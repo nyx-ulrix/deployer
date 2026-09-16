@@ -1,0 +1,39 @@
+# Secrets / local configuration
+.env
+.env.*
+!.env.example
+
+# Deployer exports contain password hashes and secrets
+*.deployer-export.json
+deployer-instance-*.json
+deployer-projects-*.json
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Node
+node_modules/
+dashboard/dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# Release / build output
+/dist/
+*.zip
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db

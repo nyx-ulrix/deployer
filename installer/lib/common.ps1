@@ -1,0 +1,961 @@
+# Deployer - shared helpers for install.ps1 and deployer.ps1.
+# Windows PowerShell 5.1 compatible. Keep this file ASCII-only (5.1 reads BOM-less files as ANSI).
+
+# Bumped when install.ps1 / deployer.ps1 need functions that older copies of this file lack.
+$script:DeployerLibVersion = 1
+$script:DeployerDistro = 'deployer'
+$script:DeployerTaskName = 'Deployer'
+$script:DeployerFirewallRule = 'Deployer-HTTP'
+$script:DeployerLogFile = $null
+$script:DeployerQuiet = $false
+
+# wsl.exe prints UTF-16 unless told otherwise; docker/compose print UTF-8.
+$env:WSL_UTF8 = '1'
+try {
+    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+} catch {
+    Write-Verbose 'Console encoding unchanged (no console attached).'
+}
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+} catch {
+    Write-Verbose 'Could not enable TLS 1.2 explicitly.'
+}
+
+# ------------------------------------------------------------------------------------------------
+# Output
+# ------------------------------------------------------------------------------------------------
+
+function Write-DeployerLog {
+    param([string]$Level, [string]$Message)
+    if ($script:DeployerLogFile) {
+        try {
+            $line = '{0} [{1}] {2}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $Level, $Message
+            Add-Content -LiteralPath $script:DeployerLogFile -Value $line -Encoding UTF8
+        } catch {
+            Write-Verbose "Log write failed: $_"
+        }
+    }
+}
+
+function Write-DeployerStep {
+    param([string]$Message)
+    Write-DeployerLog 'STEP' $Message
+    Write-Host ''
+    Write-Host "==> $Message" -ForegroundColor Cyan
+}
+
+function Write-DeployerInfo {
+    param([string]$Message)
+    Write-DeployerLog 'INFO' $Message
+    Write-Host "    $Message"
+}
+
+function Write-DeployerOk {
+    param([string]$Message)
+    Write-DeployerLog 'OK' $Message
+    Write-Host "    [ok] $Message" -ForegroundColor Green
+}
+
+function Write-DeployerWarn {
+    param([string]$Message)
+    Write-DeployerLog 'WARN' $Message
+    Write-Host "    [!] $Message" -ForegroundColor Yellow
+}
+
+function Write-DeployerError {
+    param([string]$Message)
+    Write-DeployerLog 'ERROR' $Message
+    Write-Host "    [x] $Message" -ForegroundColor Red
+}
+
+function Read-DeployerYesNo {
+    param([string]$Question, [bool]$Default = $false, [switch]$NonInteractive)
+    if ($NonInteractive) { return $Default }
+    $hint = if ($Default) { '[Y/n]' } else { '[y/N]' }
+    while ($true) {
+        $answer = Read-Host "    $Question $hint"
+        if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+        switch -Regex ($answer.Trim()) {
+            '^(y|yes)$' { return $true }
+            '^(n|no)$' { return $false }
+        }
+    }
+}
+
+# ------------------------------------------------------------------------------------------------
+# Processes
+# ------------------------------------------------------------------------------------------------
+
+function Test-DeployerIsAdmin {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function ConvertTo-DeployerArgument {
+    # Quotes one argument using the rules of CommandLineToArgvW / the MS C runtime.
+    param([AllowEmptyString()][string]$Value)
+    if ($Value -eq '') { return '""' }
+    if ($Value -notmatch '[\s"]') { return $Value }
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('"')
+    $slashes = 0
+    foreach ($ch in $Value.ToCharArray()) {
+        if ($ch -eq [char]'\') {
+            $slashes++
+            continue
+        }
+        if ($ch -eq [char]'"') {
+            [void]$sb.Append([char]'\', (2 * $slashes) + 1)
+        } elseif ($slashes -gt 0) {
+            [void]$sb.Append([char]'\', $slashes)
+        }
+        [void]$sb.Append($ch)
+        $slashes = 0
+    }
+    if ($slashes -gt 0) { [void]$sb.Append([char]'\', 2 * $slashes) }
+    [void]$sb.Append('"')
+    return $sb.ToString()
+}
+
+function Invoke-DeployerNative {
+    <#
+      Runs a program and captures stdout/stderr without PowerShell 5.1's stderr-to-ErrorRecord
+      conversion. Returns an object with ExitCode, StdOut, StdErr and Output (both combined).
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$ArgumentList = @(),
+        [int]$TimeoutSeconds = 0
+    )
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $FilePath
+    $psi.Arguments = (@($ArgumentList) | ForEach-Object { ConvertTo-DeployerArgument $_ }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    try {
+        $process = [System.Diagnostics.Process]::Start($psi)
+    } catch {
+        return [pscustomobject]@{ ExitCode = -1; StdOut = ''; StdErr = "$_"; Output = "$_" }
+    }
+    $outTask = $process.StandardOutput.ReadToEndAsync()
+    $errTask = $process.StandardError.ReadToEndAsync()
+    if ($TimeoutSeconds -gt 0) {
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $process.Kill() } catch { Write-Verbose "Kill failed: $_" }
+            return [pscustomobject]@{ ExitCode = -2; StdOut = ''; StdErr = 'timed out'; Output = 'timed out' }
+        }
+    }
+    $process.WaitForExit()
+    # Legacy wsl.exe ignores WSL_UTF8 and emits UTF-16; strip the NULs so text still matches.
+    $stdout = ($outTask.Result -replace "`0", '')
+    $stderr = ($errTask.Result -replace "`0", '')
+    return [pscustomobject]@{
+        ExitCode = $process.ExitCode
+        StdOut   = $stdout
+        StdErr   = $stderr
+        Output   = ($stdout + $stderr)
+    }
+}
+
+function Invoke-DeployerStreaming {
+    # Runs a program with its output shown live (or captured to the log in quiet/background mode).
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$ArgumentList = @()
+    )
+    Write-DeployerLog 'EXEC' ("{0} {1}" -f $FilePath, ($ArgumentList -join ' '))
+    if ($script:DeployerQuiet) {
+        $result = Invoke-DeployerNative -FilePath $FilePath -ArgumentList $ArgumentList
+        if ($result.Output) { Write-DeployerLog 'OUT' $result.Output.TrimEnd() }
+        return $result.ExitCode
+    }
+    # Out-Host keeps the program's output off this function's return value while still streaming it.
+    & $FilePath @ArgumentList | Out-Host
+    return $LASTEXITCODE
+}
+
+# ------------------------------------------------------------------------------------------------
+# Secrets, .env and ACLs
+# ------------------------------------------------------------------------------------------------
+
+function New-DeployerRandomBytes {
+    param([int]$Count)
+    $bytes = New-Object byte[] $Count
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
+    return , $bytes
+}
+
+function New-DeployerSecret {
+    # Letters and digits only: safe inside URLs (redis://), shells and connection strings.
+    param([int]$Length = 32)
+    $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
+    $sb = New-Object System.Text.StringBuilder
+    while ($sb.Length -lt $Length) {
+        foreach ($b in (New-DeployerRandomBytes -Count ($Length * 2))) {
+            # Rejection sampling keeps the distribution uniform (62 * 4 = 248).
+            if ($b -lt 248 -and $sb.Length -lt $Length) {
+                [void]$sb.Append($alphabet[$b % 62])
+            }
+        }
+    }
+    return $sb.ToString()
+}
+
+function New-DeployerMasterKey {
+    return [Convert]::ToBase64String((New-DeployerRandomBytes -Count 32))
+}
+
+function Read-DeployerEnvFile {
+    param([string]$Path)
+    $values = [ordered]@{}
+    if (-not (Test-Path -LiteralPath $Path)) { return $values }
+    foreach ($line in [System.IO.File]::ReadAllLines($Path)) {
+        if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$') {
+            $values[$Matches[1]] = $Matches[2].Trim()
+        }
+    }
+    return $values
+}
+
+function Write-DeployerTextFile {
+    # UTF-8 without BOM, LF line endings.
+    param([string]$Path, [string[]]$Lines)
+    $text = (($Lines -join "`n").TrimEnd("`n")) + "`n"
+    [System.IO.File]::WriteAllText($Path, $text, (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Set-DeployerEnvValues {
+    <#
+      Updates KEY=value pairs in place, appending keys that are missing.
+      -OnlyIfMissing never touches keys that already exist (used for secrets on upgrade).
+    #>
+    param(
+        [string]$Path,
+        [System.Collections.IDictionary]$Values,
+        [switch]$OnlyIfMissing
+    )
+    $lines = New-Object System.Collections.Generic.List[string]
+    if (Test-Path -LiteralPath $Path) {
+        foreach ($l in [System.IO.File]::ReadAllLines($Path)) { $lines.Add($l) }
+    }
+    $seen = @{}
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i] -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=') {
+            $key = $Matches[1]
+            if ($Values.Contains($key)) {
+                $seen[$key] = $true
+                if (-not $OnlyIfMissing) { $lines[$i] = "$key=$($Values[$key])" }
+            }
+        }
+    }
+    $missing = @($Values.Keys | Where-Object { -not $seen.ContainsKey($_) })
+    $hadKeys = @($lines | Where-Object { $_ -match '^\s*[A-Za-z_][A-Za-z0-9_]*\s*=' }).Count -gt 0
+    if ($missing.Count -gt 0) {
+        if ($hadKeys) {
+            $lines.Add('')
+            $lines.Add("# Added by the Deployer installer on $(Get-Date -Format 'yyyy-MM-dd')")
+        }
+        foreach ($key in $missing) { $lines.Add("$key=$($Values[$key])") }
+    }
+    Write-DeployerTextFile -Path $Path -Lines $lines.ToArray()
+}
+
+function Get-DeployerUserSid {
+    return [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+}
+
+function Set-DeployerPrivateAcl {
+    # Administrators + SYSTEM + the installing user only (for .env and backups).
+    param([string]$Path, [string]$UserSid = (Get-DeployerUserSid))
+    $isDir = (Get-Item -LiteralPath $Path -Force).PSIsContainer
+    $inherit = if ($isDir) { '(OI)(CI)' } else { '' }
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    $r = Invoke-DeployerNative -FilePath $icacls -ArgumentList @(
+        $Path, '/inheritance:r', '/grant:r',
+        "*S-1-5-32-544:$($inherit)(F)", "*S-1-5-18:$($inherit)(F)", "*$($UserSid):$($inherit)(F)"
+    )
+    if ($r.ExitCode -ne 0) { throw "Could not restrict permissions on ${Path}: $($r.Output)" }
+}
+
+function Set-DeployerInstallDirAcl {
+    # Scripts here run elevated at logon, so ordinary users must not be able to modify them.
+    param([string]$Path, [string]$UserSid = (Get-DeployerUserSid))
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    $r = Invoke-DeployerNative -FilePath $icacls -ArgumentList @(
+        $Path, '/inheritance:r', '/grant:r',
+        '*S-1-5-32-544:(OI)(CI)(F)', '*S-1-5-18:(OI)(CI)(F)',
+        "*$($UserSid):(OI)(CI)(M)", '*S-1-5-32-545:(OI)(CI)(RX)'
+    )
+    if ($r.ExitCode -ne 0) { throw "Could not set permissions on ${Path}: $($r.Output)" }
+}
+
+# ------------------------------------------------------------------------------------------------
+# State (runtime.json)
+# ------------------------------------------------------------------------------------------------
+
+function Read-DeployerState {
+    param([string]$InstallDir)
+    $path = Join-Path $InstallDir 'runtime.json'
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    return (Get-Content -LiteralPath $path -Raw | ConvertFrom-Json)
+}
+
+function Save-DeployerState {
+    param([string]$InstallDir, [System.Collections.IDictionary]$State)
+    $path = Join-Path $InstallDir 'runtime.json'
+    Write-DeployerTextFile -Path $path -Lines @(($State | ConvertTo-Json -Depth 5))
+}
+
+function ConvertTo-DeployerStateTable {
+    param($State)
+    $table = [ordered]@{}
+    if ($null -ne $State) {
+        foreach ($p in $State.PSObject.Properties) { $table[$p.Name] = $p.Value }
+    }
+    return $table
+}
+
+function Get-DeployerStateValue {
+    param($State, [string]$Name, $Default = $null)
+    if ($null -eq $State) { return $Default }
+    $prop = $State.PSObject.Properties[$Name]
+    if ($null -eq $prop -or $null -eq $prop.Value) { return $Default }
+    return $prop.Value
+}
+
+# ------------------------------------------------------------------------------------------------
+# Hardware
+# ------------------------------------------------------------------------------------------------
+
+function Test-DeployerCpuAvx {
+    if (-not ('Deployer.NativeCpu' -as [type])) {
+        Add-Type -Namespace Deployer -Name NativeCpu -MemberDefinition @'
+[DllImport("kernel32.dll")]
+[return: MarshalAs(UnmanagedType.U1)]
+public static extern bool IsProcessorFeaturePresent(uint ProcessorFeature);
+'@
+    }
+    # 39 = PF_AVX_INSTRUCTIONS_AVAILABLE
+    return [bool][Deployer.NativeCpu]::IsProcessorFeaturePresent(39)
+}
+
+# ------------------------------------------------------------------------------------------------
+# WSL
+# ------------------------------------------------------------------------------------------------
+
+function Get-DeployerWslExe {
+    return (Join-Path $env:SystemRoot 'System32\wsl.exe')
+}
+
+function ConvertTo-DeployerWslPath {
+    # C:\ProgramData\Deployer -> /mnt/c/ProgramData/Deployer
+    param([string]$WindowsPath)
+    $full = [System.IO.Path]::GetFullPath($WindowsPath)
+    if ($full -notmatch '^([A-Za-z]):\\?(.*)$') {
+        throw "Deployer must be installed on a local drive letter path (got '$WindowsPath')."
+    }
+    $drive = $Matches[1].ToLowerInvariant()
+    $rest = $Matches[2].TrimEnd('\') -replace '\\', '/'
+    if ($rest) { return "/mnt/$drive/$rest" }
+    return "/mnt/$drive"
+}
+
+function Test-DeployerWslDistro {
+    param([string]$Name = $script:DeployerDistro)
+    $r = Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('--list', '--quiet') -TimeoutSeconds 60
+    if ($r.ExitCode -ne 0) { return $false }
+    foreach ($line in ($r.StdOut -split "`r?`n")) {
+        if ($line.Trim() -ieq $Name) { return $true }
+    }
+    return $false
+}
+
+function Get-DeployerWslVersion {
+    # Returns [version] of the Store WSL package, or $null for inbox/legacy WSL.
+    $r = Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('--version') -TimeoutSeconds 60
+    if ($r.ExitCode -ne 0) { return $null }
+    if ($r.StdOut -match '(\d+\.\d+\.\d+)') { return [version]$Matches[1] }
+    return $null
+}
+
+function Get-DeployerKeepAliveProcess {
+    Get-CimInstance Win32_Process -Filter "Name = 'wsl.exe'" -ErrorAction SilentlyContinue |
+        Where-Object { $_.CommandLine -and $_.CommandLine -match "-d\s+$($script:DeployerDistro)\b" -and $_.CommandLine -match 'sleep\s+infinity' }
+}
+
+function Start-DeployerKeepAlive {
+    # WSL stops idle distros; a long-running process keeps the Docker engine (and the site) up.
+    param([switch]$Wait)
+    if (Get-DeployerKeepAliveProcess) { return }
+    $wslArgs = @('-d', $script:DeployerDistro, '-u', 'root', '--exec', 'sleep', 'infinity')
+    if ($Wait) {
+        Write-DeployerLog 'INFO' 'Keep-alive running in the foreground (scheduled task).'
+        & (Get-DeployerWslExe) @wslArgs
+        return
+    }
+    Start-Process -FilePath (Get-DeployerWslExe) -ArgumentList ($wslArgs -join ' ') -WindowStyle Hidden | Out-Null
+}
+
+function Stop-DeployerKeepAlive {
+    foreach ($p in @(Get-DeployerKeepAliveProcess)) {
+        try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop } catch { Write-Verbose "Stop keep-alive: $_" }
+    }
+}
+
+function Get-DeployerWslIp {
+    $r = Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('-d', $script:DeployerDistro, '-u', 'root', '--exec', 'hostname', '-I') -TimeoutSeconds 60
+    if ($r.ExitCode -ne 0) { return $null }
+    $first = ($r.StdOut.Trim() -split '\s+') | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } | Select-Object -First 1
+    return $first
+}
+
+# ------------------------------------------------------------------------------------------------
+# Docker / compose
+# ------------------------------------------------------------------------------------------------
+
+function Get-DeployerDockerExe {
+    $cmd = Get-Command docker.exe -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cmd) { return $cmd.Source }
+    foreach ($candidate in @(
+            (Join-Path $env:ProgramFiles 'Docker\Docker\resources\bin\docker.exe'),
+            (Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\resources\bin\docker.exe'))) {
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    return $null
+}
+
+function Get-DeployerDockerDesktopExe {
+    foreach ($candidate in @(
+            (Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'),
+            (Join-Path $env:LOCALAPPDATA 'Programs\DockerDesktop\Docker Desktop.exe'))) {
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    return $null
+}
+
+function Get-DeployerDockerCommand {
+    # Returns @{ File; Prefix } used to run `docker ...` for the given runtime.
+    param([string]$Runtime)
+    if ($Runtime -eq 'wsl-engine') {
+        return @{ File = (Get-DeployerWslExe); Prefix = @('-d', $script:DeployerDistro, '-u', 'root', '--exec', 'docker') }
+    }
+    $docker = Get-DeployerDockerExe
+    if (-not $docker) { throw 'The docker command was not found. Is Docker installed and on PATH?' }
+    return @{ File = $docker; Prefix = @() }
+}
+
+function Test-DeployerDockerEngine {
+    param([string]$Runtime)
+    try { $cmd = Get-DeployerDockerCommand -Runtime $Runtime } catch { return $false }
+    $r = Invoke-DeployerNative -FilePath $cmd.File -ArgumentList ($cmd.Prefix + @('info', '--format', '{{.ServerVersion}}')) -TimeoutSeconds 90
+    return ($r.ExitCode -eq 0 -and $r.StdOut.Trim() -match '^\d')
+}
+
+function Test-DeployerComposePlugin {
+    param([string]$Runtime)
+    try { $cmd = Get-DeployerDockerCommand -Runtime $Runtime } catch { return $false }
+    $r = Invoke-DeployerNative -FilePath $cmd.File -ArgumentList ($cmd.Prefix + @('compose', 'version')) -TimeoutSeconds 60
+    return ($r.ExitCode -eq 0)
+}
+
+function Start-DeployerDockerDesktop {
+    $exe = Get-DeployerDockerDesktopExe
+    if (-not $exe) { return $false }
+    if (Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue) { return $true }
+    # Launch through explorer.exe so Docker Desktop runs un-elevated even if we are elevated.
+    Start-Process -FilePath (Join-Path $env:SystemRoot 'explorer.exe') -ArgumentList ('"{0}"' -f $exe) | Out-Null
+    return $true
+}
+
+function Wait-DeployerDockerEngine {
+    param([string]$Runtime, [int]$TimeoutSeconds = 180, [string]$WaitingMessage = 'Waiting for the Docker engine')
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $nudged = $false
+    $announced = $false
+    $started = Get-Date
+    while ((Get-Date) -lt $deadline) {
+        if (Test-DeployerDockerEngine -Runtime $Runtime) { return $true }
+        if (-not $announced) {
+            Write-DeployerInfo "$WaitingMessage (up to $([int]($TimeoutSeconds / 60)) min)..."
+            $announced = $true
+        }
+        if (($Runtime -eq 'docker-desktop' -or $Runtime -eq 'existing') -and -not $nudged) {
+            [void](Start-DeployerDockerDesktop)
+            $nudged = $true
+        }
+        if ($Runtime -eq 'wsl-engine' -and -not $nudged -and ((Get-Date) - $started).TotalSeconds -gt 30) {
+            # Older WSL without systemd support: start the service by hand.
+            [void](Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @(
+                    '-d', $script:DeployerDistro, '-u', 'root', '--exec', 'sh', '-c',
+                    'systemctl start docker 2>/dev/null || service docker start') -TimeoutSeconds 120)
+            $nudged = $true
+        }
+        Start-Sleep -Seconds 5
+    }
+    return $false
+}
+
+function Get-DeployerComposeInvocation {
+    param([string]$InstallDir, [string]$Runtime, [string[]]$Arguments = @())
+    if ($Runtime -eq 'wsl-engine') {
+        $dir = ConvertTo-DeployerWslPath $InstallDir
+        return @{
+            File = (Get-DeployerWslExe)
+            Args = @('-d', $script:DeployerDistro, '-u', 'root', '--cd', $dir, '--exec', 'docker', 'compose',
+                '--project-directory', $dir, '-f', "$dir/docker-compose.yml") + $Arguments
+        }
+    }
+    $docker = Get-DeployerDockerExe
+    if (-not $docker) { throw 'The docker command was not found. Is Docker installed and on PATH?' }
+    return @{
+        File = $docker
+        Args = @('compose', '--project-directory', $InstallDir, '-f', (Join-Path $InstallDir 'docker-compose.yml')) + $Arguments
+    }
+}
+
+function Invoke-DeployerCompose {
+    # Streams output; returns the exit code.
+    param([string]$InstallDir, [string]$Runtime, [string[]]$Arguments = @())
+    $inv = Get-DeployerComposeInvocation -InstallDir $InstallDir -Runtime $Runtime -Arguments $Arguments
+    return (Invoke-DeployerStreaming -FilePath $inv.File -ArgumentList $inv.Args)
+}
+
+function Invoke-DeployerComposeCapture {
+    param([string]$InstallDir, [string]$Runtime, [string[]]$Arguments = @(), [int]$TimeoutSeconds = 0)
+    $inv = Get-DeployerComposeInvocation -InstallDir $InstallDir -Runtime $Runtime -Arguments $Arguments
+    return (Invoke-DeployerNative -FilePath $inv.File -ArgumentList $inv.Args -TimeoutSeconds $TimeoutSeconds)
+}
+
+function ConvertTo-DeployerRuntimePath {
+    # Path as seen by the docker CLI for this runtime.
+    param([string]$Runtime, [string]$WindowsPath)
+    if ($Runtime -eq 'wsl-engine') { return (ConvertTo-DeployerWslPath $WindowsPath) }
+    return $WindowsPath
+}
+
+function Get-DeployerHealth {
+    param([int]$Port)
+    foreach ($hostName in @('127.0.0.1', 'localhost')) {
+        try {
+            $resp = Invoke-WebRequest -UseBasicParsing -Uri "http://${hostName}:$Port/v1/health" -TimeoutSec 5
+            if ($resp.StatusCode -eq 200) { return $resp.Content }
+        } catch {
+            Write-Verbose "Health check via ${hostName}: $_"
+        }
+    }
+    return $null
+}
+
+function Wait-DeployerHealth {
+    param([int]$Port, [int]$TimeoutSeconds = 300)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $body = Get-DeployerHealth -Port $Port
+        if ($body) { return $body }
+        Start-Sleep -Seconds 5
+    }
+    return $null
+}
+
+function Show-DeployerDiagnostics {
+    param([string]$InstallDir, [string]$Runtime)
+    Write-DeployerWarn 'Container status:'
+    $ps = Invoke-DeployerComposeCapture -InstallDir $InstallDir -Runtime $Runtime -Arguments @('ps', '--all') -TimeoutSeconds 120
+    Write-Host $ps.Output
+    Write-DeployerWarn 'Last log lines (api, caddy, mariadb, mongodb, redis):'
+    $logs = Invoke-DeployerComposeCapture -InstallDir $InstallDir -Runtime $Runtime -Arguments @('logs', '--no-color', '--tail', '40', 'api', 'caddy', 'mariadb', 'redis') -TimeoutSeconds 120
+    Write-Host $logs.Output
+    Write-DeployerLog 'DIAG' ($ps.Output + "`n" + $logs.Output)
+}
+
+function Invoke-DeployerImages {
+    # Pulls published images; falls back to building from ./src when they are unavailable.
+    param([string]$InstallDir, [string]$Runtime, [switch]$FromSource)
+    if (-not $FromSource) {
+        Write-DeployerInfo 'Downloading container images...'
+        $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('pull')
+        if ($code -eq 0) { return 'pulled' }
+        Write-DeployerWarn 'Prebuilt Deployer images could not be pulled (not published for this version yet, private, or offline).'
+        Write-DeployerWarn 'Building them locally instead. This can take 10-30 minutes on an older PC.'
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $InstallDir 'src\api'))) {
+        throw 'Source code for building the images is missing (src\api). Re-run the installer or update with network access.'
+    }
+    [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('pull', '--ignore-buildable'))
+    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('build')
+    if ($code -ne 0) { throw "Building the Deployer images failed (exit code $code)." }
+    return 'built'
+}
+
+# ------------------------------------------------------------------------------------------------
+# Downloads and files
+# ------------------------------------------------------------------------------------------------
+
+function Invoke-DeployerDownload {
+    param([string]$Uri, [string]$OutFile)
+    $dir = Split-Path -Parent $OutFile
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $partial = "$OutFile.partial"
+    $curl = Join-Path $env:SystemRoot 'System32\curl.exe'
+    if (Test-Path -LiteralPath $curl) {
+        $curlArgs = @('-fL', '--retry', '3', '--retry-delay', '3', '--connect-timeout', '30', '-o', $partial, $Uri)
+        if ($script:DeployerQuiet) { $curlArgs = @('-sS') + $curlArgs } else { $curlArgs = @('-#') + $curlArgs }
+        $code = Invoke-DeployerStreaming -FilePath $curl -ArgumentList $curlArgs
+        if ($code -ne 0) {
+            Remove-Item -LiteralPath $partial -Force -ErrorAction SilentlyContinue
+            throw "Download failed ($Uri), curl exit code $code."
+        }
+    } else {
+        $old = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        try {
+            Invoke-WebRequest -UseBasicParsing -Uri $Uri -OutFile $partial
+        } finally {
+            $ProgressPreference = $old
+        }
+    }
+    Move-Item -LiteralPath $partial -Destination $OutFile -Force
+}
+
+function Get-DeployerWebText {
+    param([string]$Uri)
+    $resp = Invoke-WebRequest -UseBasicParsing -Uri $Uri -TimeoutSec 60 -Headers @{ 'User-Agent' = 'deployer-installer' }
+    if ($resp.Content -is [byte[]]) { return [System.Text.Encoding]::UTF8.GetString($resp.Content) }
+    return [string]$resp.Content
+}
+
+function Resolve-DeployerRef {
+    # An explicit ref wins; otherwise the latest GitHub release; otherwise main.
+    param([string]$Repo, [string]$Ref)
+    if ($Ref) { return $Ref }
+    try {
+        $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/releases/latest" -TimeoutSec 30 -Headers @{ 'User-Agent' = 'deployer-installer' }
+        if ($release.tag_name) { return [string]$release.tag_name }
+    } catch {
+        Write-Verbose "No published release: $_"
+    }
+    return 'main'
+}
+
+function Get-DeployerImageVersion {
+    param([string]$Ref)
+    if ($Ref -match '^v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.\-]+)?)$') { return $Matches[1] }
+    return 'latest'
+}
+
+function Get-DeployerSource {
+    <#
+      Downloads https://github.com/<Repo>/archive/<Ref>.zip (falls back to the release asset
+      deployer-deploy.zip) and returns the extracted root that contains deploy\ and installer\.
+    #>
+    param([string]$Repo, [string]$Ref, [string]$WorkDir)
+    if (Test-Path -LiteralPath $WorkDir) { Remove-Item -LiteralPath $WorkDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
+    $zip = Join-Path $WorkDir 'source.zip'
+    $sources = @(
+        "https://github.com/$Repo/archive/$Ref.zip",
+        "https://github.com/$Repo/releases/download/$Ref/deployer-deploy.zip"
+    )
+    $downloaded = $false
+    foreach ($uri in $sources) {
+        try {
+            Write-DeployerInfo "Downloading $uri"
+            Invoke-DeployerDownload -Uri $uri -OutFile $zip
+            $downloaded = $true
+            break
+        } catch {
+            Write-DeployerWarn "$_"
+        }
+    }
+    if (-not $downloaded) {
+        throw "Could not download Deployer '$Ref' from github.com/$Repo. Check the -Repo/-Ref values and your internet connection."
+    }
+    $extract = Join-Path $WorkDir 'x'
+    Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+    $candidates = @($extract) + @(Get-ChildItem -LiteralPath $extract -Directory | ForEach-Object { $_.FullName })
+    foreach ($c in $candidates) {
+        if (Test-Path -LiteralPath (Join-Path $c 'deploy\docker-compose.yml')) { return $c }
+    }
+    throw "The downloaded archive does not contain deploy\docker-compose.yml."
+}
+
+function Invoke-DeployerRobocopy {
+    param([string]$Source, [string]$Destination, [string[]]$ExcludeDirs = @(), [string[]]$ExcludeFiles = @(), [switch]$Mirror)
+    $robocopy = Join-Path $env:SystemRoot 'System32\robocopy.exe'
+    $rcArgs = @($Source, $Destination)
+    if ($Mirror) { $rcArgs += '/MIR' } else { $rcArgs += '/E' }
+    $rcArgs += @('/R:2', '/W:2', '/NFL', '/NDL', '/NJH', '/NJS', '/NP')
+    if ($ExcludeDirs.Count -gt 0) { $rcArgs += @('/XD') + $ExcludeDirs }
+    if ($ExcludeFiles.Count -gt 0) { $rcArgs += @('/XF') + $ExcludeFiles }
+    $r = Invoke-DeployerNative -FilePath $robocopy -ArgumentList $rcArgs
+    # Robocopy: 0-7 = success variants, 8+ = failure.
+    if ($r.ExitCode -ge 8) { throw "Copying $Source to $Destination failed: $($r.Output)" }
+}
+
+function Copy-DeployerFiles {
+    <#
+      Installs deploy files, management scripts and buildable source into InstallDir.
+      Never touches .env, runtime.json, backups, logs or the WSL disk.
+    #>
+    param([string]$SourceRoot, [string]$InstallDir)
+    $deploy = Join-Path $SourceRoot 'deploy'
+    Get-ChildItem -LiteralPath $deploy -Force | Where-Object { $_.Name -ne '.env' } | ForEach-Object {
+        Copy-Item -LiteralPath $_.FullName -Destination $InstallDir -Recurse -Force
+    }
+    $installerSrc = Join-Path $SourceRoot 'installer'
+    if (Test-Path -LiteralPath $installerSrc) {
+        Invoke-DeployerRobocopy -Source $installerSrc -Destination (Join-Path $InstallDir 'installer') -Mirror
+        # bash refuses CRLF scripts; normalise in case a checkout converted line endings.
+        Get-ChildItem -LiteralPath (Join-Path $InstallDir 'installer') -Recurse -Filter '*.sh' | ForEach-Object {
+            $text = [System.IO.File]::ReadAllText($_.FullName) -replace "`r`n", "`n"
+            [System.IO.File]::WriteAllText($_.FullName, $text, (New-Object System.Text.UTF8Encoding($false)))
+        }
+    }
+    $caddy = Join-Path $InstallDir 'Caddyfile'
+    if (Test-Path -LiteralPath $caddy) {
+        $text = [System.IO.File]::ReadAllText($caddy) -replace "`r`n", "`n"
+        [System.IO.File]::WriteAllText($caddy, $text, (New-Object System.Text.UTF8Encoding($false)))
+    }
+    $excludeDirs = @('node_modules', '.venv', 'venv', 'dist', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache')
+    foreach ($component in @('api', 'dashboard')) {
+        $from = Join-Path $SourceRoot $component
+        $to = Join-Path $InstallDir "src\$component"
+        if (Test-Path -LiteralPath $from) {
+            Invoke-DeployerRobocopy -Source $from -Destination $to -ExcludeDirs $excludeDirs -ExcludeFiles @('.env') -Mirror
+        }
+    }
+    $cmdShim = @(
+        '@echo off',
+        'rem Deployer management CLI - see "deployer help"',
+        '"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "%~dp0installer\deployer.ps1" %*'
+    )
+    [System.IO.File]::WriteAllText((Join-Path $InstallDir 'deployer.cmd'), (($cmdShim -join "`r`n") + "`r`n"), (New-Object System.Text.ASCIIEncoding))
+}
+
+function Initialize-DeployerEnv {
+    <#
+      Creates or upgrades .env. Secrets are generated only for keys that do not exist yet, so an
+      upgrade never rotates passwords that the databases already use.
+    #>
+    param(
+        [string]$InstallDir,
+        [int]$Port,
+        [bool]$MongoEnabled,
+        [string]$ImagePrefix,
+        [string]$Version,
+        [string]$Bind,
+        [switch]$SetPort
+    )
+    $path = Join-Path $InstallDir '.env'
+    $isNew = -not (Test-Path -LiteralPath $path)
+    $existing = Read-DeployerEnvFile -Path $path
+
+    if ($isNew) {
+        $header = @(
+            '# Deployer configuration - generated on this computer by the installer.',
+            "# Created $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'). Every secret below is random and local to this install.",
+            '# Keep a copy of this file (especially MASTER_KEY) with your backups. See .env.example for documentation.',
+            ''
+        )
+        Write-DeployerTextFile -Path $path -Lines $header
+    }
+
+    $secrets = [ordered]@{
+        PUBLIC_URL            = "http://localhost:$Port"
+        DEPLOYER_HTTP_PORT    = "$Port"
+        MARIADB_DATABASE      = 'deployer'
+        MARIADB_USER          = 'deployer'
+        MARIADB_PASSWORD      = (New-DeployerSecret -Length 32)
+        MARIADB_ROOT_PASSWORD = (New-DeployerSecret -Length 32)
+        MONGO_ROOT_USERNAME   = 'admin'
+        MONGO_ROOT_PASSWORD   = (New-DeployerSecret -Length 32)
+        REDIS_PASSWORD        = (New-DeployerSecret -Length 32)
+        JWT_SECRET            = (New-DeployerSecret -Length 64)
+        MASTER_KEY            = (New-DeployerMasterKey)
+        GOOGLE_CLIENT_ID      = ''
+        GOOGLE_CLIENT_SECRET  = ''
+        GITHUB_CLIENT_ID      = ''
+        GITHUB_CLIENT_SECRET  = ''
+        ALLOW_SIGNUP          = 'false'
+    }
+    $managed = [ordered]@{
+        DEPLOYER_BIND           = $Bind
+        DEPLOYER_IMAGE_PREFIX   = $ImagePrefix
+        DEPLOYER_VERSION        = $Version
+        DEPLOYER_SOURCE_DIR     = './src'
+        COMPOSE_PROFILES        = $(if ($MongoEnabled) { 'mongodb' } else { '' })
+        MANAGED_MONGODB_ENABLED = $(if ($MongoEnabled) { 'true' } else { 'false' })
+    }
+    if ($SetPort -and -not $isNew) {
+        $managed['DEPLOYER_HTTP_PORT'] = "$Port"
+        $oldUrl = [string]$existing['PUBLIC_URL']
+        if (-not $oldUrl -or $oldUrl -match '^http://(localhost|127\.0\.0\.1)(:\d+)?/?$') {
+            $managed['PUBLIC_URL'] = "http://localhost:$Port"
+        }
+    }
+    if ($isNew) {
+        foreach ($key in $managed.Keys) { $secrets[$key] = $managed[$key] }
+        Set-DeployerEnvValues -Path $path -Values $secrets
+    } else {
+        Set-DeployerEnvValues -Path $path -Values $secrets -OnlyIfMissing
+        Set-DeployerEnvValues -Path $path -Values $managed
+    }
+    Set-DeployerPrivateAcl -Path $path
+    return $isNew
+}
+
+function Get-DeployerImagePrefix {
+    param([string]$Repo)
+    $owner = ($Repo -split '/')[0].ToLowerInvariant()
+    return "ghcr.io/$owner/deployer"
+}
+
+# ------------------------------------------------------------------------------------------------
+# Networking (LAN access)
+# ------------------------------------------------------------------------------------------------
+
+function Get-DeployerLanAddresses {
+    Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and
+            $_.InterfaceAlias -notmatch 'vEthernet|WSL|Loopback|docker' -and
+            $_.AddressState -eq 'Preferred'
+        } |
+        Select-Object -ExpandProperty IPAddress
+}
+
+function Remove-DeployerPortProxy {
+    param([int]$Port)
+    $netsh = Join-Path $env:SystemRoot 'System32\netsh.exe'
+    $show = Invoke-DeployerNative -FilePath $netsh -ArgumentList @('interface', 'portproxy', 'show', 'v4tov4')
+    foreach ($line in ($show.StdOut -split "`r?`n")) {
+        if ($line -match '^\s*(\d+\.\d+\.\d+\.\d+|\*)\s+(\d+)\s+\S+\s+\d+') {
+            if ([int]$Matches[2] -eq $Port) {
+                [void](Invoke-DeployerNative -FilePath $netsh -ArgumentList @('interface', 'portproxy', 'delete', 'v4tov4', "listenport=$Port", "listenaddress=$($Matches[1])"))
+            }
+        }
+    }
+}
+
+function Update-DeployerPortProxy {
+    # WSL NAT mode: forward <LAN IP>:<Port> to the distro's current IP (it changes on every boot).
+    param([int]$Port)
+    if (-not (Test-DeployerIsAdmin)) {
+        Write-DeployerWarn 'Skipping LAN port forwarding refresh (needs administrator rights).'
+        return $false
+    }
+    $wslIp = Get-DeployerWslIp
+    if (-not $wslIp) {
+        Write-DeployerWarn 'Could not determine the WSL IP address; LAN forwarding not refreshed.'
+        return $false
+    }
+    Remove-DeployerPortProxy -Port $Port
+    $netsh = Join-Path $env:SystemRoot 'System32\netsh.exe'
+    $ok = $true
+    foreach ($ip in @(Get-DeployerLanAddresses)) {
+        $r = Invoke-DeployerNative -FilePath $netsh -ArgumentList @('interface', 'portproxy', 'add', 'v4tov4',
+            "listenport=$Port", "listenaddress=$ip", "connectport=$Port", "connectaddress=$wslIp")
+        if ($r.ExitCode -ne 0) {
+            Write-DeployerWarn "portproxy for ${ip}:$Port failed: $($r.Output.Trim())"
+            $ok = $false
+        }
+    }
+    try { Start-Service -Name iphlpsvc -ErrorAction Stop } catch { Write-Verbose "iphlpsvc: $_" }
+    return $ok
+}
+
+function Add-DeployerFirewallRule {
+    param([int]$Port)
+    Remove-NetFirewallRule -Name $script:DeployerFirewallRule -ErrorAction SilentlyContinue
+    New-NetFirewallRule -Name $script:DeployerFirewallRule -DisplayName "Deployer (TCP $Port)" `
+        -Description 'Allows devices on private networks to reach Deployer.' `
+        -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Private | Out-Null
+    if (Get-Command New-NetFirewallHyperVRule -ErrorAction SilentlyContinue) {
+        # WSL mirrored networking is additionally filtered by the Hyper-V firewall.
+        Remove-NetFirewallHyperVRule -Name $script:DeployerFirewallRule -ErrorAction SilentlyContinue
+        try {
+            New-NetFirewallHyperVRule -Name $script:DeployerFirewallRule -DisplayName "Deployer (TCP $Port)" `
+                -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' `
+                -Protocol TCP -LocalPorts $Port -Action Allow -ErrorAction Stop | Out-Null
+        } catch {
+            Write-Verbose "Hyper-V firewall rule not created: $_"
+        }
+    }
+}
+
+function Remove-DeployerFirewallRule {
+    Remove-NetFirewallRule -Name $script:DeployerFirewallRule -ErrorAction SilentlyContinue
+    if (Get-Command Remove-NetFirewallHyperVRule -ErrorAction SilentlyContinue) {
+        Remove-NetFirewallHyperVRule -Name $script:DeployerFirewallRule -ErrorAction SilentlyContinue
+    }
+}
+
+# ------------------------------------------------------------------------------------------------
+# Autostart + PATH
+# ------------------------------------------------------------------------------------------------
+
+function Register-DeployerTask {
+    param([string]$InstallDir)
+    $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $script = Join-Path $InstallDir 'installer\deployer.ps1'
+    $action = New-ScheduledTaskAction -Execute $ps -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" start -Background' -f $script)
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    $trigger.Delay = 'PT20S'
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable
+    Register-ScheduledTask -TaskName $script:DeployerTaskName -Action $action -Trigger $trigger `
+        -Principal $principal -Settings $settings -Force `
+        -Description 'Starts Deployer (docker compose stack) when you sign in.' | Out-Null
+}
+
+function Unregister-DeployerTask {
+    $task = Get-ScheduledTask -TaskName $script:DeployerTaskName -ErrorAction SilentlyContinue
+    if ($task) {
+        Stop-ScheduledTask -TaskName $script:DeployerTaskName -ErrorAction SilentlyContinue
+        Unregister-ScheduledTask -TaskName $script:DeployerTaskName -Confirm:$false
+    }
+}
+
+function Get-DeployerUserPath {
+    $key = Get-Item -LiteralPath 'HKCU:\Environment'
+    return [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+}
+
+function Send-DeployerEnvironmentChange {
+    # Setting a user variable through .NET broadcasts WM_SETTINGCHANGE so new terminals see PATH.
+    [Environment]::SetEnvironmentVariable('DEPLOYER_PATH_REFRESH', '1', 'User')
+    [Environment]::SetEnvironmentVariable('DEPLOYER_PATH_REFRESH', $null, 'User')
+}
+
+function Add-DeployerUserPath {
+    param([string]$Directory)
+    $current = Get-DeployerUserPath
+    $parts = @($current -split ';' | Where-Object { $_ })
+    if ($parts | Where-Object { $_.TrimEnd('\') -ieq $Directory.TrimEnd('\') }) { return }
+    $new = (@($parts) + $Directory) -join ';'
+    Set-ItemProperty -LiteralPath 'HKCU:\Environment' -Name 'Path' -Value $new -Type ExpandString
+    Send-DeployerEnvironmentChange
+}
+
+function Remove-DeployerUserPath {
+    param([string]$Directory)
+    $current = Get-DeployerUserPath
+    $parts = @($current -split ';' | Where-Object { $_ -and ($_.TrimEnd('\') -ine $Directory.TrimEnd('\')) })
+    Set-ItemProperty -LiteralPath 'HKCU:\Environment' -Name 'Path' -Value ($parts -join ';') -Type ExpandString
+    Send-DeployerEnvironmentChange
+}
+
+function Open-DeployerUrl {
+    # explorer.exe hands the URL to the already-running, non-elevated shell.
+    param([string]$Url)
+    Start-Process -FilePath (Join-Path $env:SystemRoot 'explorer.exe') -ArgumentList $Url | Out-Null
+}

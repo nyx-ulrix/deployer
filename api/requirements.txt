@@ -1,0 +1,16 @@
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+pydantic==2.*
+pydantic-settings==2.*
+email-validator==2.*
+python-multipart==0.0.*
+SQLAlchemy==2.0.*
+alembic==1.14.*
+PyMySQL==1.1.*
+psycopg[binary]==3.2.*
+pymongo==4.10.*
+redis==5.*
+httpx==0.28.*
+argon2-cffi==23.*
+PyJWT==2.*
+cryptography==44.*

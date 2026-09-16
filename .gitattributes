@@ -1,0 +1,18 @@
+* text=auto
+
+# Executed inside Linux containers / WSL: must stay LF.
+*.sh text eol=lf
+Caddyfile text eol=lf
+.env.example text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+nginx.conf text eol=lf
+
+# Windows PowerShell 5.1 scripts.
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary

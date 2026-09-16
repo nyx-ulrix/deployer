@@ -1,0 +1,194 @@
+# Deployer - production stack.
+#
+# Normally started by the Windows installer / `deployer` CLI, which writes `.env` next to this file
+# with locally generated secrets. For development: copy `.env.example` to `.env`, then
+#   docker compose -f deploy/docker-compose.yml up --build
+#
+# Sized for old PCs (4 GB RAM total). Default memory limits, all overridable in `.env`:
+#   mariadb 512m (InnoDB buffer pool 128M) | mongodb 512m (WiredTiger cache 0.25 GB)
+#   redis 160m (maxmemory 128mb)           | api 768m (exports/imports stream data)
+#   dashboard 64m (static nginx)           | caddy 128m
+# Roughly 2.1 GB worst case; typical idle usage is well under 1 GB.
+#
+# MongoDB 5.0 needs a CPU with AVX. It only starts when COMPOSE_PROFILES contains `mongodb`
+# (the installer omits it on CPUs without AVX and sets MANAGED_MONGODB_ENABLED=false).
+
+name: deployer
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  mariadb:
+    image: mariadb:11
+    restart: unless-stopped
+    command:
+      - --innodb-buffer-pool-size=128M
+      - --innodb-log-buffer-size=8M
+      - --performance-schema=OFF
+      - --max-connections=150
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --skip-name-resolve
+    environment:
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?MARIADB_ROOT_PASSWORD is not set - run the installer or create deploy/.env from .env.example}
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-deployer}
+      MARIADB_USER: ${MARIADB_USER:-deployer}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD:?MARIADB_PASSWORD is not set}
+      # Upgrade the system tables automatically when the mariadb:11 image moves to a newer minor.
+      MARIADB_AUTO_UPGRADE: "1"
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+    mem_limit: ${MARIADB_MEM_LIMIT:-512m}
+    logging: *default-logging
+
+  mongodb:
+    image: mongo:5.0
+    profiles: ["mongodb"]
+    restart: unless-stopped
+    command: ["--wiredTigerCacheSizeGB", "0.25", "--bind_ip_all"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD is not set}
+    volumes:
+      - mongodb_data:/data/db
+      - mongodb_config:/data/configdb
+    networks:
+      - backend
+    healthcheck:
+      # mongo:5.0 ships both the legacy `mongo` shell and `mongosh`; `mongo` starts far faster and
+      # uses less memory than the Node.js-based mongosh, which matters on old PCs.
+      # `ping` needs no authentication.
+      test: ["CMD", "mongo", "--quiet", "--norc", "--eval", "db.adminCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+    mem_limit: ${MONGODB_MEM_LIMIT:-512m}
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # The password is read from the environment so it never appears in `docker inspect` args.
+    command:
+      - sh
+      - -c
+      - exec redis-server --requirepass "$$REDISCLI_AUTH" --appendonly yes --maxmemory 128mb --maxmemory-policy volatile-lru --save ""
+    environment:
+      # redis-cli (used by the healthcheck) reads REDISCLI_AUTH automatically.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?REDIS_PASSWORD is not set}
+    volumes:
+      - redis_data:/data
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    mem_limit: ${REDIS_MEM_LIMIT:-160m}
+    logging: *default-logging
+
+  api:
+    image: ${DEPLOYER_IMAGE_PREFIX:-ghcr.io/nyx-ulrix/deployer}-api:${DEPLOYER_VERSION:-latest}
+    build:
+      # The installer keeps the source next to this file in ./src; in a git checkout it is ../
+      context: ${DEPLOYER_SOURCE_DIR:-..}/api
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
+      MARIADB_HOST: mariadb
+      MARIADB_PORT: "3306"
+      MARIADB_DATABASE: ${MARIADB_DATABASE:-deployer}
+      MARIADB_USER: ${MARIADB_USER:-deployer}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
+      MONGO_HOST: mongodb
+      MONGO_PORT: "27017"
+      MONGO_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MANAGED_MONGODB_ENABLED: ${MANAGED_MONGODB_ENABLED:-true}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is not set}
+      MASTER_KEY: ${MASTER_KEY:?MASTER_KEY is not set}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      ALLOW_SIGNUP: ${ALLOW_SIGNUP:-false}
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+        # mongodb is behind a profile (no AVX -> not started); don't block the API on it.
+        required: false
+    networks:
+      # backend: databases (no internet access). public: Caddy + outbound calls
+      # (OAuth token exchange, external databases such as MongoDB Atlas).
+      - backend
+      - public
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/health', timeout=4)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    mem_limit: ${API_MEM_LIMIT:-768m}
+    logging: *default-logging
+
+  dashboard:
+    image: ${DEPLOYER_IMAGE_PREFIX:-ghcr.io/nyx-ulrix/deployer}-dashboard:${DEPLOYER_VERSION:-latest}
+    build:
+      context: ${DEPLOYER_SOURCE_DIR:-..}/dashboard
+    restart: unless-stopped
+    networks:
+      - public
+    mem_limit: ${DASHBOARD_MEM_LIMIT:-64m}
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - dashboard
+    ports:
+      # DEPLOYER_BIND=127.0.0.1 keeps it reachable from this PC only; 0.0.0.0 allows the LAN
+      # (the Windows firewall still applies).
+      - "${DEPLOYER_BIND:-0.0.0.0}:${DEPLOYER_HTTP_PORT:-8080}:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - public
+    mem_limit: ${CADDY_MEM_LIMIT:-128m}
+    logging: *default-logging
+
+networks:
+  backend:
+    internal: true
+  public: {}
+
+volumes:
+  mariadb_data:
+  mongodb_data:
+  mongodb_config:
+  redis_data:
+  caddy_data:
+  caddy_config:

@@ -1,0 +1,56 @@
+# Deployer reverse proxy: one port for the dashboard and the API.
+# HTTPS is intentionally off here; remote access over HTTPS comes from a tunnel
+# (Tailscale / Cloudflare Tunnel, see the roadmap) or your own proxy in front of this port.
+{
+	admin off
+	auto_https off
+	# If you put another reverse proxy in front of Deployer, trust it so client IPs
+	# (used for login rate limiting) are passed through, e.g.:
+	# servers {
+	# 	trusted_proxies static 192.168.1.10/32
+	# }
+}
+
+:8080 {
+	encode zstd gzip
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Cross-Origin-Opener-Policy "same-origin"
+		-Server
+		# No Strict-Transport-Security: this listener is plain HTTP.
+	}
+
+	# Full export files (settings + users + all managed database contents) can be large.
+	@imports path /v1/setup/import /v1/projects/import
+	request_body @imports {
+		max_size 2GB
+	}
+
+	@api_other {
+		path /v1/*
+		not path /v1/setup/import /v1/projects/import
+	}
+	request_body @api_other {
+		max_size 64MB
+	}
+
+	handle /v1/* {
+		# Caddy sets X-Forwarded-For, X-Forwarded-Proto and X-Forwarded-Host automatically.
+		reverse_proxy api:8000 {
+			transport http {
+				read_timeout 30m
+				write_timeout 30m
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy dashboard:80
+	}
+
+	# Access logging is off by default (Caddy only logs requests when a `log` directive exists).
+}

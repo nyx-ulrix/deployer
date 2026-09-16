@@ -1,0 +1,95 @@
+"""Shared FastAPI dependencies: current user and project role checks."""
+
+from dataclasses import dataclass
+from typing import Annotated
+
+import jwt
+from fastapi import Depends, Request
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.config import get_settings
+from app.db import get_db
+from app.errors import forbidden, not_found, unauthorized
+from app.models import Project, ProjectMember, User, role_rank
+
+DbSession = Annotated[Session, Depends(get_db)]
+
+
+def decode_access_token(token: str) -> dict:
+    try:
+        claims = jwt.decode(token, get_settings().jwt_secret, algorithms=["HS256"], audience="deployer")
+    except jwt.PyJWTError as exc:
+        raise unauthorized("Invalid or expired access token") from exc
+    if claims.get("typ") != "access":
+        raise unauthorized("Invalid access token")
+    return claims
+
+
+def get_current_user(request: Request, db: DbSession) -> User:
+    header = request.headers.get("Authorization", "")
+    scheme, _, token = header.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise unauthorized()
+    claims = decode_access_token(token)
+    user = db.get(User, claims["sub"])
+    if user is None or not user.is_active:
+        raise unauthorized("Account not found or disabled")
+    return user
+
+
+CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def require_instance_owner(user: CurrentUser) -> User:
+    if not user.is_instance_owner:
+        raise forbidden("Only the instance owner can do that")
+    return user
+
+
+InstanceOwner = Annotated[User, Depends(require_instance_owner)]
+
+
+@dataclass
+class ProjectAccess:
+    project: Project
+    user: User
+    role: str
+
+    def at_least(self, role: str) -> bool:
+        return role_rank(self.role) >= role_rank(role)
+
+
+def load_project_access(db: Session, user: User, project_id: str) -> ProjectAccess:
+    project = db.get(Project, project_id)
+    if project is None:
+        raise not_found("Project")
+    member = db.scalar(
+        select(ProjectMember).where(ProjectMember.project_id == project_id, ProjectMember.user_id == user.id)
+    )
+    if member is None:
+        # Don't reveal that the project exists.
+        raise not_found("Project")
+    return ProjectAccess(project=project, user=user, role=member.role)
+
+
+def require_role(minimum: str):
+    """Dependency factory for routes with a `project_id` path parameter.
+
+    Usage: `access: Annotated[ProjectAccess, Depends(require_role("admin"))]`
+    """
+
+    def dependency(project_id: str, user: CurrentUser, db: DbSession) -> ProjectAccess:
+        access = load_project_access(db, user, project_id)
+        if not access.at_least(minimum):
+            raise forbidden(f"Requires the {minimum} role or higher on this project")
+        return access
+
+    return dependency
+
+
+def client_ip(request: Request) -> str | None:
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else None
