@@ -5,8 +5,8 @@ Skipped unless both are configured, e.g.::
     docker run -d --name dpl-it-mariadb -e MARIADB_ROOT_PASSWORD=test -p 13306:3306 mariadb:11
     docker run -d --name dpl-it-mongo -e MONGO_INITDB_ROOT_USERNAME=admin \
         -e MONGO_INITDB_ROOT_PASSWORD=test -p 37017:27017 mongo:5.0
-    DEPLOYER_IT_MARIADB_URL=mysql://root:test@127.0.0.1:13306 \
-    DEPLOYER_IT_MONGO_URI=mongodb://admin:test@127.0.0.1:37017 pytest tests/integration
+    DEPLOYER_IT_MARIADB_URL=mysql://root:<password>@127.0.0.1:13306 \
+    DEPLOYER_IT_MONGO_URI=mongodb://admin:<password>@127.0.0.1:37017 pytest tests/integration
 """
 
 import io

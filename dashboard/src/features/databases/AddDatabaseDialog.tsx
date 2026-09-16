@@ -315,7 +315,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
                   type="password"
                   value={uri}
                   onChange={(e) => setUri(e.target.value)}
-                  placeholder="mongodb+srv://user:password@cluster0.abcde.mongodb.net"
+                  placeholder="mongodb+srv://<user>:<password>@<cluster>.mongodb.net"
                   autoComplete="off"
                   spellCheck={false}
                   required

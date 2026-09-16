@@ -1,14 +1,62 @@
-# Secrets / local configuration
+# =============================================================================
+# Secrets & credentials — never commit these. CI runs a secret scan as a backstop.
+# =============================================================================
+# Environment files anywhere in the repo (only the documented example is allowed)
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
+!**/.env.example
 
-# Deployer exports contain password hashes and secrets
+# Private keys, certificates with keys, keystores
+*.pem
+*.key
+*.pfx
+*.p12
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+*.kdbx
+
+# Cloud / OAuth credential downloads (e.g. Google "Download JSON" for an OAuth client or service account)
+client_secret*.json
+*credentials*.json
+service-account*.json
+*-service-account.json
+*-sa-key.json
+gcloud-key*.json
+
+# Package manager auth files
+.npmrc
+.pypirc
+.netrc
+
+# Local secret folders
+secrets/
+.secrets/
+
+# =============================================================================
+# Deployer runtime data (created by a local stack or the installer)
+# =============================================================================
+# Exports contain password hashes, secrets and database contents
 *.deployer-export.json
 deployer-instance-*.json
 deployer-projects-*.json
+# Backups and tunnel state if a volume is bind-mounted into the checkout
+/backups/
+/deploy/backups/
+/tunnel_state/
+/deploy/tunnel_state/
+# Local databases used by tests or tools
+*.sqlite
+*.sqlite3
+*.db
 
+# =============================================================================
 # Python
+# =============================================================================
 __pycache__/
 *.py[cod]
 .venv/
@@ -17,23 +65,38 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .coverage
+.coverage.*
 htmlcov/
 *.egg-info/
 
-# Node
+# =============================================================================
+# Node / dashboard
+# =============================================================================
 node_modules/
 dashboard/dist/
 *.tsbuildinfo
 npm-debug.log*
+coverage/
 
-# Release / build output
+# =============================================================================
+# Build & release output
+# =============================================================================
 /dist/
 *.zip
+installer/windows/obj/
+installer/windows/bin/
 
-# Editors / OS
+# =============================================================================
+# Logs, temp files, editors, OS
+# =============================================================================
+*.log
+logs/
+tmp/
+.tmp/
 .vscode/*
 !.vscode/extensions.json
 .idea/
 *.swp
 .DS_Store
 Thumbs.db
+desktop.ini

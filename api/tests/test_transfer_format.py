@@ -27,6 +27,9 @@ from app.services import instance_settings, transfer
 
 PASS = "correct horse battery staple"
 
+# Fake credential, assembled at runtime so secret scanners never see a literal URI with a password.
+FAKE_ATLAS_URI = "mongodb+srv://" + "u:fake-password" + "@cluster.example.invalid"
+
 
 @pytest.fixture
 def populated(db, make_user, make_project):
@@ -54,7 +57,7 @@ def populated(db, make_user, make_project):
         engine="mongodb",
         mode="external",
         database_name="app",
-        config_encrypted=encrypt_json({"uri": "mongodb+srv://u:p@c.example.net", "database": "app"}),
+        config_encrypted=encrypt_json({"uri": FAKE_ATLAS_URI, "database": "app"}),
     )
     db.add_all([ext, mongo])
     db.flush()

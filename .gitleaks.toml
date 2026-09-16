@@ -1,0 +1,23 @@
+# gitleaks configuration: default rules plus generic connection-string detection.
+# Tests must use obviously fake values built at runtime (see api/tests/test_data_sources.py) — don't
+# add allowlist entries for real-looking credentials.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "database-uri-with-password"
+description = "Database connection URI containing a literal password"
+regex = '''(?i)\b(?:mongodb(?:\+srv)?|mysql|mariadb|postgres(?:ql)?|redis|rediss)://[^\s/:@"'<>{}$]+:[^\s/@"'<>{}$]+@[^\s/"'<>]+'''
+keywords = ["mongodb", "mysql", "mariadb", "postgres", "redis"]
+
+[allowlist]
+description = "Build output and lockfiles"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)dist/''',
+  '''package-lock\.json$''',
+  # Local-only folders that are git-ignored (only matter when scanning a working copy with `gitleaks dir`)
+  '''(^|/)\.venv/''',
+  '''(^|/)__pycache__/''',
+  '''(^|/)installer/windows/obj/''',
+]
