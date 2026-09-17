@@ -296,7 +296,9 @@ function Select-Runtime {
 
     $dockerWorks = $false
     if (Get-DeployerDockerExe) { $dockerWorks = (Test-DeployerDockerEngine -Runtime 'existing') }
-    $default = if ($dockerWorks) { 'existing' } else { 'wsl-engine' }
+    # The free Docker Engine in WSL2 is the default even when Docker Desktop is running: it has no
+    # licensing conditions and does not break after sleep/wake like Docker Desktop's socket files do.
+    $default = 'wsl-engine'
     if ($NonInteractive) { return $default }
 
     Write-DeployerStep 'Choose how to run containers'
@@ -545,6 +547,9 @@ function Test-ExistingRuntime {
         }
         Write-DeployerInfo 'The Docker engine is not running; starting Docker Desktop...'
         if (-not (Wait-DeployerDockerEngine -Runtime 'existing' -TimeoutSeconds 420 -WaitingMessage 'Waiting for Docker Desktop')) {
+            if ($script:DeployerDockerNeedsWindowsRestart) {
+                throw 'Docker Desktop cannot start until Windows is restarted (a Windows issue with Docker''s socket files after sleep). Restart Windows and click Try again - or run setup again and choose "Free Docker Engine", which does not depend on Docker Desktop.'
+            }
             throw 'Docker Desktop did not start. Open it yourself, wait until it says "Engine running", then click Try again (or choose -Runtime wsl-engine).'
         }
     }

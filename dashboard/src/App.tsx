@@ -27,8 +27,9 @@ import { RemoteAccessPage } from "./features/remote-access/RemoteAccessPage";
 import { TransferPage } from "./features/settings/TransferPage";
 import { SetupWizard } from "./features/setup/SetupWizard";
 
-// React Flow + dagre are only needed on the Schema tab.
+// React Flow + dagre are only needed on the Schema tab; CodeMirror only on the Query tab.
 const SchemaTab = lazy(() => import("./features/schema/SchemaTab"));
+const QueryTab = lazy(() => import("./features/query/QueryTab"));
 
 function RouteError() {
   const error = useRouteError();
@@ -102,6 +103,14 @@ const router = createBrowserRouter([
                     ),
                   },
                   { path: "data", element: <DataTab /> },
+                  {
+                    path: "query",
+                    element: (
+                      <Suspense fallback={<PageSpinner label="Loading query console…" />}>
+                        <QueryTab />
+                      </Suspense>
+                    ),
+                  },
                   { path: "backups", element: <BackupsTab /> },
                   { path: "members", element: <MembersTab /> },
                   { path: "api-keys", element: <ApiKeysTab /> },

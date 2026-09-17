@@ -9,6 +9,7 @@ alembic==1.14.*
 PyMySQL==1.1.*
 psycopg[binary]==3.2.*
 pymongo==4.10.*
+sqlparse==0.5.*
 redis==5.*
 httpx==0.28.*
 argon2-cffi==23.*

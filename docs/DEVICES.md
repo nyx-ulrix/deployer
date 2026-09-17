@@ -67,7 +67,7 @@ the primary) only authorizes the device endpoints below.
 | `datasource.provision` | `{kind, database_name}` | `{database_name, username}` (password stays on the device) |
 | `datasource.drop` | `{kind, database_name}` | `{}` |
 | `datasource.check` | `{kind, database_name}` | `{ok, message, server_version}` |
-| `datasource.call` | `{kind, database_name, source_name?, op, args}` | op result — `op` is one of the local service operations: `introspect`, `entity` (`{name}`), `ddl_export`, `connection_info`, `rows.list`, `rows.insert`, `rows.update`, `rows.delete`, `documents.list`, `documents.insert`, `documents.update`, `documents.delete`, `table.create`, `table.drop`, `collection.create`, `collection.drop` |
+| `datasource.call` | `{kind, database_name, source_name?, op, args}` | op result — `op` is one of the local service operations: `introspect`, `entity` (`{name}`), `ddl_export`, `connection_info`, `query` (`{query, max_rows, timeout_seconds, read_only}` — the query console runner, [QUERY_CONSOLE.md](QUERY_CONSOLE.md); the primary calls it with timeout `timeout_seconds + 15`), `rows.list`, `rows.insert`, `rows.update`, `rows.delete`, `documents.list`, `documents.insert`, `documents.update`, `documents.delete`, `table.create`, `table.drop`, `collection.create`, `collection.drop` |
 | `datasource.export` | `{kind, database_name, source_name?, transfer_id}` | `{sha256, size, tables, rows, documents}` — device writes the export `data` entry (gzip JSON) and PUTs it to the transfer |
 | `datasource.import` | `{kind, database_name, source_name?, transfer_id}` | `{rows, documents}` — device GETs a gzip JSON `data` entry and restores it into a hosted database |
 | `jobs.run` | `{job_id, type, params, project_id?, data_source_id?}` | job result. `type` is `executor.<method>` (backup executor calls: `snapshot`, `archive_logs`, `restore`, `verify`, `delete_artifact`, `artifact_exists`, `storage_stats`) or a `runs_on="host"` job type. Device streams `progress` messages with the same `job_id` |
@@ -139,9 +139,9 @@ type PlacementOption = {
 // DataSource gains: device_id: string | null; device_name: string | null
 ```
 
-Device-hosted sources: every schema / data browser / check / connection / DDL export route routes to the
-device (`503 device_offline` while it is disconnected; the schema view and DDL export show an error
-entry instead). `GET .../connection` returns the device-local connection details (fetched from the
+Device-hosted sources: every schema / data browser / query console / check / connection / DDL export
+route routes to the device (`503 device_offline` while it is disconnected; the schema view and DDL
+export show an error entry instead). `GET .../connection` returns the device-local connection details (fetched from the
 device, never stored on the primary) with an `external_hint` and `device_id`.
 
 ### Errors (besides the common codes in API.md)

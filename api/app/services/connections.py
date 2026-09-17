@@ -50,8 +50,8 @@ def _fingerprint(ds: DataSource) -> str:
     return hashlib.sha256(ds.config_encrypted.encode("utf-8")).hexdigest()
 
 
-def redact(message: str, secrets: list[str | None] | None = None) -> str:
-    """Removes passwords from driver error messages."""
+def redact(message: str, secrets: list[str | None] | None = None, *, limit: int | None = 1000) -> str:
+    """Removes passwords from driver error messages (and other text: `limit=None` keeps the length)."""
     out = str(message)
     for secret in secrets or []:
         if secret:
@@ -61,7 +61,7 @@ def redact(message: str, secrets: list[str | None] | None = None) -> str:
                 out = out.replace(quoted, "***")
     # user:password@ in any URI
     out = re.sub(r"(://[^:/@\s]+:)[^@\s]+@", r"\1***@", out)
-    return out[:1000]
+    return out if limit is None else out[:limit]
 
 
 def sql_url(engine_name: str, config: dict[str, Any]) -> URL:

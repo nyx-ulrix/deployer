@@ -19,6 +19,8 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 - **Schema viewer** - ER diagrams (crow's-foot notation) across SQL and NoSQL, convention checks,
   cross-database links, and **DDL export** (`.sql`, `mongosh` script, or a bundle).
 - **Data browser** for tables and collections.
+- **Query console** - SQL and MongoDB shell (`mongosh`) in the browser, per database, with the
+  project's roles (viewers are limited to read-only queries) ([docs/QUERY_CONSOLE.md](docs/QUERY_CONSOLE.md)).
 - **Full export / import** - one encrypted JSON file with settings, users, projects **and all data**;
   restore a whole installation or selected projects on another device.
 - **Backups and point-in-time recovery** - every managed database gets automatic encrypted versions;
@@ -105,7 +107,10 @@ Running it again later upgrades an existing installation and keeps your `.env` a
    need one, sign in to Docker Desktop yourself - Deployer never asks for Docker credentials.
 3. **Existing Docker.** Uses whatever `docker info` already reaches.
 
-`auto` uses an already-running Docker if there is one, otherwise option 1.
+`auto` (and the setup wizard) picks option 1 by default, even when Docker Desktop is installed: the
+free engine has no licensing conditions and, unlike Docker Desktop, keeps working after the PC sleeps
+and wakes. Choose `docker-desktop` or `existing` explicitly to use those instead. An existing
+installation keeps the runtime it was installed with unless you run setup again and pick another.
 
 ## First run: the setup wizard
 
@@ -237,6 +242,7 @@ stored in the database and the encrypted backup versions.
 | Images can't be downloaded | Check your internet connection or proxy. On forks, make the GHCR packages public (see Development). |
 | Deployer isn't responding | *Deployer Control → Restart*, then *View logs* (`deployer logs api`). `deployer status` shows every container. |
 | Docker Desktop was closed, crashed or the PC woke from sleep, and Deployer is down | `deployer start` (or *Deployer Control → Start*) starts Docker Desktop if needed, repairs it when it crashes on its leftover socket files, and brings Deployer back. With *Start Deployer when I sign in* on (`deployer autostart on`) this happens on its own at sign-in. |
+| *Docker Desktop cannot start until Windows is restarted* | After sleep/wake Windows sometimes can no longer create Docker Desktop's socket files (*"The file cannot be accessed by the system"*); Docker Desktop then crashes on every start. Restart Windows. To stop it recurring, run setup again and choose **Free Docker Engine** (WSL2): it does not use Docker Desktop at all. |
 | Docker Desktop asks you to sign in | Only needed if your organisation requires a paid Docker subscription. Otherwise skip it, or reinstall with the free Docker Engine. |
 
 When asking for help, include the output of `deployer status` and the latest `install-*.log` from

@@ -50,6 +50,8 @@ import type {
   ProjectsImportResponse,
   ProviderName,
   ProvidersResponse,
+  QueryRequest,
+  QueryResponse,
   Role,
   RowsResponse,
   SchemaExportFormat,
@@ -68,6 +70,11 @@ function importForm(file: File, passphrase: string): FormData {
   form.append("file", file);
   form.append("passphrase", passphrase);
   return form;
+}
+
+/** QUERY_CONSOLE.md: `POST /projects/{id}/data-sources/{sid}/query` (SQL or MongoDB shell code). */
+export function runQuery(projectId: string, sid: string, body: QueryRequest, signal?: AbortSignal) {
+  return client.post<QueryResponse>(`/projects/${e(projectId)}/data-sources/${e(sid)}/query`, body, { signal });
 }
 
 export const api = {
@@ -310,6 +317,10 @@ export const api = {
       }),
   },
 
+  query: {
+    run: runQuery,
+  },
+
   documents: {
     list: (pid: string, sid: string, collection: string, params: { filter?: string; limit: number; skip: number }) =>
       client.get<DocumentsResponse>(
@@ -344,6 +355,8 @@ export const qk = {
   apiKeys: (id: string) => ["projects", id, "api-keys"] as const,
   dataSources: (id: string) => ["projects", id, "data-sources"] as const,
   schema: (id: string) => ["projects", id, "schema"] as const,
+  /** Schema of one source (`?source_id=`); a prefix of `schema` so both invalidate together. */
+  sourceSchema: (id: string, sid: string) => ["projects", id, "schema", "source", sid] as const,
   rows: (id: string, sid: string, table: string, params: object) =>
     ["projects", id, "rows", sid, table, params] as const,
   documents: (id: string, sid: string, coll: string, params: object) =>

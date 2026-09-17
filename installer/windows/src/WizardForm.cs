@@ -563,7 +563,9 @@ namespace DeployerSetup
             report = r;
             if (!runtimeChosenByUser)
             {
-                options.Runtime = r.DockerWorks ? "existing" : r.DockerDesktopInstalled ? "docker-desktop" : "wsl-engine";
+                // Free Docker Engine in WSL2 by default, even when Docker Desktop is present: no licensing
+                // conditions, and it keeps working after sleep/wake (Docker Desktop's socket files do not).
+                options.Runtime = "wsl-engine";
             }
             if (!portEditedByUser && installedDir == null) options.Port = r.SuggestedPort;
             if (page == WizardPage.Checks) Rebuild();

@@ -592,6 +592,59 @@ export type InstanceBackups = {
   storage: { location: string; device_id: string | null; used_bytes: number | null; free_bytes: number | null }[];
 };
 
+// ---- Query console (docs/QUERY_CONSOLE.md) ----
+
+export type QueryRequest = {
+  /** SQL text (several statements allowed) or MongoDB shell code; 1..200 000 chars. */
+  query: string;
+  /** Rows returned per result set / documents printed; 1..5000, default 500. */
+  max_rows?: number;
+  /** Per statement (SQL) or for the whole script (MongoDB); 1..120, default 30. */
+  timeout_seconds?: number;
+};
+
+export type QueryError = { code: string; message: string };
+
+export type SqlEngine = Exclude<DataSourceEngine, "mongodb">;
+
+/** One entry of `SqlQueryResponse.results`; `rows` values are encoded like the data browser. */
+export type SqlStatementResult =
+  | {
+      type: "rows";
+      statement: string;
+      columns: string[];
+      rows: JsonValue[][];
+      row_count: number;
+      truncated: boolean;
+      duration_ms: number;
+    }
+  | { type: "count"; statement: string; affected_rows: number; duration_ms: number }
+  | { type: "empty"; statement: string; duration_ms: number }
+  | { type: "error"; statement: string; error: QueryError; duration_ms?: number };
+
+export type SqlQueryResponse = {
+  kind: "sql";
+  engine: SqlEngine;
+  duration_ms: number;
+  results: SqlStatementResult[];
+};
+
+export type MongoQueryResponse = {
+  kind: "nosql";
+  engine: "mongodb";
+  duration_ms: number;
+  /** Text printed by the shell (print(), warnings, stderr). */
+  output: string;
+  /** Relaxed Extended JSON of the last expression, or null. */
+  result: JsonValue | null;
+  /** Set when `result` is an array of documents (cursor batch). */
+  result_docs: JsonObject[] | null;
+  truncated: boolean;
+  error: QueryError | null;
+};
+
+export type QueryResponse = SqlQueryResponse | MongoQueryResponse;
+
 // ---- Remote access (docs/REMOTE_ACCESS.md) ----
 
 export type Domain = {

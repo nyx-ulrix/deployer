@@ -136,6 +136,9 @@ function Initialize-Engine {
         default { $msg = if (Get-DeployerDockerDesktopExe) { 'Starting Docker Desktop' } else { 'Waiting for Docker' } }
     }
     if (-not (Wait-DeployerDockerEngine -Runtime $Ctx.Runtime -TimeoutSeconds $TimeoutSeconds -WaitingMessage $msg)) {
+        if ($script:DeployerDockerNeedsWindowsRestart) {
+            throw "Docker Desktop cannot start until Windows is restarted (a Windows issue with Docker's socket files after sleep). Restart Windows, then run 'deployer start' - or switch to the free Docker Engine runtime (run setup again and choose 'Free Docker Engine'), which does not have this problem."
+        }
         throw "The Docker engine ($($Ctx.Runtime)) is not reachable. For Docker Desktop, open it and wait until it says 'Engine running'."
     }
 }
@@ -166,15 +169,22 @@ function Invoke-Start {
     $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--remove-orphans')
     if ($code -ne 0) { throw "docker compose up failed (exit code $code)." }
     Update-LanForwarding -Ctx $ctx
+    $health = Wait-DeployerHealth -Port $ctx.Port -TimeoutSeconds $(if ($Background) { 240 } else { 180 })
+    if (-not $health) {
+        # A container the engine restored after a restart (WSL VM stop/start, daemon restart) can come
+        # back without its published port; recreating the web server container fixes it.
+        Write-DeployerWarn 'The site is not answering; recreating the web server container...'
+        [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--force-recreate', 'caddy'))
+        $health = Wait-DeployerHealth -Port $ctx.Port -TimeoutSeconds 120
+    }
     if ($Background) {
-        Write-DeployerLog 'INFO' 'Stack started.'
+        Write-DeployerLog 'INFO' $(if ($health) { 'Stack started.' } else { 'Stack started but the site is not answering.' })
         if ($ctx.Runtime -eq 'wsl-engine') {
             # Blocks for as long as the user is signed in, keeping the WSL VM (and the site) running.
             Start-DeployerKeepAlive -Wait
         }
         return
     }
-    $health = Wait-DeployerHealth -Port $ctx.Port -TimeoutSeconds 240
     if ($health) {
         Write-DeployerOk "Running at http://localhost:$($ctx.Port)"
     } else {

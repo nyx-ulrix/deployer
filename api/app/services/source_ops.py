@@ -17,12 +17,21 @@ from sqlalchemy.orm import Session
 
 from app.errors import ApiError
 from app.models import DataSource, utcnow
-from app.services import connections, data_browser, ddl_export, device_rpc, introspection, schema_ops
+from app.services import (
+    connections,
+    data_browser,
+    ddl_export,
+    device_rpc,
+    introspection,
+    query_console,
+    schema_ops,
+)
 
 OPS = (
     "introspect",
     "entity",
     "ddl_export",
+    "query",
     "rows.list",
     "rows.insert",
     "rows.update",
@@ -85,6 +94,15 @@ def run_local(ds: DataSource, op: str, args: dict | None = None) -> Any:
         return ddl_export.export_sql_source(ds) if ds.kind == "sql" else ddl_export.export_mongo_source(ds)
     if op == "connection_info":
         return connections.connection_info(ds)
+    if op == "query":
+        # docs/QUERY_CONSOLE.md: `read_only` is decided by the caller's role (on the primary).
+        return query_console.run_query(
+            ds,
+            _str_arg(args, "query"),
+            max_rows=int(args.get("max_rows") or query_console.DEFAULT_MAX_ROWS),
+            timeout_seconds=int(args.get("timeout_seconds") or query_console.DEFAULT_TIMEOUT_SECONDS),
+            read_only=bool(args.get("read_only", True)),
+        )
     if ds.kind == "sql":
         engine = connections.get_sql_engine(ds)
         table = _str_arg(args, "table") if op.startswith("rows.") else None
@@ -242,6 +260,26 @@ def drop_collection(ds: DataSource, name: str) -> None:
         run(ds, "collection.drop", {"name": name})
     else:
         schema_ops.drop_collection(connections.get_mongo_db(ds), name)
+
+
+# --- query console ---------------------------------------------------------------------------------
+
+
+def run_query(ds: DataSource, query: str, *, max_rows: int, timeout_seconds: int, read_only: bool) -> dict:
+    """docs/QUERY_CONSOLE.md: the SQL / mongosh runner, on the device for device-hosted sources."""
+    if not is_remote(ds):
+        return query_console.run_query(
+            ds, query, max_rows=max_rows, timeout_seconds=timeout_seconds, read_only=read_only
+        )
+    out = run(
+        ds,
+        "query",
+        {"query": query, "max_rows": max_rows, "timeout_seconds": timeout_seconds, "read_only": read_only},
+        timeout=timeout_seconds + 15,
+    )
+    if not isinstance(out, dict):
+        raise ApiError(502, "device_error", "Malformed query result from host device")
+    return out
 
 
 # --- status & connection ---------------------------------------------------------------------------

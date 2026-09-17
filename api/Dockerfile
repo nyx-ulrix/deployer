@@ -15,14 +15,18 @@ RUN groupadd --system --gid 10001 deployer \
 # Backup tools (docs/BACKUPS.md): MariaDB 11.8 client (mariadb, mariadb-dump, mariadb-binlog) from the
 # official MariaDB apt repository (signing key checked by fingerprint) and MongoDB Database Tools
 # (mongodump, mongorestore) from the official .deb, checked against a pinned SHA-256.
+# Query console (docs/QUERY_CONSOLE.md): MongoDB Shell (`mongosh`) from the official .deb
+# (https://downloads.mongodb.com/compass/, same file as the GitHub release), pinned SHA-256.
 ARG MARIADB_SERIES=11.8
 ARG MARIADB_SIGNER_FINGERPRINT=177F4010FE56CA3336300305F1656F24C74CD1D8
 ARG MONGO_TOOLS_VERSION=100.17.0
 ARG MONGO_TOOLS_SHA256_AMD64=101eb691713880ad2ece723ce4a655e81c6c026328d8e1cfd84aef687d4681b4
+ARG MONGOSH_VERSION=2.11.1
+ARG MONGOSH_SHA256_AMD64=643495f22efd6c29caea486780e0c8b20e98529d73d539a48e7f460e1a1c2b76
 ARG TARGETARCH
 RUN set -eux; \
     arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
-    if [ "$arch" != "amd64" ]; then echo "MongoDB Database Tools for Debian 12 are only published for amd64" >&2; exit 1; fi; \
+    if [ "$arch" != "amd64" ]; then echo "MongoDB Database Tools and mongosh .deb packages are only installed for amd64" >&2; exit 1; fi; \
     apt-get update; \
     apt-get install -y --no-install-recommends ca-certificates curl gnupg; \
     install -d -m 0755 /etc/apt/keyrings; \
@@ -34,11 +38,21 @@ RUN set -eux; \
     curl -fsSL "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-debian12-x86_64-${MONGO_TOOLS_VERSION}.deb" \
         -o /tmp/mongo-tools.deb; \
     echo "${MONGO_TOOLS_SHA256_AMD64}  /tmp/mongo-tools.deb" | sha256sum -c -; \
+    curl -fsSL "https://downloads.mongodb.com/compass/mongodb-mongosh_${MONGOSH_VERSION}_amd64.deb" \
+        -o /tmp/mongosh.deb; \
+    echo "${MONGOSH_SHA256_AMD64}  /tmp/mongosh.deb" | sha256sum -c -; \
     apt-get update; \
-    apt-get install -y --no-install-recommends mariadb-client /tmp/mongo-tools.deb; \
+    apt-get install -y --no-install-recommends mariadb-client /tmp/mongo-tools.deb /tmp/mongosh.deb; \
     apt-get purge -y --auto-remove curl gnupg; \
-    rm -rf /var/lib/apt/lists/* /tmp/mariadb.pgp /tmp/mongo-tools.deb; \
-    mariadb-dump --version; mariadb-binlog --version; mongodump --version; mongorestore --version
+    rm -rf /var/lib/apt/lists/* /tmp/mariadb.pgp /tmp/mongo-tools.deb /tmp/mongosh.deb; \
+    mariadb-dump --version; mariadb-binlog --version; mongodump --version; mongorestore --version; \
+    mongosh --version
+
+# mongosh global settings (docs/QUERY_CONSOLE.md): no telemetry, no update checks, no log files.
+# Each console run gets a private temporary HOME, so nothing else is ever written or read.
+RUN printf 'mongosh:\n  forceDisableTelemetry: true\n  disableLogging: true\n  updateURL: ""\n' \
+        > /etc/mongosh.conf \
+    && chmod 0644 /etc/mongosh.conf
 
 # Backup store (the `backups` volume). Owned by the non-root user so a fresh volume is writable.
 RUN mkdir -p /backups && chown deployer:deployer /backups && chmod 0700 /backups

@@ -603,6 +603,15 @@ function Wait-DeployerDockerEngine {
                 [void](Repair-DeployerDockerDesktop)
                 $nudgedAt = Get-Date
             }
+        } elseif ($desktop -and $repaired -and (Test-DeployerDockerDesktopCrashedSince -Since $nudgedAt)) {
+            # Crashed again right after the repair: Windows itself can no longer create Docker's socket
+            # files ("The file cannot be accessed by the system"), which happens after sleep/wake. Only a
+            # Windows restart clears it, so stop waiting and say so.
+            $script:DeployerDockerNeedsWindowsRestart = $true
+            Write-DeployerMarker 'docker-needs-windows-restart'
+            Write-DeployerWarn 'Docker Desktop crashed again after the repair. Windows must be restarted before Docker Desktop can start'
+            Write-DeployerWarn '(a Windows issue with Docker''s socket files after sleep). The free Docker Engine runtime (setup: "Free Docker Engine") does not have this problem.'
+            return $false
         }
         if ($Runtime -eq 'wsl-engine' -and -not $nudged -and ((Get-Date) - $started).TotalSeconds -gt 30) {
             # Older WSL without systemd support: start the service by hand.
@@ -1069,6 +1078,13 @@ function Enable-DeployerLanAccess {
     Write-DeployerInfo 'Adding a Windows Firewall rule (Private networks only)...'
     Add-DeployerFirewallRule -Port $Port
     if ($Runtime -ne 'wsl-engine') { return 'direct' }
+    if ($UseMirrored) {
+        # Docker Engine inside WSL2 does not publish container ports under mirrored networking (no
+        # docker-proxy, no NAT rule; verified with Docker 29 on WSL 2.7), so the site is unreachable
+        # even from localhost. A netsh port forward works with the default NAT networking instead.
+        Write-DeployerInfo 'Using Windows port forwarding for LAN access (WSL mirrored networking breaks Docker port publishing).'
+        $UseMirrored = $false
+    }
     if ($UseMirrored) {
         $cfg = Join-Path $env:USERPROFILE '.wslconfig'
         if (Test-DeployerMirroredEnabled) {

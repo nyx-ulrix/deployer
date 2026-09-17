@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
-import { Link2, Unlink } from "lucide-react";
+import { Code, Link2, Terminal, Unlink } from "lucide-react";
 import { errorMessage, isApiError } from "../../api/client";
 import { api } from "../../api/endpoints";
 import { useProviders } from "../../api/hooks";
@@ -13,6 +13,8 @@ import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Field, Input } from "../../components/ui/Input";
 import { Card, PageHeader } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
+import { cn } from "../../lib/cn";
+import { QUERY_CONSOLE_MODES, useQueryConsoleMode, type QueryConsoleMode } from "../../lib/consoleMode";
 import { MIN_PASSWORD } from "../../lib/constants";
 import { formatDate } from "../../lib/format";
 import { oauthErrorMessage, PROVIDER_LABELS } from "../../lib/oauthErrors";
@@ -45,10 +47,55 @@ export function AccountSettingsPage() {
       <PageHeader title="Account settings" description={user.email} />
       <div className="space-y-5">
         <ProfileCard user={user} key={user.display_name ?? ""} />
+        <PreferencesCard />
         <PasswordCard user={user} />
         <LinkedAccountsCard user={user} />
       </div>
     </div>
+  );
+}
+
+const MODE_ICONS: Record<QueryConsoleMode, typeof Terminal> = { terminal: Terminal, editor: Code };
+
+function PreferencesCard() {
+  const [mode, setMode] = useQueryConsoleMode();
+  return (
+    <Card title="Preferences" description="Saved in this browser only.">
+      <fieldset>
+        <legend className="mb-2 text-sm font-medium">Query console</legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {QUERY_CONSOLE_MODES.map((m) => {
+            const Icon = MODE_ICONS[m.value];
+            const active = mode === m.value;
+            return (
+              <label
+                key={m.value}
+                className={cn(
+                  "flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition-colors",
+                  active ? "border-accent bg-accent-soft/40" : "border-border hover:bg-surface-2",
+                )}
+              >
+                <input
+                  type="radio"
+                  name="query-console-mode"
+                  value={m.value}
+                  checked={active}
+                  onChange={() => setMode(m.value)}
+                  className="mt-1 size-4 accent-[var(--accent)]"
+                />
+                <span className="min-w-0">
+                  <span className="flex items-center gap-1.5 text-sm font-medium">
+                    <Icon className="size-4 text-muted" />
+                    {m.label}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-muted">{m.description}</span>
+                </span>
+              </label>
+            );
+          })}
+        </div>
+      </fieldset>
+    </Card>
   );
 }
 

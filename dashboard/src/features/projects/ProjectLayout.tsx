@@ -8,6 +8,7 @@ import {
   Network,
   Settings,
   Table2,
+  Terminal,
   Users,
 } from "lucide-react";
 import { isApiError } from "../../api/client";
@@ -46,6 +47,7 @@ export function ProjectLayout() {
     { to: `${base}/databases`, label: "Databases", icon: <Database className={icon} /> },
     { to: `${base}/schema`, label: "Schema", icon: <Network className={icon} /> },
     { to: `${base}/data`, label: "Data", icon: <Table2 className={icon} /> },
+    { to: `${base}/query`, label: "Query", icon: <Terminal className={icon} /> },
     { to: `${base}/backups`, label: "Backups", icon: <History className={icon} /> },
     { to: `${base}/members`, label: "Members", icon: <Users className={icon} /> },
     ...(hasRole(p.my_role, "admin")

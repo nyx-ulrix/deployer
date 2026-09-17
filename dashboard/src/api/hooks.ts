@@ -31,6 +31,18 @@ export function useSchema(projectId: string, enabled = true) {
   });
 }
 
+/** Tables/collections of one data source (`GET /projects/{id}/schema?source_id=`), e.g. for query completion. */
+export function useSourceSchema(projectId: string, sourceId: string | null) {
+  return useQuery({
+    queryKey: qk.sourceSchema(projectId, sourceId ?? ""),
+    queryFn: () => api.schema.get(projectId, { source_id: sourceId ?? undefined }),
+    enabled: Boolean(sourceId),
+    staleTime: 30_000,
+    retry: 1,
+    select: (schema) => schema.sources.find((s) => s.source_id === sourceId) ?? null,
+  });
+}
+
 export function useInstanceSettings(enabled = true) {
   return useQuery({ queryKey: qk.instanceSettings, queryFn: api.instance.settings, enabled });
 }

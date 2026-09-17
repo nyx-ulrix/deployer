@@ -8,6 +8,7 @@ their design:
 | Host devices (enrollment, device management, placement, moving databases, device-local status) | [DEVICES.md](DEVICES.md) |
 | Backups, versions, point-in-time restore, jobs, recently deleted | [BACKUPS.md](BACKUPS.md) |
 | Cloudflare remote access & custom domains | [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
+| Query console (`POST /projects/{id}/data-sources/{sid}/query`: SQL scripts and MongoDB shell code per data source) | [QUERY_CONSOLE.md](QUERY_CONSOLE.md) |
 
 Base path `/v1`. JSON in/out unless noted. Authenticated endpoints need
 `Authorization: Bearer <access_token>`. Timestamps are ISO-8601 UTC strings. IDs are UUID strings.
