@@ -614,7 +614,7 @@ function Resolve-Source {
 
 function Get-BuildSource {
     # -LocalDeployDir installs carry no api/dashboard source; download it when images must be built.
-    if (Test-Path -LiteralPath (Join-Path $InstallDir 'src\api')) { return }
+    # Always refresh: an update that reused an older src\ would rebuild the previous version.
     $resolved = Resolve-DeployerRef -Repo $Repo -Ref $Ref
     Write-DeployerInfo "Downloading the Deployer source ($Repo@$resolved) to build the images locally..."
     $root = Get-DeployerSource -Repo $Repo -Ref $resolved -WorkDir (Join-Path $env:TEMP 'deployer-source')
@@ -925,7 +925,9 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
             # 7. Images + start ----------------------------------------------------------------------------
             Write-InstallStep 5 'Downloading container images'
             $buildLocally = ($FromSource -or $script:ForceFromSource)
-            if ($LocalDeployDir -and $buildLocally) { Get-BuildSource }
+            # A src\ left by an earlier local build must be refreshed before images are (re)built,
+            # otherwise an update quietly rebuilds the previous version.
+            if ($LocalDeployDir -and ($buildLocally -or (Test-Path -LiteralPath (Join-Path $InstallDir 'src\api')))) { Get-BuildSource }
             try {
                 $imageMode = Invoke-DeployerImages -InstallDir $InstallDir -Runtime $chosen -FromSource:$buildLocally
             } catch {
