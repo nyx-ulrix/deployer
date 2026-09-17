@@ -507,21 +507,102 @@ function Start-DeployerDockerDesktop {
     return $true
 }
 
+function Test-DeployerDockerDesktopCrashedSince {
+    # True when Docker Desktop's backend reported a crash after $Since: it writes backend.error.json
+    # and a "backend crashed" line (prefixed with an ISO-8601 UTC timestamp) to its host log.
+    param([datetime]$Since)
+    $sinceUtc = $Since.ToUniversalTime()
+    $errFile = Join-Path $env:LOCALAPPDATA 'Docker\backend.error.json'
+    if ((Test-Path -LiteralPath $errFile) -and ((Get-Item -LiteralPath $errFile).LastWriteTimeUtc -gt $sinceUtc)) { return $true }
+    # Docker rotates this log at 1 MB, so the newest rotated file is checked too: a crash can be the
+    # last thing written before a rotation.
+    $logDir = Join-Path $env:LOCALAPPDATA 'Docker\log\host'
+    $log = Join-Path $logDir 'com.docker.backend.exe.log'
+    if (-not (Test-Path -LiteralPath $log)) { return $false }
+    $rotated = Get-ChildItem -LiteralPath $logDir -Filter 'com.docker.backend.exe.log.*' -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | Select-Object -First 1
+    # The error dialog logs a poll line every few seconds after a crash, so look a few thousand lines back.
+    $tails = @(Get-Content -LiteralPath $log -Tail 3000 -ErrorAction SilentlyContinue)
+    if ($rotated) { $tails = @(Get-Content -LiteralPath $rotated.FullName -Tail 3000 -ErrorAction SilentlyContinue) + $tails }
+    foreach ($line in $tails) {
+        if ($line -notmatch 'backend crashed') { continue }
+        if ($line -match '^\[(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})') {
+            try {
+                $at = [datetime]::ParseExact($Matches[1], 'yyyy-MM-ddTHH:mm:ss', [System.Globalization.CultureInfo]::InvariantCulture,
+                    ([System.Globalization.DateTimeStyles]::AssumeUniversal -bor [System.Globalization.DateTimeStyles]::AdjustToUniversal))
+                if ($at -gt $sinceUtc) { return $true }
+            } catch {
+                Write-Verbose "Unparseable Docker log timestamp: $line"
+            }
+        }
+    }
+    return $false
+}
+
+function Repair-DeployerDockerDesktop {
+    <#
+      Recovers Docker Desktop from the crash it hits after an unclean stop (PC restart, standby, a
+      killed process): "initializing Secrets Engine / Inference manager: listening on unix://...:
+      remove ...: The file cannot be accessed by the system". Docker cannot delete those leftover
+      socket files itself, so they are moved aside (never deleted) and Docker Desktop is started
+      again. Returns $true when a restart was attempted.
+    #>
+    if (-not (Get-DeployerDockerDesktopExe)) { return $false }
+    Write-DeployerWarn 'Docker Desktop crashed while starting (leftover socket files from an unclean stop). Repairing and starting it again...'
+    Get-Process | Where-Object { $_.ProcessName -in @('Docker Desktop', 'com.docker.backend', 'com.docker.build', 'com.docker.dev-envs') } |
+        Stop-Process -Force -Confirm:$false -ErrorAction SilentlyContinue
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline -and (Get-Process -Name 'Docker Desktop', 'com.docker.backend' -ErrorAction SilentlyContinue)) { Start-Sleep -Seconds 2 }
+    $stamp = Get-Date -Format 'yyyyMMddHHmmss'
+    foreach ($dir in @((Join-Path $env:LOCALAPPDATA 'Docker\run'), (Join-Path $env:LOCALAPPDATA 'docker-secrets-engine'))) {
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        try {
+            Rename-Item -LiteralPath $dir -NewName ((Split-Path -Leaf $dir) + ".stale-$stamp") -ErrorAction Stop
+            Write-DeployerLog 'DOCKER' "moved $dir aside as .stale-$stamp"
+        } catch {
+            Write-DeployerWarn "Could not move $dir aside: $($_.Exception.Message)"
+        }
+    }
+    # Only Docker's own distributions are restarted; the user's other WSL distributions are untouched.
+    foreach ($distro in @('docker-desktop', 'docker-desktop-data')) {
+        [void](Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('--terminate', $distro) -TimeoutSeconds 60)
+    }
+    Start-Sleep -Seconds 3
+    [void](Start-DeployerDockerDesktop)
+    return $true
+}
+
 function Wait-DeployerDockerEngine {
+    # Waits for `docker info` to work. For Docker Desktop (runtimes docker-desktop and existing) it
+    # starts the app when needed, repairs it once if it crashes on start, and, for an already
+    # installed Docker that stays unresponsive, restarts it once.
     param([string]$Runtime, [int]$TimeoutSeconds = 180, [string]$WaitingMessage = 'Waiting for the Docker engine')
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     $nudged = $false
+    $nudgedAt = $null
+    $repaired = $false
     $announced = $false
     $started = Get-Date
+    $desktop = ($Runtime -eq 'docker-desktop' -or $Runtime -eq 'existing')
     while ((Get-Date) -lt $deadline) {
         if (Test-DeployerDockerEngine -Runtime $Runtime) { return $true }
         if (-not $announced) {
             Write-DeployerInfo "$WaitingMessage (up to $([int]($TimeoutSeconds / 60)) min)..."
             $announced = $true
         }
-        if (($Runtime -eq 'docker-desktop' -or $Runtime -eq 'existing') -and -not $nudged) {
+        if ($desktop -and -not $nudged) {
             [void](Start-DeployerDockerDesktop)
             $nudged = $true
+            $nudgedAt = Get-Date
+        } elseif ($desktop -and $nudged -and -not $repaired) {
+            $crashed = Test-DeployerDockerDesktopCrashedSince -Since $nudgedAt
+            $stuck = ($Runtime -eq 'existing' -and ((Get-Date) - $nudgedAt).TotalSeconds -gt 240)
+            if ($crashed -or $stuck) {
+                if ($stuck -and -not $crashed) { Write-DeployerWarn 'Docker Desktop is not responding; restarting it...' }
+                $repaired = $true
+                [void](Repair-DeployerDockerDesktop)
+                $nudgedAt = Get-Date
+            }
         }
         if ($Runtime -eq 'wsl-engine' -and -not $nudged -and ((Get-Date) - $started).TotalSeconds -gt 30) {
             # Older WSL without systemd support: start the service by hand.
@@ -726,9 +807,15 @@ function Get-DeployerSource {
         "https://github.com/$Repo/archive/$Ref.zip",
         "https://github.com/$Repo/releases/download/$Ref/deployer-deploy.zip"
     )
+    # A version tag that was never published (e.g. a locally built setup exe before the first release)
+    # falls back to the main branch instead of failing the whole install.
+    if ($Ref -ne 'main') { $sources += "https://github.com/$Repo/archive/main.zip" }
     $downloaded = $false
     foreach ($uri in $sources) {
         try {
+            if ($uri -like '*/archive/main.zip' -and $Ref -ne 'main') {
+                Write-DeployerWarn "'$Ref' is not published on github.com/$Repo; using the main branch instead."
+            }
             Write-DeployerInfo "Downloading $uri"
             Invoke-DeployerDownload -Uri $uri -OutFile $zip
             $downloaded = $true

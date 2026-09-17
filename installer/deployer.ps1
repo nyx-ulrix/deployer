@@ -133,7 +133,7 @@ function Initialize-Engine {
     switch ($Ctx.Runtime) {
         'wsl-engine' { $msg = 'Starting the Docker Engine in WSL' }
         'docker-desktop' { $msg = 'Starting Docker Desktop' }
-        default { $msg = 'Waiting for Docker' }
+        default { $msg = if (Get-DeployerDockerDesktopExe) { 'Starting Docker Desktop' } else { 'Waiting for Docker' } }
     }
     if (-not (Wait-DeployerDockerEngine -Runtime $Ctx.Runtime -TimeoutSeconds $TimeoutSeconds -WaitingMessage $msg)) {
         throw "The Docker engine ($($Ctx.Runtime)) is not reachable. For Docker Desktop, open it and wait until it says 'Engine running'."

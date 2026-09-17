@@ -44,7 +44,7 @@ namespace DeployerSetup
         }
 
         public static string Repo { get { return Metadata("DeployerRepo", "nyx-ulrix/deployer"); } }
-        public static string Ref { get { return Metadata("DeployerRef", "v" + Version); } }
+        public static string Ref { get { return Metadata("DeployerRef", "main"); } }
         public static string RepoUrl { get { return "https://github.com/" + Repo; } }
         public static string TroubleshootingUrl { get { return RepoUrl + "#troubleshooting"; } }
         public static string ExePath { get { return Application.ExecutablePath; } }

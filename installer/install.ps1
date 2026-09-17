@@ -540,7 +540,13 @@ function Test-ExistingRuntime {
     Write-DeployerStep 'Checking the existing Docker installation'
     if (-not (Get-DeployerDockerExe)) { throw 'No docker command found. Choose -Runtime wsl-engine or docker-desktop instead.' }
     if (-not (Test-DeployerDockerEngine -Runtime 'existing')) {
-        throw '`docker info` fails: the Docker engine is not running. Start it and re-run, or choose -Runtime wsl-engine.'
+        if (-not (Get-DeployerDockerDesktopExe)) {
+            throw '`docker info` fails: the Docker engine is not running. Start it and re-run, or choose -Runtime wsl-engine.'
+        }
+        Write-DeployerInfo 'The Docker engine is not running; starting Docker Desktop...'
+        if (-not (Wait-DeployerDockerEngine -Runtime 'existing' -TimeoutSeconds 420 -WaitingMessage 'Waiting for Docker Desktop')) {
+            throw 'Docker Desktop did not start. Open it yourself, wait until it says "Engine running", then click Try again (or choose -Runtime wsl-engine).'
+        }
     }
     Write-DeployerOk 'Docker engine reachable'
 }
@@ -653,7 +659,19 @@ function Invoke-DryRun {
         }
         default {
             Write-InstallStep $n 'Checking your Docker'
-            if (Test-DeployerDockerEngine -Runtime 'existing') { Write-DeployerOk 'Docker engine reachable' } else { Write-CheckResult 'docker' 'fail' '`docker info` fails: the Docker engine is not running.' }
+            if (Test-DeployerDockerEngine -Runtime 'existing') {
+                Write-DeployerOk 'Docker engine reachable'
+            } elseif (Get-DeployerDockerDesktopExe) {
+                # Starting an app the user already has is the one thing the dry run does change.
+                Write-DeployerInfo 'Docker Desktop is installed but its engine is not running; starting it...'
+                if (Wait-DeployerDockerEngine -Runtime 'existing' -TimeoutSeconds 150 -WaitingMessage 'Waiting for Docker Desktop') {
+                    Write-CheckResult 'docker' 'ok' 'Docker Desktop started; engine reachable'
+                } else {
+                    Write-CheckResult 'docker' 'warn' 'Docker Desktop is still starting; setup will keep waiting for it.'
+                }
+            } else {
+                Write-CheckResult 'docker' 'fail' '`docker info` fails: the Docker engine is not running.'
+            }
             if (Test-DeployerComposePlugin -Runtime 'existing') { Write-DeployerOk 'docker compose is available' } else { Write-CheckResult 'compose' 'fail' 'The Docker Compose v2 plugin is not available.' }
         }
     }

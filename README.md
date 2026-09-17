@@ -236,6 +236,7 @@ stored in the database and the encrypted backup versions.
 | *Restart needed* | Restart Windows and sign in again; setup continues on its own (approve the administrator prompt). |
 | Images can't be downloaded | Check your internet connection or proxy. On forks, make the GHCR packages public (see Development). |
 | Deployer isn't responding | *Deployer Control → Restart*, then *View logs* (`deployer logs api`). `deployer status` shows every container. |
+| Docker Desktop was closed, crashed or the PC woke from sleep, and Deployer is down | `deployer start` (or *Deployer Control → Start*) starts Docker Desktop if needed, repairs it when it crashes on its leftover socket files, and brings Deployer back. With *Start Deployer when I sign in* on (`deployer autostart on`) this happens on its own at sign-in. |
 | Docker Desktop asks you to sign in | Only needed if your organisation requires a paid Docker subscription. Otherwise skip it, or reinstall with the free Docker Engine. |
 
 When asking for help, include the output of `deployer status` and the latest `install-*.log` from

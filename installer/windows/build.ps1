@@ -20,7 +20,7 @@
     GitHub owner/repo the exe installs from (forks: pass your own). Default nyx-ulrix/deployer.
 
 .PARAMETER Ref
-    Release tag or branch passed to install.ps1 -Ref. Default: v<Version>.
+    Release tag or branch passed to install.ps1 -Ref. Default: main (release.yml passes the tag).
 
 .PARAMETER OutDir
     Output folder. Default: <repo>\dist.
@@ -45,7 +45,9 @@ if (-not $Version) {
 $Version = $Version.TrimStart('v')
 if ($Version -notmatch '^(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.\-]+)?$') { throw "Version '$Version' is not semantic (e.g. 0.1.0 or 0.2.0-rc.1)." }
 $numericVersion = '{0}.{1}.{2}.0' -f $Matches[1], $Matches[2], $Matches[3]
-if (-not $Ref) { $Ref = "v$Version" }
+# Release builds pass the tag explicitly (release.yml). Anything else is a development build whose
+# version tag may not exist on GitHub yet, so it installs from the main branch.
+if (-not $Ref) { $Ref = 'main' }
 if ($Repo -notmatch '^[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+$') { throw "Repo '$Repo' must look like owner/name." }
 if (-not $OutDir) { $OutDir = Join-Path $root 'dist' }
 New-Item -ItemType Directory -Path $OutDir -Force | Out-Null
