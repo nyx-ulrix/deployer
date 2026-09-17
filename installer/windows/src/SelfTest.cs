@@ -115,7 +115,16 @@ namespace DeployerSetup
                 }
                 images++;
                 Line("IMG   " + Path.GetFileName(dir) + "/" + name + ".png (" + form.ClientSize.Width + "x" + form.ClientSize.Height + ")");
-                CheckOverflow(form, dir, name);
+                // Windows clamps a top-level window to the virtual screen. On small displays (CI runners at
+                // 1024x768, DPI-unaware sessions) the forced 150 % render is clamped while its children keep
+                // their design size, so the overflow check would report bogus failures. Real runs shrink to
+                // fit the screen instead (see WizardForm), which is not what the forced scale exercises.
+                Size maxTrack = SystemInformation.MaxWindowTrackSize;
+                bool clamped = form.Width >= maxTrack.Width || form.Height >= maxTrack.Height;
+                if (clamped)
+                    Line("SKIP  " + Path.GetFileName(dir) + "/" + name + " layout: window clamped to the screen (" + form.Size + " vs max " + maxTrack + ")");
+                else
+                    CheckOverflow(form, dir, name);
             }
             catch (Exception ex)
             {
