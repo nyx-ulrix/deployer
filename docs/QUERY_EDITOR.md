@@ -82,3 +82,24 @@ now reads from the server log for the selected source.
   includes saved queries.
 - Dashboard: tabs store, snippet folder parsing (`folder/name`), pagination helper, message
   formatting, history mapping; typecheck/lint/test/build green.
+
+## Revised direction (2026-09-18, user)
+
+Build order after the weekly reset, in this priority:
+
+1. **Notebook-style editor for SQL and NoSQL** ("like the MariaDB client in a terminal"): each
+   command and its output are stacked vertically in one scrolling document — a *cell* per command
+   with the result grid / shell output directly below it, then the next command below that. Cells can
+   be re-run, edited and deleted; the whole document is a saved query file. **Tabs** let the user
+   switch between open files. This replaces the split editor/results layout above; the Terminal
+   layout stays as the second mode. Everything else in this spec (saved queries, folders, sidebar,
+   history, schema tree, server-side log of every command, results pane features) applies per cell.
+2. **Collaboration with strict version control** on those files: project members open the same
+   files from the same Deployer; every save creates a `saved_query_versions` row
+   (`id, saved_query_id, version, query_text, author_id, author_email, message, created_at`);
+   `PATCH /saved-queries/{id}` requires the client's `version` and answers `409 version_conflict`
+   with the current version when someone else saved first (the UI shows a diff and lets the user
+   merge/reload); version list, diff between versions, restore-as-new-version, and who-changed-what
+   in the sidebar; edits limited by project roles (viewer read-only). No silent overwrites, ever.
+3. **Deploy pipeline ("Vercel functions")** — only after the user's explicit go-ahead once 1 and 2
+   are done (phase 4 in ARCHITECTURE.md).
