@@ -23,6 +23,15 @@ Plaintext payload (version 1)::
 Rows are arrays aligned with `columns` (binary -> {"$base64"}, decimals/dates -> strings); Mongo
 options, indexes and documents are canonical Extended JSON. Only *managed* sources carry data.
 
+Instance exports additionally carry ``devices``, ``device_project_grants``, ``backup_policies``,
+``domains`` and ``backup_keys`` (backup key material, docs/BACKUPS.md). A host device's own
+``device_link`` / ``device_hosted_credentials`` settings are never exported or imported.
+
+Host devices (docs/DEVICES.md): data of device-hosted sources is produced *on the device*
+(``datasource.export`` RPC -> transfer upload) and copied verbatim into the payload; on import it is
+restored on the same device when that device is known here, eligible and connected, otherwise on the
+main server with a warning. Soft-deleted sources are not exported.
+
 Streaming & limits
 ------------------
 - The plaintext JSON is written incrementally into a gzip temp file while rows / documents are read
@@ -60,7 +69,11 @@ from app.crypto import decrypt_json, decrypt_with_passphrase, encrypt_json, encr
 from app.errors import ApiError
 from app.models import (
     ApiKey,
+    BackupPolicy,
     DataSource,
+    Device,
+    DeviceProjectGrant,
+    Domain,
     InstanceSetting,
     Project,
     ProjectInvite,
@@ -71,7 +84,7 @@ from app.models import (
     new_id,
     utcnow,
 )
-from app.services import connections, ddl_export, provisioning
+from app.services import backup_crypto, connections, ddl_export, device_rpc, provisioning
 from app.services.data_browser import encode_value
 from app.services.slugs import unique_slug
 
@@ -82,6 +95,10 @@ VERSION = 1
 MIN_PASSPHRASE = 12
 MAX_UPLOAD_BYTES = 8 * 1024**3
 BATCH = 1000
+DEVICE_TIMEOUT = 6 * 3600
+# A host device's own link/credentials never travel in exports: a restored copy must not
+# impersonate the device (it would kick the real one off the main Deployer).
+DEVICE_LOCAL_SETTINGS = frozenset({"device_link", "device_hosted_credentials"})
 _CANONICAL = json_util.CANONICAL_JSON_OPTIONS
 
 
@@ -314,6 +331,55 @@ def _write_mongo_data(w: _Writer, ds: DataSource) -> int:
     return documents
 
 
+def write_source_data(fh: IO[str], ds: DataSource) -> dict[str, int]:
+    """Writes one source's `data` entry (a JSON object) to `fh`. Used locally and on host devices."""
+    w = _Writer(fh)
+    w.open("{")
+    if ds.kind == "sql":
+        tables, rows = _write_sql_data(w, ds)
+        counts = {"tables": tables, "rows": rows, "documents": 0}
+    else:
+        counts = {"tables": 0, "rows": 0, "documents": _write_mongo_data(w, ds)}
+    w.close("}")
+    return counts
+
+
+def _write_device_data(fh: IO[str], ds: DataSource) -> dict[str, int]:
+    """Has the host device export the source's data and copies it verbatim into `fh`."""
+    transfer_id = device_rpc.create_transfer(ds.device_id, "put")
+    try:
+        try:
+            result = device_rpc.call(
+                ds.device_id,
+                "datasource.export",
+                {
+                    "kind": ds.kind,
+                    "database_name": ds.database_name,
+                    "source_name": ds.name,
+                    "transfer_id": transfer_id,
+                },
+                timeout=DEVICE_TIMEOUT,
+            )
+        except ApiError as exc:
+            if exc.code == "device_offline":
+                raise ApiError(
+                    503, "device_offline", f"The host device of data source '{ds.name}' is offline; try again later"
+                ) from exc
+            raise
+        path = device_rpc.claim_upload(transfer_id)
+        with gzip.open(path, "rt", encoding="utf-8") as src:
+            head = src.read(1)
+            if head != "{":
+                raise ApiError(502, "export_failed", f"Host device returned invalid data for '{ds.name}'")
+            fh.write(head)
+            while chunk := src.read(1 << 20):
+                fh.write(chunk)
+    finally:
+        device_rpc.finish_transfer(transfer_id)
+    result = result if isinstance(result, dict) else {}
+    return {"rows": int(result.get("rows") or 0), "documents": int(result.get("documents") or 0)}
+
+
 def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Project], created_at: str) -> dict[str, int]:
     """Streams the plaintext payload JSON to `fh`. Returns counts."""
     w = _Writer(fh)
@@ -325,7 +391,10 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
     w.field("created_at", created_at)
 
     if scope == "instance":
-        w.field("instance_settings", [_setting_out(s) for s in db.scalars(select(InstanceSetting))])
+        w.field(
+            "instance_settings",
+            [_setting_out(s) for s in db.scalars(select(InstanceSetting)) if s.key not in DEVICE_LOCAL_SETTINGS],
+        )
         users = list(db.scalars(select(User).order_by(User.created_at)))
         counts["users"] = len(users)
         w.field("users", [model_to_dict(u) for u in users])
@@ -352,10 +421,20 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
         return list(db.scalars(select(model).where(model.project_id.in_(project_ids)).order_by(model.created_at)))
 
     w.field("api_keys", [model_to_dict(k) for k in by_project(ApiKey)])
-    sources: list[DataSource] = by_project(DataSource)
+    sources: list[DataSource] = [ds for ds in by_project(DataSource) if ds.deleted_at is None]
     counts["data_sources"] = len(sources)
     w.field("data_sources", [_source_out(ds) for ds in sources])
     w.field("schema_links", [model_to_dict(link) for link in by_project(SchemaLink)])
+    if scope == "instance":
+        w.field("devices", [model_to_dict(d) for d in db.scalars(select(Device).order_by(Device.created_at))])
+        w.field("device_project_grants", [model_to_dict(g) for g in db.scalars(select(DeviceProjectGrant))])
+        source_ids = {ds.id for ds in sources}
+        w.field(
+            "backup_policies",
+            [model_to_dict(p) for p in db.scalars(select(BackupPolicy)) if p.data_source_id in source_ids],
+        )
+        w.field("domains", [model_to_dict(d) for d in db.scalars(select(Domain).order_by(Domain.created_at))])
+        w.field("backup_keys", backup_crypto.export_key_material())
 
     w.open_field("data", "{")
     for ds in sources:
@@ -363,6 +442,11 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
             continue
         w._sep()
         w.fh.write(json.dumps(ds.id) + ":")
+        if ds.device_id:
+            device_counts = _write_device_data(w.fh, ds)
+            counts["rows"] += device_counts["rows"]
+            counts["documents"] += device_counts["documents"]
+            continue
         w.open("{")
         try:
             if ds.kind == "sql":
@@ -592,9 +676,35 @@ def restore_mongo_data(ds: DataSource, data: dict) -> int:
     return documents
 
 
+def restore_device_data(ds: DataSource, data: dict) -> tuple[int, int]:
+    """Sends a `data` entry to the source's host device and restores it there."""
+    fd, path = tempfile.mkstemp(prefix="deployer-device-restore-", suffix=".json.gz")
+    os.close(fd)
+    try:
+        with gzip.open(path, "wt", encoding="utf-8", compresslevel=6) as fh:
+            fh.write(_dumps(data))
+        transfer_id = device_rpc.create_transfer(ds.device_id, "get", source_path=path)
+    except BaseException:
+        _unlink(path)
+        raise
+    try:
+        result = device_rpc.call(
+            ds.device_id,
+            "datasource.import",
+            {"kind": ds.kind, "database_name": ds.database_name, "source_name": ds.name, "transfer_id": transfer_id},
+            timeout=DEVICE_TIMEOUT,
+        )
+    finally:
+        device_rpc.finish_transfer(transfer_id)
+    result = result if isinstance(result, dict) else {}
+    return int(result.get("rows") or 0), int(result.get("documents") or 0)
+
+
 def restore_data(ds: DataSource, data: dict | None) -> tuple[int, int]:
     if not data:
         return 0, 0
+    if ds.device_id:
+        return restore_device_data(ds, data)
     if ds.kind == "sql":
         return restore_sql_data(ds, data), 0
     return 0, restore_mongo_data(ds, data)
@@ -627,10 +737,12 @@ def _provision_with_data(
     keep_name: bool,
     warnings: list[str],
     totals: dict[str, int],
+    device_id: str | None = None,
 ) -> DataSource | None:
     kind = row.get("kind")
     if kind not in ("sql", "nosql"):
         raise ApiError(400, "invalid_export", f"Unknown data source kind: {kind!r}")
+    extra: dict[str, Any] = {"device_id": device_id} if device_id else {}
     try:
         ds = provisioning.provision_managed_source(
             db,
@@ -639,6 +751,7 @@ def _provision_with_data(
             row["name"],
             database_name=row.get("database_name") if keep_name else None,
             data_source_id=data_source_id,
+            **extra,
         )
     except ApiError as exc:
         if exc.code == "managed_mongodb_unavailable":
@@ -655,6 +768,57 @@ def _provision_with_data(
     totals["rows"] += rows
     totals["documents"] += docs
     return ds
+
+
+def _import_placement(
+    db: Session, row: dict, project: Project, warnings: list[str], *, check_eligibility: bool
+) -> str | None:
+    """Device to restore a managed source on: its original device when known, (eligible) and online."""
+    device_id = row.get("device_id")
+    if not device_id or row.get("mode") != "managed":
+        return None
+    from app.services import devices
+
+    device = db.get(Device, device_id)
+    problem = None
+    if device is None:
+        problem = "is not attached to this installation"
+    elif check_eligibility and not devices.device_can_host(db, device, project):
+        problem = "can't host this project"
+    elif device.status != "active" or not device_rpc.is_online(device_id):
+        problem = "is not connected"
+    if problem:
+        warnings.append(
+            f"The host device of data source '{row.get('name')}' (project '{project.name}') {problem}; "
+            "its data was restored on the main server instead"
+        )
+        return None
+    return device_id
+
+
+def _merge_backup_policy(db: Session, row: dict, known_sources: set[str], known_devices: set[str]) -> None:
+    if row.get("data_source_id") not in known_sources:
+        return
+    values = dict_to_model(BackupPolicy, row)
+    if values.copy_to_device_id and values.copy_to_device_id not in known_devices:
+        values.copy_to_device_id = None
+    existing = db.get(BackupPolicy, row["data_source_id"])
+    if existing is None:
+        db.add(values)
+        return
+    for col in BackupPolicy.__table__.columns:
+        if col.key != "data_source_id" and col.key in row:
+            setattr(existing, col.key, getattr(values, col.key))
+
+
+def _import_backup_keys(material: Any, warnings: list[str]) -> None:
+    if material is None:
+        return
+    try:
+        backup_crypto.import_key_material(material)
+    except Exception:  # noqa: BLE001
+        log.warning("backup key material could not be imported", exc_info=True)
+        warnings.append("Backup key material could not be imported; backups copied elsewhere may be unreadable")
 
 
 def _cleanup(db: Session, provisioned: list[DataSource]) -> None:
@@ -683,6 +847,8 @@ def import_instance(db: Session, payload: dict) -> dict:
     try:
         for s in _list(payload, "instance_settings"):
             key, value, is_secret = s["key"], s.get("value"), bool(s.get("is_secret"))
+            if key in DEVICE_LOCAL_SETTINGS:
+                continue
             stored = encrypt_secret(str(value)) if is_secret else json.dumps(value)
             existing = db.get(InstanceSetting, key)
             if existing is None:
@@ -695,6 +861,9 @@ def import_instance(db: Session, payload: dict) -> dict:
         db.flush()
         for i in _list(payload, "user_identities"):
             db.add(dict_to_model(UserIdentity, i))
+        for d in _list(payload, "devices"):
+            db.add(dict_to_model(Device, d))
+        db.flush()
         projects: dict[str, Project] = {}
         for p in _list(payload, "projects"):
             project = dict_to_model(Project, p)
@@ -702,6 +871,10 @@ def import_instance(db: Session, payload: dict) -> dict:
             projects[project.id] = project
             totals["projects"] += 1
         db.flush()
+        known_devices = set(db.scalars(select(Device.id)))
+        for g in _list(payload, "device_project_grants"):
+            if g.get("device_id") in known_devices and g.get("project_id") in projects:
+                db.add(dict_to_model(DeviceProjectGrant, g))
         for m in _list(payload, "project_members"):
             db.add(dict_to_model(ProjectMember, m))
         for inv in _list(payload, "project_invites"):
@@ -724,17 +897,24 @@ def import_instance(db: Session, payload: dict) -> dict:
                     keep_name=True,
                     warnings=warnings,
                     totals=totals,
+                    device_id=_import_placement(db, row, project, warnings, check_eligibility=False),
                 )
                 if ds is None:
                     continue
             else:
-                db.add(_external_source(row))
+                db.add(_external_source(row, device_id=None))
             totals["data_sources"] += 1
         db.flush()
         known_sources = {row for row in db.scalars(select(DataSource.id))}
         for link in _list(payload, "schema_links"):
             if link.get("from_source_id") in known_sources and link.get("to_source_id") in known_sources:
                 db.add(dict_to_model(SchemaLink, link))
+        for policy in _list(payload, "backup_policies"):
+            _merge_backup_policy(db, policy, known_sources, known_devices)
+        for domain in _list(payload, "domains"):
+            if domain.get("project_id") is None or domain.get("project_id") in projects:
+                db.add(dict_to_model(Domain, domain))
+        _import_backup_keys(payload.get("backup_keys"), warnings)
         db.commit()
     except Exception as exc:
         _cleanup(db, provisioned)
@@ -805,11 +985,12 @@ def import_projects(db: Session, payload: dict, user: User) -> tuple[list[Projec
                     keep_name=False,
                     warnings=warnings,
                     totals=totals,
+                    device_id=_import_placement(db, row, project, warnings, check_eligibility=True),
                 )
                 if ds is None:
                     continue
             else:
-                db.add(_external_source(row, id=new_source_id, project_id=project.id))
+                db.add(_external_source(row, id=new_source_id, project_id=project.id, device_id=None))
             source_map[row["id"]] = new_source_id
             totals["data_sources"] += 1
         db.flush()

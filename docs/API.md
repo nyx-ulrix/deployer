@@ -1,5 +1,14 @@
 # Deployer HTTP API (v1)
 
+This file covers the foundation endpoints. Feature areas added later document their endpoints next to
+their design:
+
+| Area | Endpoints documented in |
+|---|---|
+| Host devices (enrollment, device management, placement, moving databases, device-local status) | [DEVICES.md](DEVICES.md) |
+| Backups, versions, point-in-time restore, jobs, recently deleted | [BACKUPS.md](BACKUPS.md) |
+| Cloudflare remote access & custom domains | [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
+
 Base path `/v1`. JSON in/out unless noted. Authenticated endpoints need
 `Authorization: Bearer <access_token>`. Timestamps are ISO-8601 UTC strings. IDs are UUID strings.
 
@@ -60,7 +69,7 @@ type ApiKey = { id: string; name: string; prefix: string; role: "anon" | "servic
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/health` | – | `{status:"ok", version, services:{mariadb:bool, mongodb:bool, redis:bool}}` |
-| GET | `/setup/status` | – | `{initialized:boolean, version, public_url, providers:{google:boolean, github:boolean}, allow_signup:boolean}` |
+| GET | `/setup/status` | – | `{initialized:boolean, version, public_url, providers:{google:boolean, github:boolean}, allow_signup:boolean, device_mode:"standalone"\|"host"}` (`device_mode`: [DEVICES.md](DEVICES.md)) |
 | POST | `/setup/owner` | `{email, password, display_name?}` | `AuthResponse` (+ refresh cookie). 409 `already_initialized` if any user exists |
 | POST | `/setup/import` | multipart: `file`, `passphrase` | `{ok:true, summary:{users, projects, data_sources, rows, documents}}`. Only while not initialized; `scope` must be `instance`. 400 `bad_passphrase` / `invalid_export` |
 
@@ -117,7 +126,7 @@ type InstanceSettings = {
 | POST | `/projects` | any user | `{name, description?, provision?:{sql:boolean, nosql:boolean}}` | `Project` (creates managed MariaDB and/or MongoDB sources when requested) |
 | GET | `/projects/{project_id}` | viewer+ | – | `Project` |
 | PATCH | `/projects/{project_id}` | admin+ | `{name?, description?}` | `Project` |
-| DELETE | `/projects/{project_id}?confirm=<slug>` | owner | – | `{ok:true}` (drops managed databases) |
+| DELETE | `/projects/{project_id}?confirm=<slug>` | owner | – | `{ok:true}` (managed databases get a final snapshot, kept 30 days, then are dropped by a job — [BACKUPS.md](BACKUPS.md)) |
 | POST | `/projects/export` | owner of each | `{project_ids:string[], passphrase}` | file download `deployer-projects-YYYYMMDD-HHMM.json` |
 | POST | `/projects/import` | any user | multipart: `file`, `passphrase` | `{ok:true, projects:Project[], summary}` (`scope` must be `projects`) |
 
@@ -153,7 +162,7 @@ type InstanceSettings = {
 | POST | `/projects/{id}/data-sources` | admin+ | `DataSourceInput` | `DataSource` (external sources are tested first; 400 `connection_failed`) |
 | POST | `/projects/{id}/data-sources/{sid}/check` | viewer+ | – | `DataSource` (refreshes status) |
 | GET | `/projects/{id}/data-sources/{sid}/connection` | developer+ | – | `{uri, host, port, username, password, database}` for use in apps (from inside the Docker network for managed sources; `external_hint` explains host access) |
-| DELETE | `/projects/{id}/data-sources/{sid}?drop=false` | admin+ (`drop=true`: owner) | – | `{ok:true}` |
+| DELETE | `/projects/{id}/data-sources/{sid}?drop=false` | admin+ (`drop=true`: owner) | – | `{ok:true, job?: Job}` — managed sources are soft-deleted ("Recently deleted", [BACKUPS.md](BACKUPS.md)) with a final snapshot job; 400 `cannot_drop_external` |
 
 ```ts
 type DataSourceInput =
@@ -260,5 +269,5 @@ MongoDB (`kind = nosql`):
 | PATCH | `.../collections/{name}/documents/{doc_id}` | developer+ | `{set:object, unset?:string[]}` | `{document:object}` |
 | DELETE | `.../collections/{name}/documents/{doc_id}` | developer+ | – | `{ok:true}` |
 
-`doc_id` is the string form of `_id` (ObjectId hex tried first, then raw string).
+`doc_id` is the string form of `_id` (tried as ObjectId hex, then as a 64-bit integer, then as the raw string).
 Binary SQL values are returned as `{"$base64": "..."}`, decimals as strings, datetimes as ISO strings.

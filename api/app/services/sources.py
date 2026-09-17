@@ -11,9 +11,14 @@ from app.serializers import iso
 from app.services import connections
 
 
-def get_source(db: Session, project_id: str, source_id: str, kind: str | None = None) -> DataSource:
+def get_source(
+    db: Session, project_id: str, source_id: str, kind: str | None = None, *, include_deleted: bool = False
+) -> DataSource:
     ds = db.get(DataSource, source_id)
     if ds is None or ds.project_id != project_id:
+        raise not_found("Data source")
+    # Soft-deleted sources ("Recently deleted", docs/BACKUPS.md) are only reachable from backup routes.
+    if ds.deleted_at is not None and not include_deleted:
         raise not_found("Data source")
     if kind and ds.kind != kind:
         noun = "SQL" if kind == "sql" else "NoSQL (MongoDB)"
@@ -25,7 +30,7 @@ def project_sources(db: Session, project_id: str) -> list[DataSource]:
     return list(
         db.scalars(
             select(DataSource)
-            .where(DataSource.project_id == project_id)
+            .where(DataSource.project_id == project_id, DataSource.deleted_at.is_(None))
             .order_by(DataSource.created_at, DataSource.name)
         )
     )
@@ -45,4 +50,19 @@ def data_source_out(ds: DataSource) -> dict:
         "last_checked_at": iso(ds.last_checked_at),
         "display": connections.display_for(ds),
         "created_at": iso(ds.created_at),
+        # docs/DEVICES.md: host device of a managed source (null = main server).
+        "device_id": ds.device_id,
+        "device_name": _device_name(ds),
     }
+
+
+def _device_name(ds: DataSource) -> str | None:
+    if not ds.device_id:
+        return None
+    from sqlalchemy.orm import object_session
+
+    from app.models import Device
+
+    session = object_session(ds)
+    device = session.get(Device, ds.device_id) if session is not None else None
+    return device.name if device else None

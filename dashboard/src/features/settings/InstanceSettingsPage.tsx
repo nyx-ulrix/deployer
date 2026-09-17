@@ -13,12 +13,14 @@ import { Alert, Card, ErrorState, PageHeader } from "../../components/ui/States"
 import { useToast } from "../../components/ui/toast-context";
 import { formatDate } from "../../lib/format";
 import { PROVIDER_LABELS } from "../../lib/oauthErrors";
+import { InstanceNav } from "./InstanceNav";
 import { OAuthProviderCard } from "./OAuthProviderCard";
 
 export function InstanceSettingsPage() {
   const settings = useInstanceSettings();
   return (
     <div className="mx-auto w-full max-w-3xl">
+      <InstanceNav />
       <PageHeader
         title="Instance settings"
         description="Settings for this Deployer installation. Only you, the instance owner, can see this page."

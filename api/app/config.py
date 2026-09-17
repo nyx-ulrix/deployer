@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     github_client_secret: str = ""
     allow_signup: bool = False
 
+    # docs/REMOTE_ACCESS.md: shared volume with the tunnel sidecar (desired.json / status.json), and
+    # the host port Caddy is published on (public_url falls back to http://localhost:<port>).
+    tunnel_state_dir: str = "/tunnel"
+    deployer_http_port: int = 0
+
     # Test hook: use an explicit SQLAlchemy URL instead of MariaDB (e.g. sqlite in unit tests).
     database_url_override: str = ""
 

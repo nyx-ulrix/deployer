@@ -33,6 +33,10 @@ def conflict(code: str, message: str) -> ApiError:
     return ApiError(409, code, message)
 
 
+def validation_error(message: str, details: dict[str, Any] | None = None) -> ApiError:
+    return ApiError(422, "validation_error", message, details)
+
+
 def _body(code: str, message: str, details: dict[str, Any] | None = None) -> dict[str, Any]:
     return {"error": {"code": code, "message": message, "details": details or {}}}
 

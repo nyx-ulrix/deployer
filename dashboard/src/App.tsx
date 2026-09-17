@@ -9,7 +9,12 @@ import { InvitePage } from "./features/auth/InvitePage";
 import { LoginPage } from "./features/auth/LoginPage";
 import { SignupPage } from "./features/auth/SignupPage";
 import { DataTab } from "./features/data/DataTab";
+import { BackupsTab } from "./features/backups/BackupsTab";
+import { InstanceBackupsPage } from "./features/backups/InstanceBackupsPage";
 import { DatabasesTab } from "./features/databases/DatabasesTab";
+import { ApproveDevicePage } from "./features/devices/ApproveDevicePage";
+import { DevicesPage } from "./features/devices/DevicesPage";
+import { DeviceStatusPage } from "./features/devices/DeviceStatusPage";
 import { ApiKeysTab } from "./features/projects/ApiKeysTab";
 import { MembersTab } from "./features/projects/MembersTab";
 import { OverviewTab } from "./features/projects/OverviewTab";
@@ -18,6 +23,7 @@ import { ProjectSettingsTab } from "./features/projects/ProjectSettingsTab";
 import { ProjectsPage } from "./features/projects/ProjectsPage";
 import { AccountSettingsPage } from "./features/settings/AccountSettingsPage";
 import { InstanceSettingsPage } from "./features/settings/InstanceSettingsPage";
+import { RemoteAccessPage } from "./features/remote-access/RemoteAccessPage";
 import { TransferPage } from "./features/settings/TransferPage";
 import { SetupWizard } from "./features/setup/SetupWizard";
 
@@ -53,6 +59,7 @@ const router = createBrowserRouter([
     errorElement: <RouteError />,
     children: [
       { path: "/setup", element: <SetupWizard /> },
+      { path: "/device", element: <DeviceStatusPage /> },
       {
         path: "/login",
         element: (
@@ -74,6 +81,8 @@ const router = createBrowserRouter([
       {
         element: <RequireAuth />,
         children: [
+          // Focused page (no app chrome); the login redirect keeps `?code=`.
+          { path: "/devices/approve", element: <ApproveDevicePage /> },
           {
             element: <AppLayout />,
             children: [
@@ -93,6 +102,7 @@ const router = createBrowserRouter([
                     ),
                   },
                   { path: "data", element: <DataTab /> },
+                  { path: "backups", element: <BackupsTab /> },
                   { path: "members", element: <MembersTab /> },
                   { path: "api-keys", element: <ApiKeysTab /> },
                   { path: "settings", element: <ProjectSettingsTab /> },
@@ -108,6 +118,23 @@ const router = createBrowserRouter([
                 ),
               },
               { path: "/settings/transfer", element: <TransferPage /> },
+              { path: "/settings/devices", element: <DevicesPage /> },
+              {
+                path: "/settings/backups",
+                element: (
+                  <RequireInstanceOwner>
+                    <InstanceBackupsPage />
+                  </RequireInstanceOwner>
+                ),
+              },
+              {
+                path: "/settings/remote-access",
+                element: (
+                  <RequireInstanceOwner>
+                    <RemoteAccessPage />
+                  </RequireInstanceOwner>
+                ),
+              },
               { path: "*", element: <NotFound /> },
             ],
           },

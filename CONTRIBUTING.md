@@ -17,9 +17,9 @@ developers, so reliability, low resource use and clear error messages matter as 
 |---|---|
 | `api/` | FastAPI control plane (Python 3.12), Alembic migrations, tests |
 | `dashboard/` | React + TypeScript + Vite SPA |
-| `deploy/` | `docker-compose.yml`, `Caddyfile`, `.env.example` |
-| `installer/` | `install.ps1`, `deployer.ps1`, `lib/common.ps1`, `wsl/setup-engine.sh` |
-| `docs/` | Architecture, API contract, schema conventions |
+| `deploy/` | `docker-compose.yml`, `docker-compose.dev.yml`, `Caddyfile`, `.env.example`, `mongodb/` (replica-set entrypoint), `tunnel/` (cloudflared sidecar image) |
+| `installer/` | `install.ps1`, `deployer.ps1`, `lib/common.ps1`, `wsl/setup-engine.sh`, `windows/` (`DeployerSetup.exe` sources + `build.ps1`) |
+| `docs/` | Architecture, API contract, schema conventions, host devices, backups, remote access |
 
 ## Development setup
 
@@ -33,15 +33,18 @@ docker compose -f deploy/docker-compose.yml up --build
 ## Checks (run before opening a PR - CI runs the same)
 
 - API: `cd api && pytest`
-- Dashboard: `cd dashboard && npm run lint && npm run typecheck && npm run build`
+- Dashboard: `cd dashboard && npm run lint && npm run typecheck && npm run test -- --run && npm run build`
 - Compose: `docker compose -f deploy/docker-compose.yml --env-file deploy/.env.example config`
+  (also with `-f deploy/docker-compose.dev.yml`)
 - Installer (Windows PowerShell):
   ```powershell
   Get-ChildItem installer -Recurse -Filter *.ps1 | ForEach-Object {
     $e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$e); $e }
   Invoke-ScriptAnalyzer -Path installer -Recurse -Severity Error
+  powershell -ExecutionPolicy Bypass -File installer\windows\build.ps1
+  dist\DeployerSetup.selftest.exe /selftest dist\selftest
   ```
-- `bash -n installer/wsl/setup-engine.sh`
+- `bash -n` on every `*.sh` (`installer/wsl/`, `deploy/mongodb/`, `deploy/tunnel/`, `api/docker-entrypoint.sh`)
 
 ## PowerShell conventions
 

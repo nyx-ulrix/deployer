@@ -18,6 +18,7 @@ import {
   Database,
   Download,
   Filter,
+  History,
   LayoutGrid,
   Link2,
   ListChecks,
@@ -27,6 +28,7 @@ import {
   Search,
   SquareMousePointer,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import { errorMessage, saveBlob } from "../../api/client";
 import { api } from "../../api/endpoints";
 import { useSchema } from "../../api/hooks";
@@ -447,6 +449,14 @@ function SchemaViewer({
             Add link
           </Button>
         )}
+
+        <Link
+          to={`/projects/${projectId}/backups`}
+          className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-muted hover:bg-surface-2 hover:text-fg"
+          title="Compare this schema with earlier versions"
+        >
+          <History className="size-3.5" /> Versions
+        </Link>
 
         <div className="ml-auto flex items-center gap-1">
           <span className="hidden text-xs text-muted md:inline">Generated {relativeTime(schema.generated_at)}</span>

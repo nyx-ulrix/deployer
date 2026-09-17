@@ -93,6 +93,9 @@ installer/windows/bin/
 logs/
 tmp/
 .tmp/
+# Claude Code session state (a shared .claude/settings.json may still be committed)
+.claude/*.lock
+.claude/settings.local.json
 .vscode/*
 !.vscode/extensions.json
 .idea/

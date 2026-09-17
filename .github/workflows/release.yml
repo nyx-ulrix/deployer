@@ -15,7 +15,14 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        component: [api, dashboard]
+        include:
+          - component: api
+            context: api
+          - component: dashboard
+            context: dashboard
+          # Cloudflare tunnel sidecar (docker-compose.yml service "tunnel").
+          - component: tunnel
+            context: deploy/tunnel
     steps:
       - uses: actions/checkout@v4
 
@@ -45,7 +52,7 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: ${{ matrix.component }}
+          context: ${{ matrix.context }}
           platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
@@ -53,31 +60,102 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.component }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}
 
+  setup-exe:
+    name: DeployerSetup.exe
+    runs-on: windows-latest
+    env:
+      # Optional code signing. Forks without these secrets publish an unsigned exe.
+      HAS_SIGNING_CERT: ${{ secrets.WINDOWS_SIGNING_PFX != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer\windows\build.ps1 -Version "${{ github.ref_name }}" -Repo "${{ github.repository }}" -Ref "${{ github.ref_name }}"
+
+      - name: Self-test
+        shell: powershell
+        run: |
+          $outDir = Join-Path $PWD 'dist\selftest'
+          $p = Start-Process -FilePath dist\DeployerSetup.selftest.exe -ArgumentList '/selftest', "`"$outDir`"" -PassThru
+          if (-not $p.WaitForExit(120000)) { Stop-Process -Id $p.Id -Force; Write-Host '::error::Self-test timed out'; exit 1 }
+          Get-Content (Join-Path $outDir 'selftest-report.txt')
+          if ($p.ExitCode -ne 0) { Write-Host "::error::Self-test failed (exit code $($p.ExitCode))"; exit 1 }
+
+      - name: Sign with signtool
+        if: env.HAS_SIGNING_CERT == 'true'
+        shell: powershell
+        env:
+          WINDOWS_SIGNING_PFX: ${{ secrets.WINDOWS_SIGNING_PFX }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: |
+          $pfx = Join-Path $env:RUNNER_TEMP 'signing.pfx'
+          [System.IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_SIGNING_PFX))
+          try {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+              Where-Object { $_.FullName -match '\\x64\\' } | Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $signtool) { throw 'signtool.exe not found' }
+            & $signtool.FullName sign /f $pfx /p $env:WINDOWS_SIGNING_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d "Deployer Setup" dist\DeployerSetup.exe
+            if ($LASTEXITCODE -ne 0) { throw "signtool sign failed ($LASTEXITCODE)" }
+            & $signtool.FullName verify /pa dist\DeployerSetup.exe
+            if ($LASTEXITCODE -ne 0) { throw "signtool verify failed ($LASTEXITCODE)" }
+          } finally {
+            Remove-Item -LiteralPath $pfx -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Checksum
+        shell: powershell
+        run: |
+          $hash = (Get-FileHash dist\DeployerSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          [System.IO.File]::WriteAllText("$PWD\dist\DeployerSetup.exe.sha256", "$hash  DeployerSetup.exe`n")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deployer-setup-exe
+          path: |
+            dist/DeployerSetup.exe
+            dist/DeployerSetup.exe.sha256
+
   bundle:
     name: Deploy bundle + GitHub release
     runs-on: ubuntu-latest
-    needs: images
+    needs: [images, setup-exe]
     steps:
       - uses: actions/checkout@v4
 
       - name: Build deployer-deploy.zip
         run: |
           mkdir -p dist
-          zip -r dist/deployer-deploy.zip deploy installer -x 'deploy/.env'
+          # deploy/ includes the sidecar build contexts (deploy/tunnel, deploy/mongodb) - never .env.
+          zip -r dist/deployer-deploy.zip deploy installer -x 'deploy/.env' -x 'installer/windows/obj/*' -x 'installer/windows/bin/*'
+          unzip -l dist/deployer-deploy.zip | grep -q 'deploy/tunnel/Dockerfile'
           (cd dist && sha256sum deployer-deploy.zip > deployer-deploy.zip.sha256)
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: deployer-setup-exe
+          path: dist
 
       - uses: softprops/action-gh-release@v2
         with:
           files: |
+            dist/DeployerSetup.exe
+            dist/DeployerSetup.exe.sha256
             dist/deployer-deploy.zip
             dist/deployer-deploy.zip.sha256
           generate_release_notes: true
           body: |
             ## Install on Windows
 
+            **Easiest:** download **DeployerSetup.exe** below and double-click it. If Windows SmartScreen says
+            "Windows protected your PC", choose **More info → Run anyway** (the exe is not code-signed yet unless this
+            release says otherwise). Checksum: `DeployerSetup.exe.sha256`.
+
+            Or with PowerShell:
+
             ```powershell
             & ([scriptblock]::Create((irm https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/installer/install.ps1))) -Repo ${{ github.repository }} -Ref ${{ github.ref_name }}
             ```
 
-            Images: `ghcr.io/${{ github.repository_owner }}/deployer-api` and `deployer-dashboard`, tagged with this version (without the leading `v`) and `latest`.
+            Images: `ghcr.io/${{ github.repository_owner }}/deployer-api`, `deployer-dashboard` and `deployer-tunnel`, tagged with this version (without the leading `v`) and `latest`.
             Existing installs: `deployer update -Ref ${{ github.ref_name }}`.

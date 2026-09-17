@@ -1,17 +1,25 @@
 # Deployer reverse proxy: one port for the dashboard and the API.
-# HTTPS is intentionally off here; remote access over HTTPS comes from a tunnel
-# (Tailscale / Cloudflare Tunnel, see the roadmap) or your own proxy in front of this port.
+# HTTPS is intentionally off here; remote access over HTTPS comes from the Cloudflare tunnel
+# sidecar (docs/REMOTE_ACCESS.md), a tunnel you run yourself, or your own proxy in front of this port.
 {
 	admin off
 	auto_https off
 	# If you put another reverse proxy in front of Deployer, trust it so client IPs
 	# (used for login rate limiting) are passed through, e.g.:
-	# servers {
+	# servers :8080 {
 	# 	trusted_proxies static 192.168.1.10/32
 	# }
+
+	# :8081 is only reachable inside the compose network: it is the origin for the Cloudflare
+	# tunnel sidecar (docs/REMOTE_ACCESS.md). Trust cloudflared's X-Forwarded-Proto (https) and take
+	# the visitor IP from Cf-Connecting-Ip, which Cloudflare's edge always overwrites.
+	servers :8081 {
+		trusted_proxies static private_ranges
+		client_ip_headers Cf-Connecting-Ip
+	}
 }
 
-:8080 {
+:8080, :8081 {
 	encode zstd gzip
 
 	header {
@@ -30,9 +38,15 @@
 		max_size 2GB
 	}
 
+	# Host-device bulk transfers (docs/DEVICES.md): database copies and backup artifacts.
+	@device_transfers path /v1/devices/transfers/*
+	request_body @device_transfers {
+		max_size 64GB
+	}
+
 	@api_other {
 		path /v1/*
-		not path /v1/setup/import /v1/projects/import
+		not path /v1/setup/import /v1/projects/import /v1/devices/transfers/*
 	}
 	request_body @api_other {
 		max_size 64MB
@@ -41,6 +55,9 @@
 	handle /v1/* {
 		# Caddy sets X-Forwarded-For, X-Forwarded-Proto and X-Forwarded-Host automatically.
 		reverse_proxy api:8000 {
+			# The API uses the first X-Forwarded-For entry; send exactly one (the client IP as
+			# determined above) so it can't be spoofed through a trusted proxy chain.
+			header_up X-Forwarded-For {client_ip}
 			transport http {
 				read_timeout 30m
 				write_timeout 30m

@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Cloud, Database, HardDrive, Leaf, XCircle } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
+import { usePlacementOptions } from "../../api/hooks";
 import type { ConnectionTestResult, DataSourceInput, DataSourceKind, SqlExternalEngine } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
@@ -10,6 +11,8 @@ import { Checkbox, Field, Input, Select } from "../../components/ui/Input";
 import { Alert } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
+import { defaultPlacement, deviceIdFromValue, engineForKind, placementDisplay } from "../devices/eligibility";
+import { HostOnSelect } from "../devices/HostOnSelect";
 
 type Mode = "managed" | "external";
 
@@ -76,12 +79,23 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
 
   const [test, setTest] = useState<{ key: string; result: ConnectionTestResult } | null>(null);
 
+  // Placement ("Host on") for managed databases.
+  const placement = usePlacementOptions(projectId);
+  const [hostChoice, setHostChoice] = useState<string | null>(null);
+  const engineForPlacement = engineForKind(kind);
+  const hostDisplays = (placement.data ?? []).map((o) => placementDisplay(o, engineForPlacement));
+  const chosenHost = hostDisplays.find((d) => d.value === hostChoice && !d.disabled);
+  const hostValue = chosenHost ? chosenHost.value : defaultPlacement(placement.data ?? [], engineForPlacement);
+  const hostUsable = hostDisplays.length === 0 || hostDisplays.some((d) => d.value === hostValue && !d.disabled);
+  const showHostOn = mode === "managed" && (placement.isError || (placement.data?.length ?? 0) > 1);
+
   const buildInput = (): DataSourceInput => {
     const n = name.trim() || defaultName();
     if (mode === "managed") {
+      const device_id = showHostOn ? deviceIdFromValue(hostValue) : undefined;
       return kind === "sql"
-        ? { kind: "sql", mode: "managed", engine: "mariadb", name: n }
-        : { kind: "nosql", mode: "managed", engine: "mongodb", name: n };
+        ? { kind: "sql", mode: "managed", engine: "mariadb", name: n, device_id }
+        : { kind: "nosql", mode: "managed", engine: "mongodb", name: n, device_id };
     }
     if (kind === "sql") {
       return {
@@ -114,7 +128,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
     kind === "sql"
       ? Boolean(host.trim() && username.trim() && database.trim()) && (!port || /^\d+$/.test(port))
       : Boolean(uri.trim() && mongoDb.trim());
-  const formValid = mode === "managed" || externalValid;
+  const formValid = mode === "managed" ? !showHostOn || hostUsable : externalValid;
 
   const testMutation = useMutation({
     mutationFn: () => api.dataSources.test(projectId, buildInput()),
@@ -207,7 +221,11 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
               onClick={() => setMode("managed")}
               icon={<HardDrive className="size-4" />}
               title="Managed"
-              description={kind === "sql" ? "New MariaDB database on this machine." : "New MongoDB database on this machine."}
+              description={
+                kind === "sql"
+                  ? "New MariaDB database run by Deployer, backed up automatically."
+                  : "New MongoDB database run by Deployer, backed up automatically."
+              }
             />
             <Choice
               selected={mode === "external"}
@@ -220,6 +238,17 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
             />
           </div>
         </div>
+
+        {showHostOn && (
+          <HostOnSelect
+            options={placement.data}
+            engine={engineForPlacement}
+            value={hostValue}
+            onChange={setHostChoice}
+            loading={placement.isPending}
+            error={placement.error}
+          />
+        )}
 
         <Field label="Display name" optional hint={`Defaults to “${defaultName()}”.`}>
           {(id) => <Input id={id} value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />}

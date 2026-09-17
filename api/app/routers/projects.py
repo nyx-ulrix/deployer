@@ -35,6 +35,8 @@ def _clean_name(value: str) -> str:
 class Provision(BaseModel):
     sql: bool = False
     nosql: bool = False
+    # Host device for the managed databases (docs/DEVICES.md); null = main server.
+    device_id: str | None = None
 
 
 ProjectName = Annotated[str, Field(max_length=120), AfterValidator(_clean_name)]
@@ -79,9 +81,18 @@ def create_project(body: ProjectCreate, request: Request, user: CurrentUser, db:
     provisioned: list[DataSource] = []
     if kinds:
         provisioning = _provisioning()
+        placement: dict = {}
+        if body.provision and body.provision.device_id:
+            from app.services import devices
+
+            for kind in kinds:
+                devices.validate_placement(db, project, body.provision.device_id, kind)
+            placement = {"device_id": body.provision.device_id}
         try:
             for kind in kinds:
-                source = provisioning.provision_managed_source(db, project, kind, MANAGED_SOURCE_NAMES[kind])
+                source = provisioning.provision_managed_source(
+                    db, project, kind, MANAGED_SOURCE_NAMES[kind], **placement
+                )
                 db.add(source)
                 db.flush()
                 provisioned.append(source)
@@ -143,14 +154,26 @@ def delete_project(
             "Pass ?confirm=<project slug> to delete this project",
             {"slug": project.slug},
         )
+    # docs/BACKUPS.md: every managed database gets a final snapshot (kept 30 days) before it is dropped;
+    # the snapshot + drop run as jobs that don't depend on the project rows deleted below.
+    from app.services import backups, jobs
+
+    finalize_jobs = []
     managed = [s for s in project.data_sources if s.mode == "managed"]
     if managed:
         provisioning = _provisioning()
         for source in managed:
-            provisioning.drop_managed_source(db, source)
+            if source.deleted_at is not None:
+                continue  # already handled by its own delete
+            job = backups.enqueue_detached_finalize(db, source, user_id=access.user.id)
+            if job is None:
+                provisioning.drop_managed_source(db, source)
+            else:
+                finalize_jobs.append(job.id)
         # drop_managed_source may or may not delete the row itself; reload before the cascade.
         db.flush()
         db.expire(project, ["data_sources"])
+    backups.expire_project_backups(db, project.id)
 
     project_id, slug = project.id, project.slug
     db.execute(delete(SchemaLink).where(SchemaLink.project_id == project_id))
@@ -159,4 +182,6 @@ def delete_project(
     db.delete(project)
     audit.record(db, "project.delete", request=request, user_id=access.user.id, project_id=project_id, slug=slug)
     db.commit()
+    for job_id in finalize_jobs:
+        jobs.dispatch(job_id)
     return {"ok": True}

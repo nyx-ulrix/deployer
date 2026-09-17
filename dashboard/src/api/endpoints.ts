@@ -4,7 +4,31 @@ import type {
   ApiKeyCreateResponse,
   ApiKeyRole,
   AuthResponse,
+  Backup,
+  BackupPolicy,
+  BackupPolicyUpdate,
+  CloudflareVerifyResult,
   ConnectionDetails,
+  DeletedSource,
+  Device,
+  DeviceApproval,
+  DeviceEnrollment,
+  DeviceUpdate,
+  Domain,
+  EnrollStartResponse,
+  EnrollStatus,
+  InstanceBackups,
+  Job,
+  JobResponse,
+  LocalDeviceStatus,
+  PlacementOption,
+  PublicUrlRequest,
+  PublicUrlResponse,
+  RecoveryWindow,
+  RemoteAccess,
+  RestoreRequest,
+  SchemaDiff,
+  SourceSchema,
   ConnectionTestResult,
   DataSource,
   DataSourceInput,
@@ -150,6 +174,91 @@ export const api = {
       client.get<ConnectionDetails>(`/projects/${e(pid)}/data-sources/${e(sid)}/connection`),
     remove: (pid: string, sid: string, drop: boolean) =>
       client.del<Ok>(`/projects/${e(pid)}/data-sources/${e(sid)}`, { query: { drop } }),
+    /** DEVICES.md: `POST .../data-sources/{sid}/move`. `device_id: null` = main server. */
+    move: (pid: string, sid: string, deviceId: string | null) =>
+      client.post<JobResponse>(`/projects/${e(pid)}/data-sources/${e(sid)}/move`, { device_id: deviceId }),
+    placementOptions: (pid: string) => client.get<PlacementOption[]>(`/projects/${e(pid)}/placement-options`),
+    deleted: (pid: string) => client.get<DeletedSource[]>(`/projects/${e(pid)}/deleted-sources`),
+    restoreDeleted: (pid: string, sid: string, name?: string) =>
+      client.post<JobResponse>(`/projects/${e(pid)}/deleted-sources/${e(sid)}/restore`, name ? { name } : {}),
+  },
+
+  // Primary-side device management. Paths follow DEVICES.md naming (`/devices`, `/devices/enrollments`).
+  devices: {
+    list: (scope: "mine" | "all" = "mine") =>
+      client.get<Device[]>("/devices", { query: { scope: scope === "all" ? "all" : undefined } }),
+    update: (id: string, body: DeviceUpdate) => client.patch<Device>(`/devices/${e(id)}`, body),
+    remove: (id: string, force = false) => client.del<Ok>(`/devices/${e(id)}`, { query: { force: force || undefined } }),
+    enrollmentByCode: (code: string) => client.get<DeviceEnrollment>("/devices/enrollments", { query: { code } }),
+    approve: (enrollmentId: string, body: DeviceApproval) =>
+      client.post<Device>(`/devices/enrollments/${e(enrollmentId)}/approve`, body),
+    deny: (enrollmentId: string, userCode: string) =>
+      client.post<Ok>(`/devices/enrollments/${e(enrollmentId)}/deny`, { user_code: userCode }),
+  },
+
+  /** Device-local API of *this* installation (DEVICES.md → Device-local API). */
+  deviceLocal: {
+    status: () => client.get<LocalDeviceStatus>("/device/status", { auth: false }),
+    enrollStart: (body: { primary_url: string; device_name: string }) =>
+      client.post<EnrollStartResponse>("/device/enroll/start", body),
+    enrollStatus: () => client.get<EnrollStatus>("/device/enroll/status"),
+    enrollCancel: () => client.post<Ok>("/device/enroll/cancel"),
+  },
+
+  backups: {
+    policy: (pid: string, sid: string) =>
+      client.get<BackupPolicy>(`/projects/${e(pid)}/data-sources/${e(sid)}/backup-policy`),
+    updatePolicy: (pid: string, sid: string, body: BackupPolicyUpdate) =>
+      client.put<BackupPolicy>(`/projects/${e(pid)}/data-sources/${e(sid)}/backup-policy`, body),
+    list: (pid: string, sid: string, limit = 100) =>
+      client.get<Backup[]>(`/projects/${e(pid)}/data-sources/${e(sid)}/backups`, { query: { limit } }),
+    create: (pid: string, sid: string, label?: string) =>
+      client.post<{ job: Job; backup_id: string }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/backups`,
+        label ? { label } : {},
+      ),
+    update: (pid: string, sid: string, backupId: string, body: { label?: string | null; pinned?: boolean }) =>
+      client.patch<Backup>(`/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}`, body),
+    remove: (pid: string, sid: string, backupId: string) =>
+      client.del<Ok>(`/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}`),
+    schema: (pid: string, sid: string, backupId: string) =>
+      client.get<SourceSchema>(`/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}/schema`),
+    diff: (pid: string, sid: string, from: string, to: string) =>
+      client.get<SchemaDiff>(`/projects/${e(pid)}/data-sources/${e(sid)}/backups/diff`, { query: { from, to } }),
+    download: (pid: string, sid: string, backupId: string) =>
+      client.download("GET", `/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}/download`, "backup.bin"),
+    recoveryWindow: (pid: string, sid: string) =>
+      client.get<RecoveryWindow>(`/projects/${e(pid)}/data-sources/${e(sid)}/recovery-window`),
+    restore: (pid: string, sid: string, body: RestoreRequest) =>
+      client.post<JobResponse>(`/projects/${e(pid)}/data-sources/${e(sid)}/restore`, body),
+  },
+
+  jobs: {
+    list: (pid: string, limit = 50) => client.get<Job[]>(`/projects/${e(pid)}/jobs`, { query: { limit } }),
+    get: (pid: string, jobId: string) => client.get<Job>(`/projects/${e(pid)}/jobs/${e(jobId)}`),
+    cancel: (pid: string, jobId: string) => client.post<Job>(`/projects/${e(pid)}/jobs/${e(jobId)}/cancel`),
+  },
+
+  instanceBackups: {
+    get: () => client.get<InstanceBackups>("/instance/backups"),
+    platformNow: () => client.post<JobResponse>("/instance/backups/platform"),
+  },
+
+  remoteAccess: {
+    get: () => client.get<RemoteAccess>("/instance/remote-access"),
+    verify: (apiToken: string) =>
+      client.post<CloudflareVerifyResult>("/instance/remote-access/cloudflare/verify", { api_token: apiToken }),
+    link: (apiToken: string, accountId: string) =>
+      client.post<RemoteAccess>("/instance/remote-access/cloudflare/link", { api_token: apiToken, account_id: accountId }),
+    addHostname: (body: { zone_id: string; hostname: string; overwrite?: boolean }) =>
+      client.post<Domain>("/instance/remote-access/cloudflare/hostnames", body),
+    removeHostname: (domainId: string) =>
+      client.del<Ok>(`/instance/remote-access/cloudflare/hostnames/${e(domainId)}`),
+    unlink: (body: { delete_dns: boolean; delete_tunnel: boolean }) =>
+      client.post<RemoteAccess>("/instance/remote-access/cloudflare/unlink", body),
+    quick: (enabled: boolean) => client.post<RemoteAccess>("/instance/remote-access/quick", { enabled }),
+    usePublicUrl: (body: PublicUrlRequest) =>
+      client.post<PublicUrlResponse>("/instance/remote-access/public-url", body),
   },
 
   schema: {
@@ -240,4 +349,23 @@ export const qk = {
   documents: (id: string, sid: string, coll: string, params: object) =>
     ["projects", id, "documents", sid, coll, params] as const,
   invite: (token: string) => ["invite", token] as const,
+  devices: (scope: "mine" | "all") => ["devices", scope] as const,
+  devicesAll: ["devices"] as const,
+  enrollment: (code: string) => ["device-enrollment", code] as const,
+  localDevice: ["device-local", "status"] as const,
+  enrollStatus: ["device-local", "enroll-status"] as const,
+  placement: (id: string) => ["projects", id, "placement-options"] as const,
+  deletedSources: (id: string) => ["projects", id, "deleted-sources"] as const,
+  backupsFor: (id: string, sid: string) => ["projects", id, "backups", sid] as const,
+  backups: (id: string, sid: string) => ["projects", id, "backups", sid, "list"] as const,
+  backupPolicy: (id: string, sid: string) => ["projects", id, "backups", sid, "policy"] as const,
+  recoveryWindow: (id: string, sid: string) => ["projects", id, "backups", sid, "window"] as const,
+  backupDiff: (id: string, sid: string, from: string, to: string) =>
+    ["projects", id, "backups", sid, "diff", from, to] as const,
+  backupSchema: (id: string, sid: string, backupId: string) =>
+    ["projects", id, "backups", sid, "schema", backupId] as const,
+  jobs: (id: string) => ["projects", id, "jobs"] as const,
+  job: (id: string, jobId: string) => ["projects", id, "jobs", jobId] as const,
+  instanceBackups: ["instance", "backups"] as const,
+  remoteAccess: ["instance", "remote-access"] as const,
 };

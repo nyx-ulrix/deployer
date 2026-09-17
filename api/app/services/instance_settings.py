@@ -9,8 +9,31 @@ from app.config import get_settings
 from app.crypto import decrypt_secret, encrypt_secret
 from app.models import InstanceSetting
 
-SECRET_KEYS = {"google_client_secret", "github_client_secret"}
-KNOWN_KEYS = {"public_url", "allow_signup", "google_client_id", "github_client_id", *SECRET_KEYS}
+SECRET_KEYS = {
+    "google_client_secret",
+    "github_client_secret",
+    # docs/REMOTE_ACCESS.md
+    "cloudflare_api_token",
+    "cloudflare_tunnel_token",
+    # docs/DEVICES.md — set on a host device: {"primary_url", "device_id", "device_token", "device_name"}
+    "device_link",
+    # On a host device: {database_name: {kind, username, password}} for databases it hosts.
+    "device_hosted_credentials",
+}
+KNOWN_KEYS = {
+    "public_url",
+    "allow_signup",
+    "google_client_id",
+    "github_client_id",
+    "remote_access_mode",
+    "cloudflare_account_id",
+    "cloudflare_account_name",
+    "cloudflare_tunnel_id",
+    "cloudflare_tunnel_name",
+    # Random per-installation id (docs/REMOTE_ACCESS.md: tunnel name `deployer-<first 8>`).
+    "instance_id",
+    *SECRET_KEYS,
+}
 
 
 def get_value(db: Session, key: str):

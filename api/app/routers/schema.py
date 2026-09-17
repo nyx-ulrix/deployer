@@ -14,9 +14,9 @@ from sqlalchemy import select
 
 from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import ApiError, not_found
-from app.models import SchemaLink
+from app.models import SchemaLink, utcnow
 from app.serializers import iso
-from app.services import audit, connections, ddl_export, introspection, schema_ops
+from app.services import audit, ddl_export, introspection, source_ops
 from app.services.conventions import check_conventions
 from app.services.sources import get_source, project_sources
 
@@ -67,7 +67,7 @@ def get_schema(
         sources = project_sources(db, project.id)
     links = [link_out(link) for link in project_links(db, project.id)]
     db.commit()  # release the platform DB transaction while talking to project databases
-    schemas = introspection.introspect_sources(sources, sample)
+    schemas = source_ops.introspect_sources(sources, sample)
     if source_id:
         links = [lk for lk in links if source_id in (lk["from_source_id"], lk["to_source_id"])]
     return {
@@ -77,7 +77,7 @@ def get_schema(
             schemas,
             links if not source_id else [lk for lk in links if lk["from_source_id"] == lk["to_source_id"] == source_id],
         ),
-        "generated_at": datetime.now(UTC).replace(tzinfo=None).isoformat(timespec="seconds") + "Z",
+        "generated_at": iso(utcnow()),
     }
 
 
@@ -117,16 +117,16 @@ def export_schema(
     now = datetime.now(UTC)
     base = _slug_filename(project.slug)
     if format == "sql":
-        content = ddl_export.export_sources(sources, "sql", now).encode("utf-8")
+        content = source_ops.export_sources(sources, "sql", now).encode("utf-8")
         filename, media = f"{base}-schema.sql", "application/sql"
     elif format == "mongo":
-        content = ddl_export.export_sources(sources, "nosql", now).encode("utf-8")
+        content = source_ops.export_sources(sources, "nosql", now).encode("utf-8")
         filename, media = f"{base}-schema.mongo.js", "text/javascript"
     else:
         content = ddl_export.build_bundle(
             project_name=project.name,
-            sql_text=ddl_export.export_sources(sources, "sql", now),
-            mongo_text=ddl_export.export_sources(sources, "nosql", now),
+            sql_text=source_ops.export_sources(sources, "sql", now),
+            mongo_text=source_ops.export_sources(sources, "nosql", now),
             links=links,
             now=now,
         )
@@ -233,9 +233,8 @@ class CollectionInput(BaseModel):
 @router.post("/projects/{project_id}/data-sources/{source_id}/tables")
 def create_table(source_id: str, body: TableSpec, access: Developer, db: DbSession, request: Request) -> dict:
     ds = get_source(db, access.project.id, source_id, kind="sql")
-    engine = connections.get_sql_engine(ds)
     spec = body.model_dump()
-    schema_ops.create_table(engine, spec)
+    source_ops.create_table(ds, spec)
     audit.record(
         db,
         "schema.table_create",
@@ -246,7 +245,7 @@ def create_table(source_id: str, body: TableSpec, access: Developer, db: DbSessi
         table=body.name,
     )
     db.commit()
-    entity = introspection.sql_entity(ds, body.name)
+    entity = source_ops.sql_entity(ds, body.name)
     if entity is None:
         raise ApiError(500, "introspection_failed", "Table was created but could not be read back")
     return entity
@@ -255,7 +254,10 @@ def create_table(source_id: str, body: TableSpec, access: Developer, db: DbSessi
 @router.delete("/projects/{project_id}/data-sources/{source_id}/tables/{table}")
 def drop_table(source_id: str, table: str, access: Admin, db: DbSession, request: Request) -> dict:
     ds = get_source(db, access.project.id, source_id, kind="sql")
-    schema_ops.drop_table(connections.get_sql_engine(ds), table)
+    from app.services import backups  # docs/BACKUPS.md: safety snapshot before a drop (per policy)
+
+    backups.safety_snapshot(db, ds, trigger="pre_drop", user_id=access.user.id)
+    source_ops.drop_table(ds, table)
     audit.record(
         db,
         "schema.table_drop",
@@ -274,7 +276,7 @@ def create_collection(
     source_id: str, body: CollectionInput, access: Developer, db: DbSession, request: Request
 ) -> dict:
     ds = get_source(db, access.project.id, source_id, kind="nosql")
-    schema_ops.create_collection(connections.get_mongo_db(ds), body.name, body.validator)
+    source_ops.create_collection(ds, body.name, body.validator)
     audit.record(
         db,
         "schema.collection_create",
@@ -285,7 +287,7 @@ def create_collection(
         collection=body.name,
     )
     db.commit()
-    entity = introspection.mongo_entity(ds, body.name)
+    entity = source_ops.mongo_entity(ds, body.name)
     if entity is None:
         raise ApiError(500, "introspection_failed", "Collection was created but could not be read back")
     return entity
@@ -294,7 +296,10 @@ def create_collection(
 @router.delete("/projects/{project_id}/data-sources/{source_id}/collections/{name}")
 def drop_collection(source_id: str, name: str, access: Admin, db: DbSession, request: Request) -> dict:
     ds = get_source(db, access.project.id, source_id, kind="nosql")
-    schema_ops.drop_collection(connections.get_mongo_db(ds), name)
+    from app.services import backups  # docs/BACKUPS.md: safety snapshot before a drop (per policy)
+
+    backups.safety_snapshot(db, ds, trigger="pre_drop", user_id=access.user.id)
+    source_ops.drop_collection(ds, name)
     audit.record(
         db,
         "schema.collection_drop",

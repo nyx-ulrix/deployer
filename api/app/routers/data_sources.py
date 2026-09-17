@@ -10,9 +10,9 @@ from sqlalchemy import or_, select
 
 from app.crypto import encrypt_json
 from app.deps import DbSession, ProjectAccess, require_role
-from app.errors import ApiError, forbidden
+from app.errors import ApiError, forbidden, validation_error
 from app.models import DataSource, SchemaLink, utcnow
-from app.services import audit, connections, provisioning
+from app.services import audit, connections, devices, provisioning, source_ops
 from app.services.sources import data_source_out, get_source, project_sources
 
 router = APIRouter(tags=["data-sources"])
@@ -28,37 +28,35 @@ class DataSourceInput(BaseModel):
     engine: Literal["mariadb", "mysql", "postgresql", "mongodb"]
     name: str = Field(min_length=1, max_length=63)
     config: dict[str, Any] | None = None
-
-
-def _invalid(message: str) -> ApiError:
-    return ApiError(422, "validation_error", message)
+    # Managed sources only: host device to place the database on (docs/DEVICES.md); null = main server.
+    device_id: str | None = None
 
 
 def normalize_input(body: DataSourceInput) -> tuple[str, dict[str, Any] | None]:
     """Validates the kind/mode/engine combination and returns (name, external config)."""
     name = body.name.strip()
     if not name:
-        raise _invalid("name is required")
+        raise validation_error("name is required")
     if body.kind == "sql" and body.engine == "mongodb":
-        raise _invalid("SQL data sources use mariadb, mysql or postgresql")
+        raise validation_error("SQL data sources use mariadb, mysql or postgresql")
     if body.kind == "nosql" and body.engine != "mongodb":
-        raise _invalid("NoSQL data sources use mongodb")
+        raise validation_error("NoSQL data sources use mongodb")
     if body.mode == "managed":
         if body.kind == "sql" and body.engine != "mariadb":
-            raise _invalid("Managed SQL data sources use mariadb")
+            raise validation_error("Managed SQL data sources use mariadb")
         return name, None
     cfg = body.config or {}
     if body.kind == "sql":
         missing = [k for k in ("host", "username", "database") if not str(cfg.get(k) or "").strip()]
         if missing:
-            raise _invalid(f"config is missing: {', '.join(missing)}")
+            raise validation_error(f"config is missing: {', '.join(missing)}")
         port = cfg.get("port") or connections.DEFAULT_PORTS[body.engine]
         try:
             port = int(port)
         except (TypeError, ValueError) as exc:
-            raise _invalid("config.port must be a number") from exc
+            raise validation_error("config.port must be a number") from exc
         if not 1 <= port <= 65535:
-            raise _invalid("config.port must be between 1 and 65535")
+            raise validation_error("config.port must be between 1 and 65535")
         return name, {
             "host": str(cfg["host"]).strip(),
             "port": port,
@@ -70,9 +68,9 @@ def normalize_input(body: DataSourceInput) -> tuple[str, dict[str, Any] | None]:
     uri = str(cfg.get("uri") or "").strip()
     database = str(cfg.get("database") or "").strip()
     if not uri.startswith(("mongodb://", "mongodb+srv://")):
-        raise _invalid("config.uri must start with mongodb:// or mongodb+srv://")
+        raise validation_error("config.uri must start with mongodb:// or mongodb+srv://")
     if not database:
-        raise _invalid("config.database is required")
+        raise validation_error("config.database is required")
     return name, {"uri": uri, "database": database}
 
 
@@ -93,6 +91,14 @@ def test_data_source(body: DataSourceInput, access: Admin, db: DbSession) -> dic
     if body.mode == "managed":
         from app.config import get_settings
 
+        if body.device_id:
+            from app.services import device_rpc
+
+            device = devices.validate_placement(db, access.project, body.device_id, body.kind)
+            if not device_rpc.is_online(device.id):
+                return {"ok": False, "message": f"Host device '{device.name}' is offline", "server_version": None}
+            message = f"Will be provisioned on host device '{device.name}'"
+            return {"ok": True, "message": message, "server_version": None}
         if body.kind == "nosql" and not get_settings().managed_mongodb_enabled:
             return {"ok": False, "message": "Managed MongoDB is not available on this host", "server_version": None}
         return {"ok": True, "message": "Managed databases are provisioned on this host", "server_version": None}
@@ -106,7 +112,9 @@ def create_data_source(body: DataSourceInput, access: Admin, db: DbSession, requ
     project = access.project
     _ensure_name_free(db, project.id, name)
     if body.mode == "managed":
-        ds = provisioning.provision_managed_source(db, project, body.kind, name)
+        device = devices.validate_placement(db, project, body.device_id, body.kind)
+        placement = {"device_id": device.id} if device else {}
+        ds = provisioning.provision_managed_source(db, project, body.kind, name, **placement)
     else:
         assert config is not None
         ok, message, version = connections.try_config(body.kind, body.engine, config)
@@ -154,7 +162,7 @@ def create_data_source(body: DataSourceInput, access: Admin, db: DbSession, requ
 @router.post("/projects/{project_id}/data-sources/{source_id}/check")
 def check_data_source(source_id: str, access: Viewer, db: DbSession) -> dict:
     ds = get_source(db, access.project.id, source_id)
-    connections.check_status(db, ds)
+    source_ops.check_status(db, ds)
     db.commit()
     return data_source_out(ds)
 
@@ -162,7 +170,7 @@ def check_data_source(source_id: str, access: Viewer, db: DbSession) -> dict:
 @router.get("/projects/{project_id}/data-sources/{source_id}/connection")
 def data_source_connection(source_id: str, access: Developer, db: DbSession, request: Request) -> dict:
     ds = get_source(db, access.project.id, source_id)
-    info = connections.connection_info(ds)
+    info = source_ops.connection_info(ds)
     audit.record(
         db,
         "data_source.credentials_view",
@@ -185,7 +193,10 @@ def delete_data_source(source_id: str, access: Admin, db: DbSession, request: Re
             raise ApiError(
                 400, "cannot_drop_external", "External databases are never dropped; delete without drop=true"
             )
-        provisioning.drop_managed_source(db, ds)
+    # docs/BACKUPS.md: soft delete ("Recently deleted" for 30 days). Managed sources get a final
+    # snapshot first; with drop=true the database is dropped by that job once the snapshot succeeded.
+    from app.services import backups, jobs
+
     connections.invalidate(ds.id)
     for link in db.scalars(
         select(SchemaLink).where(or_(SchemaLink.from_source_id == ds.id, SchemaLink.to_source_id == ds.id))
@@ -205,6 +216,13 @@ def delete_data_source(source_id: str, access: Admin, db: DbSession, request: Re
         database_name=ds.database_name,
         dropped=bool(drop),
     )
-    db.delete(ds)
+    if not backups.supported(ds):
+        # External databases are the provider's responsibility: nothing to snapshot, delete right away.
+        db.delete(ds)
+        db.commit()
+        return {"ok": True}
+    finalize = backups.soft_delete_source(db, ds, user_id=access.user.id, drop=bool(drop))
     db.commit()
-    return {"ok": True}
+    if finalize is not None:
+        jobs.dispatch(finalize.id)
+    return {"ok": True, "job": jobs.job_out(finalize)} if finalize is not None else {"ok": True}

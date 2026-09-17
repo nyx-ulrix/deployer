@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { Database, FileJson, Leaf, Plus, Table2 } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
+import { Database, FileJson, History, Leaf, Plus, Table2 } from "lucide-react";
 import { useDataSources, useSchema } from "../../api/hooks";
 import type { DataSource, Entity } from "../../api/types";
 import { Button } from "../../components/ui/Button";
@@ -9,6 +9,7 @@ import { PageSpinner } from "../../components/ui/Spinner";
 import { Alert, EmptyState, ErrorState } from "../../components/ui/States";
 import { cn } from "../../lib/cn";
 import { engineLabel, formatNumber } from "../../lib/format";
+import { useDeviceNames } from "../devices/useDeviceNames";
 import { useProjectContext } from "../projects/project-context";
 import { CreateCollectionDialog } from "./CreateCollectionDialog";
 import { CreateTableDialog } from "./CreateTableDialog";
@@ -21,6 +22,7 @@ export function DataTab() {
   const schema = useSchema(project.id);
   const [params, setParams] = useSearchParams();
   const [creating, setCreating] = useState(false);
+  const deviceName = useDeviceNames(project.id, sources.data?.some((s) => s.device_id) ?? false);
 
   if (sources.isPending) return <PageSpinner />;
   if (sources.isError) return <ErrorState error={sources.error} onRetry={() => void sources.refetch()} />;
@@ -60,7 +62,8 @@ export function DataTab() {
         >
           {sources.data.map((s) => (
             <option key={s.id} value={s.id}>
-              {s.name} ({s.kind === "sql" ? "SQL" : "NoSQL"} · {engineLabel(s.engine)})
+              {s.name} ({s.kind === "sql" ? "SQL" : "NoSQL"} · {engineLabel(s.engine)}
+              {deviceName(s) ? ` · on ${deviceName(s)}` : ""})
             </option>
           ))}
         </Select>
@@ -114,6 +117,14 @@ export function DataTab() {
               <Button icon={<Plus className="size-4" />} onClick={() => setCreating(true)}>
                 {isSql ? "Create table" : "Create collection"}
               </Button>
+            )}
+            {source.mode === "managed" && (
+              <Link
+                to={`/projects/${project.id}/backups?source=${encodeURIComponent(source.id)}`}
+                className="inline-flex items-center gap-1.5 self-start px-1 text-sm text-accent hover:underline"
+              >
+                <History className="size-3.5" /> Versions &amp; backups
+              </Link>
             )}
           </>
         )}

@@ -38,7 +38,9 @@ def user_out(user: User) -> dict:
 def project_out(db: Session, project: Project, role: str) -> dict:
     counts = dict(
         db.execute(
-            select(DataSource.kind, func.count()).where(DataSource.project_id == project.id).group_by(DataSource.kind)
+            select(DataSource.kind, func.count())
+            .where(DataSource.project_id == project.id, DataSource.deleted_at.is_(None))
+            .group_by(DataSource.kind)
         ).all()
     )
     return {

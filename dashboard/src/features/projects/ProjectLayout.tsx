@@ -2,6 +2,7 @@ import { Link, Outlet, useParams } from "react-router-dom";
 import {
   ChevronLeft,
   Database,
+  History,
   KeyRound,
   LayoutDashboard,
   Network,
@@ -16,6 +17,7 @@ import { PageSpinner } from "../../components/ui/Spinner";
 import { ErrorState } from "../../components/ui/States";
 import { NavTabs } from "../../components/ui/Tabs";
 import { hasRole, ROLE_LABELS } from "../../lib/roles";
+import { JobsButton } from "../jobs/JobsDrawer";
 import type { ProjectOutletContext } from "./project-context";
 
 export function ProjectLayout() {
@@ -44,6 +46,7 @@ export function ProjectLayout() {
     { to: `${base}/databases`, label: "Databases", icon: <Database className={icon} /> },
     { to: `${base}/schema`, label: "Schema", icon: <Network className={icon} /> },
     { to: `${base}/data`, label: "Data", icon: <Table2 className={icon} /> },
+    { to: `${base}/backups`, label: "Backups", icon: <History className={icon} /> },
     { to: `${base}/members`, label: "Members", icon: <Users className={icon} /> },
     ...(hasRole(p.my_role, "admin")
       ? [
@@ -62,6 +65,9 @@ export function ProjectLayout() {
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <h1 className="min-w-0 truncate text-xl font-semibold tracking-tight sm:text-2xl">{p.name}</h1>
         <Badge tone={p.my_role === "owner" ? "accent" : "neutral"}>{ROLE_LABELS[p.my_role]}</Badge>
+        <div className="ml-auto">
+          <JobsButton project={p} />
+        </div>
       </div>
       <NavTabs items={tabs} className="mb-5" />
       <Outlet context={context} />

@@ -19,6 +19,11 @@ export function isApiError(e: unknown): e is ApiError {
   return e instanceof ApiError;
 }
 
+/** `503 device_offline`: the data source lives on a host device that isn't connected (DEVICES.md). */
+export function isDeviceOffline(e: unknown): boolean {
+  return e instanceof ApiError && e.code === "device_offline";
+}
+
 /** Human-readable message for any thrown value. */
 export function errorMessage(e: unknown): string {
   if (e instanceof ApiError) return e.message;

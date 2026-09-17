@@ -1,8 +1,27 @@
 import type { ReactNode } from "react";
-import { AlertTriangle, Inbox, Info } from "lucide-react";
+import { AlertTriangle, Inbox, Info, WifiOff } from "lucide-react";
 import { cn } from "../../lib/cn";
-import { errorMessage } from "../../api/client";
+import { errorMessage, isDeviceOffline } from "../../api/client";
 import { Button } from "./Button";
+
+const OFFLINE_HINT =
+  "This database lives on a host device that isn't connected right now. Everything else keeps working — make sure the PC is switched on and Deployer is running on it.";
+
+/** Friendly banner for device_offline errors; renders a normal danger alert for anything else. */
+export function ErrorAlert({ error, className }: { error: unknown; className?: string }) {
+  if (isDeviceOffline(error)) {
+    return (
+      <Alert tone="warning" title="The host device is offline" className={className}>
+        {OFFLINE_HINT}
+      </Alert>
+    );
+  }
+  return (
+    <Alert tone="danger" className={className}>
+      {errorMessage(error)}
+    </Alert>
+  );
+}
 
 export function EmptyState({
   icon,
@@ -45,6 +64,7 @@ export function ErrorState({
   onRetry?: () => void;
   className?: string;
 }) {
+  const offline = isDeviceOffline(error);
   return (
     <div
       role="alert"
@@ -53,11 +73,18 @@ export function ErrorState({
         className,
       )}
     >
-      <div className="mb-3 flex size-11 items-center justify-center rounded-full bg-danger-soft text-danger">
-        <AlertTriangle className="size-5" />
+      <div
+        className={cn(
+          "mb-3 flex size-11 items-center justify-center rounded-full",
+          offline ? "bg-warning-soft text-warning" : "bg-danger-soft text-danger",
+        )}
+      >
+        {offline ? <WifiOff className="size-5" /> : <AlertTriangle className="size-5" />}
       </div>
-      <h3 className="font-semibold">{title}</h3>
-      <p className="mt-1 max-w-md text-sm break-words text-muted">{errorMessage(error)}</p>
+      <h3 className="font-semibold">{offline ? "The host device is offline" : title}</h3>
+      <p className="mt-1 max-w-md text-sm break-words text-muted">
+        {offline ? OFFLINE_HINT : errorMessage(error)}
+      </p>
       {onRetry && (
         <Button className="mt-4" onClick={onRetry}>
           Try again

@@ -49,10 +49,11 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run typecheck
+      - run: npm run test -- --run
       - run: npm run build
 
   installer:
-    name: Installer (PowerShell parse + PSScriptAnalyzer)
+    name: Installer (PowerShell checks, dry run, DeployerSetup.exe)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -85,9 +86,41 @@ jobs:
           $results = Invoke-ScriptAnalyzer -Path installer -Recurse -Severity Error
           $results | Format-Table -AutoSize | Out-String -Width 200 | Write-Host
           if ($results) { exit 1 }
-      - name: Check shell script syntax
+      - name: Check shell script syntax (every tracked *.sh)
         shell: bash
-        run: bash -n installer/wsl/setup-engine.sh
+        run: |
+          set -e
+          for f in $(git ls-files '*.sh'); do bash -n "$f" && echo "OK  $f"; done
+      - name: install.ps1 -DryRun (read-only, prints progress markers)
+        shell: powershell
+        run: |
+          $out = powershell -NoProfile -ExecutionPolicy Bypass -File installer\install.ps1 -DryRun -NonInteractive | Out-String
+          $code = $LASTEXITCODE
+          Write-Host $out
+          if ($code -ne 0) { Write-Host "::error::install.ps1 -DryRun exited with $code"; exit 1 }
+          foreach ($marker in @('##deployer:step 1/10 ', '##deployer:step 10/10 ', '##deployer:check windows ', '##deployer:done url=')) {
+            if (-not $out.Contains($marker)) { Write-Host "::error::Missing progress marker '$marker'"; exit 1 }
+          }
+      - name: Build DeployerSetup.exe
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer\windows\build.ps1 -Repo "${{ github.repository }}"
+      - name: Self-test DeployerSetup.exe (renders every page, live dry run)
+        shell: powershell
+        run: |
+          $outDir = Join-Path $PWD 'dist\selftest'
+          $p = Start-Process -FilePath dist\DeployerSetup.selftest.exe -ArgumentList '/selftest', "`"$outDir`"" -PassThru
+          if (-not $p.WaitForExit(120000)) { Stop-Process -Id $p.Id -Force; Write-Host '::error::Self-test timed out'; exit 1 }
+          Get-Content (Join-Path $outDir 'selftest-report.txt')
+          if ($p.ExitCode -ne 0) { Write-Host "::error::Self-test failed (exit code $($p.ExitCode))"; exit 1 }
+      - name: Upload DeployerSetup.exe and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployer-setup
+          path: |
+            dist/DeployerSetup.exe
+            dist/selftest/
+          if-no-files-found: warn
 
   compose:
     name: Compose file
@@ -98,5 +131,7 @@ jobs:
         run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env.example config --quiet
       - name: Validate without MongoDB (CPU without AVX)
         run: COMPOSE_PROFILES= MANAGED_MONGODB_ENABLED=false docker compose -f deploy/docker-compose.yml --env-file deploy/.env.example config --quiet
+      - name: Validate development overrides
+        run: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml --env-file deploy/.env.example config --quiet
       - name: Validate Caddyfile
         run: docker run --rm -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

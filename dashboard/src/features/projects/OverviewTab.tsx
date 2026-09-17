@@ -1,12 +1,14 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Database, KeyRound, Leaf, Network, Table2, Users } from "lucide-react";
+import { ArrowRight, Database, History, KeyRound, Leaf, Network, Table2, Users } from "lucide-react";
 import { useDataSources } from "../../api/hooks";
 import { Card } from "../../components/ui/States";
 import { Spinner } from "../../components/ui/Spinner";
 import { formatDate } from "../../lib/format";
 import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "../../lib/roles";
 import { EngineBadge, KindBadge, StatusBadge } from "../databases/SourceBadges";
+import { DeviceBadge } from "../devices/DeviceBits";
+import { useDeviceNames } from "../devices/useDeviceNames";
 import { useProjectContext } from "./project-context";
 
 function QuickLink({ to, icon, title, description }: { to: string; icon: ReactNode; title: string; description: string }) {
@@ -31,6 +33,7 @@ export function OverviewTab() {
   const { project, can } = useProjectContext();
   const sources = useDataSources(project.id);
   const base = `/projects/${project.id}`;
+  const deviceName = useDeviceNames(project.id, sources.data?.some((s) => s.device_id) ?? false);
   const sqlCount = sources.data?.filter((s) => s.kind === "sql").length ?? project.data_source_counts.sql;
   const nosqlCount = sources.data?.filter((s) => s.kind === "nosql").length ?? project.data_source_counts.nosql;
 
@@ -89,6 +92,7 @@ export function OverviewTab() {
                   <span className="min-w-0 flex-1 truncate font-medium">{s.name}</span>
                   <KindBadge kind={s.kind} />
                   <EngineBadge engine={s.engine} />
+                  <DeviceBadge name={deviceName(s)} />
                   <StatusBadge status={s.status} message={s.status_message} />
                 </li>
               ))}
@@ -111,6 +115,12 @@ export function OverviewTab() {
           icon={<Table2 className="size-4.5" />}
           title="Data"
           description="Browse and edit rows and documents."
+        />
+        <QuickLink
+          to={`${base}/backups`}
+          icon={<History className="size-4.5" />}
+          title="Backups"
+          description="Versions, compare and restore to any point in time."
         />
         <QuickLink
           to={`${base}/members`}

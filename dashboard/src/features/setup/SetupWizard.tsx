@@ -1,7 +1,7 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArchiveRestore, Check, Globe, KeyRound, PartyPopper, ShieldCheck, UserPlus } from "lucide-react";
+import { ArchiveRestore, Check, Globe, HardDrive, KeyRound, PartyPopper, ShieldCheck, UserPlus } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import { useInstanceSettings, useSetupStatus } from "../../api/hooks";
@@ -17,8 +17,9 @@ import { cn } from "../../lib/cn";
 import { MIN_PASSPHRASE, MIN_PASSWORD } from "../../lib/constants";
 import { OAuthProviderCard } from "../settings/OAuthProviderCard";
 import { ImportSummaryList } from "../settings/ImportSummaryList";
+import { EnrollDeviceFlow } from "../devices/EnrollDeviceFlow";
 
-type Step = "choose" | "restore" | "owner" | "url" | "providers" | "done";
+type Step = "choose" | "restore" | "device" | "owner" | "url" | "providers" | "done";
 
 const STEPS: { key: Step; label: string }[] = [
   { key: "choose", label: "Start" },
@@ -29,7 +30,7 @@ const STEPS: { key: Step; label: string }[] = [
 ];
 
 function Stepper({ step }: { step: Step }) {
-  const current = STEPS.findIndex((s) => s.key === (step === "restore" ? "choose" : step));
+  const current = STEPS.findIndex((s) => s.key === (step === "restore" || step === "device" ? "choose" : step));
   return (
     <ol className="mb-6 flex items-center gap-1.5 overflow-x-auto text-xs sm:gap-2">
       {STEPS.map((s, i) => (
@@ -97,6 +98,7 @@ export function SetupWizard() {
       <Stepper step={active} />
       {active === "choose" && <ChooseStep onChoose={setStep} />}
       {active === "restore" && <RestoreStep onBack={() => setStep("choose")} />}
+      {active === "device" && <DeviceStep onBack={() => setStep("choose")} />}
       {active === "owner" && <OwnerStep onBack={() => setStep("choose")} onDone={() => setStep("url")} />}
       {active === "url" && <PublicUrlStep onDone={() => setStep("providers")} />}
       {active === "providers" && <ProvidersStep onBack={() => setStep("url")} onDone={() => setStep("done")} />}
@@ -142,7 +144,31 @@ function ChooseStep({ onChoose }: { onChoose: (s: Step) => void }) {
           "Moving from another device? Upload an instance export (.json) to restore all users, projects and database data.",
           "restore",
         )}
+        {option(
+          <HardDrive className="size-5" />,
+          "Make this PC a host device",
+          "Already use Deployer on another PC? Attach this one so projects there can host databases here.",
+          "device",
+        )}
       </div>
+    </>
+  );
+}
+
+function DeviceStep({ onBack }: { onBack: () => void }) {
+  return (
+    <>
+      <StepHeader icon={<HardDrive className="size-5" />} title="Make this PC a host device">
+        <p>
+          This PC will run databases for your <strong>main Deployer</strong>. You'll manage everything from the main
+          Deployer's dashboard; this one will only show the device's status.
+        </p>
+        <p>
+          The device connects out to the main Deployer, so no port forwarding is needed — this PC just has to be able
+          to open its URL.
+        </p>
+      </StepHeader>
+      <EnrollDeviceFlow onCancel={onBack} />
     </>
   );
 }

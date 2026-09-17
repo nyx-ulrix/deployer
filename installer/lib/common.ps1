@@ -2,9 +2,11 @@
 # Windows PowerShell 5.1 compatible. Keep this file ASCII-only (5.1 reads BOM-less files as ANSI).
 
 # Bumped when install.ps1 / deployer.ps1 need functions that older copies of this file lack.
-$script:DeployerLibVersion = 1
+$script:DeployerLibVersion = 2
 $script:DeployerDistro = 'deployer'
 $script:DeployerTaskName = 'Deployer'
+$script:DeployerTrayTaskName = 'Deployer Tray'
+$script:DeployerControlExe = 'DeployerControl.exe'
 $script:DeployerFirewallRule = 'Deployer-HTTP'
 $script:DeployerLogFile = $null
 $script:DeployerQuiet = $false
@@ -67,6 +69,12 @@ function Write-DeployerError {
     param([string]$Message)
     Write-DeployerLog 'ERROR' $Message
     Write-Host "    [x] $Message" -ForegroundColor Red
+}
+
+function Write-DeployerMarker {
+    # Machine-readable progress line for DeployerSetup.exe, e.g. "##deployer:step 3/10 Installing Docker".
+    param([string]$Text)
+    Write-Host "##deployer:$Text"
 }
 
 function Read-DeployerYesNo {
@@ -409,6 +417,31 @@ function Stop-DeployerKeepAlive {
     }
 }
 
+function Test-DeployerWslDistroRunning {
+    # Read-only: unlike `wsl -d deployer ...` this never boots the distro.
+    param([string]$Name = $script:DeployerDistro)
+    $r = Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('--list', '--running', '--quiet') -TimeoutSeconds 60
+    if ($r.ExitCode -ne 0) { return $false }
+    foreach ($line in ($r.StdOut -split "`r?`n")) {
+        if ($line.Trim() -ieq $Name) { return $true }
+    }
+    return $false
+}
+
+function Test-DeployerMirroredSupported {
+    # WSL mirrored networking needs Windows 11 22H2 (build 22621) and WSL 2.0+.
+    $build = [int][Environment]::OSVersion.Version.Build
+    if ($build -lt 22621) { return $false }
+    $ver = Get-DeployerWslVersion
+    return ($null -ne $ver -and $ver -ge [version]'2.0.0')
+}
+
+function Test-DeployerMirroredEnabled {
+    $cfg = Join-Path $env:USERPROFILE '.wslconfig'
+    if (-not (Test-Path -LiteralPath $cfg)) { return $false }
+    return ((Get-Content -LiteralPath $cfg -Raw) -match '(?im)^\s*networkingMode\s*=\s*mirrored')
+}
+
 function Get-DeployerWslIp {
     $r = Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('-d', $script:DeployerDistro, '-u', 'root', '--exec', 'hostname', '-I') -TimeoutSeconds 60
     if ($r.ExitCode -ne 0) { return $null }
@@ -564,13 +597,43 @@ function Wait-DeployerHealth {
     return $null
 }
 
+function Get-DeployerComposeServices {
+    <#
+      Returns one object per container of the stack: Service, State (running/exited/...), Health
+      (healthy/unhealthy/starting or empty) and Status text. Handles both the JSON array printed by
+      older Compose v2 releases and the one-object-per-line output of newer ones.
+    #>
+    param([string]$InstallDir, [string]$Runtime)
+    $r = Invoke-DeployerComposeCapture -InstallDir $InstallDir -Runtime $Runtime -Arguments @('ps', '--all', '--format', 'json') -TimeoutSeconds 90
+    if ($r.ExitCode -ne 0) { return @() }
+    $text = $r.StdOut.Trim()
+    if (-not $text) { return @() }
+    $items = @()
+    if ($text.StartsWith('[')) {
+        $items = @($text | ConvertFrom-Json)
+    } else {
+        foreach ($line in ($text -split "`r?`n")) {
+            if ($line.Trim().StartsWith('{')) { $items += ($line | ConvertFrom-Json) }
+        }
+    }
+    foreach ($i in $items) {
+        [pscustomobject]@{
+            Service = [string]$i.Service
+            State   = [string]$i.State
+            Health  = [string]$i.Health
+            Status  = [string]$i.Status
+        }
+    }
+}
+
 function Show-DeployerDiagnostics {
     param([string]$InstallDir, [string]$Runtime)
     Write-DeployerWarn 'Container status:'
     $ps = Invoke-DeployerComposeCapture -InstallDir $InstallDir -Runtime $Runtime -Arguments @('ps', '--all') -TimeoutSeconds 120
     Write-Host $ps.Output
-    Write-DeployerWarn 'Last log lines (api, caddy, mariadb, mongodb, redis):'
-    $logs = Invoke-DeployerComposeCapture -InstallDir $InstallDir -Runtime $Runtime -Arguments @('logs', '--no-color', '--tail', '40', 'api', 'caddy', 'mariadb', 'redis') -TimeoutSeconds 120
+    # mongodb is behind a compose profile: naming it here fails on installs without AVX.
+    Write-DeployerWarn 'Last log lines (api, worker, caddy, mariadb, redis):'
+    $logs = Invoke-DeployerComposeCapture -InstallDir $InstallDir -Runtime $Runtime -Arguments @('logs', '--no-color', '--tail', '40', 'api', 'worker', 'caddy', 'mariadb', 'redis') -TimeoutSeconds 120
     Write-Host $logs.Output
     Write-DeployerLog 'DIAG' ($ps.Output + "`n" + $logs.Output)
 }
@@ -724,7 +787,8 @@ function Copy-DeployerFiles {
         [System.IO.File]::WriteAllText($caddy, $text, (New-Object System.Text.UTF8Encoding($false)))
     }
     $excludeDirs = @('node_modules', '.venv', 'venv', 'dist', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache')
-    foreach ($component in @('api', 'dashboard')) {
+    # deploy\ is a build context too (e.g. deploy\tunnel for the tunnel sidecar).
+    foreach ($component in @('api', 'dashboard', 'deploy')) {
         $from = Join-Path $SourceRoot $component
         $to = Join-Path $InstallDir "src\$component"
         if (Test-Path -LiteralPath $from) {
@@ -897,6 +961,113 @@ function Remove-DeployerFirewallRule {
     }
 }
 
+function Get-DeployerBindAddress {
+    # Host address the caddy port is published on (DEPLOYER_BIND in .env).
+    param([bool]$Lan, [string]$Runtime, [bool]$UseMirrored)
+    if ($Lan) { return '0.0.0.0' }
+    if ($Runtime -eq 'wsl-engine' -and -not $UseMirrored) {
+        # WSL NAT: the distro's own IP is only reachable from this PC; 0.0.0.0 keeps localhost forwarding reliable.
+        if (Test-DeployerMirroredEnabled) { return '127.0.0.1' }
+        return '0.0.0.0'
+    }
+    return '127.0.0.1'
+}
+
+function Enable-DeployerLanAccess {
+    <#
+      Firewall rule (Private profile) plus, for the WSL runtime, mirrored networking or a netsh
+      port forward. Returns the mode: direct, mirrored or portproxy.
+    #>
+    param([string]$Runtime, [int]$Port, [bool]$UseMirrored)
+    Write-DeployerInfo 'Adding a Windows Firewall rule (Private networks only)...'
+    Add-DeployerFirewallRule -Port $Port
+    if ($Runtime -ne 'wsl-engine') { return 'direct' }
+    if ($UseMirrored) {
+        $cfg = Join-Path $env:USERPROFILE '.wslconfig'
+        if (Test-DeployerMirroredEnabled) {
+            Write-DeployerOk 'WSL mirrored networking is already enabled'
+            return 'mirrored'
+        }
+        $lines = New-Object System.Collections.Generic.List[string]
+        if (Test-Path -LiteralPath $cfg) {
+            $backup = "$cfg.deployer-backup-$(Get-Date -Format 'yyyyMMddHHmmss')"
+            Copy-Item -LiteralPath $cfg -Destination $backup
+            Write-DeployerInfo "Backed up $cfg to $backup"
+            foreach ($l in [System.IO.File]::ReadAllLines($cfg)) { $lines.Add($l) }
+        }
+        $section = -1
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*\[wsl2\]\s*$') { $section = $i; break }
+        }
+        if ($section -lt 0) {
+            if ($lines.Count -gt 0) { $lines.Add('') }
+            $lines.Add('[wsl2]')
+            $lines.Add('networkingMode=mirrored')
+        } else {
+            $replaced = $false
+            for ($j = $section + 1; $j -lt $lines.Count -and $lines[$j] -notmatch '^\s*\['; $j++) {
+                if ($lines[$j] -match '^\s*networkingMode\s*=') { $lines[$j] = 'networkingMode=mirrored'; $replaced = $true }
+            }
+            if (-not $replaced) { $lines.Insert($section + 1, 'networkingMode=mirrored') }
+        }
+        [System.IO.File]::WriteAllText($cfg, (($lines.ToArray() -join "`r`n") + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+        Write-DeployerInfo 'Restarting WSL to switch to mirrored networking...'
+        Stop-DeployerKeepAlive
+        [void](Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('--shutdown') -TimeoutSeconds 120)
+        [void](Wait-DeployerDockerEngine -Runtime 'wsl-engine' -TimeoutSeconds 240)
+        return 'mirrored'
+    }
+    [void](Update-DeployerPortProxy -Port $Port)
+    return 'portproxy'
+}
+
+function Disable-DeployerLanAccess {
+    param([int]$Port)
+    Remove-DeployerFirewallRule
+    Remove-DeployerPortProxy -Port $Port
+}
+
+# ------------------------------------------------------------------------------------------------
+# Power (keep awake)
+# ------------------------------------------------------------------------------------------------
+
+function Get-DeployerAcPowerTimeoutMinutes {
+    # Reads the current AC timeout of STANDBYIDLE / HIBERNATEIDLE. The labels are localized, so rely
+    # on the fact that the last two hex values printed are the AC and DC indexes (in seconds).
+    param([ValidateSet('STANDBYIDLE', 'HIBERNATEIDLE')][string]$Setting)
+    $powercfg = Join-Path $env:SystemRoot 'System32\powercfg.exe'
+    $r = Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/query', 'SCHEME_CURRENT', 'SUB_SLEEP', $Setting) -TimeoutSeconds 30
+    if ($r.ExitCode -ne 0) { return $null }
+    $hex = @([regex]::Matches($r.StdOut, ':\s*0x([0-9a-fA-F]{8})\s*$', 'Multiline') | ForEach-Object { $_.Groups[1].Value })
+    if ($hex.Count -lt 2) { return $null }
+    return [int]([Convert]::ToUInt32($hex[$hex.Count - 2], 16) / 60)
+}
+
+function Set-DeployerKeepAwake {
+    <#
+      Enabled: remembers the current AC sleep/hibernate timeouts, then sets both to "never".
+      Disabled: restores the remembered values (Windows defaults if none were saved).
+      Returns the table to store as runtime.json "keepAwake".
+    #>
+    param([bool]$Enabled, $Previous = $null)
+    $powercfg = Join-Path $env:SystemRoot 'System32\powercfg.exe'
+    if ($Enabled) {
+        $wasEnabled = [bool](Get-DeployerStateValue $Previous 'enabled' $false)
+        $standby = if ($wasEnabled) { Get-DeployerStateValue $Previous 'standbyAcMinutes' 30 } else { Get-DeployerAcPowerTimeoutMinutes -Setting STANDBYIDLE }
+        $hibernate = if ($wasEnabled) { Get-DeployerStateValue $Previous 'hibernateAcMinutes' 180 } else { Get-DeployerAcPowerTimeoutMinutes -Setting HIBERNATEIDLE }
+        [void](Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/change', 'standby-timeout-ac', '0'))
+        [void](Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/change', 'hibernate-timeout-ac', '0'))
+        Write-DeployerOk 'Sleep and hibernate disabled while on AC power'
+        return @{ enabled = $true; standbyAcMinutes = $standby; hibernateAcMinutes = $hibernate }
+    }
+    $standby = Get-DeployerStateValue $Previous 'standbyAcMinutes' 30
+    $hibernate = Get-DeployerStateValue $Previous 'hibernateAcMinutes' 180
+    [void](Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/change', 'standby-timeout-ac', "$standby"))
+    [void](Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/change', 'hibernate-timeout-ac', "$hibernate"))
+    Write-DeployerOk "Sleep restored on AC power (sleep after $standby min, hibernate after $hibernate min; 0 = never)"
+    return @{ enabled = $false }
+}
+
 # ------------------------------------------------------------------------------------------------
 # Autostart + PATH
 # ------------------------------------------------------------------------------------------------
@@ -915,13 +1086,33 @@ function Register-DeployerTask {
     Register-ScheduledTask -TaskName $script:DeployerTaskName -Action $action -Trigger $trigger `
         -Principal $principal -Settings $settings -Force `
         -Description 'Starts Deployer (docker compose stack) when you sign in.' | Out-Null
+
+    # Deployer Control (DeployerSetup.exe copied into the install dir) shows a tray icon at sign-in.
+    # A task with the highest run level avoids a UAC prompt at every sign-in.
+    $exe = Join-Path $InstallDir $script:DeployerControlExe
+    if (Test-Path -LiteralPath $exe) {
+        $trayAction = New-ScheduledTaskAction -Execute $exe -Argument '/tray'
+        $trayTrigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+        $trayTrigger.Delay = 'PT30S'
+        $traySettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+            -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+        Register-ScheduledTask -TaskName $script:DeployerTrayTaskName -Action $trayAction -Trigger $trayTrigger `
+            -Principal $principal -Settings $traySettings -Force `
+            -Description 'Shows the Deployer Control tray icon when you sign in.' | Out-Null
+    }
+}
+
+function Test-DeployerTaskRegistered {
+    return ($null -ne (Get-ScheduledTask -TaskName $script:DeployerTaskName -ErrorAction SilentlyContinue))
 }
 
 function Unregister-DeployerTask {
-    $task = Get-ScheduledTask -TaskName $script:DeployerTaskName -ErrorAction SilentlyContinue
-    if ($task) {
-        Stop-ScheduledTask -TaskName $script:DeployerTaskName -ErrorAction SilentlyContinue
-        Unregister-ScheduledTask -TaskName $script:DeployerTaskName -Confirm:$false
+    foreach ($name in @($script:DeployerTaskName, $script:DeployerTrayTaskName)) {
+        $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+        if ($task) {
+            if ($name -eq $script:DeployerTaskName) { Stop-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue }
+            Unregister-ScheduledTask -TaskName $name -Confirm:$false
+        }
     }
 }
 

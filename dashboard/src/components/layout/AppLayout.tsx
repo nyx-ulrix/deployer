@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
-import { ArrowLeftRight, ChevronDown, FolderKanban, LogOut, Server, UserRound } from "lucide-react";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { ArrowLeftRight, ChevronDown, FolderKanban, Globe, HardDrive, History, LogOut, Server, UserRound } from "lucide-react";
 import { useAuth } from "../../auth/auth-context";
 import { cn } from "../../lib/cn";
 import { Menu, MenuItem } from "../ui/Menu";
@@ -10,7 +10,15 @@ import { ThemeToggle } from "./ThemeToggle";
 export function AppLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const name = user?.display_name || user?.email || "";
+  const instanceSection = ["/settings/instance", "/settings/backups", "/settings/remote-access"].some((p) =>
+    pathname.startsWith(p),
+  );
+  const go = (close: () => void, to: string) => {
+    close();
+    navigate(to);
+  };
 
   return (
     <div className="flex min-h-dvh flex-col">
@@ -33,6 +41,17 @@ export function AppLayout() {
               Projects
             </NavLink>
             <NavLink
+              to="/settings/devices"
+              className={({ isActive }) =>
+                cn(
+                  "rounded-lg px-3 py-1.5 text-sm font-medium",
+                  isActive ? "bg-surface-2 text-fg" : "text-muted hover:text-fg",
+                )
+              }
+            >
+              Devices
+            </NavLink>
+            <NavLink
               to="/settings/transfer"
               className={({ isActive }) =>
                 cn(
@@ -46,10 +65,10 @@ export function AppLayout() {
             {user?.is_instance_owner && (
               <NavLink
                 to="/settings/instance"
-                className={({ isActive }) =>
+                className={() =>
                   cn(
                     "rounded-lg px-3 py-1.5 text-sm font-medium",
-                    isActive ? "bg-surface-2 text-fg" : "text-muted hover:text-fg",
+                    instanceSection ? "bg-surface-2 text-fg" : "text-muted hover:text-fg",
                   )
                 }
               >
@@ -99,6 +118,9 @@ export function AppLayout() {
                     >
                       Account settings
                     </MenuItem>
+                    <MenuItem icon={<HardDrive />} onClick={() => go(close, "/settings/devices")}>
+                      Devices
+                    </MenuItem>
                     <MenuItem
                       icon={<ArrowLeftRight />}
                       onClick={() => {
@@ -109,15 +131,26 @@ export function AppLayout() {
                       Export &amp; import
                     </MenuItem>
                     {user?.is_instance_owner && (
-                      <MenuItem
-                        icon={<Server />}
-                        onClick={() => {
-                          close();
-                          navigate("/settings/instance");
-                        }}
-                      >
-                        Instance settings
-                      </MenuItem>
+                      <>
+                        <div className="mx-2.5 mt-1.5 mb-1 border-t border-border pt-1.5 text-[11px] font-semibold tracking-wide text-muted uppercase">
+                          Instance
+                        </div>
+                        <MenuItem
+                          icon={<Server />}
+                          onClick={() => {
+                            close();
+                            navigate("/settings/instance");
+                          }}
+                        >
+                          Instance settings
+                        </MenuItem>
+                        <MenuItem icon={<History />} onClick={() => go(close, "/settings/backups")}>
+                          Backups
+                        </MenuItem>
+                        <MenuItem icon={<Globe />} onClick={() => go(close, "/settings/remote-access")}>
+                          Domains &amp; remote access
+                        </MenuItem>
+                      </>
                     )}
                   </div>
                   <div className="border-t border-border pt-1">

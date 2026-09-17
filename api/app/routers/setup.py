@@ -25,7 +25,15 @@ def setup_status(db: DbSession) -> dict:
         "public_url": public_url(db),
         "providers": {p: oauth_app(db, p).configured for p in ("google", "github")},
         "allow_signup": allow_signup(db),
+        "device_mode": _device_mode(db),
     }
+
+
+def _device_mode(db) -> str:
+    """docs/DEVICES.md: "host" when this installation is attached to a main Deployer."""
+    from app.services.device_host import device_mode
+
+    return device_mode(db)
 
 
 class OwnerIn(BaseModel):

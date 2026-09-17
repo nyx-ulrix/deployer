@@ -35,7 +35,11 @@ export function SetupGate() {
       </FullPage>
     );
   }
-  if (!status.data.initialized && location.pathname !== "/setup") {
+  // A host device has no users of its own: its dashboard only shows the device status page.
+  if (status.data.device_mode === "host") {
+    return location.pathname === "/device" ? <Outlet /> : <Navigate to="/device" replace />;
+  }
+  if (!status.data.initialized && location.pathname !== "/setup" && location.pathname !== "/device") {
     return <Navigate to="/setup" replace />;
   }
   return <Outlet />;

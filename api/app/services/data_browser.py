@@ -11,6 +11,7 @@ import base64
 import datetime as dt
 import decimal
 import json
+import re
 import uuid
 from typing import Any
 
@@ -282,13 +283,20 @@ def _collection(database: Any, name: str) -> Any:
     return database[name]
 
 
+_INT_ID_RE = re.compile(r"-?\d{1,19}")
+
+
 def id_candidates(doc_id: str) -> list[Any]:
+    """Possible `_id` values for the string form used in URLs: ObjectId hex, then a 64-bit integer
+    (documents are often keyed by numbers), then the raw string."""
     out: list[Any] = []
     if ObjectId.is_valid(doc_id) and len(doc_id) == 24:
         try:
             out.append(ObjectId(doc_id))
         except InvalidId:
             pass
+    if _INT_ID_RE.fullmatch(doc_id) and -(2**63) <= int(doc_id) < 2**63:
+        out.append(int(doc_id))
     out.append(doc_id)
     return out
 

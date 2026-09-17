@@ -13,6 +13,8 @@ export type DialogProps = {
   size?: "sm" | "md" | "lg" | "xl";
   /** Prevent closing by backdrop click / Escape (e.g. while saving). */
   dismissible?: boolean;
+  /** "right" renders a full-height side drawer (bottom sheet on phones). */
+  placement?: "center" | "right";
 };
 
 const sizes = { sm: "sm:max-w-md", md: "sm:max-w-lg", lg: "sm:max-w-2xl", xl: "sm:max-w-4xl" };
@@ -28,6 +30,7 @@ export function Dialog({
   footer,
   size = "md",
   dismissible = true,
+  placement = "center",
 }: DialogProps) {
   const titleId = useId();
   const descId = useId();
@@ -87,7 +90,12 @@ export function Dialog({
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
+    <div
+      className={cn(
+        "fixed inset-0 z-50 flex items-end justify-center",
+        placement === "right" ? "sm:items-stretch sm:justify-end" : "sm:items-center sm:p-4",
+      )}
+    >
       <div
         className="absolute inset-0 bg-black/50 backdrop-blur-[1px]"
         aria-hidden="true"
@@ -101,7 +109,8 @@ export function Dialog({
         aria-describedby={description ? descId : undefined}
         tabIndex={-1}
         className={cn(
-          "relative flex max-h-[92dvh] w-full flex-col rounded-t-2xl border border-border bg-surface shadow-2xl outline-none sm:rounded-2xl",
+          "relative flex max-h-[92dvh] w-full flex-col rounded-t-2xl border border-border bg-surface shadow-2xl outline-none",
+          placement === "right" ? "sm:max-h-none sm:rounded-none sm:border-y-0 sm:border-r-0" : "sm:rounded-2xl",
           sizes[size],
         )}
       >

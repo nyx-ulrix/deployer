@@ -100,7 +100,9 @@ def test_patch_requires_admin(client, owner, make_user, make_project, auth_heade
     assert resp.json()["description"] is None and resp.json()["name"] == "Renamed"
 
 
-def test_delete(client, owner, owner_headers, make_user, make_project, auth_headers, fake_provisioning, db):
+def test_delete(
+    client, owner, owner_headers, make_user, make_project, auth_headers, fake_provisioning, db, monkeypatch
+):
     admin = make_user()
     created = client.post(
         "/v1/projects", json={"name": "Doomed", "provision": {"sql": True}}, headers=owner_headers
@@ -120,6 +122,20 @@ def test_delete(client, owner, owner_headers, make_user, make_project, auth_head
     resp = client.delete(f"/v1/projects/{pid}?confirm=doomed", headers=owner_headers)
     assert resp.status_code == 200, resp.text
     assert resp.json() == {"ok": True}
+    # docs/BACKUPS.md: the final snapshot and the drop run as a job that outlives the project rows.
+    from app.models import Job
+    from app.services import executors, jobs
+
+    job = db.query(Job).filter_by(type="source.finalize_delete").one()
+    assert job.project_id is None and job.params["detached"]["name"] == "main-sql"
+    assert fake_provisioning.dropped == []
+
+    class FakeExecutor:
+        def snapshot(self, **kwargs):
+            return {"size_bytes": 1, "sha256": "0" * 64, "consistent_point": {}, "row_counts": {}}
+
+    monkeypatch.setattr(executors, "executor_for", lambda _host: FakeExecutor())
+    assert jobs.run_queued() == [(job.id, "succeeded")]
     assert fake_provisioning.dropped == [(pid, "sql", "main-sql")]
     db.expire_all()
     assert db.get(Project, pid) is None

@@ -11,6 +11,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -158,6 +159,12 @@ class DataSource(Base):
     status: Mapped[str] = mapped_column(String(10), default="unknown", nullable=False)  # ok | error | unknown
     status_message: Mapped[str | None] = mapped_column(Text)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Host device for managed sources; NULL = the main server. See docs/DEVICES.md.
+    device_id: Mapped[str | None] = mapped_column(ForeignKey("devices.id", ondelete="SET NULL"), index=True)
+    # Soft delete ("Recently deleted", docs/BACKUPS.md). While deleted, `name` is replaced by a unique
+    # placeholder so the name can be reused, and the original is kept in `deleted_name`.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    deleted_name: Mapped[str | None] = mapped_column(String(63))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -206,3 +213,180 @@ class AuditLog(Base):
     user_agent: Mapped[str | None] = mapped_column(String(255))
     details: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+
+
+# --- Host devices (docs/DEVICES.md) ---------------------------------------------------------------
+
+
+class Device(Base):
+    __tablename__ = "devices"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(10), default="active", nullable=False)  # active | disabled
+    roles: Mapped[list] = mapped_column(JSON, nullable=False)  # ["database_host", "backup_storage"]
+    # my_projects | selected
+    sharing_mode: Mapped[str] = mapped_column(String(12), default="my_projects", nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    hostname: Mapped[str | None] = mapped_column(String(255))
+    os: Mapped[str | None] = mapped_column(String(120))
+    version: Mapped[str | None] = mapped_column(String(32))
+    capabilities: Mapped[dict | None] = mapped_column(JSON)
+    metrics: Mapped[dict | None] = mapped_column(JSON)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class DeviceEnrollment(Base):
+    __tablename__ = "device_enrollments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_code: Mapped[str] = mapped_column(String(9), unique=True, nullable=False)  # ABCD-EFGH
+    poll_secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    hostname: Mapped[str | None] = mapped_column(String(255))
+    os: Mapped[str | None] = mapped_column(String(120))
+    version: Mapped[str | None] = mapped_column(String(32))
+    capabilities: Mapped[dict | None] = mapped_column(JSON)
+    # pending | approved | denied | expired | consumed
+    status: Mapped[str] = mapped_column(String(10), default="pending", nullable=False)
+    approved_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    device_id: Mapped[str | None] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"))
+    # Raw device token encrypted with MASTER_KEY; kept only between approval and the device's poll.
+    device_token_encrypted: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class DeviceProjectGrant(Base):
+    __tablename__ = "device_project_grants"
+    __table_args__ = (UniqueConstraint("device_id", "project_id", name="uq_device_project"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True, nullable=False)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+# --- Jobs, backups & recovery (docs/BACKUPS.md) ---------------------------------------------------
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)  # backup.snapshot, restore, ...
+    status: Mapped[str] = mapped_column(String(10), default="queued", index=True, nullable=False)
+    progress: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    message: Mapped[str | None] = mapped_column(Text)
+    params: Mapped[dict | None] = mapped_column(JSON)
+    result: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text)
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    data_source_id: Mapped[str | None] = mapped_column(ForeignKey("data_sources.id", ondelete="SET NULL"), index=True)
+    device_id: Mapped[str | None] = mapped_column(ForeignKey("devices.id", ondelete="SET NULL"), index=True)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class BackupPolicy(Base):
+    __tablename__ = "backup_policies"
+
+    data_source_id: Mapped[str] = mapped_column(ForeignKey("data_sources.id", ondelete="CASCADE"), primary_key=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    schedule: Mapped[str] = mapped_column(String(10), default="hourly", nullable=False)  # hourly | every_6h | daily
+    keep_hourly: Mapped[int] = mapped_column(Integer, default=24, nullable=False)
+    keep_daily: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
+    keep_weekly: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
+    keep_monthly: Mapped[int] = mapped_column(Integer, default=12, nullable=False)
+    pitr_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    pitr_window_days: Mapped[int] = mapped_column(Integer, default=7, nullable=False)
+    copy_to_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    copy_to_device_id: Mapped[str | None] = mapped_column(ForeignKey("devices.id", ondelete="SET NULL"))
+    safety_snapshots: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class Backup(Base):
+    __tablename__ = "backups"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    # NULL for platform (metadata DB) backups. No FK: backups outlive purged sources until pruned.
+    data_source_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    project_id: Mapped[str | None] = mapped_column(String(36), index=True)
+    scope: Mapped[str] = mapped_column(String(10), default="source", nullable=False)  # source | platform
+    engine: Mapped[str | None] = mapped_column(String(20))
+    # scheduled | manual | pre_restore | pre_drop | pre_delete | pre_move | final
+    trigger: Mapped[str] = mapped_column(String(12), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), default="running", nullable=False)  # running|succeeded|failed
+    label: Mapped[str | None] = mapped_column(String(120))
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # {gtid, binlog_file, binlog_pos} for MariaDB | {oplog_ts_start, oplog_ts_end} for MongoDB
+    consistent_point: Mapped[dict | None] = mapped_column(JSON)
+    schema_snapshot: Mapped[dict | None] = mapped_column(JSON)  # SourceSchema at snapshot time
+    row_counts: Mapped[dict | None] = mapped_column(JSON)
+    error: Mapped[str | None] = mapped_column(Text)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+    verify_status: Mapped[str | None] = mapped_column(String(10))  # ok | failed
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_by_id: Mapped[str | None] = mapped_column(String(36))
+    job_id: Mapped[str | None] = mapped_column(String(36))
+
+
+class BackupLogSegment(Base):
+    __tablename__ = "backup_log_segments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    data_source_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)  # binlog | oplog
+    start_at: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    end_at: Mapped[datetime] = mapped_column(DateTime, index=True, nullable=False)
+    start_point: Mapped[dict | None] = mapped_column(JSON)
+    end_point: Mapped[dict | None] = mapped_column(JSON)
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class BackupCopy(Base):
+    __tablename__ = "backup_copies"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    artifact_type: Mapped[str] = mapped_column(String(10), nullable=False)  # backup | segment
+    artifact_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    location: Mapped[str] = mapped_column(String(10), nullable=False)  # local | device | primary
+    device_id: Mapped[str | None] = mapped_column(String(36), index=True)  # where the bytes live; NULL = main server
+    ref: Mapped[str] = mapped_column(String(500), nullable=False)  # path inside that location's backup store
+    size_bytes: Mapped[int | None] = mapped_column(BigInteger)
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(10), default="pending", nullable=False)  # pending | ok | missing
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+# --- Remote access & domains (docs/REMOTE_ACCESS.md) ----------------------------------------------
+
+
+class Domain(Base):
+    __tablename__ = "domains"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    hostname: Mapped[str] = mapped_column(String(253), unique=True, nullable=False)
+    provider: Mapped[str] = mapped_column(String(20), default="cloudflare", nullable=False)
+    zone_id: Mapped[str | None] = mapped_column(String(64))
+    zone_name: Mapped[str | None] = mapped_column(String(253))
+    dns_record_id: Mapped[str | None] = mapped_column(String(64))
+    target_type: Mapped[str] = mapped_column(String(12), default="dashboard", nullable=False)  # dashboard | project
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    status: Mapped[str] = mapped_column(String(10), default="pending", nullable=False)  # pending | active | error
+    status_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)

@@ -5,12 +5,17 @@ from app.errors import install_error_handlers
 from app.routers import (
     api_keys,
     auth,
+    backups,
     data,
     data_sources,
+    device_local,
+    devices,
     health,
     instance,
+    jobs,
     members,
     projects,
+    remote_access,
     schema,
     setup,
     transfer,
@@ -32,6 +37,11 @@ def create_app() -> FastAPI:
         schema,
         data,
         transfer,
+        devices,
+        device_local,
+        backups,
+        jobs,
+        remote_access,
     ):
         app.include_router(module.router, prefix="/v1")
     return app

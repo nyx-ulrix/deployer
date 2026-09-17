@@ -15,6 +15,18 @@
     deployer config                 Show non-secret settings
     deployer compose -- <args>      Run any docker compose command against the stack
     deployer uninstall [-KeepData] [-Yes]
+
+    Settings (used by Deployer Control; need administrator rights):
+    deployer set-port <port>        Change the local port (restarts the web front door)
+    deployer lan on|off             Allow / block other devices on your private network
+    deployer autostart on|off       Start Deployer (and the tray icon) when you sign in
+    deployer keepawake on|off       Keep this PC awake while plugged in
+    deployer status -Json           Machine-readable status (one "##deployer:status {json}" line)
+
+    Host devices (see docs/DEVICES.md):
+    deployer device status          Link to a main Deployer, connection state, hosted databases (JSON)
+    deployer device detach [-Force] [-Yes]
+                                    Forget the main Deployer on this PC (asks for confirmation)
 #>
 [CmdletBinding()]
 param(
@@ -29,6 +41,8 @@ param(
     [switch]$KeepData,
     [switch]$Yes,
     [switch]$Background,
+    [switch]$Json,
+    [switch]$Force,
     [string]$InstallDir = '',
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Rest = @()
@@ -66,6 +80,15 @@ function Show-Help {
     Write-Host '  deployer compose -- <args>           Run docker compose (e.g. deployer compose -- ps -a)'
     Write-Host '  deployer uninstall [-KeepData]       Remove Deployer (asks for confirmation)'
     Write-Host ''
+    Write-Host '  deployer set-port <port>             Change the local port'
+    Write-Host '  deployer lan on|off                  Allow or block other devices on your private network'
+    Write-Host '  deployer autostart on|off            Start Deployer when you sign in'
+    Write-Host '  deployer keepawake on|off            Keep this PC awake while plugged in'
+    Write-Host '  deployer status -Json                Machine-readable status'
+    Write-Host ''
+    Write-Host '  deployer device status               Host device link, connection and hosted databases'
+    Write-Host '  deployer device detach [-Force]      Forget the main Deployer on this PC (asks first)'
+    Write-Host ''
     Write-Host "  Install directory: $InstallDir"
     Write-Host ''
 }
@@ -92,7 +115,9 @@ function Assert-Admin {
     param([string]$Why)
     if (Test-DeployerIsAdmin) { return $true }
     Write-DeployerInfo "Administrator rights are needed to $Why. Asking Windows..."
-    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, $Command, '-InstallDir', $InstallDir)
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, $Command)
+    if ($Service) { $argList += $Service }
+    $argList += @('-InstallDir', $InstallDir)
     if ($KeepData) { $argList += '-KeepData' }
     if ($Yes) { $argList += '-Yes' }
     if ($Ref) { $argList += @('-Ref', $Ref) }
@@ -186,7 +211,203 @@ function Invoke-Restart {
     Invoke-Start
 }
 
+function Invoke-StatusJson {
+    # One line "##deployer:status {json}" for Deployer Control. Read-only: never boots the WSL distro.
+    $result = [ordered]@{ installed = $false; installDir = $InstallDir }
+    $state = Read-DeployerState -InstallDir $InstallDir
+    if ($null -ne $state) {
+        $ctx = Get-Context
+        $lan = $ctx.Lan
+        $keepAwake = Get-DeployerStateValue $ctx.State 'keepAwake'
+        $result['installed'] = $true
+        $result['runtime'] = $ctx.Runtime
+        $result['port'] = $ctx.Port
+        $result['url'] = "http://localhost:$($ctx.Port)"
+        $result['publicUrl'] = [string]$ctx.Env['PUBLIC_URL']
+        $result['version'] = [string](Get-DeployerStateValue $ctx.State 'ref' '')
+        $result['imageVersion'] = [string]$ctx.Env['DEPLOYER_VERSION']
+        $result['managedMongodb'] = [bool](Get-DeployerStateValue $ctx.State 'managedMongodb' $true)
+        $result['autostart'] = (Test-DeployerTaskRegistered)
+        $result['lan'] = [bool](Get-DeployerStateValue $lan 'enabled' $false)
+        $result['lanMode'] = [string](Get-DeployerStateValue $lan 'mode' 'none')
+        $result['keepAwake'] = [bool](Get-DeployerStateValue $keepAwake 'enabled' $false)
+        $engine = $true
+        if ($ctx.Runtime -eq 'wsl-engine') { $engine = Test-DeployerWslDistroRunning }
+        if ($engine) { $engine = Test-DeployerDockerEngine -Runtime $ctx.Runtime }
+        $result['engine'] = [bool]$engine
+        $services = @()
+        if ($engine) { $services = @(Get-DeployerComposeServices -InstallDir $InstallDir -Runtime $ctx.Runtime) }
+        $result['services'] = @($services | ForEach-Object { [ordered]@{ name = $_.Service; state = $_.State; health = $_.Health; status = $_.Status } })
+        $health = Get-DeployerHealth -Port $ctx.Port
+        $result['healthy'] = [bool]$health
+        $result['health'] = $(if ($health) { [string]$health } else { '' })
+    }
+    Write-Output ('##deployer:status ' + (ConvertTo-Json -InputObject $result -Depth 6 -Compress))
+}
+
+function Get-OnOffArgument {
+    switch ($Service.ToLowerInvariant()) {
+        'on' { return $true }
+        'off' { return $false }
+        default { throw "Usage: deployer $Command on|off" }
+    }
+}
+
+function Save-ContextState {
+    param($Ctx, [hashtable]$Changes)
+    $table = ConvertTo-DeployerStateTable $Ctx.State
+    foreach ($k in $Changes.Keys) { $table[$k] = $Changes[$k] }
+    $table['updatedAt'] = (Get-Date).ToUniversalTime().ToString('o')
+    Save-DeployerState -InstallDir $InstallDir -State $table
+}
+
+function Restart-StackForSettings {
+    param($Ctx, [int]$Port)
+    if (-not (Test-DeployerDockerEngine -Runtime $Ctx.Runtime)) {
+        Write-DeployerInfo 'Deployer is not running; the change applies the next time it starts.'
+        return
+    }
+    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Ctx.Runtime -Arguments @('up', '-d', '--remove-orphans')
+    if ($code -ne 0) { throw "docker compose up failed (exit code $code)." }
+    if ($Ctx.Runtime -eq 'wsl-engine') { Start-DeployerKeepAlive }
+    if (Wait-DeployerHealth -Port $Port -TimeoutSeconds 240) {
+        Write-DeployerOk "Running at http://localhost:$Port"
+    } else {
+        Write-DeployerWarn "http://localhost:$Port/v1/health is not answering yet. Check 'deployer logs caddy'."
+    }
+}
+
+function Invoke-SetPort {
+    $ctx = Get-Context
+    if ($Service -notmatch '^\d{1,5}$' -or [int]$Service -lt 1 -or [int]$Service -gt 65535) {
+        throw 'Usage: deployer set-port <port>   (a number from 1 to 65535, e.g. 8090)'
+    }
+    $newPort = [int]$Service
+    if ($newPort -eq $ctx.Port) {
+        Write-DeployerOk "Deployer already uses port $newPort"
+        return
+    }
+    [void](Assert-Admin -Why 'change the port')
+    Write-DeployerStep "Changing the port from $($ctx.Port) to $newPort"
+    $listeners = @(Get-NetTCPConnection -LocalPort $newPort -State Listen -ErrorAction SilentlyContinue)
+    if ($listeners.Count -gt 0) {
+        $names = @($listeners | ForEach-Object { (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName } | Sort-Object -Unique)
+        throw "Port $newPort is already used by: $($names -join ', '). Choose a different port."
+    }
+    $values = [ordered]@{ DEPLOYER_HTTP_PORT = "$newPort" }
+    $oldUrl = [string]$ctx.Env['PUBLIC_URL']
+    if (-not $oldUrl -or $oldUrl -match '^http://(localhost|127\.0\.0\.1)(:\d+)?/?$') {
+        $values['PUBLIC_URL'] = "http://localhost:$newPort"
+    } else {
+        Write-DeployerWarn "PUBLIC_URL is $oldUrl and was left unchanged."
+    }
+    Set-DeployerEnvValues -Path (Join-Path $InstallDir '.env') -Values $values
+    Save-ContextState -Ctx $ctx -Changes @{ port = $newPort }
+    Write-DeployerOk '.env updated'
+
+    if ([bool](Get-DeployerStateValue $ctx.Lan 'enabled' $false)) {
+        Add-DeployerFirewallRule -Port $newPort
+        if ((Get-DeployerStateValue $ctx.Lan 'mode' '') -eq 'portproxy') {
+            Remove-DeployerPortProxy -Port $ctx.Port
+            [void](Update-DeployerPortProxy -Port $newPort)
+        }
+        Write-DeployerOk "Firewall rule moved to TCP $newPort"
+    }
+    Restart-StackForSettings -Ctx $ctx -Port $newPort
+    Write-DeployerInfo 'If you use Google/GitHub sign-in, update the callback URLs in your OAuth apps to the new port.'
+}
+
+function Invoke-Lan {
+    $ctx = Get-Context
+    $on = Get-OnOffArgument
+    [void](Assert-Admin -Why 'change firewall and network settings')
+    if ($on) {
+        Write-DeployerStep 'Allowing other devices on your private network'
+        $useMirrored = ($ctx.Runtime -eq 'wsl-engine') -and (Test-DeployerMirroredSupported)
+        if (Test-DeployerDockerEngine -Runtime $ctx.Runtime) {
+            $mode = Enable-DeployerLanAccess -Runtime $ctx.Runtime -Port $ctx.Port -UseMirrored $useMirrored
+        } else {
+            Add-DeployerFirewallRule -Port $ctx.Port
+            $mode = if ($ctx.Runtime -ne 'wsl-engine') { 'direct' } elseif (Test-DeployerMirroredEnabled) { 'mirrored' } else { 'portproxy' }
+            $useMirrored = ($mode -eq 'mirrored')
+            if ($mode -eq 'portproxy') { Write-DeployerInfo 'Port forwarding is set up the next time Deployer starts.' }
+        }
+        $bind = Get-DeployerBindAddress -Lan $true -Runtime $ctx.Runtime -UseMirrored $useMirrored
+    } else {
+        Write-DeployerStep 'Blocking other devices on your network'
+        Disable-DeployerLanAccess -Port $ctx.Port
+        $mode = 'none'
+        $bind = Get-DeployerBindAddress -Lan $false -Runtime $ctx.Runtime -UseMirrored $false
+    }
+    Set-DeployerEnvValues -Path (Join-Path $InstallDir '.env') -Values ([ordered]@{ DEPLOYER_BIND = $bind })
+    Save-ContextState -Ctx $ctx -Changes @{ lan = @{ enabled = $on; mode = $mode } }
+    Restart-StackForSettings -Ctx $ctx -Port $ctx.Port
+    if ($on) {
+        foreach ($ip in @(Get-DeployerLanAddresses)) { Write-DeployerOk "On your network: http://${ip}:$($ctx.Port)" }
+        Write-DeployerInfo 'Make sure your network is set to Private in Windows settings.'
+    } else {
+        Write-DeployerOk 'Deployer is reachable from this PC only'
+    }
+}
+
+function Invoke-Autostart {
+    $ctx = Get-Context
+    $on = Get-OnOffArgument
+    [void](Assert-Admin -Why 'change the sign-in task')
+    if ($on) {
+        Register-DeployerTask -InstallDir $InstallDir
+        Write-DeployerOk "Deployer starts when $([Security.Principal.WindowsIdentity]::GetCurrent().Name) signs in"
+    } else {
+        $wasRunning = ($ctx.Runtime -eq 'wsl-engine') -and [bool](Get-DeployerKeepAliveProcess)
+        Unregister-DeployerTask
+        # Removing the task can end its keep-alive; keep a running stack running.
+        if ($wasRunning) { Start-DeployerKeepAlive }
+        Write-DeployerOk 'Deployer no longer starts automatically at sign-in'
+    }
+    Save-ContextState -Ctx $ctx -Changes @{ autostart = $on }
+}
+
+function Invoke-KeepAwake {
+    $ctx = Get-Context
+    $on = Get-OnOffArgument
+    $previous = Get-DeployerStateValue $ctx.State 'keepAwake'
+    if (-not $on -and -not [bool](Get-DeployerStateValue $previous 'enabled' $false)) {
+        Write-DeployerOk 'Keep awake is already off; power settings were not changed'
+        return
+    }
+    [void](Assert-Admin -Why 'change power settings')
+    $table = Set-DeployerKeepAwake -Enabled $on -Previous $previous
+    Save-ContextState -Ctx $ctx -Changes @{ keepAwake = $table }
+}
+
+function Invoke-Device {
+    # Runs the API's own CLI inside the api container: python -m app.cli device status|detach
+    $ctx = Get-Context
+    $sub = $Service.ToLowerInvariant()
+    if ($sub -notin @('status', 'detach')) { throw 'Usage: deployer device status | deployer device detach [-Force] [-Yes]' }
+    if (-not (Test-DeployerDockerEngine -Runtime $ctx.Runtime)) {
+        throw 'Deployer is not running. Start it first with "deployer start".'
+    }
+    $cliArgs = @('exec', '-T', 'api', 'python', '-m', 'app.cli', 'device', $sub)
+    if ($sub -eq 'detach') {
+        Write-DeployerStep 'Detach this PC from its main Deployer'
+        Write-DeployerWarn 'This PC forgets the main Deployer it is attached to. The main Deployer shows it as offline'
+        Write-DeployerWarn 'until its owner removes it there. Databases hosted here are kept on this PC (nothing is deleted).'
+        if (-not $Force) {
+            Write-DeployerInfo 'Detaching is refused while this PC still hosts databases; move them first or add -Force.'
+        }
+        if (-not $Yes) {
+            $answer = Read-Host '    Type DETACH to continue'
+            if ($answer -cne 'DETACH') { Write-DeployerInfo 'Cancelled.'; return }
+        }
+        if ($Force) { $cliArgs += '--force' }
+    }
+    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments $cliArgs
+    if ($code -ne 0) { throw "deployer device $sub failed (exit code $code)." }
+}
+
 function Invoke-Status {
+    if ($Json) { Invoke-StatusJson; return }
     $ctx = Get-Context
     Write-DeployerStep 'Deployer status'
     Write-DeployerInfo "Install dir : $InstallDir"
@@ -428,6 +649,11 @@ try {
         'config' { Invoke-Config }
         'compose' { Invoke-Compose }
         'uninstall' { Invoke-Uninstall }
+        'set-port' { Invoke-SetPort }
+        'lan' { Invoke-Lan }
+        'autostart' { Invoke-Autostart }
+        'keepawake' { Invoke-KeepAwake }
+        'device' { Invoke-Device }
         { $_ -in @('help', '-h', '--help', '/?') } { Show-Help }
         default {
             Write-DeployerError "Unknown command '$Command'."

@@ -216,6 +216,61 @@ def drop_mongo_database(database: str, username: str | None) -> None:
 
 
 # ---------------------------------------------------------------------------------------------
+# host devices (docs/DEVICES.md)
+# ---------------------------------------------------------------------------------------------
+
+
+def device_source_config(kind: str, database: str, username: str) -> dict[str, Any]:
+    """Primary-side config of a device-hosted database: display info only, no password."""
+    if kind == "sql":
+        return {
+            "host": "mariadb",
+            "port": 3306,
+            "username": username,
+            "database": database,
+            "tls": False,
+            "on_device": True,
+        }
+    return {
+        "uri": f"mongodb://{username}@mongodb:27017/{database}?authSource={database}",
+        "database": database,
+        "username": username,
+        "on_device": True,
+    }
+
+
+def provision_on_device(
+    project: Project, kind: str, device_id: str, preferred: str | None = None
+) -> tuple[str, dict[str, Any], str]:
+    from app.services import device_rpc
+
+    if kind not in ("sql", "nosql"):
+        raise ApiError(422, "validation_error", f"Unknown data source kind: {kind}")
+    candidates = [preferred] if preferred and DB_NAME_RE.fullmatch(preferred) else []
+    candidates += [generate_database_name(project.slug) for _ in range(5)]
+    for candidate in candidates:
+        try:
+            result = device_rpc.call(
+                device_id, "datasource.provision", {"kind": kind, "database_name": candidate}, timeout=90
+            )
+        except ApiError as exc:
+            if exc.code == "database_exists":
+                continue
+            raise
+        database = str(result.get("database_name") or candidate)
+        _check(DB_NAME_RE, database, "database name")
+        config = device_source_config(kind, database, str(result.get("username") or ""))
+        return database, config, "mariadb" if kind == "sql" else "mongodb"
+    raise ApiError(500, "provisioning_failed", "Could not allocate a unique database name on the device")
+
+
+def drop_on_device(device_id: str, kind: str, database: str) -> None:
+    from app.services import device_rpc
+
+    device_rpc.call(device_id, "datasource.drop", {"kind": kind, "database_name": database}, timeout=120)
+
+
+# ---------------------------------------------------------------------------------------------
 # public API
 # ---------------------------------------------------------------------------------------------
 
@@ -242,15 +297,22 @@ def provision_managed_source(
     *,
     database_name: str | None = None,
     data_source_id: str | None = None,
+    device_id: str | None = None,
 ) -> DataSource:
     """Creates a managed database + dedicated user and adds the DataSource to the session.
 
     `database_name` (optional) is kept when valid and free on this host (used by imports);
     otherwise a fresh `p_<slug>_<hex>` name is generated.
+
+    `device_id` (optional) places the database on that host device (docs/DEVICES.md) via the
+    `datasource.provision` RPC; the password then stays on the device. Callers validate eligibility
+    (`services.devices.validate_placement`) first.
     """
     settings = get_settings()
     username, password = generate_username(), generate_password()
-    if kind == "sql":
+    if device_id:
+        database, config, engine = provision_on_device(project, kind, device_id, database_name)
+    elif kind == "sql":
         try:
             database = _pick_database_name(project.slug, database_name, mariadb_database_exists)
         except ApiError:
@@ -290,8 +352,22 @@ def provision_managed_source(
         status="ok",
         status_message="Provisioned",
         last_checked_at=utcnow(),
+        device_id=device_id or None,
     )
     db.add(ds)
+    # docs/BACKUPS.md: every managed source starts with the default backup policy. The source row is
+    # flushed first (no ORM relationship orders the two inserts); on failure the new database is dropped.
+    from app.models import BackupPolicy
+
+    try:
+        db.flush([ds])
+        db.add(BackupPolicy(data_source_id=ds.id))
+    except Exception:
+        try:
+            drop_managed_source(db, ds)
+        except Exception:  # noqa: BLE001
+            log.warning("cleanup of %s failed", ds.database_name, exc_info=True)
+        raise
     return ds
 
 
@@ -299,6 +375,9 @@ def drop_managed_source(db: Session, data_source: DataSource) -> None:
     """Drops the managed database and its user. No-op for external sources. Row is not deleted."""
     _ = db
     if data_source.mode != "managed":
+        return
+    if data_source.device_id:
+        drop_on_device(data_source.device_id, data_source.kind, data_source.database_name)
         return
     connections.invalidate(data_source.id)
     try:

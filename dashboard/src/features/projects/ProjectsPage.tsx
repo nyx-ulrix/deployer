@@ -4,16 +4,25 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Database, FolderPlus, Leaf, Plus } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import { useProjects } from "../../api/hooks";
+import { useDevices, useProjects } from "../../api/hooks";
 import type { Project } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
-import { Checkbox, Field, Input, Textarea } from "../../components/ui/Input";
+import { Checkbox, Field, Input, Select, Textarea } from "../../components/ui/Input";
 import { PageSpinner } from "../../components/ui/Spinner";
 import { Alert, EmptyState, ErrorState, PageHeader } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
-import { relativeTime } from "../../lib/format";
+import { useCurrentUser } from "../../auth/auth-context";
+import { formatBytes, relativeTime } from "../../lib/format";
+import {
+  deviceIdFromValue,
+  engineAvailability,
+  engineUnavailableReason,
+  isDeviceOnline,
+  MAIN_SERVER_VALUE,
+  newProjectHosts,
+} from "../devices/eligibility";
 import { ROLE_LABELS } from "../../lib/roles";
 
 export function ProjectsPage() {
@@ -100,6 +109,22 @@ function NewProjectForm({ onClose }: { onClose: () => void }) {
   const [description, setDescription] = useState("");
   const [sql, setSql] = useState(true);
   const [nosql, setNosql] = useState(true);
+  const user = useCurrentUser();
+  const devices = useDevices("mine");
+  const hosts = newProjectHosts(devices.data ?? [], user.id);
+  const [host, setHost] = useState(MAIN_SERVER_VALUE);
+  const hostReason = (deviceId: string): string | null => {
+    const d = hosts.find((x) => x.id === deviceId);
+    if (!d) return null;
+    if (!isDeviceOnline(d)) return "Device is offline";
+    const engines = engineAvailability(d.metrics, d.capabilities);
+    return (
+      (sql && engineUnavailableReason(engines, "mariadb", d.capabilities)) ||
+      (nosql && engineUnavailableReason(engines, "mongodb", d.capabilities)) ||
+      null
+    );
+  };
+  const chosenReason = host === MAIN_SERVER_VALUE ? null : hostReason(host);
 
   const create = useMutation({
     mutationFn: api.projects.create,
@@ -116,7 +141,7 @@ function NewProjectForm({ onClose }: { onClose: () => void }) {
     create.mutate({
       name: name.trim(),
       description: description.trim() || undefined,
-      provision: { sql, nosql },
+      provision: { sql, nosql, ...(hosts.length > 0 ? { device_id: deviceIdFromValue(host) } : {}) },
     });
   };
 
@@ -132,7 +157,7 @@ function NewProjectForm({ onClose }: { onClose: () => void }) {
           <Button onClick={onClose} disabled={create.isPending}>
             Cancel
           </Button>
-          <Button type="submit" form="new-project" variant="primary" loading={create.isPending} disabled={!name.trim()}>
+          <Button type="submit" form="new-project" variant="primary" loading={create.isPending} disabled={!name.trim() || Boolean(chosenReason && (sql || nosql))}>
             Create project
           </Button>
         </>
@@ -161,15 +186,39 @@ function NewProjectForm({ onClose }: { onClose: () => void }) {
             checked={sql}
             onChange={(e) => setSql(e.target.checked)}
             label="Managed SQL database (MariaDB)"
-            description="Relational tables with foreign keys, created on this machine."
+            description="Relational tables with foreign keys."
           />
           <Checkbox
             checked={nosql}
             onChange={(e) => setNosql(e.target.checked)}
             label="Managed NoSQL database (MongoDB)"
-            description="Flexible JSON documents, created on this machine."
+            description="Flexible JSON documents."
           />
           <p className="text-xs text-muted">A project can use SQL and NoSQL together.</p>
+          {hosts.length > 0 && (sql || nosql) && (
+            <Field
+              label="Host on"
+              hint={chosenReason ?? "Place the new databases on this server or one of your host devices."}
+              error={chosenReason ?? undefined}
+            >
+              {(id) => (
+                <Select id={id} value={host} onChange={(e) => setHost(e.target.value)}>
+                  <option value={MAIN_SERVER_VALUE}>Main server</option>
+                  {hosts.map((d) => {
+                    const reason = hostReason(d.id);
+                    const free = d.metrics?.disk_free_bytes;
+                    return (
+                      <option key={d.id} value={d.id} disabled={Boolean(reason)}>
+                        {d.name} · {isDeviceOnline(d) ? "online" : "offline"}
+                        {free !== null && free !== undefined ? ` · ${formatBytes(free)} free` : ""}
+                        {reason ? ` — ${reason}` : ""}
+                      </option>
+                    );
+                  })}
+                </Select>
+              )}
+            </Field>
+          )}
         </fieldset>
         {create.error && <Alert tone="danger">{errorMessage(create.error)}</Alert>}
       </form>

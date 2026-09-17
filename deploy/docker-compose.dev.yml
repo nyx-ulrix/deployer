@@ -1,0 +1,31 @@
+# Deployer - development overrides (git checkout only; the installer never uses this file).
+#
+#   cp deploy/.env.example deploy/.env
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml up --build
+#
+# Bind-mounts the API source into the api and worker containers so uvicorn reloads on every change
+# under api/app. The worker has no reloader: run `docker compose restart worker` after changing job
+# code. The dashboard keeps being served from its image; for hot reload run `npm run dev` in
+# dashboard/ instead (its dev server proxies /v1 to http://localhost:8080).
+
+services:
+  api:
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+      - --reload
+      - --reload-dir
+      - /app/app
+    volumes:
+      - ${DEPLOYER_SOURCE_DIR:-..}/api/app:/app/app:ro
+      - ${DEPLOYER_SOURCE_DIR:-..}/api/migrations:/app/migrations:ro
+
+  worker:
+    volumes:
+      - ${DEPLOYER_SOURCE_DIR:-..}/api/app:/app/app:ro

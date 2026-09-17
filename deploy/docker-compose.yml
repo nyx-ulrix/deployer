@@ -8,7 +8,9 @@
 #   mariadb 512m (InnoDB buffer pool 128M) | mongodb 512m (WiredTiger cache 0.25 GB)
 #   redis 160m (maxmemory 128mb)           | api 768m (exports/imports stream data)
 #   dashboard 64m (static nginx)           | caddy 128m
-# Roughly 2.1 GB worst case; typical idle usage is well under 1 GB.
+#   tunnel 128m (cloudflared; idle unless remote access is enabled)
+#   worker 384m (backup jobs stream dumps; never buffers whole databases)
+# Roughly 2.6 GB worst case; typical idle usage is well under 1 GB.
 #
 # MongoDB 5.0 needs a CPU with AVX. It only starts when COMPOSE_PROFILES contains `mongodb`
 # (the installer omits it on CPUs without AVX and sets MANAGED_MONGODB_ENABLED=false).
@@ -33,6 +35,12 @@ services:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
       - --skip-name-resolve
+      # Point-in-time recovery (docs/BACKUPS.md): row-based binary log kept 8 days.
+      - --log-bin=mysql-bin
+      - --binlog-format=ROW
+      - --server-id=1
+      - --binlog-expire-logs-seconds=691200
+      - --log-slave-updates
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?MARIADB_ROOT_PASSWORD is not set - run the installer or create deploy/.env from .env.example}
       MARIADB_DATABASE: ${MARIADB_DATABASE:-deployer}
@@ -57,13 +65,18 @@ services:
     image: mongo:5.0
     profiles: ["mongodb"]
     restart: unless-stopped
-    command: ["--wiredTigerCacheSizeGB", "0.25", "--bind_ip_all"]
+    # Single-node replica set `rs0` (the oplog enables point-in-time recovery, docs/BACKUPS.md). The
+    # wrapper derives the member keyfile from MONGO_ROOT_PASSWORD; the worker initiates the set.
+    # CR characters are stripped so a Windows (CRLF) checkout still runs.
+    entrypoint: ["bash", "-c", "exec bash <(tr -d '\r' < /deployer-mongo/entrypoint.sh) \"$$@\"", "deployer-mongo"]
+    command: ["--replSet", "rs0", "--keyFile", "/tmp/deployer-mongo-keyfile", "--wiredTigerCacheSizeGB", "0.25", "--bind_ip_all"]
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:-admin}
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?MONGO_ROOT_PASSWORD is not set}
     volumes:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
+      - ./mongodb:/deployer-mongo:ro
     networks:
       - backend
     healthcheck:
@@ -107,7 +120,7 @@ services:
       # The installer keeps the source next to this file in ./src; in a git checkout it is ../
       context: ${DEPLOYER_SOURCE_DIR:-..}/api
     restart: unless-stopped
-    environment:
+    environment: &api-environment
       PUBLIC_URL: ${PUBLIC_URL:-http://localhost:8080}
       MARIADB_HOST: mariadb
       MARIADB_PORT: "3306"
@@ -128,6 +141,18 @@ services:
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
       ALLOW_SIGNUP: ${ALLOW_SIGNUP:-false}
+      # public_url falls back to http://localhost:<this port> when a remote hostname is removed.
+      DEPLOYER_HTTP_PORT: ${DEPLOYER_HTTP_PORT:-8080}
+      # Encrypted backup artifacts (docs/BACKUPS.md).
+      BACKUP_DIR: /backups
+      # Host devices (docs/DEVICES.md): the worker runs the device agent + device maintenance.
+      WORKER_PLUGINS: ${WORKER_PLUGINS:-app.services.device_worker}
+      # Tests only: lets a device use http://host.docker.internal as its main Deployer URL.
+      DEPLOYER_ALLOW_INSECURE_PRIMARY: ${DEPLOYER_ALLOW_INSECURE_PRIMARY:-}
+    volumes:
+      # Shared with the tunnel sidecar: desired.json (written by the API) / status.json.
+      - tunnel_state:/tunnel
+      - backups:/backups
     depends_on:
       mariadb:
         condition: service_healthy
@@ -149,6 +174,35 @@ services:
       retries: 5
       start_period: 90s
     mem_limit: ${API_MEM_LIMIT:-768m}
+    logging: *default-logging
+
+  # Background jobs and the backup scheduler (docs/BACKUPS.md): snapshots, log archiving, restores,
+  # verification, pruning. Same image as the API; starts after the API has applied migrations.
+  worker:
+    image: ${DEPLOYER_IMAGE_PREFIX:-ghcr.io/nyx-ulrix/deployer}-api:${DEPLOYER_VERSION:-latest}
+    restart: unless-stopped
+    entrypoint: []
+    command: ["python", "-m", "app.worker"]
+    environment: *api-environment
+    volumes:
+      - backups:/backups
+    depends_on:
+      api:
+        condition: service_healthy
+      mariadb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+        required: false
+    networks:
+      - backend
+      - public
+    healthcheck:
+      disable: true
+    stop_grace_period: 30s
+    mem_limit: ${WORKER_MEM_LIMIT:-384m}
     logging: *default-logging
 
   dashboard:
@@ -180,6 +234,30 @@ services:
     mem_limit: ${CADDY_MEM_LIMIT:-128m}
     logging: *default-logging
 
+  # Cloudflare Tunnel connector (docs/REMOTE_ACCESS.md). Idle until the owner enables remote access
+  # in the dashboard; follows /tunnel/desired.json. No ports, no Docker socket; only outbound
+  # connections to Cloudflare and caddy:8081 on the public network.
+  tunnel:
+    image: ${DEPLOYER_IMAGE_PREFIX:-ghcr.io/nyx-ulrix/deployer}-tunnel:${DEPLOYER_VERSION:-latest}
+    build:
+      context: ${DEPLOYER_SOURCE_DIR:-..}/deploy/tunnel
+    restart: unless-stopped
+    depends_on:
+      - caddy
+    volumes:
+      - tunnel_state:/tunnel
+    networks:
+      - public
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,uid=10001,gid=10001,mode=0700
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: ${TUNNEL_MEM_LIMIT:-128m}
+    logging: *default-logging
+
 networks:
   backend:
     internal: true
@@ -192,3 +270,5 @@ volumes:
   redis_data:
   caddy_data:
   caddy_config:
+  tunnel_state:
+  backups:
