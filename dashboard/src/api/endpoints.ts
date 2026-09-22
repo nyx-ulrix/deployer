@@ -1,6 +1,7 @@
 import { client } from "./client";
 import type {
   ApiKey,
+  ApiKeyConfig,
   ApiKeyCreateResponse,
   ApiKeyRole,
   AuthResponse,
@@ -176,6 +177,11 @@ export const api = {
     create: (pid: string, body: { name: string; role: ApiKeyRole }) =>
       client.post<ApiKeyCreateResponse>(`/projects/${e(pid)}/api-keys`, body),
     revoke: (pid: string, keyId: string) => client.del<Ok>(`/projects/${e(pid)}/api-keys/${e(keyId)}`),
+    reveal: (pid: string, keyId: string) =>
+      client.get<{ secret: string }>(`/projects/${e(pid)}/api-keys/${e(keyId)}/reveal`),
+    // Served as a download by the API; fetched as JSON so auth/refresh apply and the dashboard names the file.
+    config: (pid: string, keyId: string) =>
+      client.get<ApiKeyConfig>(`/projects/${e(pid)}/api-keys/${e(keyId)}/config`),
   },
 
   dataSources: {

@@ -19,6 +19,9 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 - **Schema viewer** - ER diagrams (crow's-foot notation) across SQL and NoSQL, convention checks,
   cross-database links, and **DDL export** (`.sql`, `mongosh` script, or a bundle).
 - **Data browser** for tables and collections.
+- **API keys** - give your apps a project-scoped key (`anon` read-only, `service` read/write) and use
+  the same rows, documents, query and schema endpoints from curl, JavaScript or Python; download a
+  ready-made config JSON per key ([docs/DATA_API.md](docs/DATA_API.md)).
 - **Query console** - SQL and MongoDB shell (`mongosh`) in the browser, per database, with the
   project's roles (viewers are limited to read-only queries) ([docs/QUERY_CONSOLE.md](docs/QUERY_CONSOLE.md)).
 - **Full export / import** - one encrypted JSON file with settings, users, projects **and all data**;
@@ -304,7 +307,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
    export/import. *(done)*
 2. **Operations** - `DeployerSetup.exe` + Deployer Control, host devices, backups / versions /
    point-in-time recovery, Cloudflare remote access & custom domains. *(current)*
-3. Public data API - project-scoped REST endpoints authenticated by API keys.
+3. Public data API - project-scoped REST endpoints authenticated by API keys. *(done: [docs/DATA_API.md](docs/DATA_API.md))*
 4. GitHub push-to-deploy - webhooks, Redis build queue, sandboxed build worker.
 5. Google Cloud automation - per-install service account.
 6. MCP server for AI agents.

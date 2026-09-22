@@ -1,4 +1,4 @@
-"""Data browser (docs/API.md "Data browser")."""
+"""Data browser (docs/API.md "Data browser"). Also reachable with project API keys (docs/DATA_API.md)."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from app.services.sources import get_source
 
 router = APIRouter(tags=["data"])
 
-Viewer = Annotated[ProjectAccess, Depends(require_role("viewer"))]
-Developer = Annotated[ProjectAccess, Depends(require_role("developer"))]
+Viewer = Annotated[ProjectAccess, Depends(require_role("viewer", api_keys=True))]
+Developer = Annotated[ProjectAccess, Depends(require_role("developer", api_keys=True))]
 
 TABLE_ROWS = "/projects/{project_id}/data-sources/{source_id}/tables/{table}/rows"
 COLLECTION_DOCS = "/projects/{project_id}/data-sources/{source_id}/collections/{name}/documents"

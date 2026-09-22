@@ -92,6 +92,22 @@ export type ApiKey = {
   created_at: string;
   last_used_at: string | null;
   revoked_at: string | null;
+  /** False for keys created before Deployer kept secrets: they can't be revealed, only replaced. */
+  revealable: boolean;
+};
+
+/** `GET /projects/{pid}/api-keys/{id}/config`: a ready-to-use client config (docs/DATA_API.md). */
+export type ApiKeyConfig = {
+  deployer: {
+    url: string;
+    project_id: string;
+    project: string;
+    role: ApiKeyRole;
+    api_key: string;
+    data_sources: { id: string; name: string; kind: DataSourceKind; engine: string }[];
+    endpoints: { rows: string; documents: string; query: string; schema: string };
+    generated_at: string;
+  };
 };
 
 // ---- Health & setup ----

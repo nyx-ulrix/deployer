@@ -22,7 +22,8 @@ from app.services.sources import get_source, project_sources
 
 router = APIRouter(tags=["schema"])
 
-Viewer = Annotated[ProjectAccess, Depends(require_role("viewer"))]
+# Read routes (schema, export, links list) also take project API keys (docs/DATA_API.md).
+Viewer = Annotated[ProjectAccess, Depends(require_role("viewer", api_keys=True))]
 Developer = Annotated[ProjectAccess, Depends(require_role("developer"))]
 Admin = Annotated[ProjectAccess, Depends(require_role("admin"))]
 
@@ -110,6 +111,7 @@ def export_schema(
         request=request,
         user_id=access.user.id,
         project_id=project.id,
+        api_key_id=access.api_key_id,
         format=format,
         source_id=source_id,
     )

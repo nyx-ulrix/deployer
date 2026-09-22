@@ -8,7 +8,8 @@ their design:
 | Host devices (enrollment, device management, placement, moving databases, device-local status) | [DEVICES.md](DEVICES.md) |
 | Backups, versions, point-in-time restore, jobs, recently deleted | [BACKUPS.md](BACKUPS.md) |
 | Cloudflare remote access & custom domains | [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
-| Query console (`POST /projects/{id}/data-sources/{sid}/query`: SQL scripts and MongoDB shell code per data source) | [QUERY_CONSOLE.md](QUERY_CONSOLE.md) |
+| Query console (`POST /projects/{id}/data-sources/{sid}/query`: SQL scripts and MongoDB shell code per data source; `api_keys: true`) | [QUERY_CONSOLE.md](QUERY_CONSOLE.md) |
+| Data API for apps: API keys on the data, query and schema routes, reveal / config download | [DATA_API.md](DATA_API.md) |
 | Query editor: query log (`/projects/{id}/query-log`) and saved queries (`/projects/{id}/saved-queries`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) |
 | Saved-query versions: strict version control (`/projects/{id}/saved-queries/{sid}/versions`, `/restore`, `409 version_conflict`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) "Phase 2 — versions" |
 
@@ -155,6 +156,12 @@ type InstanceSettings = {
 | GET | `/projects/{id}/api-keys` | admin+ | – | `ApiKey[]` |
 | POST | `/projects/{id}/api-keys` | admin+ | `{name, role}` | `{api_key:ApiKey, secret}` — secret `dpl_<role>_<random>` shown once |
 | DELETE | `/projects/{id}/api-keys/{key_id}` | admin+ | – | `{ok:true}` (revokes) |
+| GET | `/projects/{id}/api-keys/{key_id}/reveal` | admin+ | – | `{secret}`; 409 `not_revealable` (key predates stored secrets), 409 `api_key_revoked` |
+| GET | `/projects/{id}/api-keys/{key_id}/config` | admin+ | – | app config JSON download `deployer-<slug>-<role>.json` (same 409s) — [DATA_API.md](DATA_API.md) |
+
+`ApiKey` has `revealable: boolean`. Keys (`Authorization: Bearer dpl_...`) are accepted **only** by the
+data browser, `POST .../query` and the GET schema routes (marked `api_keys: true` below): `anon` acts
+as viewer, `service` as developer; elsewhere they get 401 `api_key_not_allowed`. See [DATA_API.md](DATA_API.md).
 
 ## Data sources
 
@@ -183,9 +190,9 @@ A project may have any number of SQL and NoSQL sources at once (typically one of
 
 | Method | Path | Role | Body / Query | Response |
 |---|---|---|---|---|
-| GET | `/projects/{id}/schema?source_id=&sample=200` | viewer+ | – | `ProjectSchema` |
-| GET | `/projects/{id}/schema/export?format=sql\|mongo\|bundle&source_id=` | viewer+ | – | file: `.sql` / `.js` / `.zip` |
-| GET | `/projects/{id}/schema/links` | viewer+ | – | `SchemaLink[]` |
+| GET | `/projects/{id}/schema?source_id=&sample=200` | viewer+ (`api_keys: true`) | – | `ProjectSchema` |
+| GET | `/projects/{id}/schema/export?format=sql\|mongo\|bundle&source_id=` | viewer+ (`api_keys: true`) | – | file: `.sql` / `.js` / `.zip` |
+| GET | `/projects/{id}/schema/links` | viewer+ (`api_keys: true`) | – | `SchemaLink[]` |
 | POST | `/projects/{id}/schema/links` | developer+ | `Omit<SchemaLink,"id"\|"created_at">` | `SchemaLink` |
 | DELETE | `/projects/{id}/schema/links/{link_id}` | developer+ | – | `{ok:true}` |
 | POST | `/projects/{id}/data-sources/{sid}/tables` | developer+ | `TableSpec` | `Entity` |
@@ -254,7 +261,7 @@ type TableSpec = {
 
 ## Data browser
 
-SQL (`kind = sql`):
+All routes accept API keys (`api_keys: true`, [DATA_API.md](DATA_API.md)). SQL (`kind = sql`):
 
 | Method | Path | Role | Body / Query | Response |
 |---|---|---|---|---|

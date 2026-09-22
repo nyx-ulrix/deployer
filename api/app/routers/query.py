@@ -18,6 +18,7 @@ from app.services.sources import get_source
 router = APIRouter(tags=["query"])
 
 Viewer = Annotated[ProjectAccess, Depends(require_role("viewer"))]
+QueryRunner = Annotated[ProjectAccess, Depends(require_role("viewer", api_keys=True))]  # docs/DATA_API.md
 Owner = Annotated[ProjectAccess, Depends(require_role("owner"))]
 
 
@@ -36,7 +37,7 @@ def _naive_utc(value: datetime | None) -> datetime | None:
 
 
 @router.post("/projects/{project_id}/data-sources/{source_id}/query")
-def run_query(source_id: str, body: QueryRequest, access: Viewer, db: DbSession, request: Request) -> dict:
+def run_query(source_id: str, body: QueryRequest, access: QueryRunner, db: DbSession, request: Request) -> dict:
     ds = get_source(db, access.project.id, source_id)
     # Viewers may only run read-only queries; the service refuses anything else with 403 read_only_role.
     read_only = not access.at_least("developer")
@@ -62,6 +63,7 @@ def run_query(source_id: str, body: QueryRequest, access: Viewer, db: DbSession,
             user_id=access.user.id,
             project_id=access.project.id,
             data_source_id=ds.id,
+            api_key_id=access.api_key_id,
             kind=ds.kind,
             statements=statements,
             read_only=read_only,
@@ -76,7 +78,7 @@ def run_query(source_id: str, body: QueryRequest, access: Viewer, db: DbSession,
             user=access.user,
             query_text=body.query,
             read_only=read_only,
-            layout=body.layout or "api",
+            layout="api" if access.api_key else (body.layout or "api"),
             duration_ms=duration_ms,
             result=result,
             error=error,

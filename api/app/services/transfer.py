@@ -13,7 +13,8 @@ Plaintext payload (version 1)::
      "users": [...], "user_identities": [...],                 # instance scope only (with password_hash)
      "projects": [...], "project_members": [... + email],
      "project_invites": [...],                                 # instance scope only, pending invites
-     "api_keys": [...], "data_sources": [... + decrypted "config", without config_encrypted],
+     "api_keys": [... + decrypted "secret" (null for keys made before secrets were kept), without secret_encrypted],
+     "data_sources": [... + decrypted "config", without config_encrypted],
      "schema_links": [...], "saved_queries": [...], "saved_query_versions": [...],   # query_runs never travel
      "data": {<data_source_id>: {"kind": "sql", "engine", "database_name",
                                  "tables": [{name, create_sql, columns: [{name, type}], rows: [[...], ...]}]}
@@ -65,7 +66,14 @@ from sqlalchemy import DateTime, select
 from sqlalchemy.orm import Session
 
 from app import __version__
-from app.crypto import decrypt_json, decrypt_with_passphrase, encrypt_json, encrypt_secret, encrypt_with_passphrase
+from app.crypto import (
+    decrypt_json,
+    decrypt_secret,
+    decrypt_with_passphrase,
+    encrypt_json,
+    encrypt_secret,
+    encrypt_with_passphrase,
+)
 from app.errors import ApiError
 from app.models import (
     ApiKey,
@@ -220,8 +228,6 @@ def _pending_invites(db: Session) -> list[ProjectInvite]:
 
 def _setting_out(row: InstanceSetting) -> dict:
     if row.is_secret:
-        from app.crypto import decrypt_secret
-
         value: Any = decrypt_secret(row.value)
     else:
         try:
@@ -229,6 +235,19 @@ def _setting_out(row: InstanceSetting) -> dict:
         except ValueError:
             value = row.value
     return {"key": row.key, "value": value, "is_secret": bool(row.is_secret)}
+
+
+def _api_key_out(key: ApiKey) -> dict:
+    row = model_to_dict(key)
+    row.pop("secret_encrypted", None)
+    row["secret"] = decrypt_secret(key.secret_encrypted) if key.secret_encrypted else None
+    return row
+
+
+def _api_key_secret(row: dict) -> str | None:
+    # Re-encrypted with this instance's MASTER_KEY; an old export's `secret_encrypted` is unusable here.
+    secret = row.get("secret") if isinstance(row, dict) else None
+    return encrypt_secret(secret) if isinstance(secret, str) and secret else None
 
 
 def _source_out(ds: DataSource) -> dict:
@@ -422,7 +441,7 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
             return []
         return list(db.scalars(select(model).where(model.project_id.in_(project_ids)).order_by(model.created_at)))
 
-    w.field("api_keys", [model_to_dict(k) for k in by_project(ApiKey)])
+    w.field("api_keys", [_api_key_out(k) for k in by_project(ApiKey)])
     sources: list[DataSource] = [ds for ds in by_project(DataSource) if ds.deleted_at is None]
     counts["data_sources"] = len(sources)
     w.field("data_sources", [_source_out(ds) for ds in sources])
@@ -892,7 +911,7 @@ def import_instance(db: Session, payload: dict) -> dict:
         for inv in _list(payload, "project_invites"):
             db.add(dict_to_model(ProjectInvite, inv))
         for k in _list(payload, "api_keys"):
-            db.add(dict_to_model(ApiKey, k))
+            db.add(dict_to_model(ApiKey, k, secret_encrypted=_api_key_secret(k)))
         db.flush()
         for row in _list(payload, "data_sources"):
             project = projects.get(row.get("project_id"))
@@ -990,7 +1009,16 @@ def import_projects(db: Session, payload: dict, user: User) -> tuple[list[Projec
             if db.scalar(select(ApiKey.id).where(ApiKey.key_hash == k.get("key_hash"))):
                 skipped_api_keys += 1
                 continue
-            db.add(dict_to_model(ApiKey, k, id=new_id(), project_id=project.id, created_by_id=user.id))
+            db.add(
+                dict_to_model(
+                    ApiKey,
+                    k,
+                    id=new_id(),
+                    project_id=project.id,
+                    created_by_id=user.id,
+                    secret_encrypted=_api_key_secret(k),
+                )
+            )
         source_map: dict[str, str] = {}
         for row in _list(payload, "data_sources"):
             project = project_map.get(row.get("project_id"))

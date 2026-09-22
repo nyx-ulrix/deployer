@@ -197,6 +197,8 @@ class ApiKey(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # anon | service
     prefix: Mapped[str] = mapped_column(String(24), nullable=False)
     key_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # app.crypto.encrypt_secret of the full secret, for "reveal"; NULL for keys created before 0005.
+    secret_encrypted: Mapped[str | None] = mapped_column(Text)
     created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
