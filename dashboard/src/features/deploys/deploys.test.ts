@@ -54,8 +54,9 @@ describe("parseEnv", () => {
     ]);
   });
   it("keeps '=' inside values", () => {
-    expect(parseEnv("DSN=postgres://u:p@h/db?sslmode=require")).toEqual([
-      { key: "DSN", value: "postgres://u:p@h/db?sslmode=require" },
+    // No user:password@ in the URL: the repository's secret scanner would flag even a fake one.
+    expect(parseEnv("DSN=postgres://db.example.test/app?sslmode=require&x=1")).toEqual([
+      { key: "DSN", value: "postgres://db.example.test/app?sslmode=require&x=1" },
     ]);
   });
   it("rowsToEnv drops blank keys and lets later duplicates win", () => {
