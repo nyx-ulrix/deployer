@@ -149,7 +149,8 @@ def test_prune(db, console, make_project, make_user, monkeypatch):
 
     def add(pid, age_days):
         run = query_log.record_run(
-            db, project_id=pid, ds=ds, user=user, query_text="SELECT 1", read_only=False, layout="api", duration_ms=1
+            # layout "terminal", not "api": gitleaks' generic-api-key rule trips on `api", duration_ms=1`.
+            db, project_id=pid, ds=ds, user=user, query_text="SELECT 1", read_only=False, layout="terminal", duration_ms=1
         )
         run.created_at = now - timedelta(days=age_days)
 
