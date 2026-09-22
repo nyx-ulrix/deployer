@@ -46,7 +46,7 @@ def encrypt_secret(plaintext: str) -> str:
 def decrypt_secret(token: str) -> str:
     if not token.startswith(_VERSION_PREFIX):
         raise ValueError("Unknown secret format")
-    blob = _b64d(token[len(_VERSION_PREFIX):])
+    blob = _b64d(token[len(_VERSION_PREFIX) :])
     return AESGCM(_master_key()).decrypt(blob[:12], blob[12:], None).decode("utf-8")
 
 
@@ -62,9 +62,7 @@ SCRYPT_N, SCRYPT_R, SCRYPT_P = 2**15, 8, 1
 
 
 def _derive(passphrase: str, salt: bytes, n: int, r: int, p: int) -> bytes:
-    return hashlib.scrypt(
-        passphrase.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=32, maxmem=128 * 1024 * 1024
-    )
+    return hashlib.scrypt(passphrase.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=32, maxmem=128 * 1024 * 1024)
 
 
 def encrypt_with_passphrase(plaintext: bytes, passphrase: str) -> tuple[dict[str, Any], str]:

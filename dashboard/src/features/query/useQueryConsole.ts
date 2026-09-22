@@ -46,7 +46,7 @@ export function useQueryConsole(project: Project, sources: DataSource[], readOnl
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [histories, setHistories] = useState<Record<string, HistoryEntry[]>>({});
   const [entries, setEntries] = useState<ConsoleEntry[]>(() => [{ id: 0, kind: "help" }]);
-  /** Latest run per source, shown by the editor layout's results panel. */
+  /** Latest run per source (the terminal's `current`). */
   const [lastRun, setLastRun] = useState<Record<string, number | null>>({});
   const [prefs, setPrefsState] = useState<QueryPrefs>(loadPrefs);
   const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
@@ -139,7 +139,7 @@ export function useQueryConsole(project: Project, sources: DataSource[], readOnl
     inflight.current.get(target.id)?.abort();
     const controller = new AbortController();
     inflight.current.set(target.id, controller);
-    const request: QueryRequest = { query: queryText, max_rows: prefs.maxRows, timeout_seconds: prefs.timeoutSeconds };
+    const request: QueryRequest = { query: queryText, max_rows: prefs.maxRows, timeout_seconds: prefs.timeoutSeconds, layout: "terminal" };
     const startedAt = Date.now();
     const at = new Date(startedAt).toISOString();
     const id = addEntry({

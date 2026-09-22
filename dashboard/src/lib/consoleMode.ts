@@ -1,7 +1,10 @@
 import { useSyncExternalStore } from "react";
 import { readStorage, writeStorage } from "./storage";
 
-/** How the project Query tab is laid out: a shell-style transcript or an editor above a results panel. */
+/**
+ * How the project Query tab is laid out: a shell-style transcript or a notebook of cells. `"editor"` is the
+ * stored value of the notebook mode (kept so existing preferences keep working).
+ */
 export type QueryConsoleMode = "terminal" | "editor";
 
 export const QUERY_CONSOLE_MODE_KEY = "deployer.queryConsoleMode";
@@ -15,8 +18,8 @@ export const QUERY_CONSOLE_MODES: { value: QueryConsoleMode; label: string; desc
   },
   {
     value: "editor",
-    label: "Editor",
-    description: "A multi-line editor above a results panel, one card per statement.",
+    label: "Notebook",
+    description: "Commands and their output stacked in one document, like a database shell; tabs for saved files.",
   },
 ];
 

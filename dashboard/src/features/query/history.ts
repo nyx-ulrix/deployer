@@ -31,7 +31,8 @@ function isEntry(v: unknown): v is HistoryEntry {
   );
 }
 
-function newId(): string {
+/** Short unique id for client-side records (history entries, notebook cells and tabs). */
+export function newId(): string {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 

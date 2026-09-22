@@ -13,6 +13,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -388,5 +389,52 @@ class Domain(Base):
     project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(10), default="pending", nullable=False)  # pending | active | error
     status_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+# --- Query editor: run log & saved queries (docs/QUERY_EDITOR.md) ---------------------------------
+
+
+class QueryRun(Base):
+    """One console/editor run. The only place query text is stored (audit logs keep counts only)."""
+
+    __tablename__ = "query_runs"
+    __table_args__ = (Index("ix_query_runs_project_created", "project_id", "created_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    # No FK: the log outlives the data source. `source_name` / `user_email` are snapshots for the same reason.
+    data_source_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    source_name: Mapped[str] = mapped_column(String(63), nullable=False)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)  # sql | nosql
+    engine: Mapped[str] = mapped_column(String(20), nullable=False)
+    user_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    user_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False)  # ok | error | timeout | refused
+    statements: Mapped[int] = mapped_column(Integer, nullable=False)
+    rows: Mapped[int] = mapped_column(Integer, nullable=False)  # rows returned, or documents for MongoDB
+    affected_rows: Mapped[int | None] = mapped_column(Integer)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    error_message: Mapped[str | None] = mapped_column(Text)  # already redacted by query_console
+    read_only: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    layout: Mapped[str] = mapped_column(String(10), nullable=False)  # terminal | editor | api
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+
+
+class SavedQuery(Base):
+    __tablename__ = "saved_queries"
+    __table_args__ = (Index("ix_saved_queries_project_updated", "project_id", "updated_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    data_source_id: Mapped[str | None] = mapped_column(ForeignKey("data_sources.id", ondelete="SET NULL"))
+    owner_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    folder: Mapped[str | None] = mapped_column(String(120))
+    # Opaque to the API: the dashboard stores its notebook document ({"cells": [{id, text}]}) here.
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(String(10), nullable=False)  # sql | nosql | any
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)

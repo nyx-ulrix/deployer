@@ -491,7 +491,9 @@ def test_mongosh_read_only_and_concurrency(fake_mongosh, monkeypatch):
 
 
 def test_connect_uri_adds_timeouts_once():
-    assert query_console._connect_uri("mongodb://h:27017").endswith("/?serverSelectionTimeoutMS=5000&connectTimeoutMS=5000")
+    assert query_console._connect_uri("mongodb://h:27017").endswith(
+        "/?serverSelectionTimeoutMS=5000&connectTimeoutMS=5000"
+    )
     assert query_console._connect_uri("mongodb+srv://c.example/app?retryWrites=true") == (
         "mongodb+srv://c.example/app?retryWrites=true&serverSelectionTimeoutMS=5000&connectTimeoutMS=5000"
     )
@@ -502,7 +504,7 @@ def test_connect_uri_adds_timeouts_once():
 
 def test_parse_shell_output():
     marker = "@@deployer:abc@@"
-    text, report = query_console.parse_shell_output(f"a\n{marker}{{\"phase\": \"done\", \"value\": 1}}\nb\n", marker)
+    text, report = query_console.parse_shell_output(f'a\n{marker}{{"phase": "done", "value": 1}}\nb\n', marker)
     assert text == "a\nb\n" and report == {"phase": "done", "value": 1}
     assert query_console.parse_shell_output("no report\n", marker) == ("no report\n", None)
     assert query_console.parse_shell_output(f"{marker}not json\n", marker) == ("", None)
@@ -598,8 +600,17 @@ def test_query_route_device_hosted_source(client, db, owner, owner_headers, make
         "kind": "sql",
         "engine": "mariadb",
         "duration_ms": 3,
-        "results": [{"statement": "SELECT 1", "type": "rows", "columns": ["1"], "rows": [[1]], "row_count": 1,
-                     "truncated": False, "duration_ms": 1}],
+        "results": [
+            {
+                "statement": "SELECT 1",
+                "type": "rows",
+                "columns": ["1"],
+                "rows": [[1]],
+                "row_count": 1,
+                "truncated": False,
+                "duration_ms": 1,
+            }
+        ],
     }
 
     def handler(method, params):
@@ -611,7 +622,8 @@ def test_query_route_device_hosted_source(client, db, owner, owner_headers, make
     fd = fake_device(device.id, handler)
     resp = client.post(url, json={"query": "SELECT 1", "max_rows": 100, "timeout_seconds": 10}, headers=owner_headers)
     assert resp.status_code == 200, resp.text
-    assert resp.json() == canned
+    body = resp.json()
+    assert isinstance(body.pop("run_id"), str) and body == canned
     _, params = fd.calls[-1]
     assert params["kind"] == "sql" and params["database_name"] == ds.database_name
     assert params["args"] == {"query": "SELECT 1", "max_rows": 100, "timeout_seconds": 10, "read_only": False}

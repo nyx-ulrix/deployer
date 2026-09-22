@@ -20,7 +20,7 @@ import { pickRunnable } from "./results";
 import { shouldSubmitOnEnter } from "./terminal";
 
 /** What a key binding asks the console to do (delivered through `onAction`). */
-export type ConsoleAction = "submit" | "history-prev" | "history-next" | "clear";
+export type ConsoleAction = "submit" | "submit-next" | "history-prev" | "history-next" | "clear";
 export type EditorMode = "editor" | "terminal";
 
 export type QueryEditorHandle = {
@@ -41,12 +41,14 @@ type Props = {
   engine: string;
   /** Tables/collections of the selected source, for completion. */
   entities: readonly Entity[];
-  /** `editor`: Ctrl/Cmd+Enter submits. `terminal`: shell-like Enter / history / Ctrl+L bindings. */
+  /** `editor`: Ctrl/Cmd+Enter submits, Shift+Enter submits and moves on. `terminal`: shell-like Enter / history / Ctrl+L bindings. */
   mode: EditorMode;
   onAction: (action: ConsoleAction) => void;
   /** Force a colour scheme (the terminal panel is always dark). Defaults to the app theme. */
   theme?: "light" | "dark";
   autoFocus?: boolean;
+  /** Editor mode only: grow with the content up to this CSS height instead of filling the parent. */
+  maxHeight?: string;
   className?: string;
   /** Receives the imperative handle once mounted (and `null` on unmount). */
   onHandle?: (handle: QueryEditorHandle | null) => void;
@@ -70,7 +72,13 @@ function insertNewline(view: EditorView): boolean {
 const cursorLine = (view: EditorView) => view.state.doc.lineAt(view.state.selection.main.head).number;
 const tabAcceptsCompletion = { key: "Tab", run: acceptCompletion };
 
-const editorKeys = Prec.high(keymap.of([{ key: "Mod-Enter", run: (view) => emit(view, "submit") }, tabAcceptsCompletion]));
+const editorKeys = Prec.high(
+  keymap.of([
+    { key: "Mod-Enter", run: (view) => emit(view, "submit") },
+    { key: "Shift-Enter", run: (view) => emit(view, "submit-next") },
+    tabAcceptsCompletion,
+  ]),
+);
 
 const terminalKeys = Prec.high(
   keymap.of([
@@ -89,7 +97,7 @@ const terminalKeys = Prec.high(
 
 // ---- Theme: colours come from the app's CSS tokens so the editor follows light/dark. ----
 
-function editorTheme(dark: boolean, compact: boolean): Extension {
+function editorTheme(dark: boolean, compact: boolean, fill: boolean): Extension {
   return [
     EditorView.theme(
       {
@@ -97,7 +105,7 @@ function editorTheme(dark: boolean, compact: boolean): Extension {
           backgroundColor: compact ? "transparent" : "var(--surface)",
           color: "var(--fg)",
           fontSize: "13px",
-          height: compact ? "auto" : "100%",
+          height: fill ? "100%" : "auto",
         },
         "&.cm-focused": { outline: "none" },
         ".cm-scroller": { fontFamily: "var(--font-mono)", lineHeight: "1.6" },
@@ -258,10 +266,11 @@ function placeholderFor(kind: DataSourceKind, engine: string, mode: EditorMode):
     : `SELECT * FROM ${table} LIMIT 100;\n-- Several statements are fine, separated by ;`;
 }
 
-export function QueryEditor({ value, onChange, kind, engine, entities, mode, onAction, theme: forcedTheme, autoFocus, className, onHandle }: Props) {
+export function QueryEditor({ value, onChange, kind, engine, entities, mode, onAction, theme: forcedTheme, autoFocus, maxHeight, className, onHandle }: Props) {
   const { resolved } = useTheme();
   const dark = (forcedTheme ?? resolved) === "dark";
   const terminal = mode === "terminal";
+  const fill = !terminal && !maxHeight;
   const cmRef = useRef<ReactCodeMirrorRef>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -280,7 +289,7 @@ export function QueryEditor({ value, onChange, kind, engine, entities, mode, onA
     return [javascript(), javascriptLanguage.data.of({ autocomplete: mongoCompletions(entities.map((e) => e.name)) })];
   }, [kind, engine, entities]);
 
-  const theme = useMemo(() => editorTheme(dark, terminal), [dark, terminal]);
+  const theme = useMemo(() => editorTheme(dark, terminal, fill), [dark, terminal, fill]);
   const extensions = useMemo(
     () => [language, terminal ? terminalKeys : editorKeys, kindFacet.of(kind), theme, EditorView.lineWrapping],
     [language, terminal, kind, theme],
@@ -331,7 +340,7 @@ export function QueryEditor({ value, onChange, kind, engine, entities, mode, onA
   }, [handle, onHandle]);
 
   return (
-    <div ref={wrapperRef} className={cn(terminal ? "min-w-0 flex-1" : "h-full", className)}>
+    <div ref={wrapperRef} className={cn(terminal ? "min-w-0 flex-1" : fill && "h-full", className)}>
       <CodeMirror
         ref={cmRef}
         value={value}
@@ -351,10 +360,10 @@ export function QueryEditor({ value, onChange, kind, engine, entities, mode, onA
               }
             : { foldGutter: false, crosshairCursor: false, tabSize: 2 }
         }
-        height={terminal ? "auto" : "100%"}
-        maxHeight={terminal ? "12rem" : undefined}
+        height={fill ? "100%" : "auto"}
+        maxHeight={terminal ? "12rem" : maxHeight}
         autoFocus={autoFocus}
-        className="h-full"
+        className={fill ? "h-full" : undefined}
         aria-label={terminal ? "Query prompt" : "Query editor"}
       />
     </div>

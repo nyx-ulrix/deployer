@@ -6,7 +6,7 @@ import { PageSpinner } from "../../components/ui/Spinner";
 import { EmptyState, ErrorState } from "../../components/ui/States";
 import { useQueryConsoleMode } from "../../lib/consoleMode";
 import { useProjectContext } from "../projects/project-context";
-import { EditorConsole } from "./EditorConsole";
+import { NotebookConsole } from "./NotebookConsole";
 import { TerminalConsole } from "./TerminalConsole";
 import { useQueryConsole } from "./useQueryConsole";
 
@@ -14,6 +14,7 @@ import { useQueryConsole } from "./useQueryConsole";
 export default function QueryTab() {
   const { project, can } = useProjectContext();
   const sources = useDataSources(project.id);
+  const [mode] = useQueryConsoleMode();
 
   if (sources.isPending) return <PageSpinner label="Loading databases…" />;
   if (sources.isError) return <ErrorState error={sources.error} onRetry={() => void sources.refetch()} />;
@@ -31,12 +32,17 @@ export default function QueryTab() {
       />
     );
   }
-  return <QueryConsole key={project.id} project={project} sources={sources.data} readOnly={!can("developer")} />;
+  const readOnly = !can("developer");
+  // "editor" is the stored value of the notebook mode (QUERY_EDITOR.md → Revised direction).
+  return mode === "terminal" ? (
+    <TerminalQueryConsole key={project.id} project={project} sources={sources.data} readOnly={readOnly} />
+  ) : (
+    <NotebookConsole key={project.id} project={project} sources={sources.data} readOnly={readOnly} />
+  );
 }
 
-/** Holds the shared console state and renders the preferred layout; switching keeps input and history. */
-function QueryConsole({ project, sources, readOnly }: { project: Project; sources: DataSource[]; readOnly: boolean }) {
+/** Owns the terminal's transcript state so the layout component stays thin. */
+function TerminalQueryConsole({ project, sources, readOnly }: { project: Project; sources: DataSource[]; readOnly: boolean }) {
   const console = useQueryConsole(project, sources, readOnly);
-  const [mode] = useQueryConsoleMode();
-  return mode === "terminal" ? <TerminalConsole console={console} /> : <EditorConsole console={console} />;
+  return <TerminalConsole console={console} />;
 }

@@ -124,12 +124,24 @@ def release_leadership(client: redis.Redis, me: str = WORKER_ID) -> None:
             pass
 
 
+PRUNE_QUERY_LOG_EVERY_S = 24 * 3600
+_last_query_log_prune = float("-inf")  # module-level: the leader is one process, ticks every TICK_EVERY_S
+
+
 def scheduler_tick() -> None:
-    from app.services import backups
+    global _last_query_log_prune
+    from app.services import backups, query_log
 
     jobs.recover_stale()
     jobs.redispatch_queued()
     backups.scheduler_tick(jobs.get_sessionmaker())
+    if time.monotonic() - _last_query_log_prune >= PRUNE_QUERY_LOG_EVERY_S:
+        _last_query_log_prune = time.monotonic()
+        with jobs.get_sessionmaker()() as session:
+            pruned = query_log.prune(session)
+            session.commit()
+        if pruned:
+            log.info("pruned %d query log row(s)", pruned)
 
 
 def scheduler_loop(stop: threading.Event, client_factory: Callable[[], redis.Redis] = _worker_redis) -> None:

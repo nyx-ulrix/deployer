@@ -1,4 +1,4 @@
-import { Code, Eye, Terminal } from "lucide-react";
+import { Eye, NotebookPen, Terminal } from "lucide-react";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Select } from "../../components/ui/Input";
@@ -8,7 +8,7 @@ import { QUERY_CONSOLE_MODES, useQueryConsoleMode } from "../../lib/consoleMode"
 import { formatNumber } from "../../lib/format";
 import { MAX_ROWS_OPTIONS, TIMEOUT_OPTIONS } from "./prefs";
 
-// Small pieces shared by the terminal and editor layouts' header bars.
+// Small pieces shared by the terminal and notebook layouts' header bars.
 
 function withCurrent(options: readonly number[], current: number): number[] {
   return options.includes(current) ? [...options] : [...options, current].sort((a, b) => a - b);
@@ -51,13 +51,13 @@ export function ReadOnlyBadge() {
   );
 }
 
-/** Terminal / Editor layout switch (the same preference as Settings → Account → Preferences). */
+/** Terminal / Notebook layout switch (the same preference as Settings → Account → Preferences). */
 export function ModeSwitch() {
   const [mode, setMode] = useQueryConsoleMode();
   return (
     <div role="group" aria-label="Console layout" className="inline-flex rounded-lg border border-border bg-surface-2 p-0.5">
       {QUERY_CONSOLE_MODES.map((m) => {
-        const Icon = m.value === "terminal" ? Terminal : Code;
+        const Icon = m.value === "terminal" ? Terminal : NotebookPen;
         const active = m.value === mode;
         return (
           <button

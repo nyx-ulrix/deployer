@@ -601,6 +601,8 @@ export type QueryRequest = {
   max_rows?: number;
   /** Per statement (SQL) or for the whole script (MongoDB); 1..120, default 30. */
   timeout_seconds?: number;
+  /** Which console layout sent it; recorded in the query log (QUERY_EDITOR.md). */
+  layout?: "terminal" | "editor";
 };
 
 export type QueryError = { code: string; message: string };
@@ -627,6 +629,8 @@ export type SqlQueryResponse = {
   engine: SqlEngine;
   duration_ms: number;
   results: SqlStatementResult[];
+  /** Id of the query-log row (QUERY_EDITOR.md). */
+  run_id?: string;
 };
 
 export type MongoQueryResponse = {
@@ -641,9 +645,68 @@ export type MongoQueryResponse = {
   result_docs: JsonObject[] | null;
   truncated: boolean;
   error: QueryError | null;
+  /** Id of the query-log row (QUERY_EDITOR.md). */
+  run_id?: string;
 };
 
 export type QueryResponse = SqlQueryResponse | MongoQueryResponse;
+
+// ---- Query editor (docs/QUERY_EDITOR.md) ----
+
+export type SavedQueryKind = "sql" | "nosql" | "any";
+
+/** A snippet: `query_text` is opaque to the API (the notebook stores `{"cells":[…]}` JSON in it). */
+export type SavedQuery = {
+  id: string;
+  project_id: string;
+  data_source_id: string | null;
+  owner_id: string;
+  owner_email: string;
+  name: string;
+  folder: string | null;
+  query_text: string;
+  kind: SavedQueryKind;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SavedQueryInput = {
+  name: string;
+  folder?: string | null;
+  query_text: string;
+  data_source_id?: string | null;
+  kind: SavedQueryKind;
+};
+
+export type QueryRunStatus = "ok" | "error" | "timeout" | "refused";
+
+/** One row of the server-side query log (every console run, both layouts). */
+export type QueryRun = {
+  id: string;
+  project_id: string;
+  data_source_id: string;
+  source_name: string;
+  kind: DataSourceKind;
+  engine: string;
+  user_id: string;
+  user_email: string;
+  /** Truncated to 2 000 chars in list responses (`query_truncated`); `GET /query-log/{id}` has the full text. */
+  query_text: string;
+  query_truncated?: boolean;
+  status: QueryRunStatus;
+  statements: number;
+  rows: number;
+  affected_rows: number | null;
+  duration_ms: number;
+  error_message: string | null;
+  read_only: boolean;
+  layout: "terminal" | "editor" | "api";
+  created_at: string;
+};
+
+export type QueryLogPage = { runs: QueryRun[]; has_more: boolean };
+
+export type QueryLogParams = { source_id?: string; user?: "me" | "all"; limit?: number; before?: string };
 
 // ---- Remote access (docs/REMOTE_ACCESS.md) ----
 

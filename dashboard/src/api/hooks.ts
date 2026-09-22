@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api, qk } from "./endpoints";
 import type { JobStatus } from "./types";
 
@@ -40,6 +40,25 @@ export function useSourceSchema(projectId: string, sourceId: string | null) {
     staleTime: 30_000,
     retry: 1,
     select: (schema) => schema.sources.find((s) => s.source_id === sourceId) ?? null,
+  });
+}
+
+export function useSavedQueries(projectId: string) {
+  return useQuery({ queryKey: qk.savedQueries(projectId), queryFn: () => api.savedQueries.list(projectId) });
+}
+
+const QUERY_LOG_PAGE = 50;
+
+/** Newest-first pages of one source's query log; the next page starts before the last row's `created_at`. */
+export function useQueryLog(projectId: string, sourceId: string, user: "me" | "all", enabled = true) {
+  return useInfiniteQuery({
+    queryKey: qk.queryLog(projectId, sourceId, user),
+    queryFn: ({ pageParam }) =>
+      api.queryLog.list(projectId, { source_id: sourceId, user, limit: QUERY_LOG_PAGE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => (last.has_more && last.runs.length > 0 ? last.runs[last.runs.length - 1].created_at : undefined),
+    enabled,
+    staleTime: 10_000,
   });
 }
 

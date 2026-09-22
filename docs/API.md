@@ -9,6 +9,7 @@ their design:
 | Backups, versions, point-in-time restore, jobs, recently deleted | [BACKUPS.md](BACKUPS.md) |
 | Cloudflare remote access & custom domains | [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
 | Query console (`POST /projects/{id}/data-sources/{sid}/query`: SQL scripts and MongoDB shell code per data source) | [QUERY_CONSOLE.md](QUERY_CONSOLE.md) |
+| Query editor: query log (`/projects/{id}/query-log`) and saved queries (`/projects/{id}/saved-queries`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) |
 
 Base path `/v1`. JSON in/out unless noted. Authenticated endpoints need
 `Authorization: Bearer <access_token>`. Timestamps are ISO-8601 UTC strings. IDs are UUID strings.

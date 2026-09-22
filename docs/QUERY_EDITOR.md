@@ -30,8 +30,9 @@ All under `/v1/projects/{project_id}`.
 | DELETE | `/saved-queries/{id}` | owner of the snippet or admin+ | – | `{ok:true}` |
 
 ```ts
-type QueryRun = { id: string; data_source_id: string; source_name: string; kind: "sql"|"nosql"; engine: string;
-  user_id: string; user_email: string; query_text: string; status: "ok"|"error"|"timeout"|"refused";
+type QueryRun = { id: string; project_id: string; data_source_id: string; source_name: string; kind: "sql"|"nosql"; engine: string;
+  user_id: string; user_email: string; query_text: string; query_truncated?: true;  // only in list responses, when cut at 2 000 chars
+  status: "ok"|"error"|"timeout"|"refused";
   statements: number; rows: number; affected_rows: number|null; duration_ms: number; error_message: string|null;
   read_only: boolean; layout: "terminal"|"editor"|"api"; created_at: string };
 type SavedQuery = { id: string; project_id: string; data_source_id: string|null; owner_id: string; owner_email: string;

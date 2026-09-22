@@ -11,7 +11,7 @@ def _scan(dump: bytes) -> dict[str, int]:
 
 
 def test_single_line_extended_insert():
-    dump = b"-- Table structure for table `items`\n" b"INSERT INTO `items` VALUES (1,'a'),(2,'b'),(3,'c');\n"
+    dump = b"-- Table structure for table `items`\nINSERT INTO `items` VALUES (1,'a'),(2,'b'),(3,'c');\n"
     assert _scan(dump) == {"items": 3}
 
 

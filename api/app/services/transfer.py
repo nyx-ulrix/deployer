@@ -14,7 +14,7 @@ Plaintext payload (version 1)::
      "projects": [...], "project_members": [... + email],
      "project_invites": [...],                                 # instance scope only, pending invites
      "api_keys": [...], "data_sources": [... + decrypted "config", without config_encrypted],
-     "schema_links": [...],
+     "schema_links": [...], "saved_queries": [...],              # query_runs (the query log) never travel
      "data": {<data_source_id>: {"kind": "sql", "engine", "database_name",
                                  "tables": [{name, create_sql, columns: [{name, type}], rows: [[...], ...]}]}
                               | {"kind": "nosql", "database_name",
@@ -78,6 +78,7 @@ from app.models import (
     Project,
     ProjectInvite,
     ProjectMember,
+    SavedQuery,
     SchemaLink,
     User,
     UserIdentity,
@@ -425,6 +426,7 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
     counts["data_sources"] = len(sources)
     w.field("data_sources", [_source_out(ds) for ds in sources])
     w.field("schema_links", [model_to_dict(link) for link in by_project(SchemaLink)])
+    w.field("saved_queries", [model_to_dict(q) for q in by_project(SavedQuery)])
     if scope == "instance":
         w.field("devices", [model_to_dict(d) for d in db.scalars(select(Device).order_by(Device.created_at))])
         w.field("device_project_grants", [model_to_dict(g) for g in db.scalars(select(DeviceProjectGrant))])
@@ -909,6 +911,12 @@ def import_instance(db: Session, payload: dict) -> dict:
         for link in _list(payload, "schema_links"):
             if link.get("from_source_id") in known_sources and link.get("to_source_id") in known_sources:
                 db.add(dict_to_model(SchemaLink, link))
+        known_users = set(db.scalars(select(User.id)))
+        for q in _list(payload, "saved_queries"):
+            if q.get("project_id") not in projects or q.get("owner_id") not in known_users:
+                continue
+            source_id = q.get("data_source_id")
+            db.add(dict_to_model(SavedQuery, q, data_source_id=source_id if source_id in known_sources else None))
         for policy in _list(payload, "backup_policies"):
             _merge_backup_policy(db, policy, known_sources, known_devices)
         for domain in _list(payload, "domains"):
@@ -1001,6 +1009,21 @@ def import_projects(db: Session, payload: dict, user: User) -> tuple[list[Projec
                 continue
             db.add(
                 dict_to_model(SchemaLink, link, id=new_id(), project_id=project.id, from_source_id=f, to_source_id=t)
+            )
+        for q in _list(payload, "saved_queries"):
+            project = project_map.get(q.get("project_id"))
+            if project is None:
+                continue
+            # The importer owns everything here (members are not carried over, see skipped_members).
+            db.add(
+                dict_to_model(
+                    SavedQuery,
+                    q,
+                    id=new_id(),
+                    project_id=project.id,
+                    owner_id=user.id,
+                    data_source_id=source_map.get(q.get("data_source_id")),
+                )
             )
         db.commit()
     except Exception as exc:

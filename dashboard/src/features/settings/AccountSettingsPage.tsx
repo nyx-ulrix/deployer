@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
-import { Code, Link2, Terminal, Unlink } from "lucide-react";
+import { Link2, NotebookPen, Terminal, Unlink } from "lucide-react";
 import { errorMessage, isApiError } from "../../api/client";
 import { api } from "../../api/endpoints";
 import { useProviders } from "../../api/hooks";
@@ -55,7 +55,7 @@ export function AccountSettingsPage() {
   );
 }
 
-const MODE_ICONS: Record<QueryConsoleMode, typeof Terminal> = { terminal: Terminal, editor: Code };
+const MODE_ICONS: Record<QueryConsoleMode, typeof Terminal> = { terminal: Terminal, editor: NotebookPen };
 
 function PreferencesCard() {
   const [mode, setMode] = useQueryConsoleMode();

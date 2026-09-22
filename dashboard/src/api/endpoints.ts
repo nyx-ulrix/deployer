@@ -50,8 +50,13 @@ import type {
   ProjectsImportResponse,
   ProviderName,
   ProvidersResponse,
+  QueryLogPage,
+  QueryLogParams,
   QueryRequest,
   QueryResponse,
+  QueryRun,
+  SavedQuery,
+  SavedQueryInput,
   Role,
   RowsResponse,
   SchemaExportFormat,
@@ -321,6 +326,24 @@ export const api = {
     run: runQuery,
   },
 
+  // QUERY_EDITOR.md: snippets (POST needs developer+; PATCH/DELETE the snippet's owner or admin+).
+  savedQueries: {
+    list: (pid: string) => client.get<SavedQuery[]>(`/projects/${e(pid)}/saved-queries`),
+    create: (pid: string, body: SavedQueryInput) => client.post<SavedQuery>(`/projects/${e(pid)}/saved-queries`, body),
+    update: (pid: string, id: string, body: Partial<SavedQueryInput>) =>
+      client.patch<SavedQuery>(`/projects/${e(pid)}/saved-queries/${e(id)}`, body),
+    remove: (pid: string, id: string) => client.del<Ok>(`/projects/${e(pid)}/saved-queries/${e(id)}`),
+  },
+
+  // QUERY_EDITOR.md: the server-side log of every run (`user=all` needs admin+; clear is owner-only).
+  queryLog: {
+    list: (pid: string, params: QueryLogParams) =>
+      client.get<QueryLogPage>(`/projects/${e(pid)}/query-log`, { query: params }),
+    get: (pid: string, runId: string) => client.get<QueryRun>(`/projects/${e(pid)}/query-log/${e(runId)}`),
+    clear: (pid: string, before: string) =>
+      client.del<{ deleted: number }>(`/projects/${e(pid)}/query-log`, { query: { before } }),
+  },
+
   documents: {
     list: (pid: string, sid: string, collection: string, params: { filter?: string; limit: number; skip: number }) =>
       client.get<DocumentsResponse>(
@@ -378,6 +401,10 @@ export const qk = {
   backupSchema: (id: string, sid: string, backupId: string) =>
     ["projects", id, "backups", sid, "schema", backupId] as const,
   jobs: (id: string) => ["projects", id, "jobs"] as const,
+  savedQueries: (id: string) => ["projects", id, "saved-queries"] as const,
+  /** Every log listing of one source (prefix of `queryLog`), invalidated after each run. */
+  queryLogFor: (id: string, sid: string) => ["projects", id, "query-log", sid] as const,
+  queryLog: (id: string, sid: string, user: "me" | "all") => ["projects", id, "query-log", sid, user] as const,
   job: (id: string, jobId: string) => ["projects", id, "jobs", jobId] as const,
   instanceBackups: ["instance", "backups"] as const,
   remoteAccess: ["instance", "remote-access"] as const,
