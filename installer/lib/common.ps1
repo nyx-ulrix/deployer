@@ -742,7 +742,10 @@ function Invoke-DeployerImages {
         throw 'Source code for building the images is missing (src\api). Re-run the installer or update with network access.'
     }
     [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('pull', '--ignore-buildable'))
-    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('build')
+    # --progress=plain: BuildKit's interactive (TTY) progress exits 1 at once when stderr is a Windows
+    # console relayed by wsl.exe (seen with `deployer update` in an elevated window); plain output also
+    # reads better in the log file.
+    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('build', '--progress=plain')
     if ($code -ne 0) { throw "Building the Deployer images failed (exit code $code)." }
     return 'built'
 }
