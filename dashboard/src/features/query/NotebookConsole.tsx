@@ -18,8 +18,8 @@ import {
 } from "lucide-react";
 import { errorMessage, isDeviceOffline } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import { useSourceSchema } from "../../api/hooks";
-import type { DataSource, Entity, Project, QueryRequest } from "../../api/types";
+import { useSavedQueries, useSourceSchema } from "../../api/hooks";
+import type { DataSource, Entity, Project, QueryRequest, SavedQuery } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -28,26 +28,32 @@ import { Spinner } from "../../components/ui/Spinner";
 import { Alert, ErrorAlert } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
-import { engineLabel, formatTime } from "../../lib/format";
+import { engineLabel, formatTime, relativeTime } from "../../lib/format";
 import { useDeviceNames } from "../devices/useDeviceNames";
 import { ModeSwitch, PendingWriteAlert, ReadOnlyBadge, RowsSelect, TimeoutSelect } from "./ConsoleBits";
+import { DiffDialog } from "./DiffView";
 import { MongoResults } from "./MongoResults";
 import {
   attachSaved,
   closeTab,
   detachSaved,
   insertCellAfter,
+  isBehind,
+  joinCells,
   loadNotebook,
   moveCell,
   newCell,
   openSaved,
   openUntitled,
+  parseDocument,
   patchTab,
+  refreshSaved,
   removeCell,
   saveNotebook,
   serializeDocument,
   setCells,
   tabTitle,
+  versionConflict,
   type NotebookCell,
   type NotebookState,
   type NotebookTab,
@@ -69,6 +75,12 @@ const NO_ENTITIES: Entity[] = [];
 type CellResult = { run: RunState; at: string; /** The text that was run, for the "edited since" hint. */ text: string; collapsed: boolean };
 
 type PendingWrite = { cellId: string; text: string; reason: string };
+
+/**
+ * The server copy of a tab's snippet shown side by side with the tab (QUERY_EDITOR.md → phase 2).
+ * "save": our PATCH lost a race; "restore": a restore did; "remote": someone saved while we were editing.
+ */
+type Conflict = { tabId: string; current: SavedQuery; mode: "save" | "restore" | "remote" };
 
 /** Everything a cell can ask the notebook to do, keyed by cell id (keeps the cell's props short). */
 type CellActions = {
@@ -114,6 +126,13 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
   const [saveDialog, setSaveDialog] = useState(false);
   const [closing, setClosing] = useState<NotebookTab | null>(null);
   const [deletingCell, setDeletingCell] = useState<string | null>(null);
+  /** Optional "What changed?" line sent with the next save of a snippet. */
+  const [message, setMessage] = useState("");
+  const [conflict, setConflict] = useState<Conflict | null>(null);
+  /** The banner's "Reload theirs" confirms before it throws local edits away. */
+  const [reloading, setReloading] = useState<SavedQuery | null>(null);
+  /** Per tab, the remote version the user chose to keep editing over (hides the banner until the next one). */
+  const [dismissed, setDismissed] = useState<Record<string, number>>({});
 
   const inflight = useRef(new Map<string, AbortController>());
   const handles = useRef(new Map<string, QueryEditorHandle>());
@@ -127,6 +146,11 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
   const offline = isDeviceOffline(schema.error);
   const anyRunning = Object.values(results).some((r) => r.run.status === "running");
   const activeCell = activeCellId && tab.cells.some((c) => c.id === activeCellId) ? activeCellId : tab.cells[0].id;
+  // The list is polled (useSavedQueries), which is how a tab notices that a teammate saved a newer version.
+  const savedList = useSavedQueries(project.id);
+  const saved = savedList.data?.find((x) => x.id === tab.savedId);
+  const behind = saved && isBehind(tab, saved) ? saved : undefined;
+  const conflictTab = conflict ? state.tabs.find((t) => t.id === conflict.tabId) : undefined;
 
   // Persist text (debounced while typing) and flush on the way out; results never leave memory.
   useEffect(() => {
@@ -141,6 +165,21 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
       for (const c of controllers.values()) c.abort();
     };
   }, [project.id]);
+
+  // Clean tabs follow the server silently; dirty ones get the banner below instead (never an auto-merge).
+  useEffect(() => {
+    const list = savedList.data;
+    if (!list) return;
+    const s = latest.current;
+    const newer = s.tabs.flatMap((t) => {
+      const sv = list.find((x) => x.id === t.savedId);
+      return !t.dirty && sv && isBehind(t, sv) ? [{ t, sv }] : [];
+    });
+    if (newer.length === 0) return;
+    setState((prev) => newer.reduce((acc, { sv }) => refreshSaved(acc, sv), prev));
+    const active = newer.find(({ t }) => t.id === s.activeId);
+    if (active) toast.info(`Updated to v${active.sv.version} by ${active.sv.updated_by_email}`);
+  }, [savedList.data, toast]);
 
   const setPrefs = (next: QueryPrefs) => {
     setPrefsState(next);
@@ -307,24 +346,40 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
 
   const clearOutputs = () => setResults((r) => Object.fromEntries(Object.entries(r).filter(([, v]) => v.run.status === "running")));
 
-  // ---- Saving (developer+; PATCH silently after the first save) ----
+  // ---- Saving (developer+; PATCH silently after the first save, carrying the version the tab loaded) ----
 
   const save = useMutation({
-    mutationFn: ({ tab: t, name, folder }: { tab: NotebookTab; name?: string; folder?: string | null }) => {
+    /** `version` overrides the tab's own: "Keep mine" after a conflict saves on top of the version that won. */
+    mutationFn: ({ tab: t, name, folder, version }: { tab: NotebookTab; name?: string; folder?: string | null; version?: number }) => {
       const src = sourceOf(t);
       const body = { query_text: serializeDocument(t.cells), data_source_id: src.id, kind: src.kind };
       return t.savedId && name === undefined
-        ? api.savedQueries.update(project.id, t.savedId, body)
+        ? api.savedQueries.update(project.id, t.savedId, { ...body, version: version ?? t.version ?? 0, message: message.trim() || undefined })
         : api.savedQueries.create(project.id, { ...body, name: name ?? tabTitle(t), folder });
     },
-    onSuccess: (saved, { tab: t }) => {
-      setState((s) => attachSaved(s, t.id, saved));
+    onSuccess: (result, { tab: t }) => {
+      setState((s) => attachSaved(s, t.id, result));
       void queryClient.invalidateQueries({ queryKey: qk.savedQueries(project.id) });
+      void queryClient.invalidateQueries({ queryKey: qk.savedQueryVersions(project.id, result.id) });
       setSaveDialog(false);
-      toast.success(`Saved “${saved.name}”.`);
+      setConflict(null);
+      setMessage("");
+      toast.success(`Saved “${result.name}” as v${result.version}.`);
     },
-    onError: (e) => toast.error(errorMessage(e), "Couldn't save the query"),
+    onError: (e, { tab: t }) => {
+      const current = versionConflict(e);
+      if (current && current.id === t.savedId) setConflict({ tabId: t.id, current, mode: "save" });
+      else toast.error(errorMessage(e), "Couldn't save the query");
+    },
   });
+
+  /** Replace a tab's document with the server copy — the user has seen the diff or confirmed the reload. */
+  const reloadTheirs = (current: SavedQuery) => {
+    setState((s) => refreshSaved(s, current, true));
+    setConflict(null);
+    setReloading(null);
+    toast.info(`Reloaded v${current.version} by ${current.updated_by_email}.`);
+  };
 
   const requestSave = () => {
     if (readOnly || save.isPending) return;
@@ -363,13 +418,20 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
         newTab();
         if (inDrawer) setDrawerOpen(false);
       }}
-      onRenamed={(saved) =>
+      onRenamed={(renamed) =>
         setState((s) => {
-          const t = s.tabs.find((x) => x.savedId === saved.id);
-          return t ? patchTab(s, t.id, { name: saved.name, folder: saved.folder }) : s;
+          const t = s.tabs.find((x) => x.savedId === renamed.id);
+          return t ? patchTab(s, t.id, { name: renamed.name, folder: renamed.folder, version: renamed.version }) : s;
         })
       }
       onDeleted={(id) => setState((s) => detachSaved(s, id))}
+      tab={tab}
+      kind={source.kind}
+      onRestored={(restored) => {
+        setState((s) => refreshSaved(s, restored, true));
+        toast.success(`Restored as v${restored.version}.`);
+      }}
+      onRestoreConflict={(current) => setConflict({ tabId: tab.id, current, mode: "restore" })}
       onInsertHistory={(text) => {
         addCellBelow(activeCell, text);
         if (inDrawer) setDrawerOpen(false);
@@ -404,6 +466,25 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
             <Button size="sm" variant="ghost" icon={<FilePlus className="size-3.5" />} onClick={() => setSaveDialog(true)} disabled={save.isPending}>
               Save as…
             </Button>
+            {tab.savedId && (
+              <input
+                type="text"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    requestSave();
+                  }
+                }}
+                placeholder="What changed? (optional)"
+                aria-label="What changed? Saved with the next version"
+                title="A one-line note stored with the next version"
+                maxLength={200}
+                autoComplete="off"
+                className="h-8 w-full rounded-lg border border-border bg-surface px-2.5 text-base focus:border-accent focus:ring-3 focus:ring-ring focus:outline-none sm:w-52 sm:text-xs"
+              />
+            )}
           </>
         )}
         <RowsSelect value={prefs.maxRows} onChange={(n) => setPrefs({ ...prefs, maxRows: n })} />
@@ -474,6 +555,33 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
             </Button>
           </div>
 
+          {saved && (
+            <p className="-mt-1 text-xs text-muted" title={saved.updated_at}>
+              v{saved.version} · last saved by {saved.updated_by_email} · {relativeTime(saved.updated_at)}
+            </p>
+          )}
+
+          {behind && tab.dirty && dismissed[tab.id] !== behind.version && (
+            <Alert
+              tone="warning"
+              action={
+                <div className="flex flex-wrap gap-1">
+                  <Button size="sm" onClick={() => setConflict({ tabId: tab.id, current: behind, mode: "remote" })}>
+                    Show diff
+                  </Button>
+                  <Button size="sm" onClick={() => setReloading(behind)}>
+                    Reload theirs
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setDismissed((d) => ({ ...d, [tab.id]: behind.version }))}>
+                    Keep editing
+                  </Button>
+                </div>
+              }
+            >
+              {behind.updated_by_email} saved v{behind.version} while you were editing.
+            </Alert>
+          )}
+
           {/* Cells */}
           {tab.cells.map((c, i) => (
             <NotebookCell
@@ -520,6 +628,64 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
         description="It has unsaved changes. They are lost when the tab closes."
         confirmLabel="Close without saving"
       />
+      <ConfirmDialog
+        open={reloading !== null}
+        onClose={() => setReloading(null)}
+        onConfirm={() => {
+          if (reloading) reloadTheirs(reloading);
+        }}
+        title={`Reload v${reloading?.version}?`}
+        description={`Your unsaved edits in this tab are replaced by what ${reloading?.updated_by_email} saved.`}
+        confirmLabel="Reload theirs"
+      />
+      {conflict && conflictTab && (
+        <DiffDialog
+          open
+          onClose={() => setConflict(null)}
+          loading={save.isPending}
+          title={
+            conflict.mode === "save"
+              ? "Someone saved first"
+              : conflict.mode === "restore"
+                ? "The snippet changed since you opened it"
+                : `${conflict.current.updated_by_email} saved v${conflict.current.version}`
+          }
+          description={`${conflict.current.updated_by_email} saved v${conflict.current.version} ${relativeTime(conflict.current.updated_at)}. Red lines are theirs, green lines are yours.`}
+          a={joinCells(parseDocument(conflict.current.query_text), source.kind)}
+          b={joinCells(conflictTab.cells, source.kind)}
+          footer={
+            <>
+              <Button onClick={() => setConflict(null)} disabled={save.isPending}>
+                {conflict.mode === "remote" ? "Keep editing" : "Cancel"}
+              </Button>
+              <Button onClick={() => reloadTheirs(conflict.current)} disabled={save.isPending}>
+                Reload theirs
+              </Button>
+              {conflict.mode === "save" && !readOnly && (
+                <>
+                  <Button
+                    onClick={() => {
+                      setConflict(null);
+                      setSaveDialog(true);
+                    }}
+                    disabled={save.isPending}
+                  >
+                    Save as copy
+                  </Button>
+                  <Button
+                    variant="primary"
+                    loading={save.isPending}
+                    onClick={() => save.mutate({ tab: conflictTab, version: conflict.current.version })}
+                    title={`Saves your text as v${conflict.current.version + 1}; theirs stays in the history`}
+                  >
+                    Keep mine
+                  </Button>
+                </>
+              )}
+            </>
+          }
+        />
+      )}
       <ConfirmDialog
         open={deletingCell !== null}
         onClose={() => setDeletingCell(null)}

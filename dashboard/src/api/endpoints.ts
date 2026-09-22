@@ -57,6 +57,9 @@ import type {
   QueryRun,
   SavedQuery,
   SavedQueryInput,
+  SavedQueryRestore,
+  SavedQueryUpdate,
+  SavedQueryVersion,
   Role,
   RowsResponse,
   SchemaExportFormat,
@@ -330,9 +333,16 @@ export const api = {
   savedQueries: {
     list: (pid: string) => client.get<SavedQuery[]>(`/projects/${e(pid)}/saved-queries`),
     create: (pid: string, body: SavedQueryInput) => client.post<SavedQuery>(`/projects/${e(pid)}/saved-queries`, body),
-    update: (pid: string, id: string, body: Partial<SavedQueryInput>) =>
+    update: (pid: string, id: string, body: SavedQueryUpdate) =>
       client.patch<SavedQuery>(`/projects/${e(pid)}/saved-queries/${e(id)}`, body),
     remove: (pid: string, id: string) => client.del<Ok>(`/projects/${e(pid)}/saved-queries/${e(id)}`),
+    versions: (pid: string, id: string) =>
+      client.get<{ versions: SavedQueryVersion[] }>(`/projects/${e(pid)}/saved-queries/${e(id)}/versions`),
+    version: (pid: string, id: string, n: number) =>
+      client.get<SavedQueryVersion & { query_text: string }>(`/projects/${e(pid)}/saved-queries/${e(id)}/versions/${n}`),
+    /** A new version holding an old version's text; 409 when `current_version` is stale. */
+    restore: (pid: string, id: string, body: SavedQueryRestore) =>
+      client.post<SavedQuery>(`/projects/${e(pid)}/saved-queries/${e(id)}/restore`, body),
   },
 
   // QUERY_EDITOR.md: the server-side log of every run (`user=all` needs admin+; clear is owner-only).
@@ -402,6 +412,8 @@ export const qk = {
     ["projects", id, "backups", sid, "schema", backupId] as const,
   jobs: (id: string) => ["projects", id, "jobs"] as const,
   savedQueries: (id: string) => ["projects", id, "saved-queries"] as const,
+  savedQueryVersions: (id: string, sqId: string) => ["projects", id, "saved-queries", sqId, "versions"] as const,
+  savedQueryVersion: (id: string, sqId: string, n: number) => ["projects", id, "saved-queries", sqId, "versions", n] as const,
   /** Every log listing of one source (prefix of `queryLog`), invalidated after each run. */
   queryLogFor: (id: string, sid: string) => ["projects", id, "query-log", sid] as const,
   queryLog: (id: string, sid: string, user: "me" | "all") => ["projects", id, "query-log", sid, user] as const,

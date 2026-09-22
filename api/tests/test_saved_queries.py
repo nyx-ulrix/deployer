@@ -41,7 +41,7 @@ def test_crud_and_validation(client, db, project_setup):  # noqa: F811
     assert body["data_source_id"] == ds.id and body["kind"] == "sql" and body["owner_email"].endswith("@example.com")
     assert set(body) == {
         "id", "project_id", "data_source_id", "owner_id", "owner_email", "name", "folder", "query_text", "kind",
-        "created_at", "updated_at",
+        "version", "updated_by_email", "created_at", "updated_at",
     }  # fmt: skip
     assert body["created_at"].endswith("Z") and body["updated_at"].endswith("Z")
 
@@ -71,7 +71,7 @@ def test_crud_and_validation(client, db, project_setup):  # noqa: F811
     before = db.get(SavedQuery, body["id"]).updated_at
     patched = client.patch(
         f"{url}/{body['id']}",
-        json={"name": "Top 10", "folder": None, "data_source_id": None, "updated_at": "ignored"},
+        json={"name": "Top 10", "folder": None, "data_source_id": None, "updated_at": "ignored", "version": 1},
         headers=project_setup["dev"],
     )
     assert patched.status_code == 200, patched.text
@@ -79,15 +79,21 @@ def test_crud_and_validation(client, db, project_setup):  # noqa: F811
     assert patched.json()["data_source_id"] is None and patched.json()["query_text"] == doc
     db.expire_all()
     assert db.get(SavedQuery, body["id"]).updated_at >= before
-    assert client.patch(f"{url}/{body['id']}", json={"folder": "x/y"}, headers=project_setup["dev"]).status_code == 422
+    v1 = {"version": 1}
     assert (
-        client.patch(f"{url}/{body['id']}", json={"data_source_id": gone.id}, headers=project_setup["dev"]).status_code
+        client.patch(f"{url}/{body['id']}", json={"folder": "x/y", **v1}, headers=project_setup["dev"]).status_code
         == 422
     )
-    assert client.patch(f"{url}/nope", json={"name": "z"}, headers=project_setup["dev"]).status_code == 404
+    assert (
+        client.patch(
+            f"{url}/{body['id']}", json={"data_source_id": gone.id, **v1}, headers=project_setup["dev"]
+        ).status_code
+        == 422
+    )
+    assert client.patch(f"{url}/nope", json={"name": "z", **v1}, headers=project_setup["dev"]).status_code == 404
 
     # Deleting the source clears the reference (ON DELETE SET NULL) instead of dropping the snippet.
-    relinked = client.patch(f"{url}/{body['id']}", json={"data_source_id": ds.id}, headers=project_setup["dev"])
+    relinked = client.patch(f"{url}/{body['id']}", json={"data_source_id": ds.id, **v1}, headers=project_setup["dev"])
     assert relinked.status_code == 200
     db.delete(db.get(DataSource, ds.id))
     db.commit()
@@ -111,18 +117,22 @@ def test_permissions(client, db, project_setup, make_user, make_project, auth_he
     db.add(ProjectMember(project_id=project.id, user_id=other_dev.id, role="developer"))
     db.commit()
     other_h = auth_headers(other_dev)
-    assert client.patch(f"{url}/{mine['id']}", json={"name": "taken"}, headers=other_h).status_code == 403
+    # Collaboration: any developer edits any snippet; only the owner or an admin deletes it.
+    v1 = {"version": 1}
+    assert client.patch(f"{url}/{mine['id']}", json={"name": "taken", **v1}, headers=other_h).status_code == 200
     assert client.delete(f"{url}/{mine['id']}", headers=other_h).status_code == 403
     assert client.get(url, headers=other_h).status_code == 200  # reading is fine
     assert (
-        client.patch(f"{url}/{mine['id']}", json={"name": "admin edit"}, headers=project_setup["owner"]).status_code
+        client.patch(
+            f"{url}/{mine['id']}", json={"name": "admin edit", **v1}, headers=project_setup["owner"]
+        ).status_code
         == 200
     )
 
     stranger = make_user()
     other = make_project(stranger, "Other")
     foreign = f"/v1/projects/{other.id}/saved-queries/{mine['id']}"
-    assert client.patch(foreign, json={"name": "x"}, headers=auth_headers(stranger)).status_code == 404
+    assert client.patch(foreign, json={"name": "x", **v1}, headers=auth_headers(stranger)).status_code == 404
     assert client.delete(foreign, headers=auth_headers(stranger)).status_code == 404
     assert client.get(url).status_code == 401
 

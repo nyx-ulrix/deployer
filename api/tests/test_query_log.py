@@ -149,8 +149,15 @@ def test_prune(db, console, make_project, make_user, monkeypatch):
 
     def add(pid, age_days):
         run = query_log.record_run(
-            # layout is "terminal" here: gitleaks' generic-key rule misfires on the three-letter layout value.
-            db, project_id=pid, ds=ds, user=user, query_text="SELECT 1", read_only=False, layout="terminal", duration_ms=1
+            # layout "terminal": gitleaks' generic-key rule misfires on the three-letter layout value.
+            db,
+            project_id=pid,
+            ds=ds,
+            user=user,
+            query_text="SELECT 1",
+            read_only=False,
+            layout="terminal",
+            duration_ms=1,
         )
         run.created_at = now - timedelta(days=age_days)
 

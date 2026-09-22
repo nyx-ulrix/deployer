@@ -668,6 +668,9 @@ export type SavedQuery = {
   kind: SavedQueryKind;
   created_at: string;
   updated_at: string;
+  /** Bumped by every text change; a PATCH must carry the version it was based on (QUERY_EDITOR.md → phase 2). */
+  version: number;
+  updated_by_email: string;
 };
 
 export type SavedQueryInput = {
@@ -677,6 +680,22 @@ export type SavedQueryInput = {
   data_source_id?: string | null;
   kind: SavedQueryKind;
 };
+
+/** A PATCH always carries the version the client loaded; the API answers `409 version_conflict` otherwise. */
+export type SavedQueryUpdate = Partial<SavedQueryInput> & { version: number; message?: string };
+
+export type SavedQueryVersion = {
+  id: string;
+  version: number;
+  author_id: string;
+  author_email: string;
+  message: string | null;
+  created_at: string;
+  /** Length of that version's `query_text`. */
+  chars: number;
+};
+
+export type SavedQueryRestore = { version: number; current_version: number; message?: string };
 
 export type QueryRunStatus = "ok" | "error" | "timeout" | "refused";
 

@@ -43,8 +43,27 @@ export function useSourceSchema(projectId: string, sourceId: string | null) {
   });
 }
 
+/** Polled so an open tab notices when a teammate saves a newer version (QUERY_EDITOR.md → phase 2). */
 export function useSavedQueries(projectId: string) {
-  return useQuery({ queryKey: qk.savedQueries(projectId), queryFn: () => api.savedQueries.list(projectId) });
+  return useQuery({ queryKey: qk.savedQueries(projectId), queryFn: () => api.savedQueries.list(projectId), refetchInterval: 30_000 });
+}
+
+export function useSavedQueryVersions(projectId: string, savedId: string | null) {
+  return useQuery({
+    queryKey: qk.savedQueryVersions(projectId, savedId ?? ""),
+    queryFn: () => api.savedQueries.versions(projectId, savedId ?? ""),
+    enabled: savedId !== null,
+    select: (r) => r.versions,
+  });
+}
+
+export function useSavedQueryVersion(projectId: string, savedId: string, n: number | null) {
+  return useQuery({
+    queryKey: qk.savedQueryVersion(projectId, savedId, n ?? 0),
+    queryFn: () => api.savedQueries.version(projectId, savedId, n ?? 0),
+    enabled: n !== null,
+    staleTime: Infinity, // a version's text never changes
+  });
 }
 
 const QUERY_LOG_PAGE = 50;

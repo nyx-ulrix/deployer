@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { ApiError } from "../../api/client";
 import type { QueryRun, SavedQuery } from "../../api/types";
 import {
   attachSaved,
@@ -7,6 +8,8 @@ import {
   EMPTY_NOTEBOOK,
   historyRow,
   insertCellAfter,
+  isBehind,
+  joinCells,
   loadNotebook,
   moveCell,
   nextUntitledNumber,
@@ -14,12 +17,14 @@ import {
   openSaved,
   openUntitled,
   parseDocument,
+  refreshSaved,
   removeCell,
   saveNotebook,
   serializeDocument,
   setCells,
   splitFolderName,
   tabTitle,
+  versionConflict,
   type NotebookState,
 } from "./notebook";
 
@@ -35,6 +40,8 @@ const saved = (over: Partial<SavedQuery> = {}): SavedQuery => ({
   kind: "sql",
   created_at: "2026-09-01T00:00:00Z",
   updated_at: "2026-09-01T00:00:00Z",
+  version: 1,
+  updated_by_email: "u1@example.com",
   ...over,
 });
 
@@ -152,12 +159,58 @@ describe("tabs", () => {
     expect(s.tabs[0].dirty).toBe(false);
     s = setCells(s, id, [{ id: "a", text: "SELECT 2;" }]);
     expect(s.tabs[0].dirty).toBe(true);
-    s = attachSaved(s, id, { id: "sq1", name: "renamed", folder: null });
-    expect(s.tabs[0]).toMatchObject({ dirty: false, name: "renamed", folder: null, savedId: "sq1" });
+    s = attachSaved(s, id, { id: "sq1", name: "renamed", folder: null, version: 2 });
+    expect(s.tabs[0]).toMatchObject({ dirty: false, name: "renamed", folder: null, savedId: "sq1", version: 2 });
     s = detachSaved(s, "sq1");
-    expect(s.tabs[0]).toMatchObject({ dirty: true, savedId: null, name: null, untitled: 1 });
+    expect(s.tabs[0]).toMatchObject({ dirty: true, savedId: null, name: null, untitled: 1, version: null });
     expect(tabTitle(s.tabs[0])).toBe("Untitled 1");
     expect(detachSaved(s, "other")).toBe(s);
+  });
+});
+
+describe("versions", () => {
+  const v2 = saved({ version: 2, name: "renamed", query_text: serializeDocument([{ id: "z", text: "SELECT 9;" }]) });
+
+  it("opening a saved query remembers its version; untitled tabs have none", () => {
+    const s = openUntitled(openSaved(EMPTY_NOTEBOOK, saved(), null), null);
+    expect(s.tabs.map((t) => t.version)).toEqual([1, null]);
+  });
+
+  it("refreshSaved updates a clean tab and leaves a dirty one alone unless forced", () => {
+    const clean = openSaved(EMPTY_NOTEBOOK, saved(), null);
+    const refreshed = refreshSaved(clean, v2);
+    expect(refreshed.tabs[0]).toMatchObject({ version: 2, name: "renamed", dirty: false, cells: [{ id: "z", text: "SELECT 9;" }] });
+
+    const dirty = setCells(clean, clean.tabs[0].id, [{ id: "a", text: "mine" }]);
+    expect(refreshSaved(dirty, v2)).toBe(dirty);
+    expect(refreshSaved(dirty, v2, true).tabs[0]).toMatchObject({ version: 2, dirty: false, cells: [{ id: "z", text: "SELECT 9;" }] });
+    expect(refreshSaved(clean, saved({ id: "other" }))).toBe(clean);
+  });
+
+  it("isBehind compares the tab's version with the server's", () => {
+    const tab = openSaved(EMPTY_NOTEBOOK, saved(), null).tabs[0];
+    expect(isBehind(tab, saved())).toBe(false);
+    expect(isBehind(tab, v2)).toBe(true);
+    expect(isBehind(tab, saved({ id: "other", version: 5 }))).toBe(false);
+    expect(isBehind(tab, undefined)).toBe(false);
+    // A tab stored before versions existed counts as behind so it gets refreshed.
+    expect(isBehind({ ...tab, version: null }, saved())).toBe(true);
+  });
+
+  it("versionConflict extracts the server copy from a 409 and nothing else", () => {
+    expect(versionConflict(new ApiError(409, "version_conflict", "stale", { current: v2 }))?.version).toBe(2);
+    expect(versionConflict(new ApiError(409, "version_conflict", "stale", {}))).toBeNull();
+    expect(versionConflict(new ApiError(403, "forbidden", "no"))).toBeNull();
+    expect(versionConflict(new Error("x"))).toBeNull();
+  });
+
+  it("joinCells separates cells with a comment line for the diff", () => {
+    const cells = [
+      { id: "a", text: "SELECT 1;" },
+      { id: "b", text: "SELECT 2;" },
+    ];
+    expect(joinCells(cells, "sql")).toBe("SELECT 1;\n-- cell --\nSELECT 2;");
+    expect(joinCells(cells, "nosql")).toBe("SELECT 1;\n// cell //\nSELECT 2;");
   });
 });
 

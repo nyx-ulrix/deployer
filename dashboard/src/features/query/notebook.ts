@@ -1,4 +1,5 @@
-import type { QueryRun, SavedQuery } from "../../api/types";
+import { isApiError } from "../../api/client";
+import type { DataSourceKind, QueryRun, SavedQuery } from "../../api/types";
 import { relativeTime } from "../../lib/format";
 import { readJson, writeStorage } from "../../lib/storage";
 import { newId } from "./history";
@@ -21,6 +22,8 @@ export type NotebookTab = {
   cells: NotebookCell[];
   /** Edited since it was opened or last saved. */
   dirty: boolean;
+  /** Version of the saved query this tab's text came from; a PATCH carries it (null = untitled or pre-phase-2 tab). */
+  version: number | null;
 };
 
 export type NotebookState = { tabs: NotebookTab[]; activeId: string | null };
@@ -57,6 +60,11 @@ export function parseDocument(text: string): NotebookCell[] {
 
 export function serializeDocument(cells: readonly NotebookCell[]): string {
   return JSON.stringify({ cells: cells.map(({ id, text }) => ({ id, text })) });
+}
+
+/** Cells as one text with a comment line between them, so a line diff of two documents reads naturally. */
+export function joinCells(cells: readonly NotebookCell[], kind: DataSourceKind): string {
+  return cells.map((c) => c.text).join(kind === "nosql" ? "\n// cell //\n" : "\n-- cell --\n");
 }
 
 // ---- Cells ----
@@ -110,6 +118,7 @@ export function openUntitled(state: NotebookState, sourceId: string | null, cell
     sourceId,
     cells,
     dirty: false,
+    version: null,
   });
 }
 
@@ -126,6 +135,7 @@ export function openSaved(state: NotebookState, saved: SavedQuery, fallbackSourc
     sourceId: saved.data_source_id ?? fallbackSourceId,
     cells: parseDocument(saved.query_text),
     dirty: false,
+    version: saved.version,
   });
 }
 
@@ -149,15 +159,37 @@ export function setCells(state: NotebookState, id: string, cells: NotebookCell[]
 }
 
 /** The tab was saved as (or renamed to) this saved query. */
-export function attachSaved(state: NotebookState, id: string, saved: Pick<SavedQuery, "id" | "name" | "folder">): NotebookState {
-  return patchTab(state, id, { savedId: saved.id, name: saved.name, folder: saved.folder, untitled: null, dirty: false });
+export function attachSaved(state: NotebookState, id: string, saved: Pick<SavedQuery, "id" | "name" | "folder" | "version">): NotebookState {
+  return patchTab(state, id, { savedId: saved.id, name: saved.name, folder: saved.folder, untitled: null, dirty: false, version: saved.version });
+}
+
+/**
+ * The server has a newer copy of a tab's saved query: take its name, folder, text and version. A dirty tab is
+ * left alone (the user decides in the UI) unless `force` — "Reload theirs" after a conflict, or a restore.
+ */
+export function refreshSaved(state: NotebookState, saved: SavedQuery, force = false): NotebookState {
+  const tab = state.tabs.find((t) => t.savedId === saved.id);
+  if (!tab || (tab.dirty && !force)) return state;
+  return patchTab(state, tab.id, { name: saved.name, folder: saved.folder, version: saved.version, cells: parseDocument(saved.query_text), dirty: false });
+}
+
+/** A tab whose saved query the server knows a newer version of. */
+export function isBehind(tab: Pick<NotebookTab, "savedId" | "version">, saved: Pick<SavedQuery, "id" | "version"> | undefined): boolean {
+  return saved !== undefined && tab.savedId === saved.id && saved.version > (tab.version ?? 0);
+}
+
+/** The current server copy carried by a `409 version_conflict`, or null for any other error. */
+export function versionConflict(e: unknown): SavedQuery | null {
+  if (!isApiError(e) || e.code !== "version_conflict") return null;
+  const current = e.details.current as SavedQuery | undefined;
+  return current && typeof current.version === "number" ? current : null;
 }
 
 /** The saved query was deleted elsewhere: its tab lives on as an unsaved untitled document. */
 export function detachSaved(state: NotebookState, savedId: string): NotebookState {
   const tab = state.tabs.find((t) => t.savedId === savedId);
   if (!tab) return state;
-  return patchTab(state, tab.id, { savedId: null, name: null, folder: null, untitled: nextUntitledNumber(state.tabs), dirty: true });
+  return patchTab(state, tab.id, { savedId: null, name: null, folder: null, untitled: nextUntitledNumber(state.tabs), dirty: true, version: null });
 }
 
 // ---- Snippet names ----
@@ -205,6 +237,7 @@ export function loadNotebook(projectId: string): NotebookState {
     sourceId: typeof t.sourceId === "string" ? t.sourceId : null,
     cells: t.cells.length > 0 ? t.cells : [newCell()],
     dirty: t.dirty,
+    version: typeof t.version === "number" ? t.version : null,
   }));
   const activeId = tabs.some((t) => t.id === raw.activeId) ? (raw.activeId as string) : (tabs[0]?.id ?? null);
   return { tabs, activeId };

@@ -438,3 +438,25 @@ class SavedQuery(Base):
     kind: Mapped[str] = mapped_column(String(10), nullable=False)  # sql | nosql | any
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    # Current version number; every text change appends a SavedQueryVersion and bumps this.
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+
+
+class SavedQueryVersion(Base):
+    """Append-only history of a saved query's text (docs/QUERY_EDITOR.md "Phase 2 — versions")."""
+
+    __tablename__ = "saved_query_versions"
+    __table_args__ = (
+        UniqueConstraint("saved_query_id", "version", name="uq_saved_query_version"),
+        Index("ix_saved_query_versions_query_version", "saved_query_id", "version"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    saved_query_id: Mapped[str] = mapped_column(ForeignKey("saved_queries.id", ondelete="CASCADE"), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    # Snapshots, no FK: history outlives the author's account.
+    author_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    author_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    message: Mapped[str | None] = mapped_column(String(200))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)

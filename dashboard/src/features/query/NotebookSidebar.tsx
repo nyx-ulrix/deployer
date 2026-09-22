@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { FileCode, Folder, History, MoreHorizontal, Pencil, Plus, Search, Trash2, Users, X } from "lucide-react";
+import { FileCode, Folder, GitCommitVertical, History, MoreHorizontal, Pencil, Plus, RotateCcw, Search, Trash2, Users, X } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import { useQueryLog, useSavedQueries } from "../../api/hooks";
-import type { DataSource, Project, QueryRun, SavedQuery, SourceSchema } from "../../api/types";
+import { useQueryLog, useSavedQueries, useSavedQueryVersion, useSavedQueryVersions } from "../../api/hooks";
+import type { DataSource, DataSourceKind, Project, QueryRun, SavedQuery, SavedQueryVersion, SourceSchema } from "../../api/types";
 import { useCurrentUser } from "../../auth/auth-context";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -14,10 +14,11 @@ import { PageSpinner } from "../../components/ui/Spinner";
 import { ErrorAlert } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
-import { formatDateTime } from "../../lib/format";
+import { formatDateTime, formatNumber, relativeTime } from "../../lib/format";
 import { useProjectContext } from "../projects/project-context";
+import { DiffDialog } from "./DiffView";
 import { EntitySidebar } from "./EntitySidebar";
-import { historyRow } from "./notebook";
+import { historyRow, joinCells, parseDocument, versionConflict, type NotebookTab } from "./notebook";
 import { SnippetDialog } from "./SnippetDialog";
 
 type Props = {
@@ -30,6 +31,13 @@ type Props = {
   onNew: () => void;
   onRenamed: (saved: SavedQuery) => void;
   onDeleted: (id: string) => void;
+  /** The active tab: its snippet's versions are listed and diffed against its cells. */
+  tab: NotebookTab;
+  kind: DataSourceKind;
+  /** A restore made a new version; the tab takes its text. */
+  onRestored: (saved: SavedQuery) => void;
+  /** The restore lost a race: the console shows the server copy with a reload option. */
+  onRestoreConflict: (current: SavedQuery) => void;
   /** A history row was clicked: its text goes into a new cell. */
   onInsertHistory: (text: string) => void;
   /** A table/collection was clicked: a starter query goes into the active cell. */
@@ -76,6 +84,10 @@ export function NotebookSidebar({
   onNew,
   onRenamed,
   onDeleted,
+  tab,
+  kind,
+  onRestored,
+  onRestoreConflict,
   onInsertHistory,
   onInsertEntity,
   onClose,
@@ -84,6 +96,9 @@ export function NotebookSidebar({
   return (
     <aside className={cn("flex flex-col gap-3", className)} aria-label="Notebook sidebar">
       <Snippets project={project} openSavedId={openSavedId} onOpen={onOpenSaved} onNew={onNew} onRenamed={onRenamed} onDeleted={onDeleted} onClose={onClose} />
+      {tab.savedId && (
+        <VersionsSection key={tab.savedId} project={project} savedId={tab.savedId} tab={tab} kind={kind} onRestored={onRestored} onConflict={onRestoreConflict} />
+      )}
       <HistorySection project={project} source={source} onInsert={onInsertHistory} />
       <EntitySidebar source={source} schema={schema} onInsert={onInsertEntity} />
     </aside>
@@ -109,12 +124,21 @@ function Snippets({
   const [deleting, setDeleting] = useState<SavedQuery | null>(null);
   const groups = useMemo(() => groupSnippets(list.data ?? [], filter), [list.data, filter]);
   const invalidate = () => queryClient.invalidateQueries({ queryKey: qk.savedQueries(project.id) });
-  // PATCH/DELETE are for the snippet's owner or admin+ (QUERY_EDITOR.md).
-  const canManage = (s: SavedQuery) => s.owner_id === user.id || can("admin");
+  // Phase 2: PATCH (rename, move) is for any developer+; DELETE stays with the snippet's owner or admin+.
+  const canDelete = (s: SavedQuery) => s.owner_id === user.id || can("admin");
 
   const rename = useMutation({
-    mutationFn: ({ id, name, folder }: { id: string; name: string; folder: string | null }) =>
-      api.savedQueries.update(project.id, id, { name, folder }),
+    mutationFn: async ({ snippet, name, folder }: { snippet: SavedQuery; name: string; folder: string | null }) => {
+      try {
+        return await api.savedQueries.update(project.id, snippet.id, { name, folder, version: snippet.version });
+      } catch (e) {
+        const current = versionConflict(e);
+        if (!current) throw e;
+        // A rename is metadata-only: retrying on top of whoever saved first changes none of their text, so
+        // one retry with the fresh version is safe (a second 409 surfaces as an error like any other).
+        return api.savedQueries.update(project.id, snippet.id, { name, folder, version: current.version });
+      }
+    },
     onSuccess: (saved) => {
       void invalidate();
       onRenamed(saved);
@@ -189,7 +213,7 @@ function Snippets({
                     <FileCode className="size-3.5 shrink-0 text-muted" />
                     <span className="min-w-0 flex-1 truncate">{s.name}</span>
                   </button>
-                  {canManage(s) && (
+                  {can("developer") && (
                     <Menu
                       trigger={({ toggle, open }) => (
                         <Button size="icon-sm" variant="ghost" aria-label={`Actions for ${s.name}`} aria-expanded={open} onClick={toggle}>
@@ -208,16 +232,18 @@ function Snippets({
                           >
                             Rename or move
                           </MenuItem>
-                          <MenuItem
-                            icon={<Trash2 />}
-                            danger
-                            onClick={() => {
-                              setDeleting(s);
-                              close();
-                            }}
-                          >
-                            Delete
-                          </MenuItem>
+                          {canDelete(s) && (
+                            <MenuItem
+                              icon={<Trash2 />}
+                              danger
+                              onClick={() => {
+                                setDeleting(s);
+                                close();
+                              }}
+                            >
+                              Delete
+                            </MenuItem>
+                          )}
                         </>
                       )}
                     </Menu>
@@ -237,7 +263,7 @@ function Snippets({
         initialFolder={renaming?.folder}
         loading={rename.isPending}
         onClose={() => setRenaming(null)}
-        onSubmit={(name, folder) => renaming && rename.mutate({ id: renaming.id, name, folder })}
+        onSubmit={(name, folder) => renaming && rename.mutate({ snippet: renaming, name, folder })}
       />
       <ConfirmDialog
         open={deleting !== null}
@@ -249,6 +275,136 @@ function Snippets({
         description="The snippet is removed for everyone in the project. An open tab keeps its text as an unsaved document."
         confirmLabel="Delete"
         loading={remove.isPending}
+      />
+    </section>
+  );
+}
+
+/** Who changed what (QUERY_EDITOR.md → phase 2): every version, diffable against the tab, restorable by developer+. */
+function VersionsSection({
+  project,
+  savedId,
+  tab,
+  kind,
+  onRestored,
+  onConflict,
+}: {
+  project: Project;
+  savedId: string;
+  tab: NotebookTab;
+  kind: DataSourceKind;
+  onRestored: (saved: SavedQuery) => void;
+  onConflict: (current: SavedQuery) => void;
+}) {
+  const { can } = useProjectContext();
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const versions = useSavedQueryVersions(project.id, savedId);
+  const [viewing, setViewing] = useState<SavedQueryVersion | null>(null);
+  const [restoring, setRestoring] = useState<SavedQueryVersion | null>(null);
+  const viewed = useSavedQueryVersion(project.id, savedId, viewing?.version ?? null);
+
+  const restore = useMutation({
+    mutationFn: (v: SavedQueryVersion) =>
+      api.savedQueries.restore(project.id, savedId, { version: v.version, current_version: tab.version ?? 0 }),
+    onSuccess: (saved) => {
+      void queryClient.invalidateQueries({ queryKey: qk.savedQueries(project.id) });
+      void queryClient.invalidateQueries({ queryKey: qk.savedQueryVersions(project.id, savedId) });
+      setRestoring(null);
+      onRestored(saved);
+    },
+    onError: (e) => {
+      setRestoring(null);
+      const current = versionConflict(e);
+      if (current) onConflict(current);
+      else toast.error(errorMessage(e), "Couldn't restore that version");
+    },
+  });
+
+  return (
+    <section className={section} aria-label="Versions">
+      <SectionHeader icon={<GitCommitVertical className="size-3.5 text-muted" />} title="Versions" count={versions.data?.length} />
+      <div className="max-h-72 min-h-0 overflow-y-auto p-1">
+        {versions.isPending ? (
+          <PageSpinner label="Loading versions…" />
+        ) : versions.isError ? (
+          <ErrorAlert error={versions.error} className="m-1" />
+        ) : versions.data.length === 0 ? (
+          <p className="px-2 py-3 text-sm text-muted">Every save of this snippet shows up here.</p>
+        ) : (
+          <ul aria-label="Saved versions">
+            {versions.data.map((v) => {
+              const current = v.version === tab.version;
+              return (
+                <li key={v.id} className="group flex items-start gap-1 rounded-lg px-2 py-1.5 hover:bg-surface-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-1.5 text-xs">
+                      <span className={cn("font-semibold tabular-nums", current ? "text-accent" : "text-fg")}>v{v.version}</span>
+                      <span className="min-w-0 truncate text-muted" title={v.author_email}>
+                        {v.author_email}
+                      </span>
+                    </p>
+                    <p className="flex items-center gap-1.5 text-[11px] text-muted">
+                      <span title={formatDateTime(v.created_at)}>{relativeTime(v.created_at)}</span>
+                      <span>·</span>
+                      <span className="tabular-nums">{formatNumber(v.chars)} chars</span>
+                    </p>
+                    {v.message && <p className="truncate text-xs text-fg/80 italic" title={v.message}>{v.message}</p>}
+                  </div>
+                  <Button size="icon-sm" variant="ghost" aria-label={`Compare v${v.version} with this tab`} title="View diff" onClick={() => setViewing(v)}>
+                    <GitCommitVertical className="size-3.5" />
+                  </Button>
+                  {can("developer") && !current && (
+                    <Button size="icon-sm" variant="ghost" aria-label={`Restore v${v.version}`} title="Restore as a new version" onClick={() => setRestoring(v)}>
+                      <RotateCcw className="size-3.5" />
+                    </Button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      {viewing && (
+        <DiffDialog
+          open
+          onClose={() => setViewing(null)}
+          title={`v${viewing.version} vs this tab`}
+          description={`Red lines are v${viewing.version} (${viewing.author_email}, ${relativeTime(viewing.created_at)}), green lines are your tab.`}
+          a={viewed.data ? joinCells(parseDocument(viewed.data.query_text), kind) : ""}
+          b={joinCells(tab.cells, kind)}
+          status={viewed.isPending ? <PageSpinner label="Loading version…" /> : viewed.isError ? <ErrorAlert error={viewed.error} /> : undefined}
+          footer={
+            <>
+              {can("developer") && viewing.version !== tab.version && (
+                <Button
+                  onClick={() => {
+                    setRestoring(viewing);
+                    setViewing(null);
+                  }}
+                >
+                  Restore…
+                </Button>
+              )}
+              <Button variant="primary" onClick={() => setViewing(null)}>
+                Close
+              </Button>
+            </>
+          }
+        />
+      )}
+      <ConfirmDialog
+        open={restoring !== null}
+        onClose={() => setRestoring(null)}
+        onConfirm={() => {
+          if (restoring) restore.mutate(restoring);
+        }}
+        title={`Restore v${restoring?.version}?`}
+        description={`Its text becomes a new version v${(tab.version ?? 0) + 1} and replaces the document in this tab${tab.dirty ? ", including your unsaved edits" : ""}. Nothing is deleted from the history.`}
+        confirmLabel="Restore"
+        destructive={tab.dirty}
+        loading={restore.isPending}
       />
     </section>
   );
