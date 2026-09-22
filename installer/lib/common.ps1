@@ -994,21 +994,35 @@ function Get-DeployerLanAddresses {
         Select-Object -ExpandProperty IPAddress
 }
 
+# Deployed apps are served by Caddy on one port each from this range (docs/DEPLOYMENTS.md); LAN
+# access forwards and opens it together with the dashboard port.
+$script:DeployerAppPortFirst = 8100
+$script:DeployerAppPortLast = 8199
+
+function Get-DeployerLanPorts {
+    # The dashboard port plus the app port range.
+    param([int]$Port)
+    return @($Port) + @($script:DeployerAppPortFirst..$script:DeployerAppPortLast)
+}
+
 function Remove-DeployerPortProxy {
     param([int]$Port)
+    $ports = @{}
+    foreach ($p in (Get-DeployerLanPorts -Port $Port)) { $ports[[int]$p] = $true }
     $netsh = Join-Path $env:SystemRoot 'System32\netsh.exe'
     $show = Invoke-DeployerNative -FilePath $netsh -ArgumentList @('interface', 'portproxy', 'show', 'v4tov4')
     foreach ($line in ($show.StdOut -split "`r?`n")) {
         if ($line -match '^\s*(\d+\.\d+\.\d+\.\d+|\*)\s+(\d+)\s+\S+\s+\d+') {
-            if ([int]$Matches[2] -eq $Port) {
-                [void](Invoke-DeployerNative -FilePath $netsh -ArgumentList @('interface', 'portproxy', 'delete', 'v4tov4', "listenport=$Port", "listenaddress=$($Matches[1])"))
+            if ($ports.ContainsKey([int]$Matches[2])) {
+                [void](Invoke-DeployerNative -FilePath $netsh -ArgumentList @('interface', 'portproxy', 'delete', 'v4tov4', "listenport=$($Matches[2])", "listenaddress=$($Matches[1])"))
             }
         }
     }
 }
 
 function Update-DeployerPortProxy {
-    # WSL NAT mode: forward <LAN IP>:<Port> to the distro's current IP (it changes on every boot).
+    # WSL NAT mode: forward <LAN IP>:<port> to the distro's current IP (it changes on every boot)
+    # for the dashboard port and the app port range. netsh has no range syntax, so one rule each.
     param([int]$Port)
     if (-not (Test-DeployerIsAdmin)) {
         Write-DeployerWarn 'Skipping LAN port forwarding refresh (needs administrator rights).'
@@ -1023,11 +1037,13 @@ function Update-DeployerPortProxy {
     $netsh = Join-Path $env:SystemRoot 'System32\netsh.exe'
     $ok = $true
     foreach ($ip in @(Get-DeployerLanAddresses)) {
-        $r = Invoke-DeployerNative -FilePath $netsh -ArgumentList @('interface', 'portproxy', 'add', 'v4tov4',
-            "listenport=$Port", "listenaddress=$ip", "connectport=$Port", "connectaddress=$wslIp")
-        if ($r.ExitCode -ne 0) {
-            Write-DeployerWarn "portproxy for ${ip}:$Port failed: $($r.Output.Trim())"
-            $ok = $false
+        foreach ($p in (Get-DeployerLanPorts -Port $Port)) {
+            $r = Invoke-DeployerNative -FilePath $netsh -ArgumentList @('interface', 'portproxy', 'add', 'v4tov4',
+                "listenport=$p", "listenaddress=$ip", "connectport=$p", "connectaddress=$wslIp")
+            if ($r.ExitCode -ne 0) {
+                Write-DeployerWarn "portproxy for ${ip}:$p failed: $($r.Output.Trim())"
+                $ok = $false
+            }
         }
     }
     try { Start-Service -Name iphlpsvc -ErrorAction Stop } catch { Write-Verbose "iphlpsvc: $_" }
@@ -1036,10 +1052,11 @@ function Update-DeployerPortProxy {
 
 function Add-DeployerFirewallRule {
     param([int]$Port)
+    $range = "$($script:DeployerAppPortFirst)-$($script:DeployerAppPortLast)"
     Remove-NetFirewallRule -Name $script:DeployerFirewallRule -ErrorAction SilentlyContinue
-    New-NetFirewallRule -Name $script:DeployerFirewallRule -DisplayName "Deployer (TCP $Port)" `
-        -Description 'Allows devices on private networks to reach Deployer.' `
-        -Direction Inbound -Protocol TCP -LocalPort $Port -Action Allow -Profile Private | Out-Null
+    New-NetFirewallRule -Name $script:DeployerFirewallRule -DisplayName "Deployer (TCP $Port, $range)" `
+        -Description 'Allows devices on private networks to reach Deployer and the apps it deploys.' `
+        -Direction Inbound -Protocol TCP -LocalPort @("$Port", $range) -Action Allow -Profile Private | Out-Null
     if (Get-Command New-NetFirewallHyperVRule -ErrorAction SilentlyContinue) {
         # WSL mirrored networking is additionally filtered by the Hyper-V firewall.
         Remove-NetFirewallHyperVRule -Name $script:DeployerFirewallRule -ErrorAction SilentlyContinue
