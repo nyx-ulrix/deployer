@@ -14,6 +14,7 @@ Plaintext payload (version 1)::
      "projects": [...], "project_members": [... + email],
      "project_invites": [...],                                 # instance scope only, pending invites
      "api_keys": [... + decrypted "secret" (null for keys made before secrets were kept), without secret_encrypted],
+     "apps": [... + decrypted "env", "repo_token", "webhook_secret"; no port / live deployment],   # docs/DEPLOYMENTS.md
      "data_sources": [... + decrypted "config", without config_encrypted],
      "schema_links": [...], "saved_queries": [...], "saved_query_versions": [...],   # query_runs never travel
      "data": {<data_source_id>: {"kind": "sql", "engine", "database_name",
@@ -77,6 +78,7 @@ from app.crypto import (
 from app.errors import ApiError
 from app.models import (
     ApiKey,
+    App,
     BackupPolicy,
     DataSource,
     Device,
@@ -248,6 +250,42 @@ def _api_key_secret(row: dict) -> str | None:
     # Re-encrypted with this instance's MASTER_KEY; an old export's `secret_encrypted` is unusable here.
     secret = row.get("secret") if isinstance(row, dict) else None
     return encrypt_secret(secret) if isinstance(secret, str) and secret else None
+
+
+_APP_SECRETS = ("env_encrypted", "repo_token_encrypted", "webhook_secret_encrypted")
+
+
+def _app_out(app: App) -> dict:
+    row = model_to_dict(app)
+    for key in (*_APP_SECRETS, "port", "live_deployment_id"):
+        row.pop(key, None)
+    row["env"] = decrypt_json(app.env_encrypted) if app.env_encrypted else {}
+    row["repo_token"] = decrypt_secret(app.repo_token_encrypted) if app.repo_token_encrypted else None
+    row["webhook_secret"] = decrypt_secret(app.webhook_secret_encrypted)
+    return row
+
+
+def _app_model(db: Session, row: dict, **overrides: Any) -> App:
+    """Re-encrypts the secrets with this instance's key; a fresh port; nothing live yet."""
+    from app.crypto import random_token
+    from app.services import deployments
+
+    env = row.get("env") if isinstance(row.get("env"), dict) else {}
+    token = row.get("repo_token")
+    secret = row.get("webhook_secret")
+    app = dict_to_model(
+        App,
+        row,
+        env_encrypted=encrypt_json({str(k): str(v) for k, v in env.items()}),
+        repo_token_encrypted=encrypt_secret(token) if isinstance(token, str) and token else None,
+        webhook_secret_encrypted=encrypt_secret(secret if isinstance(secret, str) and secret else random_token(32)),
+        port=deployments.allocate_port(db),
+        live_deployment_id=None,
+        **overrides,
+    )
+    if app.api_key_id and db.get(ApiKey, app.api_key_id) is None:
+        app.api_key_id = None
+    return app
 
 
 def _source_out(ds: DataSource) -> dict:
@@ -442,6 +480,8 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
         return list(db.scalars(select(model).where(model.project_id.in_(project_ids)).order_by(model.created_at)))
 
     w.field("api_keys", [_api_key_out(k) for k in by_project(ApiKey)])
+    apps = by_project(App)
+    w.field("apps", [_app_out(a) for a in apps])
     sources: list[DataSource] = [ds for ds in by_project(DataSource) if ds.deleted_at is None]
     counts["data_sources"] = len(sources)
     w.field("data_sources", [_source_out(ds) for ds in sources])
@@ -466,6 +506,9 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
         )
         w.field("domains", [model_to_dict(d) for d in db.scalars(select(Domain).order_by(Domain.created_at))])
         w.field("backup_keys", backup_crypto.export_key_material())
+    elif apps:
+        app_ids = [a.id for a in apps]
+        w.field("domains", [model_to_dict(d) for d in db.scalars(select(Domain).where(Domain.app_id.in_(app_ids)))])
 
     w.open_field("data", "{")
     for ds in sources:
@@ -913,6 +956,13 @@ def import_instance(db: Session, payload: dict) -> dict:
         for k in _list(payload, "api_keys"):
             db.add(dict_to_model(ApiKey, k, secret_encrypted=_api_key_secret(k)))
         db.flush()
+        known_apps: set[str] = set()
+        for a in _list(payload, "apps"):
+            if a.get("project_id") in projects:
+                app = _app_model(db, a)
+                db.add(app)
+                db.flush()
+                known_apps.add(app.id)
         for row in _list(payload, "data_sources"):
             project = projects.get(row.get("project_id"))
             if project is None:
@@ -954,7 +1004,9 @@ def import_instance(db: Session, payload: dict) -> dict:
         for policy in _list(payload, "backup_policies"):
             _merge_backup_policy(db, policy, known_sources, known_devices)
         for domain in _list(payload, "domains"):
-            if domain.get("project_id") is None or domain.get("project_id") in projects:
+            if (domain.get("project_id") is None or domain.get("project_id") in projects) and (
+                domain.get("app_id") is None or domain.get("app_id") in known_apps
+            ):
                 db.add(dict_to_model(Domain, domain))
         _import_backup_keys(payload.get("backup_keys"), warnings)
         db.commit()
@@ -1002,6 +1054,7 @@ def import_projects(db: Session, payload: dict, user: User) -> tuple[list[Projec
                 email = m.get("email")
                 if email and email.lower() != (user.email or "").lower() and email not in skipped_members:
                     skipped_members.append(email)
+        key_map: dict[str, str] = {}
         for k in _list(payload, "api_keys"):
             project = project_map.get(k.get("project_id"))
             if project is None:
@@ -1009,16 +1062,34 @@ def import_projects(db: Session, payload: dict, user: User) -> tuple[list[Projec
             if db.scalar(select(ApiKey.id).where(ApiKey.key_hash == k.get("key_hash"))):
                 skipped_api_keys += 1
                 continue
+            key_map[k.get("id")] = new_id()
             db.add(
                 dict_to_model(
                     ApiKey,
                     k,
-                    id=new_id(),
+                    id=key_map[k.get("id")],
                     project_id=project.id,
                     created_by_id=user.id,
                     secret_encrypted=_api_key_secret(k),
                 )
             )
+        db.flush()
+        # App hostnames are not carried over: DNS and tunnel ingress belong to the source instance.
+        for a in _list(payload, "apps"):
+            project = project_map.get(a.get("project_id"))
+            if project is None:
+                continue
+            db.add(
+                _app_model(
+                    db,
+                    a,
+                    id=new_id(),
+                    project_id=project.id,
+                    created_by_id=user.id,
+                    api_key_id=key_map.get(a.get("api_key_id")),
+                )
+            )
+            db.flush()
         source_map: dict[str, str] = {}
         for row in _list(payload, "data_sources"):
             project = project_map.get(row.get("project_id"))

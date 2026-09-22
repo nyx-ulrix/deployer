@@ -387,8 +387,10 @@ class Domain(Base):
     zone_id: Mapped[str | None] = mapped_column(String(64))
     zone_name: Mapped[str | None] = mapped_column(String(253))
     dns_record_id: Mapped[str | None] = mapped_column(String(64))
-    target_type: Mapped[str] = mapped_column(String(12), default="dashboard", nullable=False)  # dashboard | project
+    # dashboard | project | app (docs/DEPLOYMENTS.md: app hostnames route to the app's container)
+    target_type: Mapped[str] = mapped_column(String(12), default="dashboard", nullable=False)
     project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    app_id: Mapped[str | None] = mapped_column(ForeignKey("apps.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(10), default="pending", nullable=False)  # pending | active | error
     status_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
@@ -462,3 +464,57 @@ class SavedQueryVersion(Base):
     author_email: Mapped[str] = mapped_column(String(255), nullable=False)
     message: Mapped[str | None] = mapped_column(String(200))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+# --- Apps & deployments (docs/DEPLOYMENTS.md) ----------------------------------------------------
+
+
+class App(Base):
+    __tablename__ = "apps"
+    __table_args__ = (UniqueConstraint("project_id", "slug", name="uq_app_project_slug"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    slug: Mapped[str] = mapped_column(String(63), nullable=False)  # DNS-safe, unique per project
+    repo_url: Mapped[str] = mapped_column(String(500), nullable=False)  # https only
+    branch: Mapped[str] = mapped_column(String(120), default="main", nullable=False)
+    root_dir: Mapped[str] = mapped_column(String(200), default=".", nullable=False)
+    preset: Mapped[str] = mapped_column(String(12), nullable=False)  # static | node | python | dockerfile
+    install_command: Mapped[str | None] = mapped_column(String(500))
+    build_command: Mapped[str | None] = mapped_column(String(500))
+    start_command: Mapped[str | None] = mapped_column(String(500))
+    output_dir: Mapped[str | None] = mapped_column(String(200))
+    container_port: Mapped[int | None] = mapped_column(Integer)
+    env_encrypted: Mapped[str] = mapped_column(Text, nullable=False)  # encrypt_json({KEY: value})
+    repo_token_encrypted: Mapped[str | None] = mapped_column(Text)  # GitHub token for private repos; never logged
+    webhook_secret_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    api_key_id: Mapped[str | None] = mapped_column(ForeignKey("api_keys.id", ondelete="SET NULL"))
+    port: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)  # Caddy listener, 8100-8199, for life
+    live_deployment_id: Mapped[str | None] = mapped_column(String(36))  # no FK: circular with deployments
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class Deployment(Base):
+    __tablename__ = "deployments"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    app_id: Mapped[str] = mapped_column(ForeignKey("apps.id", ondelete="CASCADE"), index=True, nullable=False)
+    job_id: Mapped[str | None] = mapped_column(ForeignKey("jobs.id", ondelete="SET NULL"))
+    # queued | building | deploying | live | failed | cancelled | superseded
+    status: Mapped[str] = mapped_column(String(12), default="queued", nullable=False)
+    trigger: Mapped[str] = mapped_column(String(10), nullable=False)  # manual | webhook | rollback
+    commit_sha: Mapped[str | None] = mapped_column(String(40))
+    commit_message: Mapped[str | None] = mapped_column(String(200))
+    branch: Mapped[str] = mapped_column(String(120), nullable=False)
+    image_tag: Mapped[str | None] = mapped_column(String(200))
+    container_name: Mapped[str | None] = mapped_column(String(100))
+    log: Mapped[str] = mapped_column(Text, default="", nullable=False)  # capped 1 MB, tail kept
+    error: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    rollback_of: Mapped[str | None] = mapped_column(String(36))

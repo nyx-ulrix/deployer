@@ -208,6 +208,10 @@ def test_migration_backfills_version_one(tmp_path):
     command.upgrade(cfg, "head")
     conn = sqlite3.connect(db_file)
     assert conn.execute("SELECT version FROM saved_queries").fetchall() == [(1,)]
+    # 0006 (docs/DEPLOYMENTS.md): apps, deployments and domains.app_id.
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    assert {"apps", "deployments"} <= tables
+    assert "app_id" in [row[1] for row in conn.execute("PRAGMA table_info(domains)")]
     rows = conn.execute(
         "SELECT version, query_text, author_id, author_email, message, created_at FROM saved_query_versions"
     ).fetchall()

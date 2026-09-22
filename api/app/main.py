@@ -4,6 +4,7 @@ from app import __version__
 from app.errors import install_error_handlers
 from app.routers import (
     api_keys,
+    apps,
     auth,
     backups,
     data,
@@ -46,6 +47,7 @@ def create_app() -> FastAPI:
         backups,
         jobs,
         remote_access,
+        apps,
     ):
         app.include_router(module.router, prefix="/v1")
     return app

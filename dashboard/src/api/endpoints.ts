@@ -4,7 +4,14 @@ import type {
   ApiKeyConfig,
   ApiKeyCreateResponse,
   ApiKeyRole,
+  App,
+  AppInput,
+  AppLogs,
+  AppPatch,
+  AppWebhook,
   AuthResponse,
+  Deployment,
+  DeploymentPage,
   Backup,
   BackupPolicy,
   BackupPolicyUpdate,
@@ -379,6 +386,34 @@ export const api = {
     remove: (pid: string, sid: string, collection: string, docId: string) =>
       client.del<Ok>(`/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(collection)}/documents/${e(docId)}`),
   },
+
+  // DEPLOYMENTS.md: apps built from a Git repo and served next to the project's databases.
+  apps: {
+    list: (pid: string) => client.get<App[]>(`/projects/${e(pid)}/apps`),
+    create: (pid: string, body: AppInput) => client.post<App>(`/projects/${e(pid)}/apps`, body),
+    get: (pid: string, id: string) => client.get<App>(`/projects/${e(pid)}/apps/${e(id)}`),
+    update: (pid: string, id: string, body: AppPatch) => client.patch<App>(`/projects/${e(pid)}/apps/${e(id)}`, body),
+    remove: (pid: string, id: string) => client.del<{ job_id: string }>(`/projects/${e(pid)}/apps/${e(id)}`),
+    env: (pid: string, id: string) => client.get<{ env: Record<string, string> }>(`/projects/${e(pid)}/apps/${e(id)}/env`),
+    webhook: (pid: string, id: string) => client.get<AppWebhook>(`/projects/${e(pid)}/apps/${e(id)}/webhook`),
+    rotateWebhook: (pid: string, id: string) => client.post<AppWebhook>(`/projects/${e(pid)}/apps/${e(id)}/webhook/rotate`),
+    deploy: (pid: string, id: string, branch?: string) =>
+      client.post<Deployment>(`/projects/${e(pid)}/apps/${e(id)}/deploy`, branch ? { branch } : {}),
+    deployments: (pid: string, id: string, params: { limit?: number; before?: string } = {}) =>
+      client.get<DeploymentPage>(`/projects/${e(pid)}/apps/${e(id)}/deployments`, { query: params }),
+    deployment: (pid: string, id: string, dep: string, log = false) =>
+      client.get<Deployment>(`/projects/${e(pid)}/apps/${e(id)}/deployments/${e(dep)}`, { query: { log: log ? 1 : undefined } }),
+    cancel: (pid: string, id: string, dep: string) =>
+      client.post<Deployment>(`/projects/${e(pid)}/apps/${e(id)}/deployments/${e(dep)}/cancel`),
+    rollback: (pid: string, id: string, dep: string) =>
+      client.post<Deployment>(`/projects/${e(pid)}/apps/${e(id)}/deployments/${e(dep)}/rollback`),
+    logs: (pid: string, id: string, tail = 200) =>
+      client.get<AppLogs>(`/projects/${e(pid)}/apps/${e(id)}/logs`, { query: { tail } }),
+    addDomain: (pid: string, id: string, hostname: string) =>
+      client.post<Domain>(`/projects/${e(pid)}/apps/${e(id)}/domains`, { hostname }),
+    removeDomain: (pid: string, id: string, domainId: string) =>
+      client.del<Ok>(`/projects/${e(pid)}/apps/${e(id)}/domains/${e(domainId)}`),
+  },
 };
 
 export const qk = {
@@ -426,4 +461,9 @@ export const qk = {
   job: (id: string, jobId: string) => ["projects", id, "jobs", jobId] as const,
   instanceBackups: ["instance", "backups"] as const,
   remoteAccess: ["instance", "remote-access"] as const,
+  apps: (id: string) => ["projects", id, "apps"] as const,
+  app: (id: string, appId: string) => ["projects", id, "apps", appId] as const,
+  deployments: (id: string, appId: string) => ["projects", id, "apps", appId, "deployments"] as const,
+  deployment: (id: string, appId: string, dep: string) => ["projects", id, "apps", appId, "deployments", dep] as const,
+  appLogs: (id: string, appId: string) => ["projects", id, "apps", appId, "logs"] as const,
 };

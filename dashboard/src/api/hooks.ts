@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api, qk } from "./endpoints";
 import type { JobStatus } from "./types";
+import { isActive } from "../features/deploys/deploys";
 
 export function useSetupStatus() {
   return useQuery({ queryKey: qk.setupStatus, queryFn: api.setup.status, staleTime: 60_000, retry: 1 });
@@ -116,6 +117,48 @@ export function useJob(projectId: string, jobId: string | null) {
     queryFn: () => api.jobs.get(projectId, jobId as string),
     enabled: Boolean(jobId),
     refetchInterval: (query) => (isJobFinished(query.state.data?.status) ? false : JOB_POLL_MS),
+    staleTime: 0,
+  });
+}
+
+// ---- Deployments (DEPLOYMENTS.md) ----
+
+const DEPLOY_POLL_MS = 2000;
+
+export function useApps(projectId: string) {
+  return useQuery({ queryKey: qk.apps(projectId), queryFn: () => api.apps.list(projectId), refetchInterval: 15_000 });
+}
+
+/** Polls every 5 s while `poll` (an app page with a deployment in flight) so the live badge/URLs follow. */
+export function useApp(projectId: string, appId: string, opts: { poll?: boolean } = {}) {
+  return useQuery({
+    queryKey: qk.app(projectId, appId),
+    queryFn: () => api.apps.get(projectId, appId),
+    refetchInterval: opts.poll ? 5000 : false,
+  });
+}
+
+const DEPLOYMENTS_PAGE = 20;
+
+/** Newest-first pages; the list refreshes every 5 s so webhook-triggered deploys show up. */
+export function useDeployments(projectId: string, appId: string) {
+  return useInfiniteQuery({
+    queryKey: qk.deployments(projectId, appId),
+    queryFn: ({ pageParam }) => api.apps.deployments(projectId, appId, { limit: DEPLOYMENTS_PAGE, before: pageParam }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) =>
+      last.has_more && last.deployments.length > 0 ? last.deployments[last.deployments.length - 1].created_at : undefined,
+    refetchInterval: 5000,
+  });
+}
+
+/** One deployment with its log (`?log=1`); with `poll`, refetched every 2 s until it leaves queued/building/deploying. */
+export function useDeployment(projectId: string, appId: string, depId: string | null, opts: { poll?: boolean } = {}) {
+  return useQuery({
+    queryKey: [...qk.deployment(projectId, appId, depId ?? ""), "log"],
+    queryFn: () => api.apps.deployment(projectId, appId, depId as string, true),
+    enabled: Boolean(depId),
+    refetchInterval: (query) => (opts.poll && isActive(query.state.data?.status) ? DEPLOY_POLL_MS : false),
     staleTime: 0,
   });
 }

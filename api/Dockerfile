@@ -17,8 +17,12 @@ RUN groupadd --system --gid 10001 deployer \
 # (mongodump, mongorestore) from the official .deb, checked against a pinned SHA-256.
 # Query console (docs/QUERY_CONSOLE.md): MongoDB Shell (`mongosh`) from the official .deb
 # (https://downloads.mongodb.com/compass/, same file as the GitHub release), pinned SHA-256.
+# Push-to-deploy (docs/DEPLOYMENTS.md, worker only): git, the Docker CLI and BuildKit plugin from
+# Docker's apt repository (signing key checked by fingerprint). The image stays non-root; compose
+# switches only the worker service to root for the Docker socket.
 ARG MARIADB_SERIES=11.8
 ARG MARIADB_SIGNER_FINGERPRINT=177F4010FE56CA3336300305F1656F24C74CD1D8
+ARG DOCKER_SIGNER_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
 ARG MONGO_TOOLS_VERSION=100.17.0
 ARG MONGO_TOOLS_SHA256_AMD64=101eb691713880ad2ece723ce4a655e81c6c026328d8e1cfd84aef687d4681b4
 ARG MONGOSH_VERSION=2.11.1
@@ -35,6 +39,11 @@ RUN set -eux; \
     gpg --dearmor < /tmp/mariadb.pgp > /etc/apt/keyrings/mariadb.gpg; \
     echo "deb [signed-by=/etc/apt/keyrings/mariadb.gpg] https://dlm.mariadb.com/repo/mariadb-server/${MARIADB_SERIES}/repo/debian bookworm main" \
         > /etc/apt/sources.list.d/mariadb.list; \
+    curl -fsSL https://download.docker.com/linux/debian/gpg -o /tmp/docker.pgp; \
+    gpg --show-keys --with-colons /tmp/docker.pgp | grep -q "^fpr:::::::::${DOCKER_SIGNER_FINGERPRINT}:"; \
+    gpg --dearmor < /tmp/docker.pgp > /etc/apt/keyrings/docker.gpg; \
+    echo "deb [arch=${arch} signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
+        > /etc/apt/sources.list.d/docker.list; \
     curl -fsSL "https://fastdl.mongodb.org/tools/db/mongodb-database-tools-debian12-x86_64-${MONGO_TOOLS_VERSION}.deb" \
         -o /tmp/mongo-tools.deb; \
     echo "${MONGO_TOOLS_SHA256_AMD64}  /tmp/mongo-tools.deb" | sha256sum -c -; \
@@ -42,11 +51,12 @@ RUN set -eux; \
         -o /tmp/mongosh.deb; \
     echo "${MONGOSH_SHA256_AMD64}  /tmp/mongosh.deb" | sha256sum -c -; \
     apt-get update; \
-    apt-get install -y --no-install-recommends mariadb-client /tmp/mongo-tools.deb /tmp/mongosh.deb; \
+    apt-get install -y --no-install-recommends mariadb-client /tmp/mongo-tools.deb /tmp/mongosh.deb \
+        git docker-ce-cli docker-buildx-plugin; \
     apt-get purge -y --auto-remove curl gnupg; \
-    rm -rf /var/lib/apt/lists/* /tmp/mariadb.pgp /tmp/mongo-tools.deb /tmp/mongosh.deb; \
+    rm -rf /var/lib/apt/lists/* /tmp/mariadb.pgp /tmp/docker.pgp /tmp/mongo-tools.deb /tmp/mongosh.deb; \
     mariadb-dump --version; mariadb-binlog --version; mongodump --version; mongorestore --version; \
-    mongosh --version
+    mongosh --version; git --version; docker --version; docker buildx version
 
 # mongosh global settings (docs/QUERY_CONSOLE.md): no telemetry, no update checks, no log files.
 # Each console run gets a private temporary HOME, so nothing else is ever written or read.

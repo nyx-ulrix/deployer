@@ -6,6 +6,7 @@ import {
   KeyRound,
   LayoutDashboard,
   Network,
+  Rocket,
   Settings,
   Table2,
   Terminal,
@@ -49,6 +50,7 @@ export function ProjectLayout() {
     { to: `${base}/data`, label: "Data", icon: <Table2 className={icon} /> },
     { to: `${base}/query`, label: "Query", icon: <Terminal className={icon} /> },
     { to: `${base}/backups`, label: "Backups", icon: <History className={icon} /> },
+    { to: `${base}/deploys`, label: "Deploys", icon: <Rocket className={icon} /> },
     { to: `${base}/members`, label: "Members", icon: <Users className={icon} /> },
     ...(hasRole(p.my_role, "admin")
       ? [

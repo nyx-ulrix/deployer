@@ -23,15 +23,18 @@ every password/secret is generated locally at install time.
 Browser / phone / AI agent
         │ HTTP(S)
         ▼
-  caddy  (host port DEPLOYER_HTTP_PORT, default 8080; internal :8081 for the tunnel)
+  caddy  (host port DEPLOYER_HTTP_PORT, default 8080; internal :8081 for the tunnel;
+   │      host ports 8100-8199, one per deployed app, from `caddy_apps/<app_id>.caddy`)
    ├── /v1/*  → api        (FastAPI, Python 3.12)
-   └── /*     → dashboard  (React + Vite SPA served by nginx)
+   ├── /*     → dashboard  (React + Vite SPA served by nginx)
+   └── :81xx  → deployer-app-<slug>-<dep>  (app containers on the public network, DEPLOYMENTS.md)
                  │
    backend network (internal: true)
    ├── mariadb:11   platform metadata DB `deployer` + managed SQL databases `p_<ref>` (binlog on)
    ├── mongo:5.0    managed NoSQL databases `p_<ref>` (single-node replica set for the oplog)
-   ├── redis:7      OAuth state, rate limits, job queue, device RPC routing
-   └── worker       jobs + scheduler: backups, log archiving, pruning, verification; on a host
+   ├── redis:7      OAuth state, rate limits, job queue, device RPC routing, app runtime logs
+   └── worker       jobs + scheduler: backups, log archiving, pruning, verification; app builds and
+                    containers (root + /var/run/docker.sock, writes the Caddy app files); on a host
                     device also the outbound connection to the main Deployer
 
   tunnel (optional, public network only) — cloudflared connector for Cloudflare remote access
@@ -43,7 +46,7 @@ Browser / phone / AI agent
 | `dashboard/` | React + TypeScript + Vite SPA, Dockerfile (nginx) |
 | `deploy/` | `docker-compose.yml`, `docker-compose.dev.yml` (API hot reload for checkouts), `Caddyfile`, `.env.example`, `mongodb/` (replica-set entrypoint), `tunnel/` (cloudflared sidecar image) |
 | `installer/` | `install.ps1` (Windows bootstrap), `deployer.ps1` (manage CLI), WSL engine scripts, `windows/` (`DeployerSetup.exe`: setup wizard + Deployer Control, C# WinForms on .NET Framework 4.8) |
-| `docs/` | This file, `API.md` (HTTP contract), `CONVENTIONS.md` (schema conventions), `DEVICES.md` (host devices), `BACKUPS.md` (backups & recovery), `REMOTE_ACCESS.md` (Cloudflare domains) |
+| `docs/` | This file, `API.md` (HTTP contract), `CONVENTIONS.md` (schema conventions), `DEVICES.md` (host devices), `BACKUPS.md` (backups & recovery), `REMOTE_ACCESS.md` (Cloudflare domains), `DEPLOYMENTS.md` (push-to-deploy) |
 
 ## Data model (platform DB, MariaDB `deployer`)
 
@@ -63,6 +66,7 @@ Source of truth: `api/app/models.py`.
 | `schema_links` | user-declared relationships, incl. **cross-database** links (SQL column ↔ Mongo field) |
 | `api_keys` | hashed per-project keys (`anon` / `service`) |
 | `audit_logs` | security-relevant events |
+| `apps`, `deployments` | push-to-deploy: a Git-backed app per project (encrypted env / repo token / webhook secret, a Caddy port for life) and its builds; `domains.app_id` links an app hostname ([DEPLOYMENTS.md](DEPLOYMENTS.md)) |
 
 ## Security model
 
@@ -119,9 +123,10 @@ user's Google/GitHub OAuth apps if the public URL changed.
 2. Operations — `DeployerSetup.exe` (setup wizard + Deployer Control), host devices
    ([DEVICES.md](DEVICES.md)), backups/versions/point-in-time recovery ([BACKUPS.md](BACKUPS.md)),
    Cloudflare remote access & custom domains ([REMOTE_ACCESS.md](REMOTE_ACCESS.md)). **← current**
-3. Public data API — project-scoped REST endpoints authenticated by API keys.
-4. GitHub push-to-deploy — webhooks, Redis build queue, sandboxed build worker (host devices gain an
-   app-hosting role).
+3. Public data API — project-scoped REST endpoints authenticated by API keys. **Done.**
+4. GitHub push-to-deploy — apps built from a Git repository by the worker (BuildKit), run as
+   containers behind Caddy, GitHub webhooks, rollbacks, app hostnames
+   ([DEPLOYMENTS.md](DEPLOYMENTS.md)). **Done** (host devices as app hosts: later).
 5. Google Cloud automation — per-install service account.
 6. MCP server for AI agents.
 7. Monitoring and hardening.

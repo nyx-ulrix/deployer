@@ -240,6 +240,7 @@ def domain_out(domain: Domain) -> dict:
         "zone_name": domain.zone_name,
         "target_type": domain.target_type,
         "project_id": domain.project_id,
+        "app_id": domain.app_id,
         "status": domain.status,
         "status_message": domain.status_message,
         "url": f"https://{domain.hostname}",
@@ -390,11 +391,28 @@ def _put_ingress(client: cf.CloudflareClient, account_id: str, tunnel_id: str, h
 
 
 def _active_hostnames(db: Session, *, exclude: str | None = None) -> list[str]:
+    """Dashboard and app hostnames: both are served by caddy:8081 (apps by their own host block)."""
     return [
         d.hostname
         for d in _domains(db)
-        if d.target_type == "dashboard" and d.status == "active" and d.hostname != exclude
+        if d.target_type in ("dashboard", "app") and d.status == "active" and d.hostname != exclude
     ]
+
+
+def zone_for_hostname(db: Session, hostname: str) -> dict:
+    """The linked account's zone containing `hostname` (longest match) or 404 zone_not_found."""
+    token, account_id, _tunnel_id = _linked_state(db)
+    zones = _cached_zones(account_id)
+    if zones is None:
+        try:
+            with _client(token) as client:
+                zones = fetch_zones(client, account_id)
+        except cf.CloudflareError as exc:
+            raise cf.to_api_error(exc) from None
+    matches = [z for z in zones if hostname_in_zone(hostname, normalize_hostname(z["name"], "zone_id"))]
+    if not matches:
+        raise ApiError(404, "zone_not_found", f"No zone of the linked Cloudflare account contains {hostname}")
+    return max(matches, key=lambda z: len(z["name"]))
 
 
 def link(db: Session, api_token: str, account_id: str, *, request: Request | None, user_id: str) -> dict:
@@ -489,8 +507,18 @@ def link(db: Session, api_token: str, account_id: str, *, request: Request | Non
 
 
 def add_hostname(
-    db: Session, zone_id: str, hostname: str, overwrite: bool, *, request: Request | None, user_id: str
+    db: Session,
+    zone_id: str,
+    hostname: str,
+    overwrite: bool,
+    *,
+    request: Request | None,
+    user_id: str,
+    target_type: str = "dashboard",
+    project_id: str | None = None,
+    app_id: str | None = None,
 ) -> dict:
+    """Creates the CNAME + tunnel ingress for a dashboard hostname or (`target_type="app"`) an app's."""
     token, account_id, tunnel_id = _linked_state(db)
     host = normalize_hostname(hostname)
     if db.scalar(select(Domain).where(Domain.hostname == host)) is not None:
@@ -535,7 +563,9 @@ def add_hostname(
             provider="cloudflare",
             zone_id=zone["id"],
             zone_name=zone_name,
-            target_type="dashboard",
+            target_type=target_type,
+            project_id=project_id,
+            app_id=app_id,
             status="pending",
         )
         hostnames = [*_active_hostnames(db), host]
@@ -568,9 +598,11 @@ def add_hostname(
         "remote_access.hostname_add",
         request=request,
         user_id=user_id,
+        project_id=project_id,
         hostname=host,
         zone_id=zone["id"],
         overwrote=bool(others),
+        app_id=app_id,
     )
     db.commit()
     return domain_out(domain)

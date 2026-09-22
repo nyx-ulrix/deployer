@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, Database, History, KeyRound, Leaf, Network, Table2, Users } from "lucide-react";
+import { ArrowRight, Database, History, KeyRound, Leaf, Network, Rocket, Table2, Users } from "lucide-react";
 import { useDataSources } from "../../api/hooks";
 import { Card } from "../../components/ui/States";
 import { Spinner } from "../../components/ui/Spinner";
@@ -124,6 +124,12 @@ export function OverviewTab() {
           icon={<History className="size-4.5" />}
           title="Backups"
           description="Versions, compare and restore to any point in time."
+        />
+        <QuickLink
+          to={`${base}/deploys`}
+          icon={<Rocket className="size-4.5" />}
+          title="Deploys"
+          description="Build and run apps from a Git repository."
         />
         <QuickLink
           to={`${base}/members`}

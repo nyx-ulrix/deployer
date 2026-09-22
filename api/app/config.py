@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     tunnel_state_dir: str = "/tunnel"
     deployer_http_port: int = 0
 
+    # docs/DEPLOYMENTS.md (worker only): generated Caddy site files (`caddy_apps` volume), the compose
+    # network app containers join, their memory limit, and where checkouts are built (default: tmp).
+    caddy_apps_dir: str = "/etc/caddy/apps"
+    app_network: str = "deployer_public"
+    app_mem_limit: str = "512m"
+    app_build_dir: str = ""
+
     # Test hook: use an explicit SQLAlchemy URL instead of MariaDB (e.g. sqlite in unit tests).
     database_url_override: str = ""
 

@@ -1,17 +1,20 @@
 ---
 name: deploy-website
-description: "Use when the user wants to deploy, publish, host or 'put online' a website or web app, or asks how to use their self-hosted Deployer instance for a site. Walks an agent through Deployer (projects, databases, API keys, remote access) and, before anything is deployed, ALWAYS asks the user which platform to deploy to - with the options ordered by their past deployment activity. Never deploys without that answer."
+description: "Use when the user wants to deploy, publish, host or 'put online' a website or web app, or asks how to use their self-hosted Deployer instance for a site. Walks an agent through Deployer (projects, databases, API keys, remote access, push-to-deploy apps) and, before anything is deployed, ALWAYS asks the user which platform to deploy to - with the options ordered by their past deployment activity. Never deploys without that answer."
 ---
 
 # Deploy a website with Deployer
 
-Deployer is a self-hosted backend platform (MariaDB, MongoDB, Redis, a data API, backups,
-host devices, Cloudflare tunnels) that runs on the user's own Windows PC. It is the *backend*
-side of a site. Its own push-to-deploy pipeline for the site's frontend/serverless code is
-**not built yet** (roadmap phase 4), so today a website is deployed in two halves:
+Deployer is a self-hosted backend + deployment platform (MariaDB, MongoDB, Redis, a data API,
+backups, host devices, Cloudflare tunnels, push-to-deploy) that runs on the user's own Windows PC.
+A site can be deployed in two ways:
 
-1. the data and API live in Deployer (this skill);
-2. the static or serverless part is deployed on a platform **the user chooses** (below).
+1. **On the Deployer instance itself** (`docs/DEPLOYMENTS.md`): an *app* built from the site's
+   Git repository, run as a container on the PC, served on a local port and, when Cloudflare is
+   linked, on the user's own hostname. Good for hobby/LAN/home-server sites and anything that
+   should stay on the user's hardware.
+2. **On an external platform** (Vercel, Netlify, Cloudflare Pages, GitHub Pages...) with the data
+   and API living in Deployer (Step 1 below). Good for global CDN reach and serverless functions.
 
 ## Hard rule: always ask which platform
 
@@ -25,14 +28,15 @@ Gather evidence first (read-only, fast):
   `.github/workflows/*pages*`, `firebase.json`, `render.yaml`, `fly.toml`, `deployer-*.json`;
 - git history: `git log --oneline -30` for deploy/publish commits and CI workflow names;
 - the user's memory notes and earlier conversation (platforms they used, accounts they have);
-- an existing Deployer project / API key for this site (a `deployer-<slug>-<role>.json` config).
+- an existing Deployer project / API key / app for this site (a `deployer-<slug>-<role>.json`
+  config, or `GET <url>/v1/projects/{id}/apps` listing an app whose `repo_url` is this repo).
 
 Then ask, in this exact shape (adapt the list; keep the first line):
 
 > Which platform should I deploy this site to? Based on what I found, in order:
-> 1. **Vercel** - `vercel.json` present and the last 3 deploy commits used it (recommended)
-> 2. **Cloudflare Pages** - the domain is already on Cloudflare (Deployer tunnel is linked)
-> 3. **Netlify** / **GitHub Pages** / **a Deployer host device** - no past use found
+> 1. **This Deployer instance** - an app for this repo already exists in project "Shop" (recommended)
+> 2. **Vercel** - `vercel.json` present and the last 3 deploy commits used it
+> 3. **Cloudflare Pages** / **Netlify** / **GitHub Pages** - no past use found
 >
 > Reply with a number or a name. I won't deploy until you pick one.
 
@@ -61,7 +65,7 @@ The dashboard is at the instance's public URL (default `http://localhost:8080`; 
 5. **Reachability**: a site hosted elsewhere must reach the instance. Localhost is not enough:
    turn on LAN access or, for the internet, link the user's own Cloudflare account under
    Settings → Domains & remote access (docs/REMOTE_ACCESS.md). Never expose the plain `:8080`
-   listener to the internet directly.
+   listener to the internet directly. (An app deployed *on* the instance reaches it directly.)
 
 Using the key from the site (example, JavaScript):
 
@@ -77,7 +81,47 @@ const { rows } = await res.json();
 Put the config's `url` and the key in the platform's environment variables (`DEPLOYER_URL`,
 `DEPLOYER_API_KEY`); commit only the `anon` key if any, never the `service` key.
 
-## Step 2 - Frontend / serverless on the chosen platform
+## Step 2a - Deploy on this Deployer instance
+
+Only after the user picked **this Deployer instance**. The code must be in a Git repository the
+instance can clone over HTTPS (GitHub; private repos need a fine-grained token with
+*Contents: read* that the **user** pastes in - never ask for it in chat).
+
+1. Push the code to the repository's branch (default `main`). Commit any missing `package.json`
+   build script or `requirements.txt` first; the preset decides the build:
+
+   | Preset | Build | Runs |
+   |---|---|---|
+   | `static` | `npm ci` + `npm run build` when a package.json exists; output dir auto-detected (`dist`, `build`, `out`, `public`, `.`) | nginx, port 80 |
+   | `node` | `npm ci` (+ optional build command) | `npm start` (or `start_command`) with `PORT=3000` |
+   | `python` | `pip install -r requirements.txt` | `start_command` (required), `PORT=8000` |
+   | `dockerfile` | the repo's Dockerfile (`root_dir` relative) | the image's CMD on `container_port` |
+
+2. Create the app: project → **Deploys** → *New app* in the dashboard, or with the user's session
+   `POST /v1/projects/{id}/apps {name, repo_url, branch?, root_dir?, preset, install_command?,
+   build_command?, start_command?, output_dir?, container_port?, env?, api_key_id?}`
+   (developer role or higher; `repo_token` only through the dashboard field the user fills in).
+   Attach the project API key with `api_key_id` so the container gets `DEPLOYER_API_KEY`,
+   `DEPLOYER_URL` and `DEPLOYER_PROJECT_ID` automatically; use those names in the code instead of
+   hard-coding the config JSON.
+3. First deployment: *Deploy now* or `POST /v1/projects/{id}/apps/{app_id}/deploy` → a deployment
+   in `queued` → `building` → `deploying` → `live`. Follow the build log with
+   `GET .../deployments/{dep_id}?log=1` every few seconds; on `failed`, read `error` + the log tail,
+   fix the repo, push, deploy again. A failed deployment never replaces the running one.
+4. Push-to-deploy: `GET .../apps/{app_id}/webhook` gives the payload URL and secret; the **user**
+   adds them in GitHub (repo → Settings → Webhooks, content type `application/json`, just the
+   push event). From then on every push to the branch deploys.
+5. URLs: `local_url` (`http://localhost:81xx`, LAN when enabled) always works. For the internet,
+   the user links Cloudflare (Settings → Domains & remote access), then
+   `POST .../apps/{app_id}/domains {hostname}` (admin) creates the DNS record, tunnel ingress and
+   Caddy route; the app then lists it under `urls`.
+6. Runtime: `GET .../apps/{app_id}/logs?tail=200` (container stdout/stderr, last 500 lines);
+   older successful deployments can be re-activated with `POST .../deployments/{dep_id}/rollback`.
+
+Limits to tell the user: one PC, 512 MB RAM per app by default, no persistent volumes (use the
+project's databases), builds run through Docker on that PC and take a few minutes the first time.
+
+## Step 2b - Frontend / serverless on an external platform
 
 Only after the user answered the platform question:
 
@@ -87,7 +131,7 @@ Only after the user answered the platform question:
 | Netlify | `netlify deploy --prod`, or Git integration | same, in *Site settings → Environment* |
 | Cloudflare Pages | `wrangler pages deploy <dir>` or Git integration | same; the Deployer tunnel can share the zone |
 | GitHub Pages | workflow that builds and publishes `dist/` | only the `anon` key (static site, public) |
-| Deployer host device | **not available yet** (phase 4). Say so; offer the options above. | - |
+| Deployer host device | not available yet (apps run on the main Deployer PC only). Offer "this Deployer instance". | - |
 
 After deploying: open the site, run one real request against the data API from it, and check the
 project's query log / audit (Deployer dashboard) shows the call. Then tell the user the URL, the
@@ -98,12 +142,13 @@ platform used, and where the key lives.
 - Do ask the platform question every time, even for a redeploy - the answer may change.
 - Do use the `anon` key on the client and the `service` key only on servers/functions.
 - Don't create accounts or enter passwords or secrets on the user's behalf; ask them to paste
-  keys into the platform's settings themselves when a UI needs it.
-- Don't claim Deployer deployed the site; today it hosts the data, the chosen platform hosts the
-  site. Update this skill when the Deployer deploy pipeline ships.
+  repository tokens, webhook secrets and keys into the platform's settings themselves.
+- Don't hand-run `docker` on the user's PC to "help" a deployment; use the app's deploy endpoint
+  and its log.
 
 ## Where things are
 
 - Instance dashboard: `http://localhost:8080` (or the public URL in Settings)
-- Docs in the repo: `docs/DATA_API.md`, `docs/REMOTE_ACCESS.md`, `docs/BACKUPS.md`, `docs/API.md`
+- Docs in the repo: `docs/DEPLOYMENTS.md`, `docs/DATA_API.md`, `docs/REMOTE_ACCESS.md`,
+  `docs/BACKUPS.md`, `docs/API.md`
 - Install / update the instance: `DeployerSetup.exe`, or `deployer update` on the PC

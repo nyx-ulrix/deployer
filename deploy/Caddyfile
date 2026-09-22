@@ -2,7 +2,10 @@
 # HTTPS is intentionally off here; remote access over HTTPS comes from the Cloudflare tunnel
 # sidecar (docs/REMOTE_ACCESS.md), a tunnel you run yourself, or your own proxy in front of this port.
 {
-	admin off
+	# The admin API listens on a Unix socket inside this container only (never on a TCP port): the
+	# worker runs `docker exec <caddy> caddy reload --config /etc/caddy/Caddyfile` after it writes an
+	# app's site file (docs/DEPLOYMENTS.md).
+	admin unix//run/caddy-admin.sock
 	auto_https off
 	# If you put another reverse proxy in front of Deployer, trust it so client IPs
 	# (used for login rate limiting) are passed through, e.g.:
@@ -71,3 +74,9 @@
 
 	# Access logging is off by default (Caddy only logs requests when a `log` directive exists).
 }
+
+# Deployed apps (docs/DEPLOYMENTS.md): the worker writes one `<app_id>.caddy` per app into the
+# shared `caddy_apps` volume - a `:81xx` listener for LAN/localhost and, per Cloudflare hostname, an
+# `http://<host>:8081` block in front of the catch-all above. A glob that matches nothing only logs a
+# warning, and the worker keeps a placeholder file there anyway.
+import /etc/caddy/apps/*.caddy

@@ -10,7 +10,8 @@
 #   dashboard 64m (static nginx)           | caddy 128m
 #   tunnel 128m (cloudflared; idle unless remote access is enabled)
 #   worker 384m (backup jobs stream dumps; never buffers whole databases)
-# Roughly 2.6 GB worst case; typical idle usage is well under 1 GB.
+# Roughly 2.6 GB worst case; typical idle usage is well under 1 GB. Deployed apps
+# (docs/DEPLOYMENTS.md) run as extra containers, APP_MEM_LIMIT (512m) each, on top of that.
 #
 # MongoDB 5.0 needs a CPU with AVX. It only starts when COMPOSE_PROFILES contains `mongodb`
 # (the installer omits it on CPUs without AVX and sets MANAGED_MONGODB_ENABLED=false).
@@ -178,14 +179,26 @@ services:
 
   # Background jobs and the backup scheduler (docs/BACKUPS.md): snapshots, log archiving, restores,
   # verification, pruning. Same image as the API; starts after the API has applied migrations.
+  # Push-to-deploy (docs/DEPLOYMENTS.md): the worker also builds app images and runs app containers,
+  # so it gets the Docker socket and runs as root: the socket is owned by root on the engine host and
+  # whoever holds it is root-equivalent anyway, so an unprivileged uid would only pretend otherwise.
+  # The API container keeps no socket and stays uid 10001 (SECURITY.md "Worker trust").
   worker:
     image: ${DEPLOYER_IMAGE_PREFIX:-ghcr.io/nyx-ulrix/deployer}-api:${DEPLOYER_VERSION:-latest}
     restart: unless-stopped
     entrypoint: []
     command: ["python", "-m", "app.worker"]
-    environment: *api-environment
+    user: "0:0"
+    environment:
+      <<: *api-environment
+      # App containers: memory limit per container and the compose network Caddy reaches them on.
+      APP_MEM_LIMIT: ${APP_MEM_LIMIT:-512m}
+      APP_NETWORK: deployer_public
+      CADDY_APPS_DIR: /etc/caddy/apps
     volumes:
       - backups:/backups
+      - caddy_apps:/etc/caddy/apps
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       api:
         condition: service_healthy
@@ -225,8 +238,12 @@ services:
       # DEPLOYER_BIND=127.0.0.1 keeps it reachable from this PC only; 0.0.0.0 allows the LAN
       # (the Windows firewall still applies).
       - "${DEPLOYER_BIND:-0.0.0.0}:${DEPLOYER_HTTP_PORT:-8080}:8080"
+      # Deployed apps (docs/DEPLOYMENTS.md): one listener per app in this range, same bind rule.
+      - "${DEPLOYER_BIND:-0.0.0.0}:8100-8199:8100-8199"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Generated `<app_id>.caddy` site files written by the worker (`import /etc/caddy/apps/*.caddy`).
+      - caddy_apps:/etc/caddy/apps
       - caddy_data:/data
       - caddy_config:/config
     networks:
@@ -270,5 +287,6 @@ volumes:
   redis_data:
   caddy_data:
   caddy_config:
+  caddy_apps:
   tunnel_state:
   backups:

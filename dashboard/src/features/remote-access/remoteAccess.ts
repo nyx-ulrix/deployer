@@ -28,26 +28,33 @@ export const OAUTH_CONSOLES = {
   github: "https://github.com/settings/developers",
 } as const;
 
+/** Every API error code from docs/REMOTE_ACCESS.md as a plain sentence plus what to do. */
 const MESSAGES: Record<string, string> = {
-  cloudflare_auth_failed: "Cloudflare rejected this API token. Check that you copied the whole token and that it hasn't expired or been rolled.",
-  cloudflare_permission_missing: "The token is missing a permission Cloudflare needs for this step.",
-  cloudflare_api_error: "Cloudflare returned an error or couldn't be reached.",
-  account_not_found: "This token can't read that Cloudflare account. Check the token's Account Resources.",
+  cloudflare_auth_failed:
+    "Cloudflare says this API token is invalid or expired. Check that you copied the whole token; if it was rolled or deleted, create a new one and paste it here.",
+  cloudflare_permission_missing:
+    "The token is missing a permission Cloudflare needs for this step. Edit the token in Cloudflare, add it, then try again.",
+  cloudflare_api_error: "Cloudflare returned an error or couldn't be reached. Wait a moment and try again.",
+  account_not_found: "This token can't read that Cloudflare account. Edit the token's Account Resources to include the account that owns your domain.",
   already_linked:
-    "A different Cloudflare account is already linked and still has hostnames. Remove those hostnames or unlink first.",
-  zone_not_found: "That domain isn't in the linked Cloudflare account.",
-  hostname_not_in_zone: "The hostname must be the domain itself or a subdomain of it.",
-  domain_exists: "That hostname is already set up.",
-  not_linked: "Link a Cloudflare account first.",
+    "A different Cloudflare account is already linked and still has hostnames. Remove those hostnames or unlink first, then link the new account.",
+  zone_not_found: "That domain isn't in the linked Cloudflare account. Pick a domain from the list, or relink with the account that owns it.",
+  hostname_not_in_zone: "The hostname must be the domain itself or a subdomain of it, e.g. deployer.example.com for example.com.",
+  validation_error: "Check the hostname: letters, numbers and hyphens only, no wildcards.",
+  dns_record_exists: "That name already has DNS records. Choose Overwrite to replace them, or pick another name.",
+  domain_exists: "That hostname is already set up. Pick another name, or use the existing one below.",
+  not_linked: "Link a Cloudflare account first (step 3).",
   domain_not_active: "That hostname isn't active yet. Wait for it to finish setting up, then try again.",
-  tunnel_not_active: "The tunnel isn't running in Cloudflare mode. Link your account (and turn off the quick tunnel) first.",
+  tunnel_not_active:
+    "The tunnel isn't running in Cloudflare mode. Link your account and turn off the quick tunnel, then try again.",
   quick_tunnel_not_ready: "The quick tunnel doesn't have a URL yet. Wait a few seconds and try again.",
 };
 
 export function remoteAccessError(e: unknown): string {
   if (isApiError(e)) {
     const base = MESSAGES[e.code];
-    if (e.code === "cloudflare_api_error" || e.code === "validation_error") return e.message || base || errorMessage(e);
+    if (e.code === "cloudflare_api_error") return e.message ? `${e.message} ${base}` : base;
+    if (e.code === "validation_error") return e.message || base;
     if (e.code === "cloudflare_permission_missing") {
       const missing = e.details.missing_permissions;
       if (Array.isArray(missing) && missing.length > 0) return `${base} Missing: ${missing.join(", ")}.`;

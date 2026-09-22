@@ -12,6 +12,8 @@ import { DataTab } from "./features/data/DataTab";
 import { BackupsTab } from "./features/backups/BackupsTab";
 import { InstanceBackupsPage } from "./features/backups/InstanceBackupsPage";
 import { DatabasesTab } from "./features/databases/DatabasesTab";
+import { AppPage } from "./features/deploys/AppPage";
+import { DeploysTab } from "./features/deploys/DeploysTab";
 import { ApproveDevicePage } from "./features/devices/ApproveDevicePage";
 import { DevicesPage } from "./features/devices/DevicesPage";
 import { DeviceStatusPage } from "./features/devices/DeviceStatusPage";
@@ -112,6 +114,8 @@ const router = createBrowserRouter([
                     ),
                   },
                   { path: "backups", element: <BackupsTab /> },
+                  { path: "deploys", element: <DeploysTab /> },
+                  { path: "deploys/:appId", element: <AppPage /> },
                   { path: "members", element: <MembersTab /> },
                   { path: "api-keys", element: <ApiKeysTab /> },
                   { path: "settings", element: <ProjectSettingsTab /> },

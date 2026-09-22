@@ -791,3 +791,81 @@ export type PublicUrlResponse = {
   oauth_callbacks: { google: string; github: string };
   previous_public_url: string;
 };
+
+// ---- Deployments / push-to-deploy (docs/DEPLOYMENTS.md) ----
+
+export type AppPreset = "static" | "node" | "python" | "dockerfile";
+
+export type DeploymentStatus = "queued" | "building" | "deploying" | "live" | "failed" | "cancelled" | "superseded";
+
+export type DeploymentTrigger = "manual" | "webhook" | "rollback";
+
+export type Deployment = {
+  id: string;
+  app_id: string;
+  status: DeploymentStatus;
+  trigger: DeploymentTrigger;
+  commit_sha: string | null;
+  commit_message: string | null;
+  branch: string;
+  image_tag: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  rollback_of: string | null;
+  /** Only with `?log=1`. */
+  log?: string;
+  job_id: string | null;
+};
+
+export type App = {
+  id: string;
+  project_id: string;
+  name: string;
+  slug: string;
+  repo_url: string;
+  branch: string;
+  root_dir: string;
+  preset: AppPreset;
+  install_command: string | null;
+  build_command: string | null;
+  start_command: string | null;
+  output_dir: string | null;
+  container_port: number | null;
+  env_keys: string[];
+  has_repo_token: boolean;
+  api_key_id: string | null;
+  port: number;
+  local_url: string;
+  urls: string[];
+  live_deployment: Deployment | null;
+  domains: Domain[];
+  created_at: string;
+  updated_at: string;
+};
+
+export type AppInput = {
+  name: string;
+  repo_url: string;
+  branch?: string;
+  root_dir?: string;
+  preset: AppPreset;
+  install_command?: string | null;
+  build_command?: string | null;
+  start_command?: string | null;
+  output_dir?: string | null;
+  container_port?: number | null;
+  env?: Record<string, string>;
+  repo_token?: string;
+  api_key_id?: string | null;
+};
+
+/** `repo_token: null` clears the stored token. */
+export type AppPatch = Partial<Omit<AppInput, "repo_token">> & { repo_token?: string | null };
+
+export type DeploymentPage = { deployments: Deployment[]; has_more: boolean };
+
+export type AppWebhook = { url: string; secret: string };
+
+export type AppLogs = { lines: string[]; container: string | null };

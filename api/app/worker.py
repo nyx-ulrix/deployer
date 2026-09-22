@@ -11,6 +11,8 @@ Threads started by `start_background_tasks()`:
   hourly pruning incl. purging sources deleted > 30 days ago, weekly verification, daily platform
   snapshot).
 - `mongo-replset`: initiates the managed MongoDB single-node replica set on first start/upgrade.
+- `app-logs`: every 10 s copies new `docker logs` lines of live app containers into Redis
+  (docs/DEPLOYMENTS.md); the scheduler tick also removes orphan app containers.
 - any task added with `register_background_task(name, fn)`.
 
 Extension point (host devices): call `register_background_task("device-agent", fn)` before
@@ -130,11 +132,12 @@ _last_query_log_prune = float("-inf")  # module-level: the leader is one process
 
 def scheduler_tick() -> None:
     global _last_query_log_prune
-    from app.services import backups, query_log
+    from app.services import backups, deployments, query_log
 
     jobs.recover_stale()
     jobs.redispatch_queued()
     backups.scheduler_tick(jobs.get_sessionmaker())
+    deployments.scheduler_tick(jobs.get_sessionmaker())
     if time.monotonic() - _last_query_log_prune >= PRUNE_QUERY_LOG_EVERY_S:
         _last_query_log_prune = time.monotonic()
         with jobs.get_sessionmaker()() as session:
@@ -201,7 +204,14 @@ def _load_plugins() -> None:
 def start_background_tasks(stop: threading.Event, *, concurrency: int | None = None) -> list[threading.Thread]:
     concurrency = concurrency or max(1, int(os.environ.get("WORKER_CONCURRENCY", "2")))
     specs: list[tuple[str, BackgroundTask]] = [(f"runner-{i + 1}", runner_loop) for i in range(concurrency)]
-    specs += [("scheduler", scheduler_loop), ("mongo-replset", mongo_replset_loop), *_tasks]
+    from app.services import deployments
+
+    specs += [
+        ("scheduler", scheduler_loop),
+        ("mongo-replset", mongo_replset_loop),
+        ("app-logs", deployments.logs_loop),
+        *_tasks,
+    ]
     threads = []
     for name, fn in specs:
         thread = threading.Thread(target=_guard(name, fn, stop), name=name, daemon=True)

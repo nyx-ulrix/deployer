@@ -12,6 +12,31 @@ import { Alert } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { currentDomain, OAUTH_CONSOLES, remoteAccessError } from "./remoteAccess";
 
+/** The Google/GitHub callback URLs to register after the public URL changes. */
+export function SignInAppsBox({ callbacks }: { callbacks: { google: string; github: string } }) {
+  return (
+    <div className="space-y-3 rounded-xl border border-border bg-surface-2/50 p-3.5">
+      <h3 className="font-semibold">Update your sign-in apps</h3>
+      <p className="text-muted">
+        Google and GitHub only redirect back to callback URLs you've registered. Paste these into each OAuth app — you
+        can keep the old URLs registered during the switch — or sign-in with those providers fails.
+      </p>
+      <div className="space-y-1.5">
+        <CopyField label="Google — Authorized redirect URI" value={callbacks.google} />
+        <a href={OAUTH_CONSOLES.google} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline">
+          Google Cloud Console → APIs & Services → Credentials → your OAuth client <ExternalLink className="size-3" />
+        </a>
+      </div>
+      <div className="space-y-1.5">
+        <CopyField label="GitHub — Authorization callback URL" value={callbacks.github} />
+        <a href={OAUTH_CONSOLES.github} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline">
+          GitHub → Settings → Developer settings → OAuth Apps → your app <ExternalLink className="size-3" />
+        </a>
+      </div>
+    </div>
+  );
+}
+
 export function PublicUrlResultDialog({ result, onClose }: { result: PublicUrlResponse; onClose: () => void }) {
   const url = result.settings.public_url;
   const onNewAddress = (() => {
@@ -47,25 +72,7 @@ export function PublicUrlResultDialog({ result, onClose }: { result: PublicUrlRe
     >
       <div className="space-y-4 text-sm">
         <CopyField label="New public URL" value={url} />
-        <div className="space-y-3">
-          <h3 className="font-semibold">Update your sign-in providers</h3>
-          <p className="text-muted">
-            Google and GitHub only redirect back to callback URLs you've registered. Add these in each OAuth app (you
-            can keep the old ones registered during the switch), or sign-in with those providers will fail.
-          </p>
-          <div className="space-y-1.5">
-            <CopyField label="Google — Authorized redirect URI" value={result.oauth_callbacks.google} />
-            <a href={OAUTH_CONSOLES.google} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline">
-              Google Cloud Console → Credentials <ExternalLink className="size-3" />
-            </a>
-          </div>
-          <div className="space-y-1.5">
-            <CopyField label="GitHub — Authorization callback URL" value={result.oauth_callbacks.github} />
-            <a href={OAUTH_CONSOLES.github} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline">
-              GitHub → Developer settings → OAuth Apps <ExternalLink className="size-3" />
-            </a>
-          </div>
-        </div>
+        <SignInAppsBox callbacks={result.oauth_callbacks} />
         <Alert tone="info" title="Host devices and invite links">
           Host devices should use the new URL — re-enroll a device if it was attached with the old address. New invite
           links use the new URL too.

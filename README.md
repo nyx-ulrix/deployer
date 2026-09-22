@@ -37,6 +37,10 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 - **Remote access with your own domain** - link your Cloudflare account and Deployer creates a tunnel
   and DNS records for `https://deployer.example.com` (or a throwaway quick tunnel for testing)
   ([docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md)).
+- **Push-to-deploy** - point an app at a GitHub repository (static site, Node, Python or your own
+  Dockerfile); every push builds it on this PC and swaps it in behind Caddy with zero downtime,
+  rollbacks, build and runtime logs, and `https://shop.example.com` through the same Cloudflare
+  tunnel ([docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md)).
 - **Runs anywhere Windows does** - Docker Engine in WSL2 by default, sized for 4 GB RAM machines.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/API.md](docs/API.md) for details.
@@ -170,6 +174,20 @@ URLs in both OAuth apps. Client secrets are stored encrypted with your installat
   and gives you `https://<your-domain>` through a Cloudflare Tunnel - no port forwarding, no
   certificates. A quick `trycloudflare.com` tunnel is available for testing. See
   [docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md). Do not port-forward the plain-HTTP port on your router.
+
+## Deploy an app
+
+Project → **Deploys** → *New app*: name, GitHub repository URL (+ a fine-grained token with
+*Contents: read* for private repositories), branch, a preset (`static`, `node`, `python` or
+`dockerfile`), environment variables and optionally one of the project's API keys (injected as
+`DEPLOYER_API_KEY` next to `DEPLOYER_URL` and `DEPLOYER_PROJECT_ID`). *Deploy now* clones, builds
+(BuildKit) and starts the app; it is served on `http://localhost:<port>` (ports 8100-8199, LAN when
+enabled) and on any hostname you add under the app's **Domains** once Cloudflare is linked.
+
+For push-to-deploy, copy the webhook URL and secret from the app's **Settings** into the GitHub
+repository (*Settings → Webhooks*, content type `application/json`, just the push event). Every push
+to the configured branch becomes a deployment; a failed build or start leaves the previous one
+running, and older successful deployments can be rolled back to. Details: [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md).
 
 ## Deployer Control
 
@@ -311,7 +329,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 2. **Operations** - `DeployerSetup.exe` + Deployer Control, host devices, backups / versions /
    point-in-time recovery, Cloudflare remote access & custom domains. *(current)*
 3. Public data API - project-scoped REST endpoints authenticated by API keys. *(done: [docs/DATA_API.md](docs/DATA_API.md))*
-4. GitHub push-to-deploy - webhooks, Redis build queue, sandboxed build worker.
+4. GitHub push-to-deploy - webhooks, build worker, per-app Caddy routing, rollbacks. *(done: [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md))*
 5. Google Cloud automation - per-install service account.
 6. MCP server for AI agents.
 7. Monitoring and hardening.

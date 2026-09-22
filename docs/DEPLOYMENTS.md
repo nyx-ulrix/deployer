@@ -39,7 +39,9 @@ GitHub push ──webhook──▶ api ──job app.deploy──▶ worker (roo
   ```
 
   The worker rewrites the file and runs `docker exec deployer-caddy-1 caddy reload --config
-  /etc/caddy/Caddyfile` (the container name comes from `docker ps --filter label=com.docker.compose.service=caddy`).
+  /etc/caddy/Caddyfile` (the container name comes from `docker ps --filter label=com.docker.compose.service=caddy`;
+  the Caddyfile's admin API listens on a Unix socket inside the Caddy container for this, never on TCP).
+  The worker also keeps a `_empty.caddy` placeholder in the directory so the import always matches.
   Ports are allocated per app from the range (`apps.port`, unique); an app keeps its port for life.
   LAN access to app ports needs the same port forwarding as 8080 (`deployer lan on` forwards the
   range too — installer follow-up).
@@ -47,9 +49,11 @@ GitHub push ──webhook──▶ api ──job app.deploy──▶ worker (roo
   (up to 60 s), rewrites the Caddy file to the new container, reloads, then stops and removes the
   previous container. A failed start leaves the previous deployment live.
 - **Cloudflare hostnames** for apps reuse the `domains` table (`domains.app_id` nullable FK,
-  `domains.kind` `dashboard|app`): adding one creates the DNS CNAME and adds the hostname to the
-  tunnel ingress (→ `http://caddy:8081`), exactly like dashboard hostnames (REMOTE_ACCESS.md), and the
-  Caddy host block above routes it to the app.
+  `domains.target_type` = `app`): adding one resolves the zone from the hostname (longest matching
+  zone of the linked account, else 404 `zone_not_found`), creates the DNS CNAME and adds the
+  hostname to the tunnel ingress (→ `http://caddy:8081`), exactly like dashboard hostnames
+  (REMOTE_ACCESS.md). The API has no Docker access, so it then enqueues `app.route` (only when the
+  app has a live deployment) and the worker rewrites the Caddy file with the host block above.
 
 ## Presets
 
@@ -90,10 +94,16 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
   `Starting`, `Routing`, `Cleaning up`. Cancel between steps via `ctx.check_cancelled()`. One active
   deploy per app (`jobs.active_job(key=app_id)`), a second request while one runs is queued behind
   it (status `queued`).
-- `app.remove` (`{app_id}`): stop/remove containers and images, delete the Caddy file, reload,
-  remove the app's domains (DNS + ingress) — enqueued by `DELETE /apps/{id}`.
-- Scheduler: every tick, containers labelled `deployer.app` whose app or live deployment no longer
-  exists are removed (orphans after a failed remove or an import).
+- `app.remove` (`{app_id, slug}`): stop/remove containers and images, delete the Caddy file, reload —
+  enqueued by `DELETE /apps/{id}`, which first removes the app's domains (DNS + ingress, synchronously
+  like `DELETE /instance/remote-access/cloudflare/hostnames/{id}`), cancels active deployments and
+  deletes the row (deployments and domains cascade).
+- `app.route` (`{app_id}`): rewrite the app's Caddy file for its live deployment (or remove it) and
+  reload — enqueued when an app hostname is added or removed.
+- Scheduler: every tick, containers labelled `deployer.app` whose app or deployment no longer exists
+  (or is not `deploying`/`live`) are removed, Caddy files of deleted apps are deleted, `queued`
+  deployments without a job get one when no deploy of their app is active, and `queued` deployments
+  whose job ended without running them are closed as `failed`/`cancelled`.
 
 ## API (`/v1/projects/{pid}`)
 
@@ -112,8 +122,8 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
 | GET | `/apps/{id}/deployments/{dep}` | viewer+ | `?log=1` includes the log | `Deployment` |
 | POST | `/apps/{id}/deployments/{dep}/cancel` | developer+ | – | `Deployment` |
 | POST | `/apps/{id}/deployments/{dep}/rollback` | developer+ | – | `Deployment` (202, new one) |
-| GET | `/apps/{id}/logs?tail=200` | viewer+ | – | `{lines: string[], container}` from `docker logs` of the live container (worker-side via a short job? No: the API calls `docker logs` through the worker RPC — see below) |
-| POST | `/apps/{id}/domains` | admin+ (instance owner for DNS) | `{hostname}` | `Domain` (same rules as REMOTE_ACCESS.md, `kind: app`) |
+| GET | `/apps/{id}/logs?tail=200` | viewer+ | – | `{lines: string[], container}` — the last `tail` (≤ 500) lines the worker copied from `docker logs` of the live container into Redis (see below); `container` is the live container name or null |
+| POST | `/apps/{id}/domains` | admin+ (uses the instance owner's Cloudflare link; 409 `not_linked`) | `{hostname, overwrite?}` | `Domain` (same rules as REMOTE_ACCESS.md, `target_type: app`, `app_id`; zone resolved from the hostname) |
 | DELETE | `/apps/{id}/domains/{domain_id}` | admin+ | – | `{ok}` |
 
 Webhook (no auth header): `POST /v1/hooks/github/{app_id}` with GitHub's `X-Hub-Signature-256`
@@ -121,7 +131,8 @@ Webhook (no auth header): `POST /v1/hooks/github/{app_id}` with GitHub's `X-Hub-
 otherwise), `X-GitHub-Event: ping` → 200 `{ok}`; `push` for `refs/heads/<branch>` → 202
 `{deployment_id}` (`trigger=webhook`, `commit_sha`, first line of the head commit message); other
 branches/events → 200 `{ignored: true}`. Coalescing: a push while a deployment is still `queued`
-for the same app replaces its commit instead of adding another. Rate limit 6/min per app.
+for the same app replaces its commit instead of adding another. Rate limit 6/min per app (every
+delivery counts, including rejected signatures; 429 `rate_limited`). Unknown app → 404.
 
 Runtime logs: the API has no Docker access. `GET /apps/{id}/logs` enqueues nothing; instead the
 worker keeps the last 500 lines of each live container in Redis (`apps:logs:<app_id>`, a capped
@@ -140,8 +151,12 @@ type Deployment = { id; app_id; status; trigger; commit_sha; commit_message; bra
 not localhost); `urls` adds `https://<hostname>` per active app domain.
 
 Export/import: `apps` (with `env` decrypted, `repo_token` decrypted, `webhook_secret`
-decrypted — re-encrypted on import) and `domains` of kind `app`; deployments are not exported. The
-importing instance allocates fresh ports and does not deploy automatically.
+decrypted — re-encrypted on import; `port` and `live_deployment_id` omitted) and `domains` with
+`target_type: app`; deployments are not exported. The importing instance allocates fresh ports and
+does not deploy automatically. An instance import keeps app ids and their hostnames (same
+Cloudflare link); a projects import gives apps new ids (`api_key_id` remapped to the imported key) and
+skips app hostnames, because their DNS records and tunnel ingress belong to the source instance —
+add the hostname again on the new one.
 
 ## Dashboard — project tab **Deploys**
 
