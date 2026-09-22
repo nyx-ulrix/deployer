@@ -103,3 +103,5 @@ tmp/
 .DS_Store
 Thumbs.db
 desktop.ini
+# graphify knowledge-graph output (local map of the codebase)
+graphify-out/
