@@ -9,6 +9,7 @@ import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "../../lib/roles";
 import { EngineBadge, KindBadge, StatusBadge } from "../databases/SourceBadges";
 import { DeviceBadge } from "../devices/DeviceBits";
 import { useDeviceNames } from "../devices/useDeviceNames";
+import { AgentSkillCard } from "./AgentSkillCard";
 import { useProjectContext } from "./project-context";
 
 function QuickLink({ to, icon, title, description }: { to: string; icon: ReactNode; title: string; description: string }) {
@@ -101,6 +102,8 @@ export function OverviewTab() {
             <p className="text-sm text-muted">No databases attached yet.</p>
           )}
         </Card>
+
+        <AgentSkillCard />
       </div>
 
       <div className="space-y-3">

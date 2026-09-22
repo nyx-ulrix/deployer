@@ -22,6 +22,9 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 - **API keys** - give your apps a project-scoped key (`anon` read-only, `service` read/write) and use
   the same rows, documents, query and schema endpoints from curl, JavaScript or Python; download a
   ready-made config JSON per key ([docs/DATA_API.md](docs/DATA_API.md)).
+- **AI-agent skill** - [skills/deploy-website/SKILL.md](skills/deploy-website/SKILL.md) teaches agents
+  such as Claude Code how to back a site with Deployer; it always asks which platform to deploy to,
+  ordered by your past deployments. Install commands are on each project's Overview tab.
 - **Query console** - SQL and MongoDB shell (`mongosh`) in the browser, per database, with the
   project's roles (viewers are limited to read-only queries) ([docs/QUERY_CONSOLE.md](docs/QUERY_CONSOLE.md)).
 - **Full export / import** - one encrypted JSON file with settings, users, projects **and all data**;
