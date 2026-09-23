@@ -188,6 +188,11 @@ No endpoint ever returns the API token or the connector token.
 
 ## Troubleshooting
 
+- **The site answers `530` and the tunnel log repeats "failed to dial to edge with quic: timeout"**:
+  outbound UDP 7844 is blocked (router, ISP, VPN or the WSL NAT after a network change). The sidecar
+  uses HTTP/2 over TCP 443 by default (`TUNNEL_PROTOCOL=http2` in `.env`, passed to cloudflared as
+  `TUNNEL_TRANSPORT_PROTOCOL`); if an older `.env`/compose file still lets it use QUIC, update, or set
+  the variable and run `docker compose up -d tunnel`.
 - **`connector.last_error` says the sidecar hasn't reported / isn't running**: the `tunnel` container
   isn't running. Check `docker compose ps tunnel` and `docker compose logs tunnel`, then
   `docker compose up -d tunnel`.

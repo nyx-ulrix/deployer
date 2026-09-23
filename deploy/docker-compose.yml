@@ -266,6 +266,12 @@ services:
     restart: unless-stopped
     depends_on:
       - caddy
+    environment:
+      # cloudflared's default QUIC transport needs outbound UDP 7844; home routers, ISPs and the WSL
+      # NAT can silently drop it (the connector then retries QUIC for minutes and the site is down
+      # with Cloudflare error 530). HTTP/2 over TCP 443 works wherever the PC can browse the web.
+      # Set TUNNEL_PROTOCOL=auto (or quic) in .env to prefer QUIC.
+      TUNNEL_TRANSPORT_PROTOCOL: ${TUNNEL_PROTOCOL:-http2}
     volumes:
       - tunnel_state:/tunnel
     networks:
