@@ -1,4 +1,15 @@
-import type { App, AppInput, AppPatch, AppPreset, DataSource, Deployment, DeploymentStatus, DeploymentTrigger } from "../../api/types";
+import type {
+  App,
+  AppDetectDraft,
+  AppInput,
+  AppPatch,
+  AppPreset,
+  DataSource,
+  Deployment,
+  DeploymentStatus,
+  DeploymentTrigger,
+  GitHubRepo,
+} from "../../api/types";
 import type { BadgeTone } from "../../components/ui/Badge";
 
 /** DNS-safe slug preview matching the API's rules: lowercase `[a-z0-9-]`, no leading/trailing `-`, max 63. */
@@ -114,8 +125,8 @@ export const PRESETS: Record<
   python: {
     label: "Python",
     description: "python:3.12 — pip install -r requirements.txt, then your start command on port 8000.",
-    fields: ["start_command"],
-    placeholders: { start_command: "uvicorn main:app --host 0.0.0.0 --port 8000" },
+    fields: ["install_command", "start_command"],
+    placeholders: { install_command: "pip install -r requirements.txt", start_command: "uvicorn main:app --host 0.0.0.0 --port 8000" },
   },
   dockerfile: {
     label: "Dockerfile",
@@ -126,7 +137,7 @@ export const PRESETS: Record<
 };
 
 export const FIELD_LABELS: Record<PresetField, { label: string; hint: string }> = {
-  install_command: { label: "Install command", hint: "Defaults to npm ci when there is a package.json." },
+  install_command: { label: "Install command", hint: "Leave blank for the default (npm ci, or pip install -r requirements.txt)." },
   build_command: { label: "Build command", hint: "Defaults to npm run build when package.json has one." },
   start_command: { label: "Start command", hint: "Runs inside the container; listen on $PORT." },
   output_dir: { label: "Output directory", hint: "Defaults to the first of dist, build, out, public." },
@@ -154,6 +165,8 @@ export type AppDraft = {
   repo_token: string;
   api_key_id: string;
   database_access: boolean;
+  /** New app only: clone + webhook through the creator's GitHub connection (no token field). */
+  use_github_connection: boolean;
 };
 
 export function emptyDraft(app?: App): AppDraft {
@@ -172,6 +185,7 @@ export function emptyDraft(app?: App): AppDraft {
     repo_token: "",
     api_key_id: app?.api_key_id ?? "",
     database_access: app?.database_access ?? false,
+    use_github_connection: false,
   };
 }
 
@@ -209,13 +223,14 @@ export function draftToInput(d: AppDraft, env: EnvRow[]): AppInput {
     api_key_id: d.api_key_id || null,
     database_access: d.database_access,
   };
-  if (d.private_repo && d.repo_token.trim()) body.repo_token = d.repo_token.trim();
+  if (d.use_github_connection) body.use_github_connection = true;
+  else if (d.private_repo && d.repo_token.trim()) body.repo_token = d.repo_token.trim();
   return body;
 }
 
 /** Draft → `PATCH /apps/{id}` body (env is edited separately; the token only when typed or cleared). */
 export function draftToPatch(d: AppDraft, app: App): AppPatch {
-  const { env: _env, repo_token: _t, ...rest } = draftToInput(d, []);
+  const { env: _env, repo_token: _t, use_github_connection: _c, ...rest } = draftToInput(d, []);
   const patch: AppPatch = rest;
   if (d.private_repo && d.repo_token.trim()) patch.repo_token = d.repo_token.trim();
   else if (!d.private_repo && app.has_repo_token) patch.repo_token = null;
@@ -232,4 +247,51 @@ export function databaseEnvNames(source: Pick<DataSource, "name" | "kind">): str
 /** Sources an app with database access can reach: managed, on the main server. */
 export function reachableSources<T extends Pick<DataSource, "mode" | "device_id">>(sources: T[]): T[] {
   return sources.filter((s) => s.mode === "managed" && !s.device_id);
+}
+
+// --- "Connect a Git repository" (docs/DEPLOYMENTS.md) -------------------------------------------
+
+/** Repositories matching `q` (name or description, case-insensitive), most recently pushed first. */
+export function filterRepos(repos: GitHubRepo[], q: string): GitHubRepo[] {
+  const needle = q.trim().toLowerCase();
+  return repos
+    .filter((r) => !needle || `${r.full_name} ${r.description ?? ""}`.toLowerCase().includes(needle))
+    .sort((a, b) => (b.pushed_at ?? "").localeCompare(a.pushed_at ?? ""));
+}
+
+/** Detected draft → form draft. `viaConnection`: picked from the connected account's list (no token field). */
+export function draftFromDetect(d: AppDetectDraft, viaConnection: boolean, isAdmin: boolean): AppDraft {
+  return {
+    ...emptyDraft(),
+    name: d.name,
+    repo_url: d.repo_url,
+    branch: d.branch || "main",
+    root_dir: d.root_dir || ".",
+    preset: d.preset,
+    install_command: d.install_command ?? "",
+    build_command: d.build_command ?? "",
+    start_command: d.start_command ?? "",
+    output_dir: d.output_dir ?? "",
+    container_port: d.container_port ? String(d.container_port) : "",
+    use_github_connection: viaConnection,
+    private_repo: !viaConnection && d.private === true,
+    database_access: isAdmin && d.database_access_suggested,
+  };
+}
+
+/** Env rows with every detected key present (empty = still to fill in); values already typed are kept. */
+export function seedEnv(keys: string[], rows: EnvRow[]): EnvRow[] {
+  const have = new Set(rows.map((r) => r.key));
+  return [...rows, ...keys.filter((k) => !have.has(k)).map((key) => ({ key, value: "" }))];
+}
+
+/** "Flask app (requirements.txt, app/__init__.py)"; null when nothing was recognised. */
+export function detectedSummary(d: Pick<AppDetectDraft, "detected">): string | null {
+  return d.detected.length ? d.detected.map((x) => `${x.what} (${x.from})`).join("; ") : null;
+}
+
+/** Keys the repository's .env example lists that still have no value. */
+export function unfilledKeys(keys: string[], rows: EnvRow[]): string[] {
+  const filled = new Set(rows.filter((r) => r.value.trim()).map((r) => r.key.trim()));
+  return keys.filter((k) => !filled.has(k));
 }

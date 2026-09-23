@@ -838,6 +838,8 @@ export type App = {
   api_key_id: string | null;
   /** docs/DEPLOYMENTS.md "Database access": joins the databases network + DEPLOYER_DB_* env. Admin-only to enable. */
   database_access: boolean;
+  /** Set when the app clones (and got its webhook) through someone's GitHub connection. */
+  github: { connected_by_email: string; hook_active: boolean } | null;
   port: number;
   local_url: string;
   urls: string[];
@@ -862,13 +864,51 @@ export type AppInput = {
   repo_token?: string;
   api_key_id?: string | null;
   database_access?: boolean;
+  /** Clone + add the push webhook with the caller's GitHub connection (instead of `repo_token`). */
+  use_github_connection?: boolean;
 };
 
+/** `POST /apps` also returns what couldn't be set up automatically (e.g. the webhook). */
+export type AppCreated = App & { warnings: string[] };
+
 /** `repo_token: null` clears the stored token. */
-export type AppPatch = Partial<Omit<AppInput, "repo_token">> & { repo_token?: string | null };
+export type AppPatch = Partial<Omit<AppInput, "repo_token" | "use_github_connection">> & { repo_token?: string | null };
+
+/** docs/DEPLOYMENTS.md "Connect a Git repository". */
+export type GitHubStatus = { connected: boolean; login: string | null; scopes: string[]; configured: boolean };
+
+export type GitHubRepo = {
+  full_name: string;
+  private: boolean;
+  default_branch: string;
+  html_url: string;
+  clone_url: string;
+  pushed_at: string | null;
+  description: string | null;
+};
+
+/** `POST /apps/detect`: a suggested app, never persisted. */
+export type AppDetectDraft = {
+  name: string;
+  repo_url: string;
+  branch: string;
+  root_dir: string;
+  preset: AppPreset;
+  install_command: string | null;
+  build_command: string | null;
+  start_command: string | null;
+  output_dir: string | null;
+  container_port: number | null;
+  env_keys: string[];
+  database_access_suggested: boolean;
+  detected: { what: string; from: string }[];
+  warnings: string[];
+  /** null when the repository isn't on GitHub (not inspected). */
+  private: boolean | null;
+};
 
 export type DeploymentPage = { deployments: Deployment[]; has_more: boolean };
 
-export type AppWebhook = { url: string; secret: string };
+export type AppWebhook = { url: string; secret: string; hook_active?: boolean; warnings?: string[] };
 
 export type AppLogs = { lines: string[]; container: string | null };

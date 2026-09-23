@@ -308,6 +308,11 @@ def move_data_source(source_id: str, body: MoveInput, access: Admin, db: DbSessi
     )
     if running:
         raise ApiError(409, "move_in_progress", "This database is already being moved")
+    from app.models import SourceReplica
+
+    if db.scalar(select(SourceReplica.id).where(SourceReplica.data_source_id == ds.id)):
+        # docs/COHOSTING.md: copies follow the main server's database; remove them before moving it.
+        raise ApiError(409, "has_replicas", "Remove this database's co-host copies before moving it")
     job = device_moves.create_move_job(db, ds, target, access.user)
     audit.record(
         db,

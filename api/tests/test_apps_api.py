@@ -51,9 +51,10 @@ def test_create_list_get_and_roles(client, env, db):
     assert set(app) == {
         "id", "project_id", "name", "slug", "repo_url", "branch", "root_dir", "preset", "install_command",
         "build_command", "start_command", "output_dir", "container_port", "env_keys", "has_repo_token",
-        "api_key_id", "database_access", "port", "local_url", "urls", "live_deployment", "domains", "created_at",
-        "updated_at",
+        "api_key_id", "database_access", "github", "port", "local_url", "urls", "live_deployment", "domains",
+        "created_at", "updated_at", "warnings",
     }  # fmt: skip
+    assert app["github"] is None and app["warnings"] == []
     assert (app["slug"], app["port"], app["branch"], app["root_dir"]) == ("my-shop", 8100, "main", ".")
     assert app["local_url"] == "http://localhost:8100" and app["urls"] == [] and app["live_deployment"] is None
     assert app["env_keys"] == [] and app["has_repo_token"] is False and app["database_access"] is False
@@ -281,7 +282,17 @@ def test_app_hostnames(client, env, db, owner_headers, fake_cf):  # noqa: F811
 def test_export_import_roundtrip(client, env, db, make_user, auth_headers):
     token = new_token()
     project = env["project"]
-    app = make_app(db, project, "Shop", env={"A": "1"}, token=token, start_command="node server.js")
+    connected_by = env["admin_user"].id
+    app = make_app(
+        db,
+        project,
+        "Shop",
+        env={"A": "1"},
+        token=token,
+        start_command="node server.js",
+        github_connection_user_id=connected_by,
+        github_hook_id="9",
+    )
     db.add(
         Domain(
             hostname="shop.example.com",
@@ -302,6 +313,7 @@ def test_export_import_roundtrip(client, env, db, make_user, auth_headers):
     [row] = payload["apps"]
     assert row["env"] == {"A": "1"} and row["repo_token"] == token and row["webhook_secret"] == secret
     assert "port" not in row and "env_encrypted" not in row and payload["domains"][0]["app_id"] == app.id
+    assert "github_hook_id" not in row  # the hook belongs to this instance's URL
 
     importer = make_user()
     created, summary = transfer.import_projects(db, payload, importer)
@@ -310,6 +322,7 @@ def test_export_import_roundtrip(client, env, db, make_user, auth_headers):
     assert deployments.env_of(new) == {"A": "1"} and deployments.repo_token(new) == token
     assert deployments.webhook_secret(new) == secret and new.start_command == "node server.js"
     assert db.scalar(select(Domain).where(Domain.app_id == new.id)) is None  # hostnames stay with the source instance
+    assert new.github_connection_user_id is None  # never someone else's GitHub connection
 
     # Instance scope keeps ids and app hostnames.
     path, _ = transfer.build_export_file(db, scope="instance", projects=[project], passphrase="correct horse battery")
@@ -331,4 +344,5 @@ def test_export_import_roundtrip(client, env, db, make_user, auth_headers):
     transfer.import_instance(db, payload)
     restored = db.get(deployments.App, app.id)
     assert restored is not None and deployments.repo_token(restored) == token and restored.port == 8100
+    assert (restored.github_connection_user_id, restored.github_hook_id) == (connected_by, None)
     assert db.scalar(select(Domain).where(Domain.app_id == app.id)).hostname == "shop.example.com"

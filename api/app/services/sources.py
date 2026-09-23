@@ -53,7 +53,20 @@ def data_source_out(ds: DataSource) -> dict:
         # docs/DEVICES.md: host device of a managed source (null = main server).
         "device_id": ds.device_id,
         "device_name": _device_name(ds),
+        # docs/COHOSTING.md: live copies on co-host devices.
+        "replicas": _replicas(ds),
     }
+
+
+def _replicas(ds: DataSource) -> list[dict]:
+    from sqlalchemy.orm import object_session
+
+    from app.services import cohosting
+
+    session = object_session(ds)
+    if session is None or ds.mode != "managed":
+        return []
+    return cohosting.source_replicas(session, ds.id)
 
 
 def _device_name(ds: DataSource) -> str | None:

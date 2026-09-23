@@ -36,10 +36,10 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.crypto import decrypt_json, decrypt_secret, encrypt_json, encrypt_secret, random_token
 from app.errors import ApiError, conflict, not_found
-from app.models import ApiKey, App, DataSource, Deployment, Domain, Job, utcnow
+from app.models import ApiKey, App, DataSource, Deployment, Domain, Job, User, utcnow
 from app.redis_client import get_redis
 from app.serializers import iso
-from app.services import jobs
+from app.services import github, jobs
 from app.services.app_runner import DockerCli, DockerError, get_docker
 from app.services.connections import load_config, parse_mongo_uri, redact, sql_app_uri
 from app.services.instance_settings import public_url
@@ -120,6 +120,23 @@ def repo_token(app: App) -> str | None:
     return decrypt_secret(app.repo_token_encrypted) if app.repo_token_encrypted else None
 
 
+def clone_token(db: Session, app: App) -> str | None:
+    """The token git clones with: the app's own token, else (GitHub URLs only) the GitHub connection
+    of the user who created it (docs/DEPLOYMENTS.md "Connect a Git repository")."""
+    if app.repo_token_encrypted:
+        return repo_token(app)
+    if not app.github_connection_user_id or github.parse_repo(app.repo_url) is None:
+        return None
+    conn = github.get_connection(db, app.github_connection_user_id)
+    if conn is None:
+        user = db.get(User, app.github_connection_user_id)
+        who = user.email if user else "the user who created this app"
+        raise jobs.JobError(
+            f"The GitHub connection of {who} was removed; reconnect GitHub or add a token in the app's settings"
+        )
+    return github.token_of(conn)
+
+
 def webhook_secret(app: App) -> str:
     return decrypt_secret(app.webhook_secret_encrypted)
 
@@ -185,6 +202,7 @@ def deployment_out(dep: Deployment, *, with_log: bool = False) -> dict:
 def app_out(db: Session, app: App) -> dict:
     domains = app_domains(db, app.id)
     live = db.get(Deployment, app.live_deployment_id) if app.live_deployment_id else None
+    connected_by = db.get(User, app.github_connection_user_id) if app.github_connection_user_id else None
     return {
         "id": app.id,
         "project_id": app.project_id,
@@ -203,6 +221,11 @@ def app_out(db: Session, app: App) -> dict:
         "has_repo_token": app.repo_token_encrypted is not None,
         "api_key_id": app.api_key_id,
         "database_access": bool(app.database_access),
+        "github": (
+            {"connected_by_email": connected_by.email, "hook_active": app.github_hook_id is not None}
+            if connected_by
+            else None
+        ),
         "port": app.port,
         "local_url": local_url(db, app),
         "urls": [f"https://{d.hostname}" for d in domains if d.status == "active"],
@@ -535,7 +558,9 @@ def _docker_failure(exc: DockerError, secrets: list[str | None]) -> str:
 
 
 def _checkout(ctx: jobs.JobContext, cli: DockerCli, app: App, dep: Deployment, workdir: str, log_: _DeployLog) -> str:
-    token = repo_token(app)
+    with ctx.session_factory() as db:
+        token = clone_token(db, app)
+    log_.secrets.append(token)
     checkout = os.path.join(workdir, "src")
     log_.step("Cloning")
     log_.write(f"git clone --depth 1 --branch {dep.branch} {app.repo_url}")

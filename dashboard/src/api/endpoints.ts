@@ -5,6 +5,8 @@ import type {
   ApiKeyCreateResponse,
   ApiKeyRole,
   App,
+  AppCreated,
+  AppDetectDraft,
   AppInput,
   AppLogs,
   AppPatch,
@@ -24,6 +26,8 @@ import type {
   DeviceUpdate,
   Domain,
   EnrollStartResponse,
+  GitHubRepo,
+  GitHubStatus,
   EnrollStatus,
   InstanceBackups,
   Job,
@@ -390,7 +394,9 @@ export const api = {
   // DEPLOYMENTS.md: apps built from a Git repo and served next to the project's databases.
   apps: {
     list: (pid: string) => client.get<App[]>(`/projects/${e(pid)}/apps`),
-    create: (pid: string, body: AppInput) => client.post<App>(`/projects/${e(pid)}/apps`, body),
+    create: (pid: string, body: AppInput) => client.post<AppCreated>(`/projects/${e(pid)}/apps`, body),
+    detect: (pid: string, repo_url: string, branch?: string) =>
+      client.post<AppDetectDraft>(`/projects/${e(pid)}/apps/detect`, branch ? { repo_url, branch } : { repo_url }),
     get: (pid: string, id: string) => client.get<App>(`/projects/${e(pid)}/apps/${e(id)}`),
     update: (pid: string, id: string, body: AppPatch) => client.patch<App>(`/projects/${e(pid)}/apps/${e(id)}`, body),
     remove: (pid: string, id: string) => client.del<{ job_id: string }>(`/projects/${e(pid)}/apps/${e(id)}`),
@@ -413,6 +419,14 @@ export const api = {
       client.post<Domain>(`/projects/${e(pid)}/apps/${e(id)}/domains`, { hostname }),
     removeDomain: (pid: string, id: string, domainId: string) =>
       client.del<Ok>(`/projects/${e(pid)}/apps/${e(id)}/domains/${e(domainId)}`),
+  },
+
+  // DEPLOYMENTS.md "Connect a Git repository": the signed-in user's GitHub connection.
+  github: {
+    status: () => client.get<GitHubStatus>("/integrations/github"),
+    connect: () => client.post<{ url: string }>("/integrations/github/connect"),
+    disconnect: () => client.del<{ ok: true; apps_using_connection: number; message: string }>("/integrations/github"),
+    repos: (q = "") => client.get<GitHubRepo[]>("/integrations/github/repos", { query: { q: q || undefined } }),
   },
 };
 
@@ -466,4 +480,6 @@ export const qk = {
   deployments: (id: string, appId: string) => ["projects", id, "apps", appId, "deployments"] as const,
   deployment: (id: string, appId: string, dep: string) => ["projects", id, "apps", appId, "deployments", dep] as const,
   appLogs: (id: string, appId: string) => ["projects", id, "apps", appId, "logs"] as const,
+  github: ["integrations", "github"] as const,
+  githubRepos: (q: string) => ["integrations", "github", "repos", q] as const,
 };

@@ -33,7 +33,7 @@ def test_list_members(client, team, auth_headers):
     assert resp.status_code == 200
     members = resp.json()
     assert [m["role"] for m in members] == ["owner", "admin", "admin", "developer", "viewer"]
-    assert set(members[0]) == {"user_id", "email", "display_name", "avatar_url", "role", "created_at"}
+    assert set(members[0]) == {"user_id", "email", "display_name", "avatar_url", "role", "can_cohost", "created_at"}
 
 
 def test_change_role_rules(client, team, auth_headers, db):

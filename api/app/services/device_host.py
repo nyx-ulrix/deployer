@@ -6,7 +6,7 @@ Stored in this installation's own `instance_settings` (both encrypted with MASTE
 - `device_link`: JSON `{primary_url, device_id, device_token, device_name}`.
 - `device_hosted_credentials`: JSON `{database_name: {kind, username, password, created_at}}`.
 
-RPC `datasource.*` methods only ever touch databases listed in `device_hosted_credentials`
+RPC `datasource.*` and `sync.*` methods only ever touch databases listed in `device_hosted_credentials`
 (`datasource.provision` additionally requires that the database does not exist yet), so the main
 Deployer can never reach this device's own platform database or anything else on it.
 """
@@ -632,6 +632,94 @@ def m_status(params: dict, ctx: CallContext) -> dict:
     return {"hosted_sources": _with_session(lambda s: hosted_summary(s)), "metrics": collect_metrics()}
 
 
+# --- co-hosting sync (docs/COHOSTING.md): only databases this device hosts ------------------------
+
+
+def _sync_database(params: dict, kind: str) -> str:
+    database = params.get("database_name")
+    hosted_entry(database, kind)  # 422 / 404 not_hosted for anything else
+    return database
+
+
+def _sync_limit(params: dict) -> int:
+    from app.services import source_sync
+
+    limit = params.get("limit", source_sync.BATCH_LIMIT)
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= source_sync.BATCH_LIMIT:
+        raise ApiError(422, "validation_error", "Invalid limit")
+    return limit
+
+
+def _sync_since(params: dict) -> dict | None:
+    since = params.get("since")
+    if since is not None and not isinstance(since, dict):
+        raise ApiError(422, "validation_error", "Invalid since")
+    return since
+
+
+def _sync_offset(params: dict) -> int | None:
+    from app.services import source_sync
+
+    auto = params.get("auto_increment")
+    if auto is None:
+        return None
+    offset = auto.get("offset") if isinstance(auto, dict) else None
+    if (
+        not isinstance(auto, dict)
+        or auto.get("increment") != source_sync.AUTO_INCREMENT_STEP
+        or not isinstance(offset, int)
+        or not 2 <= offset <= source_sync.AUTO_INCREMENT_STEP
+    ):
+        raise ApiError(422, "validation_error", "Invalid auto_increment")
+    return offset
+
+
+def m_sync_position(params: dict, ctx: CallContext) -> dict:
+    """Current end of this device's change history for a hosted database (after the initial copy);
+    SQL: also applies the binlog prerequisites and this device's auto_increment offset."""
+    from app.services import source_sync
+
+    kind = _kind(params)
+    database = _sync_database(params, kind)
+    if kind == "sql":
+        source_sync.ensure_mariadb_settings(offset=_sync_offset(params))
+    return source_sync.local_position(kind, database)
+
+
+def m_sync_sql_changes(params: dict, ctx: CallContext) -> dict:
+    from app.services import source_sync
+
+    database = _sync_database(params, "sql")
+    offset, since, limit = _sync_offset(params), _sync_since(params), _sync_limit(params)
+    source_sync.ensure_mariadb_settings(offset=offset)
+    return source_sync.read_sql_changes(database, since, limit)
+
+
+def m_sync_sql_apply(params: dict, ctx: CallContext) -> dict:
+    from app.services import source_sync
+
+    database = _sync_database(params, "sql")
+    changes = source_sync.check_changes(params.get("changes"), "sql")
+    # sql_log_bin = 0: changes applied here are never read back as this device's own changes.
+    return {"outcomes": source_sync.apply_local("sql", database, changes, log_bin=False)}
+
+
+def m_sync_mongo_changes(params: dict, ctx: CallContext) -> dict:
+    from app.services import source_sync
+
+    database = _sync_database(params, "nosql")
+    since, limit = _sync_since(params), _sync_limit(params)
+    return source_sync.read_mongo_changes(database, since, limit)
+
+
+def m_sync_mongo_apply(params: dict, ctx: CallContext) -> dict:
+    from app.services import source_sync
+
+    database = _sync_database(params, "nosql")
+    changes = source_sync.check_changes(params.get("changes"), "nosql")
+    return {"outcomes": source_sync.apply_local("nosql", database, changes, log_bin=False)}
+
+
 # Extra job types a device can run locally (`jobs.run`): type -> fn(job_id, params, ctx) -> result.
 JOB_HANDLERS: dict[str, Callable[[str, dict, CallContext], Any]] = {}
 
@@ -675,6 +763,11 @@ METHODS: dict[str, Callable[[dict, CallContext], Any]] = {
     "device.detach": m_detach,
     "device.ping": m_ping,
     "device.status": m_status,
+    "sync.position": m_sync_position,
+    "sync.sql_changes": m_sync_sql_changes,
+    "sync.sql_apply": m_sync_sql_apply,
+    "sync.mongo_changes": m_sync_mongo_changes,
+    "sync.mongo_apply": m_sync_mongo_apply,
 }
 
 

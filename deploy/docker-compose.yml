@@ -42,6 +42,9 @@ services:
       - --server-id=1
       - --binlog-expire-logs-seconds=691200
       - --log-slave-updates
+      # Co-hosting sync (docs/COHOSTING.md) reads column names/types from the binlog; the sync also
+      # sets this at runtime, the flag keeps it across restarts. Retention (8 days above) must stay >= 7.
+      - --binlog-row-metadata=FULL
     environment:
       MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?MARIADB_ROOT_PASSWORD is not set - run the installer or create deploy/.env from .env.example}
       MARIADB_DATABASE: ${MARIADB_DATABASE:-deployer}

@@ -16,7 +16,7 @@ from app.crypto import encrypt_secret
 from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import ApiError, forbidden, not_found
 from app.models import App, Deployment, Domain
-from app.services import audit, deployments, jobs, rate_limit
+from app.services import audit, deployments, github, jobs, rate_limit
 from app.services import remote_access as ra
 
 router = APIRouter(tags=["apps"])
@@ -118,6 +118,14 @@ class AppCreate(AppFields):
     name: str = Field(max_length=120)
     repo_url: str = Field(max_length=500)
     preset: Literal["static", "node", "python", "dockerfile"]
+    # Clone + add the push webhook with the caller's GitHub connection instead of a repo_token.
+    use_github_connection: bool = False
+
+
+class DetectBody(AppFields):
+    """Only `repo_url` (required) and `branch` are used; AppFields gives them the same validation."""
+
+    repo_url: str = Field(max_length=500)
 
 
 def _check_preset(app: App) -> None:
@@ -168,6 +176,14 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
     project = access.project
     _check_database_access(access, body.database_access)
     deployments.check_api_key(db, project.id, body.api_key_id)
+    if body.use_github_connection:
+        if body.repo_token:
+            raise ApiError(422, "validation_error", "Send either repo_token or use_github_connection, not both")
+        if github.parse_repo(body.repo_url) is None:
+            raise ApiError(
+                422, "validation_error", "use_github_connection needs a https://github.com/<owner>/<repo> URL"
+            )
+        github.require_token(db, access.user.id)
     app = App(
         project_id=project.id,
         name=body.name,
@@ -185,14 +201,16 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
         database_access=bool(body.database_access),
         port=deployments.allocate_port(db),
         created_by_id=access.user.id,
+        github_connection_user_id=access.user.id if body.use_github_connection else None,
     )
     _check_preset(app)
     deployments.set_env(app, body.env or {})
     if body.repo_token:
         app.repo_token_encrypted = encrypt_secret(body.repo_token)
-    deployments.rotate_webhook_secret(app)
+    secret = deployments.rotate_webhook_secret(app)
     db.add(app)
     db.flush()
+    warnings = github.sync_hook(db, app, deployments.webhook_url(db, app), secret)
     audit.record(
         db,
         "app.create",
@@ -205,7 +223,13 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
     if app.database_access:
         _audit_database_access(db, request, access, app)
     db.commit()
-    return deployments.app_out(db, app)
+    return {**deployments.app_out(db, app), "warnings": warnings}
+
+
+@router.post(BASE + "/detect")
+def detect_app(body: DetectBody, access: Developer, db: DbSession) -> dict:
+    """A suggested app draft read from the repository (never persisted)."""
+    return github.detect_draft(db, access.user.id, body.repo_url, body.branch)
 
 
 @router.get(BASE + "/{app_id}")
@@ -220,6 +244,11 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
     if "database_access" in changed:
         _check_database_access(access, body.database_access and not app.database_access)
     access_before = app.database_access
+    if "repo_url" in changed and body.repo_url and body.repo_url != app.repo_url and app.github_connection_user_id:
+        # The webhook belongs to the old repository; only the connection's owner may point it elsewhere.
+        github.delete_hook(db, app)
+        if app.github_connection_user_id != access.user.id:
+            app.github_connection_user_id = None
     for field in changed:
         value = getattr(body, field)
         if field == "env":
@@ -270,6 +299,7 @@ def delete_app(app_id: str, request: Request, access: Admin, db: DbSession) -> d
         select(Deployment).where(Deployment.app_id == app.id, Deployment.status.in_(deployments.ACTIVE_STATUSES))
     ):
         deployments.cancel_deployment(db, dep)
+    github.delete_hook(db, app)
     job = jobs.enqueue(
         db,
         type="app.remove",
@@ -316,11 +346,13 @@ def reveal_webhook(app_id: str, request: Request, access: Developer, db: DbSessi
 def rotate_webhook(app_id: str, request: Request, access: Developer, db: DbSession) -> dict:
     app = deployments.get_app(db, access.project.id, app_id)
     secret = deployments.rotate_webhook_secret(app)
+    url = deployments.webhook_url(db, app)
+    warnings = github.sync_hook(db, app, url, secret)
     audit.record(
         db, "app.webhook.rotate", request=request, user_id=access.user.id, project_id=app.project_id, app_id=app.id
     )
     db.commit()
-    return {"url": deployments.webhook_url(db, app), "secret": secret}
+    return {"url": url, "secret": secret, "hook_active": app.github_hook_id is not None, "warnings": warnings}
 
 
 # --- deployments ---------------------------------------------------------------------------------

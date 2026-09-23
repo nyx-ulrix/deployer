@@ -13,6 +13,7 @@ their design:
 | Query editor: query log (`/projects/{id}/query-log`) and saved queries (`/projects/{id}/saved-queries`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) |
 | Saved-query versions: strict version control (`/projects/{id}/saved-queries/{sid}/versions`, `/restore`, `409 version_conflict`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) "Phase 2 — versions" |
 | Push-to-deploy: apps (`/projects/{id}/apps`), deployments, rollback, runtime logs, app hostnames, and the unauthenticated GitHub webhook `POST /hooks/github/{app_id}` (HMAC `X-Hub-Signature-256`). `database_access` (opt-in, admin+ to enable) joins an app to the databases network and injects `DEPLOYER_DB_<NAME>_*` | [DEPLOYMENTS.md](DEPLOYMENTS.md) |
+| Connect a Git repository: the user's GitHub connection (`GET/DELETE /integrations/github`, `POST /integrations/github/connect`, `GET /integrations/github/repos?q=&page=`), `POST /projects/{id}/apps/detect` (suggested app settings), `use_github_connection` on `POST /apps` (automatic clone token + webhook) | [DEPLOYMENTS.md](DEPLOYMENTS.md) "Connect a Git repository" |
 
 Base path `/v1`. JSON in/out unless noted. Authenticated endpoints need
 `Authorization: Bearer <access_token>`. Timestamps are ISO-8601 UTC strings. IDs are UUID strings.
@@ -49,7 +50,7 @@ type Project = {
   data_source_counts: { sql: number; nosql: number };
 };
 type Member = { user_id: string; email: string; display_name: string | null;
-                avatar_url: string | null; role: Role; created_at: string };
+                avatar_url: string | null; role: Role; can_cohost: boolean; created_at: string };
 type Invite = { id: string; email: string | null; role: Exclude<Role, "owner">;
                 invited_by: string; expires_at: string; created_at: string };
 
@@ -62,6 +63,7 @@ type DataSource = {
   status: "ok" | "error" | "unknown"; status_message: string | null; last_checked_at: string | null;
   display: { host: string | null; port: number | null; username: string | null; tls: boolean };
   created_at: string;
+  replicas: Replica[];   // live copies on co-host devices, COHOSTING.md ([] for external sources)
 };
 type ApiKey = { id: string; name: string; prefix: string; role: "anon" | "service";
                 created_at: string; last_used_at: string | null; revoked_at: string | null };
@@ -148,7 +150,7 @@ type InstanceSettings = {
 | Method | Path | Role | Body | Response |
 |---|---|---|---|---|
 | GET | `/projects/{id}/members` | viewer+ | – | `Member[]` |
-| PATCH | `/projects/{id}/members/{user_id}` | admin+ | `{role}` (not `owner`; can't change owner) | `Member` |
+| PATCH | `/projects/{id}/members/{user_id}` | admin+ | `{role?, can_cohost?}` (role not `owner`; can't change the owner's role; only the owner changes the owner's `can_cohost`; `can_cohost` needs developer+, 422 otherwise, and is cleared on demotion — [COHOSTING.md](COHOSTING.md)) | `Member` |
 | DELETE | `/projects/{id}/members/{user_id}` | admin+ or self | – | `{ok:true}` (owner can't be removed) |
 | GET | `/projects/{id}/invites` | admin+ | – | `Invite[]` (pending only) |
 | POST | `/projects/{id}/invites` | admin+ | `{email?, role, expires_in_days?:1..30 (default 7)}` | `{invite:Invite, invite_url}` — token only returned here |
@@ -194,6 +196,25 @@ type DataSourceInput =
 ```
 
 A project may have any number of SQL and NoSQL sources at once (typically one of each).
+
+### Co-hosting (live copies on members' devices)
+
+Full table, shapes and rules in [COHOSTING.md](COHOSTING.md) "API":
+
+| Method | Path | Role | Body | Response |
+|---|---|---|---|---|
+| GET | `/projects/{id}/cohosting/eligibility` | viewer+ | – | `{can_cohost, devices:[{id, name, online, granted}], offer}` (caller's own devices) |
+| POST | `/projects/{id}/data-sources/{sid}/replicas` | developer+ with `can_cohost` | `{device_id}` | `{replica:Replica, job:Job}` |
+| GET | `/projects/{id}/data-sources/{sid}/replicas` | viewer+ | – | `Replica[]` |
+| POST | `/projects/{id}/data-sources/{sid}/replicas/{rid}/pause\|resume\|recopy` | co-host owner or admin+ | – | `{replica, job?}` |
+| DELETE | `/projects/{id}/data-sources/{sid}/replicas/{rid}?drop=false` | co-host owner or admin+ | – | `{ok:true}` |
+| GET | `/projects/{id}/data-sources/{sid}/sync-conflicts?status=open\|resolved` | developer+ | – | `SyncConflict[]` |
+| GET | `/projects/{id}/data-sources/{sid}/sync-conflicts/{cid}` | developer+ | – | `SyncConflict` |
+| POST | `/projects/{id}/data-sources/{sid}/sync-conflicts/{cid}/resolve` | co-host owner or admin+ | `{choice:"primary"\|"replica"\|"manual", value?}` | `SyncConflict` |
+| GET | `/projects/{id}/data-sources/{sid}/sync-history?table=&key=<JSON>` | developer+ | – | `HistoryItem[]` |
+| POST | `/projects/{id}/data-sources/{sid}/sync-history/restore` | co-host owner or admin+ | `{table, key, version_id}` | `{ok:true, resolved_conflict_id}` |
+
+`POST .../move` ([DEVICES.md](DEVICES.md)) returns 409 `has_replicas` while a source has co-host copies.
 
 ## Schema
 

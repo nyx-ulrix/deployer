@@ -199,6 +199,10 @@ def test_migration_backfills_version_one(tmp_path):
         "VALUES ('p1', 'p1', 'P', 'u1', '2026-01-01', '2026-01-01')"
     )
     conn.execute(
+        "INSERT INTO project_members (id, project_id, user_id, role, created_at) "
+        "VALUES ('m1', 'p1', 'u1', 'owner', '2026-01-01')"
+    )
+    conn.execute(
         "INSERT INTO saved_queries (id, project_id, owner_id, name, query_text, kind, created_at, updated_at) "
         "VALUES ('q1', 'p1', 'u1', 'Old', 'SELECT old', 'sql', '2026-01-01', '2026-01-02 03:04:05')"
     )
@@ -214,6 +218,10 @@ def test_migration_backfills_version_one(tmp_path):
     assert "app_id" in [row[1] for row in conn.execute("PRAGMA table_info(domains)")]
     # 0007 (docs/DEPLOYMENTS.md "Database access"): off by default.
     assert "database_access" in [row[1] for row in conn.execute("PRAGMA table_info(apps)")]
+    # 0008 (docs/COHOSTING.md): co-hosting flag (off for existing members) and the sync tables.
+    assert {"source_replicas", "sync_conflicts", "sync_versions"} <= tables
+    assert "can_cohost" in [row[1] for row in conn.execute("PRAGMA table_info(project_members)")]
+    assert conn.execute("SELECT can_cohost FROM project_members").fetchall() == [(0,)]
     rows = conn.execute(
         "SELECT version, query_text, author_id, author_email, message, created_at FROM saved_query_versions"
     ).fetchall()

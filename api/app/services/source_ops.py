@@ -234,11 +234,20 @@ def export_sources(sources: list[DataSource], kind: str, now: datetime | None = 
     return "\n".join(chunks)
 
 
+def _to_copies(ds: DataSource, op: str, args: dict) -> None:
+    """docs/COHOSTING.md: schema changes made through Deployer are repeated on co-host copies."""
+    if not is_remote(ds) and ds.mode == "managed":
+        from app.services import cohosting
+
+        cohosting.fan_out_schema_change(ds, op, args)
+
+
 def create_table(ds: DataSource, spec: dict) -> None:
     if is_remote(ds):
         run(ds, "table.create", {"spec": spec})
     else:
         schema_ops.create_table(connections.get_sql_engine(ds), spec)
+        _to_copies(ds, "table.create", {"spec": spec})
 
 
 def drop_table(ds: DataSource, name: str) -> None:
@@ -246,6 +255,7 @@ def drop_table(ds: DataSource, name: str) -> None:
         run(ds, "table.drop", {"name": name})
     else:
         schema_ops.drop_table(connections.get_sql_engine(ds), name)
+        _to_copies(ds, "table.drop", {"name": name})
 
 
 def create_collection(ds: DataSource, name: str, validator: Any = None) -> None:
@@ -253,6 +263,7 @@ def create_collection(ds: DataSource, name: str, validator: Any = None) -> None:
         run(ds, "collection.create", {"name": name, "validator": validator})
     else:
         schema_ops.create_collection(connections.get_mongo_db(ds), name, validator)
+        _to_copies(ds, "collection.create", {"name": name, "validator": validator})
 
 
 def drop_collection(ds: DataSource, name: str) -> None:
@@ -260,6 +271,7 @@ def drop_collection(ds: DataSource, name: str) -> None:
         run(ds, "collection.drop", {"name": name})
     else:
         schema_ops.drop_collection(connections.get_mongo_db(ds), name)
+        _to_copies(ds, "collection.drop", {"name": name})
 
 
 # --- query console ---------------------------------------------------------------------------------

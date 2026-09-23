@@ -121,6 +121,8 @@ class ProjectMember(Base):
     project_id: Mapped[str] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=False)
     user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # see ROLES
+    # docs/COHOSTING.md: may keep a live copy of the project's databases on their own host device.
+    can_cohost: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
     project: Mapped[Project] = relationship(back_populates="members")
@@ -493,6 +495,9 @@ class App(Base):
     api_key_id: Mapped[str | None] = mapped_column(ForeignKey("api_keys.id", ondelete="SET NULL"))
     # docs/DEPLOYMENTS.md "Database access": joins the databases network + DEPLOYER_DB_* env; admin-only.
     database_access: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    # docs/DEPLOYMENTS.md "Connect a Git repository": clone + webhook with this user's GitHub connection.
+    github_connection_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    github_hook_id: Mapped[str | None] = mapped_column(String(40))  # the repo webhook Deployer created
     port: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)  # Caddy listener, 8100-8199, for life
     live_deployment_id: Mapped[str | None] = mapped_column(String(36))  # no FK: circular with deployments
     created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
@@ -521,3 +526,96 @@ class Deployment(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
     rollback_of: Mapped[str | None] = mapped_column(String(36))
+
+
+# --- Co-hosting: live database copies on members' host devices (docs/COHOSTING.md) ----------------
+
+
+class SourceReplica(Base):
+    __tablename__ = "source_replicas"
+    __table_args__ = (UniqueConstraint("data_source_id", "device_id", name="uq_replica_source_device"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    data_source_id: Mapped[str] = mapped_column(
+        ForeignKey("data_sources.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True, nullable=False)
+    status: Mapped[str] = mapped_column(String(10), default="copying", nullable=False)  # copying|syncing|paused|error
+    # SQL {"gtid": "0-1-42"} / Mongo {"token": "<extended JSON resume token>"}; see services/source_sync.py
+    position_primary: Mapped[dict | None] = mapped_column(JSON)
+    position_replica: Mapped[dict | None] = mapped_column(JSON)
+    # MariaDB auto_increment_offset of the device (primary = 1, step source_sync.AUTO_INCREMENT_STEP).
+    id_offset: Mapped[int | None] = mapped_column(Integer)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime)
+    lag_seconds: Mapped[float | None] = mapped_column(Float)
+    error: Mapped[str | None] = mapped_column(Text)
+    warnings: Mapped[list | None] = mapped_column(JSON)  # e.g. tables without a primary key (not synced)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class SyncConflict(Base):
+    """A row/document changed on both copies since their last common version (like a Git merge
+    conflict): neither change is applied to that key until someone resolves it."""
+
+    __tablename__ = "sync_conflicts"
+    __table_args__ = (Index("ix_sync_conflicts_replica_key", "replica_id", "table_name", "key_hash"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    replica_id: Mapped[str] = mapped_column(
+        ForeignKey("source_replicas.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    table_name: Mapped[str] = mapped_column(String(128), nullable=False)  # table / collection
+    key_json: Mapped[dict] = mapped_column(JSON, nullable=False)  # primary key columns / {"_id": ...}
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), default="open", index=True, nullable=False)  # open | resolved
+    base_json: Mapped[dict | None] = mapped_column(JSON)  # last synced version, when known
+    primary_json: Mapped[dict | None] = mapped_column(JSON)  # "ours" (null = deleted)
+    replica_json: Mapped[dict | None] = mapped_column(JSON)  # "theirs" (null = deleted)
+    op_primary: Mapped[str | None] = mapped_column(String(10))  # insert | update | delete
+    op_replica: Mapped[str | None] = mapped_column(String(10))
+    primary_changed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    replica_changed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    resolution: Mapped[str | None] = mapped_column(String(10))  # primary | replica | manual
+    resolved_json: Mapped[dict | None] = mapped_column(JSON)
+    resolved_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+
+
+class SyncVersion(Base):
+    """A version of a row/document the sync applied or confirmed (base for conflict detection, echo
+    suppression for MongoDB, and the per-key history). Only keys changed since the copy; pruned."""
+
+    __tablename__ = "sync_versions"
+    __table_args__ = (Index("ix_sync_versions_replica_key", "replica_id", "table_name", "key_hash"),)
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    replica_id: Mapped[str] = mapped_column(
+        ForeignKey("source_replicas.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    table_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    key_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    key_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    version_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    json: Mapped[dict | None] = mapped_column(JSON)  # null = deleted
+    origin: Mapped[str] = mapped_column(String(10), nullable=False)  # primary | replica | resolution | restore
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    synced_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
+
+
+class GitHubConnection(Base):
+    """A user's GitHub OAuth token for repository access (docs/DEPLOYMENTS.md "Connect a Git repository")."""
+
+    __tablename__ = "github_connections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False)
+    github_login: Mapped[str] = mapped_column(String(100), nullable=False)
+    github_user_id: Mapped[str] = mapped_column(String(40), nullable=False)
+    token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)  # encrypt_secret; never logged or returned
+    scopes: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)

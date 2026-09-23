@@ -2,19 +2,22 @@ import { useState } from "react";
 import { ClipboardPaste, Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 import { Button } from "../../components/ui/Button";
 import { Input, Textarea } from "../../components/ui/Input";
+import { cn } from "../../lib/cn";
 import { parseEnv, type EnvRow } from "./deploys";
 
-/** Key/value rows plus a "paste .env" box; `secret` masks values with a per-row reveal. */
+/** Key/value rows plus a "paste .env" box; `secret` masks values with a per-row reveal; `required` keys without a value are highlighted. */
 export function EnvEditor({
   rows,
   onChange,
   secret = false,
   disabled = false,
+  required = [],
 }: {
   rows: EnvRow[];
   onChange: (rows: EnvRow[]) => void;
   secret?: boolean;
   disabled?: boolean;
+  required?: string[];
 }) {
   const [pasting, setPasting] = useState(false);
   const [pasteText, setPasteText] = useState("");
@@ -61,9 +64,9 @@ export function EnvEditor({
             type={secret && !shown.has(i) ? "password" : "text"}
             value={r.value}
             onChange={(e) => update(i, { value: e.target.value })}
-            placeholder="value"
+            placeholder={required.includes(r.key) ? "fill in" : "value"}
             aria-label={`Variable ${i + 1} value`}
-            className="h-9 font-mono text-xs sm:text-xs"
+            className={cn("h-9 font-mono text-xs sm:text-xs", required.includes(r.key) && !r.value && "border-warning bg-warning-soft/40")}
             autoCapitalize="off"
             spellCheck={false}
             disabled={disabled}

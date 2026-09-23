@@ -7,12 +7,14 @@ from app.routers import (
     apps,
     auth,
     backups,
+    cohosting,
     data,
     data_sources,
     device_local,
     devices,
     health,
     instance,
+    integrations,
     jobs,
     members,
     projects,
@@ -48,6 +50,8 @@ def create_app() -> FastAPI:
         jobs,
         remote_access,
         apps,
+        cohosting,
+        integrations,
     ):
         app.include_router(module.router, prefix="/v1")
     return app

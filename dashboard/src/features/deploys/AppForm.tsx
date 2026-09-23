@@ -60,6 +60,7 @@ export function AppFormFields({
   disabled = false,
   hasRepoToken = false,
   showSlug = true,
+  hideRepoAccess = false,
 }: {
   projectId: string;
   draft: AppDraft;
@@ -70,6 +71,8 @@ export function AppFormFields({
   /** Settings: a token is stored, so the field is optional ("leave blank to keep"). */
   hasRepoToken?: boolean;
   showSlug?: boolean;
+  /** Cloned through the creator's GitHub connection: no private-repository/token fields. */
+  hideRepoAccess?: boolean;
 }) {
   const keys = useQuery({ queryKey: qk.apiKeys(projectId), queryFn: () => api.apiKeys.list(projectId), enabled: isAdmin });
   const preset = PRESETS[draft.preset];
@@ -97,14 +100,16 @@ export function AppFormFields({
         </Field>
       </div>
 
-      <Checkbox
-        label="Private repository"
-        description="Deployer clones with a GitHub fine-grained token (Repository permissions → Contents: Read). It is stored encrypted and never logged."
-        checked={draft.private_repo}
-        onChange={(e) => onChange({ private_repo: e.target.checked })}
-        disabled={disabled}
-      />
-      {draft.private_repo && (
+      {!hideRepoAccess && (
+        <Checkbox
+          label="Private repository"
+          description="Deployer clones with a GitHub fine-grained token (Repository permissions → Contents: Read). It is stored encrypted and never logged."
+          checked={draft.private_repo}
+          onChange={(e) => onChange({ private_repo: e.target.checked })}
+          disabled={disabled}
+        />
+      )}
+      {!hideRepoAccess && draft.private_repo && (
         <>
           <RepoTokenSteps repoUrl={draft.repo_url} />
           <Field label="GitHub token" optional={hasRepoToken} hint={hasRepoToken ? "A token is stored. Leave blank to keep it." : undefined}>

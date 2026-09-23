@@ -76,9 +76,14 @@ the primary) only authorizes the device endpoints below.
 | `storage.delete` | `{local_ref}` | `{}` |
 | `device.detach` | `{}` | `{}` — device forgets its credentials after confirming no hosted databases remain (409 `databases_remain` otherwise) |
 | `device.ping` / `device.status` | `{}` | `{pong, time, version}` / `{hosted_sources, metrics}` |
+| `sync.position` | `{kind, database_name, auto_increment?: {increment: 10, offset: 2..10}}` | `{gtid}` (sql) / `{token}` (nosql) — current end of the change history of a hosted database; sql: also checks/sets the binlog prerequisites and this device's auto_increment step/offset ([COHOSTING.md](COHOSTING.md)) |
+| `sync.sql_changes` | `{database_name, since: {gtid}, limit ≤ 1000, auto_increment?}` | `{changes, position, skipped_tables, more}` — row changes of that database from the device's own binlog (whole transactions, ≤ 4 MB) |
+| `sync.sql_apply` | `{database_name, changes}` | `{outcomes: [{result: "applied"\|"skipped"\|"conflict", current, reason?}]}` — applied as root with `sql_log_bin = 0`, each checked against the row's current version |
+| `sync.mongo_changes` | `{database_name, since: {token}\|{ts}, limit ≤ 1000}` | same shape as `sync.sql_changes` (change stream) |
+| `sync.mongo_apply` | `{database_name, changes}` | same shape as `sync.sql_apply` |
 
 Devices only execute these methods against **their own managed databases** — never arbitrary hosts:
-`datasource.*` and `executor.snapshot|archive_logs|restore` only accept databases listed in the
+`datasource.*`, `sync.*` and `executor.snapshot|archive_logs|restore` only accept databases listed in the
 device's `device_hosted_credentials` (`datasource.provision` only creates databases that don't exist
 yet), and `local_ref`s must stay inside the device's backup store. Errors come back as
 `{status, code, message, details}` and are re-raised on the primary with the same status and code.

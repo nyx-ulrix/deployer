@@ -55,6 +55,11 @@ function GeneralCard({ projectId, app, canEdit, isAdmin }: Props) {
   return (
     <Card title="General" description="Repository, preset and build settings. Changes apply on the next deploy.">
       <form onSubmit={onSubmit} className="space-y-4">
+        {app.github && !app.has_repo_token && (
+          <p className="text-xs text-muted">
+            Cloned with the GitHub connection of {app.github.connected_by_email}. Tick “Private repository” and add a token to use a token instead.
+          </p>
+        )}
         <AppFormFields
           projectId={projectId}
           draft={draft}
@@ -157,7 +162,9 @@ function WebhookCard({ projectId, app, canEdit }: Props) {
     mutationFn: () => api.apps.rotateWebhook(projectId, app.id),
     onSuccess: (h) => {
       setHook(h);
-      toast.success("Secret rotated. Update it on GitHub.");
+      if (h.hook_active) toast.success("Secret rotated and updated on GitHub.");
+      else toast.success("Secret rotated. Update it on GitHub.");
+      for (const w of h.warnings ?? []) toast.info(w);
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't rotate the secret"),
   });
@@ -186,17 +193,21 @@ function WebhookCard({ projectId, app, canEdit }: Props) {
           <CopyField label="Secret" value={hook.secret} secret />
         </div>
       ) : null}
-      <ol className="mt-4 list-decimal space-y-1 pl-5 text-sm text-muted">
-        <li>
-          On GitHub open the repository → <b>Settings</b> → <b>Webhooks</b> → <b>Add webhook</b>.
-        </li>
-        <li>Paste the payload URL and set content type to <code className="font-mono">application/json</code>.</li>
-        <li>Paste the secret.</li>
-        <li>
-          Choose <b>Just the push event</b> and save. GitHub sends a ping; pushes to <code className="font-mono">{app.branch}</code>{" "}
-          then deploy.
-        </li>
-      </ol>
+      {app.github?.hook_active ? (
+        <p className="mt-4 text-sm text-muted">Deployer added this webhook to the GitHub repository for you; rotating the secret updates it there too.</p>
+      ) : (
+        <ol className="mt-4 list-decimal space-y-1 pl-5 text-sm text-muted">
+          <li>
+            On GitHub open the repository → <b>Settings</b> → <b>Webhooks</b> → <b>Add webhook</b>.
+          </li>
+          <li>Paste the payload URL and set content type to <code className="font-mono">application/json</code>.</li>
+          <li>Paste the secret.</li>
+          <li>
+            Choose <b>Just the push event</b> and save. GitHub sends a ping; pushes to <code className="font-mono">{app.branch}</code>{" "}
+            then deploy.
+          </li>
+        </ol>
+      )}
       <ConfirmDialog
         open={confirmRotate}
         onClose={() => setConfirmRotate(false)}
@@ -206,7 +217,11 @@ function WebhookCard({ projectId, app, canEdit }: Props) {
         }}
         loading={rotate.isPending}
         title="Rotate the webhook secret?"
-        description="GitHub keeps sending with the old secret until you update it there; those pushes are rejected."
+        description={
+          app.github?.hook_active
+            ? "Deployer updates the secret on GitHub too."
+            : "GitHub keeps sending with the old secret until you update it there; those pushes are rejected."
+        }
         confirmLabel="Rotate"
       />
     </Card>

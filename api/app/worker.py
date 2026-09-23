@@ -11,6 +11,8 @@ Threads started by `start_background_tasks()`:
   hourly pruning incl. purging sources deleted > 30 days ago, weekly verification, daily platform
   snapshot).
 - `mongo-replset`: initiates the managed MongoDB single-node replica set on first start/upgrade.
+- `source-sync`: while this worker leads the scheduler, a co-hosting sync round every 2 s for each
+  syncing database copy (docs/COHOSTING.md, `source_sync.sync_loop`).
 - `app-logs`: every 10 s copies new `docker logs` lines of live app containers into Redis
   (docs/DEPLOYMENTS.md); the scheduler tick also removes orphan app containers.
 - any task added with `register_background_task(name, fn)`.
@@ -204,12 +206,13 @@ def _load_plugins() -> None:
 def start_background_tasks(stop: threading.Event, *, concurrency: int | None = None) -> list[threading.Thread]:
     concurrency = concurrency or max(1, int(os.environ.get("WORKER_CONCURRENCY", "2")))
     specs: list[tuple[str, BackgroundTask]] = [(f"runner-{i + 1}", runner_loop) for i in range(concurrency)]
-    from app.services import deployments
+    from app.services import deployments, source_sync
 
     specs += [
         ("scheduler", scheduler_loop),
         ("mongo-replset", mongo_replset_loop),
         ("app-logs", deployments.logs_loop),
+        ("source-sync", source_sync.sync_loop),
         *_tasks,
     ]
     threads = []

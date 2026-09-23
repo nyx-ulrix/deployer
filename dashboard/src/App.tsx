@@ -14,6 +14,7 @@ import { InstanceBackupsPage } from "./features/backups/InstanceBackupsPage";
 import { DatabasesTab } from "./features/databases/DatabasesTab";
 import { AppPage } from "./features/deploys/AppPage";
 import { DeploysTab } from "./features/deploys/DeploysTab";
+import { GitHubDonePage } from "./features/deploys/GitHubConnect";
 import { ApproveDevicePage } from "./features/devices/ApproveDevicePage";
 import { DevicesPage } from "./features/devices/DevicesPage";
 import { DeviceStatusPage } from "./features/devices/DeviceStatusPage";
@@ -86,6 +87,8 @@ const router = createBrowserRouter([
         children: [
           // Focused page (no app chrome); the login redirect keeps `?code=`.
           { path: "/devices/approve", element: <ApproveDevicePage /> },
+          // Back from GitHub's authorize page (docs/DEPLOYMENTS.md "Connect a Git repository").
+          { path: "/integrations/github/done", element: <GitHubDonePage /> },
           {
             element: <AppLayout />,
             children: [

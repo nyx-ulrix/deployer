@@ -9,6 +9,10 @@ Provider HTTP traffic goes through `_http_post_form` / `_http_get_json` so tests
 
 Account linking is never automatic: an OAuth login whose email matches an existing account is
 refused with `account_exists_link_required`.
+
+Intent `github_connect` (docs/DEPLOYMENTS.md "Connect a Git repository") reuses the GitHub app and this
+callback with wider scopes to store a repository-access token (`services.github`). It never signs
+anyone in: the callback also requires the refresh-token cookie of the user who started it.
 """
 
 import base64
@@ -27,9 +31,9 @@ from sqlalchemy.orm import Session
 
 from app.crypto import random_token, sha256_hex
 from app.errors import ApiError, not_found
-from app.models import User, UserIdentity
+from app.models import User, UserIdentity, utcnow
 from app.redis_client import get_redis
-from app.services import audit, invites
+from app.services import audit, github, invites, tokens
 from app.services.instance_settings import OAuthApp, allow_signup, oauth_app, oauth_callback_url, public_url
 from app.services.passwords import normalize_email
 from app.services.tokens import cookie_secure
@@ -146,6 +150,7 @@ def begin(
     redirect: str | None,
     user_id: str | None = None,
     invite_token: str | None = None,
+    scope: str | None = None,
 ) -> tuple[str, str]:
     """Stores a state record. Returns (provider authorize URL, browser nonce for `set_browser_cookie`).
 
@@ -170,7 +175,7 @@ def begin(
         "client_id": app.client_id,
         "redirect_uri": oauth_callback_url(db, provider),
         "response_type": "code",
-        "scope": spec.scope,
+        "scope": scope or spec.scope,
         "state": state,
         "code_challenge": _pkce_challenge(verifier),
         "code_challenge_method": "S256",
@@ -253,6 +258,11 @@ def _http_get_json(url: str, access_token: str) -> Any:
 
 def exchange_code(provider: str, app: OAuthApp, code: str, redirect_uri: str, code_verifier: str) -> str:
     """Returns the provider access token."""
+    return _exchange(provider, app, code, redirect_uri, code_verifier)["access_token"]
+
+
+def _exchange(provider: str, app: OAuthApp, code: str, redirect_uri: str, code_verifier: str) -> dict[str, Any]:
+    """The token response (with a non-empty `access_token`)."""
     body = _http_post_form(
         PROVIDERS[provider].token_url,
         {
@@ -267,7 +277,7 @@ def exchange_code(provider: str, app: OAuthApp, code: str, redirect_uri: str, co
     token = body.get("access_token")
     if not isinstance(token, str) or not token:
         raise OAuthFlowError("oauth_failed")
-    return token
+    return body
 
 
 def fetch_profile(provider: str, access_token: str) -> OAuthProfile:
@@ -410,6 +420,8 @@ def handle_callback(
     if record is None or record.get("provider") != provider or not _browser_matches(record, browser_nonce):
         return CallbackResult(login_error_url(db, "oauth_state_invalid"))
 
+    if record.get("intent") == "github_connect":
+        return CallbackResult(_connect(db, request, provider, code=code, error=error, record=record))
     intent = "link" if record.get("intent") == "link" else "login"
     redirect = sanitize_redirect(record.get("redirect"), DEFAULT_LINK_REDIRECT if intent == "link" else "/")
     try:
@@ -441,3 +453,41 @@ def handle_callback(
         if intent == "link":
             return CallbackResult(base + _with_query(redirect, error=exc.code))
         return CallbackResult(login_error_url(db, exc.code))
+
+
+def _connect(db: Session, request: Request, provider: str, *, code: str | None, error: str | None, record: dict) -> str:
+    """`github_connect` callback: stores the user's GitHub token. Returns the dashboard redirect URL."""
+    done = f"{public_url(db)}/integrations/github/done"
+    user_id = str(record.get("user_id") or "")
+    try:
+        if provider != "github" or error or not code:
+            raise OAuthFlowError("oauth_failed")
+        user = db.get(User, user_id)
+        session = tokens.find_refresh_token(db, request.cookies.get(tokens.REFRESH_COOKIE))
+        if (
+            user is None
+            or not user.is_active
+            or session is None
+            or session.user_id != user.id
+            or session.revoked_at is not None
+            or session.expires_at <= utcnow()
+        ):
+            raise OAuthFlowError("github_connect_user_mismatch")
+        app = oauth_app(db, provider)
+        if not app.configured:
+            raise OAuthFlowError("provider_not_configured")
+        body = _exchange(provider, app, code, oauth_callback_url(db, provider), str(record.get("code_verifier") or ""))
+        token = body["access_token"]
+        profile = _http_get_json(GITHUB_USER_URL, token)
+        if not isinstance(profile, dict) or profile.get("id") is None or not profile.get("login"):
+            raise OAuthFlowError("oauth_failed")
+        scopes = " ".join(str(body.get("scope") or github.CONNECT_SCOPE).replace(",", " ").split())
+        github.save_connection(
+            db, user.id, login=str(profile["login"]), github_user_id=str(profile["id"]), token=token, scopes=scopes
+        )
+        audit.record(db, "github.connect", request=request, user_id=user.id, login=str(profile["login"]))
+        return done + "?ok=1"
+    except OAuthFlowError as exc:
+        db.rollback()
+        audit.record(db, "github.connect_failed", request=request, user_id=user_id or None, code=exc.code)
+        return done + "?" + urlencode({"error": exc.code})

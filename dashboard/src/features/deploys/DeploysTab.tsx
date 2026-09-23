@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { ExternalLink, Plus, Rocket } from "lucide-react";
 import { useApps } from "../../api/hooks";
 import type { App } from "../../api/types";
@@ -23,7 +23,13 @@ export function AppStatusDot({ app, active = false }: { app: App; active?: boole
 export function DeploysTab() {
   const { project, can } = useProjectContext();
   const apps = useApps(project.id);
-  const [creating, setCreating] = useState(false);
+  // `?new=1`: back from connecting GitHub in the New app dialog (docs/DEPLOYMENTS.md).
+  const [params, setParams] = useSearchParams();
+  const [creating, setCreating] = useState(params.get("new") === "1");
+  const closeNew = () => {
+    setCreating(false);
+    if (params.has("new")) setParams({}, { replace: true });
+  };
   const base = `/projects/${project.id}/deploys`;
 
   const newApp = can("developer") && (
@@ -81,7 +87,7 @@ export function DeploysTab() {
         </ul>
       )}
 
-      {creating && <NewAppDialog projectId={project.id} isAdmin={can("admin")} onClose={() => setCreating(false)} />}
+      {creating && <NewAppDialog projectId={project.id} isAdmin={can("admin")} onClose={closeNew} />}
     </div>
   );
 }

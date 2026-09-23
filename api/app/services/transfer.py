@@ -257,7 +257,8 @@ _APP_SECRETS = ("env_encrypted", "repo_token_encrypted", "webhook_secret_encrypt
 
 def _app_out(app: App) -> dict:
     row = model_to_dict(app)
-    for key in (*_APP_SECRETS, "port", "live_deployment_id"):
+    # The GitHub connection token itself is never exported; the hook belongs to the source instance's URL.
+    for key in (*_APP_SECRETS, "port", "live_deployment_id", "github_hook_id"):
         row.pop(key, None)
     row["env"] = decrypt_json(app.env_encrypted) if app.env_encrypted else {}
     row["repo_token"] = decrypt_secret(app.repo_token_encrypted) if app.repo_token_encrypted else None
@@ -1087,6 +1088,7 @@ def import_projects(db: Session, payload: dict, user: User) -> tuple[list[Projec
                     project_id=project.id,
                     created_by_id=user.id,
                     api_key_id=key_map.get(a.get("api_key_id")),
+                    github_connection_user_id=None,  # never someone else's GitHub connection
                 )
             )
             db.flush()

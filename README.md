@@ -37,8 +37,8 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 - **Remote access with your own domain** - link your Cloudflare account and Deployer creates a tunnel
   and DNS records for `https://deployer.example.com` (or a throwaway quick tunnel for testing)
   ([docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md)).
-- **Push-to-deploy** - point an app at a GitHub repository (static site, Node, Python or your own
-  Dockerfile); every push builds it on this PC and swaps it in behind Caddy with zero downtime,
+- **Push-to-deploy** - connect GitHub once, pick a repository and Deployer detects how to build it
+  (static site, Node, Python or your own Dockerfile) and adds the webhook; every push builds it on this PC and swaps it in behind Caddy with zero downtime,
   rollbacks, build and runtime logs, and `https://shop.example.com` through the same Cloudflare
   tunnel ([docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md)).
 - **Runs anywhere Windows does** - Docker Engine in WSL2 by default, sized for 4 GB RAM machines.

@@ -89,6 +89,69 @@ Off by default. An app normally reaches its project's data only through the data
   with host `mariadb` / port `3306` and `mongodb:27017`, plus the source's credentials from
   `GET /data-sources/{sid}/connection`.
 
+## Connect a Git repository
+
+The New app dialog starts with **Choose a repository**; everything it fills in stays editable.
+
+1. **Connect GitHub once** (per Deployer user). `POST /v1/integrations/github/connect` returns GitHub's
+   authorize URL for the instance's existing GitHub sign-in OAuth app (Instance settings → Sign-in
+   apps; no extra app to register) with scopes `repo admin:repo_hook read:user`, using the same state +
+   PKCE + browser-nonce machinery and callback (`/v1/auth/oauth/github/callback`) as sign-in, with
+   the state's intent `github_connect`. That callback **never signs anyone in or creates a user**: it
+   also requires the browser's refresh-token cookie to belong to the user who started the flow
+   (`error=github_connect_user_mismatch` otherwise), stores the token with `encrypt_secret` in
+   `github_connections` (one per user; never logged or returned) and redirects to the dashboard's
+   `/integrations/github/done?ok=1` (or `?error=<code>`), which returns to where the user was.
+   `GET /v1/integrations/github` → `{connected, login, scopes, configured}`; disconnect in Account
+   settings (`DELETE /v1/integrations/github` → `{ok, apps_using_connection, message}`); GitHub's own
+   revoke is at github.com/settings/applications.
+2. **Pick a repository** from `GET /v1/integrations/github/repos?q=&page=` (GitHub `/user/repos`,
+   affiliation owner + collaborator + organization member, most recently pushed first, 100 per page;
+   `q` searches name/description over up to 5 pages; 409 `github_not_connected` without a connection
+   or when GitHub rejects the token), or paste any https URL.
+3. **Detect**: `POST /apps/detect {repo_url, branch?}` reads the repository through the GitHub API
+   (the caller's connection when there is one, otherwise anonymously, so public repositories work
+   without connecting): the tree at the branch plus a few small files. It returns a draft that is
+   never stored. The rules live in `api/app/services/repo_detect.py` (pure, unit-tested):
+
+   | Found | Suggests |
+   |---|---|
+   | `Dockerfile` | `dockerfile`, `container_port` from `EXPOSE` (8080 + warning without one) |
+   | `package.json` with `next` + `output: 'export'` / `next export` | `static`, output `out` |
+   | ... `vite` / `@vitejs/*`, `react-scripts`, `astro`, `@sveltejs/kit` + `adapter-static` (and no `express`/`fastify`/`koa`/`hono`) | `static`, output `dist`, `build`, `dist`, `build` |
+   | ... a `start` script or `express`/`fastify`/`next`/`nuxt` | `node`: `npm ci` (`npm install` without a lockfile), `npm run build` when there is a build script, `npm start` (else `npx next start`, Nuxt's `.output/server/index.mjs`, `node <main>`) |
+   | `requirements.txt` / `pyproject.toml` with `flask` | `python`, `python -m flask --app <module> run --host 0.0.0.0 --port 8000`; module from `app.py` / `wsgi.py` / `app/__init__.py` (`create_app` or `app =`) |
+   | ... `fastapi` | `uvicorn <module>:app --host 0.0.0.0 --port 8000` (`main.py`, `app.py`, `app/main.py`; warns when uvicorn isn't a dependency) |
+   | ... `django` / `manage.py` | `python manage.py runserver 0.0.0.0:8000` + a warning that it's a development server |
+   | `index.html` without `package.json` | `static`, no build, output `.` |
+
+   pyproject-only Python apps get `pip install --no-cache-dir .` as the install command. Monorepos:
+   when the root matches nothing but exactly one first-level directory does, `root_dir` is set to it
+   (several: a warning naming them). `env_keys` come from `.env.example` / `.env.sample` /
+   `.env.template` (names only, never values); `database_access_suggested` when Python deps include
+   `pymysql`/`mysqlclient`/`psycopg`/`pymongo`/`sqlalchemy` or Node deps `mysql2`/`pg`/`mongodb`/
+   `mongoose`/`prisma`. Not found / no access: 422 `repo_not_accessible` ("connect GitHub for private
+   repositories"); unknown branch: 422 `branch_not_found`. Non-GitHub URLs are not cloned by the API
+   (it has no git sandbox): an empty draft with a warning.
+4. **Create & deploy** with `use_github_connection: true` (instead of `repo_token`; GitHub URLs only;
+   409 `github_not_connected` without a connection). The app stores `github_connection_user_id`
+   (the creator); every deploy clones with that user's current token, resolved at deploy time. If the
+   connection was removed the deployment fails with "The GitHub connection of <email> was removed;
+   reconnect GitHub or add a token in the app's settings". The token is only ever used for github.com
+   URLs, and when someone other than the creator changes the app's repository the connection is
+   detached (they must supply a token). An explicit `repo_token` wins over the connection.
+5. **Webhook**: right after create (and on `POST /apps/{id}/webhook/rotate`) Deployer creates or
+   updates the repository's `push` webhook (`POST`/`PATCH /repos/{o}/{r}/hooks`, JSON, the app's
+   secret) and stores its id in `apps.github_hook_id`; deleting the app (or changing its repository)
+   removes it, best effort. When the public URL is `localhost` or a private address the hook is
+   skipped and the create response carries the warning "GitHub can't reach http://localhost:8080 — set
+   up a public URL (Settings → Domains) to deploy on push"; a GitHub error becomes a warning too. The
+   app is created either way and the manual webhook instructions in Settings still apply.
+
+Migration `0009_github_connections`: `github_connections (id, user_id unique FK CASCADE,
+github_login, github_user_id, token_encrypted, scopes, created_at, updated_at)`, plus
+`apps.github_connection_user_id` (FK users, SET NULL) and `apps.github_hook_id`.
+
 ## Presets
 
 | `preset` | Build | Run | Port |
@@ -144,13 +207,14 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
 | Method | Path | Role | Body / Query | Response |
 |---|---|---|---|---|
 | GET | `/apps` | viewer+ | – | `App[]` |
-| POST | `/apps` | developer+ | `{name, repo_url, branch?, root_dir?, preset, install_command?, build_command?, start_command?, output_dir?, container_port?, env?: {k:v}, repo_token?, api_key_id?, database_access?}` | `App` (201); allocates `port`, generates `webhook_secret`; `database_access: true` needs admin+ |
+| POST | `/apps/detect` | developer+ | `{repo_url, branch?}` | draft `{name, repo_url, branch, root_dir, preset, install_command, build_command, start_command, output_dir, container_port, env_keys, database_access_suggested, detected: [{what, from}], warnings, private}`, never stored ("Connect a Git repository") |
+| POST | `/apps` | developer+ | `{name, repo_url, branch?, root_dir?, preset, install_command?, build_command?, start_command?, output_dir?, container_port?, env?: {k:v}, repo_token?, use_github_connection?, api_key_id?, database_access?}` | `App & {warnings: string[]}` (201); allocates `port`, generates `webhook_secret`; `database_access: true` needs admin+; `use_github_connection` clones with the creator's GitHub connection and adds the webhook |
 | GET | `/apps/{id}` | viewer+ | – | `App` |
 | PATCH | `/apps/{id}` | developer+ | partial of the above (`repo_token: null` clears; turning `database_access` on needs admin+, 403 `forbidden`) | `App` (changes apply on the next deploy) |
 | DELETE | `/apps/{id}` | admin+ | – | `{job_id}` (`app.remove`) |
 | GET | `/apps/{id}/env` | admin+ | – | `{env: {k:v}}` plain values (audit `app.env.reveal`) |
 | GET | `/apps/{id}/webhook` | developer+ | – | `{url, secret}` — url `<public_url>/v1/hooks/github/{app_id}`; audit `app.webhook.reveal` |
-| POST | `/apps/{id}/webhook/rotate` | developer+ | – | `{url, secret}` |
+| POST | `/apps/{id}/webhook/rotate` | developer+ | – | `{url, secret, hook_active, warnings}` (also updates the GitHub hook of a connected app) |
 | POST | `/apps/{id}/deploy` | developer+ | `{branch?}` | `Deployment` (202) |
 | GET | `/apps/{id}/deployments?limit=20&before=` | viewer+ | – | `{deployments: Deployment[] (log omitted), has_more}` |
 | GET | `/apps/{id}/deployments/{dep}` | viewer+ | `?log=1` includes the log | `Deployment` |
@@ -175,7 +239,9 @@ list refreshed by a `docker logs --since` poll every 10 s in the scheduler) and 
 ```ts
 type App = { id; project_id; name; slug; repo_url; branch; root_dir; preset; install_command; build_command;
   start_command; output_dir; container_port: number|null; env_keys: string[]; has_repo_token: boolean;
-  api_key_id: string|null; port: number; local_url: string; urls: string[]; live_deployment: Deployment|null;
+  api_key_id: string|null; database_access: boolean;
+  github: {connected_by_email: string; hook_active: boolean} | null;  // "Connect a Git repository"
+  port: number; local_url: string; urls: string[]; live_deployment: Deployment|null;
   domains: Domain[]; created_at; updated_at };
 type Deployment = { id; app_id; status; trigger; commit_sha; commit_message; branch; image_tag; created_at;
   started_at; finished_at; error; rollback_of; log?: string; job_id };
@@ -195,10 +261,16 @@ add the hostname again on the new one.
 ## Dashboard — project tab **Deploys**
 
 - Apps list (name, preset, branch, live status dot, local URL, last deploy relative time) → app page.
-- **New app** dialog: name (slug preview), repository URL + branch, "private repository" toggle with a
-  token field (help: fine-grained token, Contents: read), preset picker with per-preset fields and
-  sensible defaults, root directory, environment variables editor (key/value rows, paste `.env`),
-  attach an API key (list of the project's keys; only revealable ones), *Create* then *Deploy now*.
+- **New app** dialog, step 1 *Choose a repository*: the connected GitHub account's repositories
+  (search, private badge, default branch, last push) or *Connect GitHub* (explains the access it asks
+  for), plus "paste a repository URL" and "configure by hand". Step 2: the detected settings
+  ("Detected: Flask app (requirements.txt, app/__init__.py)", warnings) in the usual fields (name,
+  repository URL + branch, preset with per-preset fields, root directory), environment variables
+  pre-seeded with the `.env.example` keys (empty values highlighted "fill in"), database access
+  pre-ticked when suggested (admins; others see the suggestion), attach an API key, **Create & deploy**.
+  Repositories picked through the connection have no token field; *Use a token instead* switches to the
+  manual path ("private repository" + step-by-step fine-grained token instructions).
+- Account settings: *Repository access*, "GitHub: connected as <login>" + **Disconnect**.
 - App page: header with live badge, URL links, **Deploy now** / **Cancel**; deployments table
   (status, trigger, commit, when, duration; **Rollback** on old successful ones); build log panel that
   follows the running deployment (poll `?log=1` every 2 s while building/deploying, then stop);
@@ -217,3 +289,8 @@ API: model/migration, slug/port allocation, CRUD + roles, env reveal audit, webh
 reuses the image), Caddy file rendering, orphan cleanup, export/import round-trip; an integration
 test that builds a one-file static site is skipped unless `DEPLOYER_TEST_DOCKER=1`.
 Dashboard: slug preview, env editor parsing (`.env` paste), deployment status mapping, URL builders.
+Connect a Git repository: `tests/test_repo_detect.py` (every rule, a HawkerHub-shaped Flask fixture,
+monorepos, env keys) and `tests/test_github_integration.py` (connect flow and same-user check,
+repo listing, detect, create with a connection: clone token, webhook create/rotate/delete, localhost
+warning, removed connection, migration) against a fake GitHub; dashboard repo filter, draft mapping
+and env seeding in `deploys.test.ts`.

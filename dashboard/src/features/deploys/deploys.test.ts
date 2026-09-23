@@ -1,20 +1,25 @@
 import { describe, expect, it } from "vitest";
-import type { App } from "../../api/types";
+import type { App, AppDetectDraft, GitHubRepo } from "../../api/types";
 import {
   canRollback,
   databaseEnvNames,
   deploymentDuration,
   DEPLOYMENT_STATUS,
+  detectedSummary,
   draftErrors,
+  draftFromDetect,
   draftToInput,
   draftToPatch,
   emptyDraft,
+  filterRepos,
   isActive,
   parseEnv,
   reachableSources,
   rowsToEnv,
+  seedEnv,
   shortSha,
   slugify,
+  unfilledKeys,
 } from "./deploys";
 
 describe("slugify", () => {
@@ -170,5 +175,77 @@ describe("database access", () => {
     const d = { ...emptyDraft({ database_access: true } as App), name: "Shop", repo_url: "https://x" };
     expect(draftToInput(d, []).database_access).toBe(true);
     expect(draftToPatch({ ...d, database_access: false }, { has_repo_token: false } as App).database_access).toBe(false);
+  });
+});
+
+describe("connect a Git repository", () => {
+  const repo = (full_name: string, pushed_at: string | null, description: string | null = null): GitHubRepo => ({
+    full_name,
+    pushed_at,
+    description,
+    private: false,
+    default_branch: "main",
+    html_url: `https://github.com/${full_name}`,
+    clone_url: `https://github.com/${full_name}.git`,
+  });
+  const hawkerhub: AppDetectDraft = {
+    name: "HawkerHub",
+    repo_url: "https://github.com/nyx-ulrix/HawkerHub",
+    branch: "main",
+    root_dir: ".",
+    preset: "python",
+    install_command: null,
+    build_command: null,
+    start_command: "python -m flask --app app run --host 0.0.0.0 --port 8000",
+    output_dir: null,
+    container_port: null,
+    env_keys: ["HH_SQL_HOST", "HH_SQL_PASSWORD"],
+    database_access_suggested: true,
+    detected: [{ what: "Flask app", from: "requirements.txt, app/__init__.py" }],
+    warnings: [],
+    private: true,
+  };
+
+  it("filters repositories by name or description and sorts by last push", () => {
+    const repos = [repo("a/old", "2026-01-01T00:00:00Z"), repo("b/new", "2026-09-01T00:00:00Z", "Hawker finder"), repo("c/none", null)];
+    expect(filterRepos(repos, "").map((r) => r.full_name)).toEqual(["b/new", "a/old", "c/none"]);
+    expect(filterRepos(repos, " HAWKER ").map((r) => r.full_name)).toEqual(["b/new"]);
+    expect(filterRepos(repos, "a/").map((r) => r.full_name)).toEqual(["a/old"]);
+  });
+
+  it("maps a detected draft onto the form (connection vs pasted private URL)", () => {
+    const viaConnection = draftFromDetect(hawkerhub, true, true);
+    expect(viaConnection).toMatchObject({
+      name: "HawkerHub",
+      preset: "python",
+      start_command: hawkerhub.start_command,
+      install_command: "",
+      use_github_connection: true,
+      private_repo: false,
+      database_access: true,
+    });
+    const body = draftToInput(viaConnection, []);
+    expect(body.use_github_connection).toBe(true);
+    expect(body.repo_token).toBeUndefined();
+    expect(body.install_command).toBeNull();
+    // Pasted private URL without a connection: the token path; developers can't switch database access on.
+    expect(draftFromDetect(hawkerhub, false, false)).toMatchObject({ use_github_connection: false, private_repo: true, database_access: false });
+    expect(draftFromDetect({ ...hawkerhub, container_port: 5000, preset: "dockerfile" }, false, true).container_port).toBe("5000");
+    expect("use_github_connection" in draftToPatch(viaConnection, { has_repo_token: false } as App)).toBe(false);
+  });
+
+  it("seeds env keys with empty values, keeping typed ones, and reports the unfilled ones", () => {
+    const rows = seedEnv(["A", "B"], [{ key: "B", value: "typed" }]);
+    expect(rows).toEqual([
+      { key: "B", value: "typed" },
+      { key: "A", value: "" },
+    ]);
+    expect(unfilledKeys(["A", "B"], rows)).toEqual(["A"]);
+    expect(unfilledKeys(["A"], [{ key: "A", value: " x " }])).toEqual([]);
+  });
+
+  it("summarises what was detected", () => {
+    expect(detectedSummary(hawkerhub)).toBe("Flask app (requirements.txt, app/__init__.py)");
+    expect(detectedSummary({ detected: [] })).toBeNull();
   });
 });

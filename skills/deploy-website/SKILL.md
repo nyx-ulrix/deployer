@@ -95,8 +95,8 @@ Deployer changes quickly. Before telling the user a feature exists, confirm it o
 | Push-to-deploy apps (static / Node / Python / Dockerfile), logs, rollback, app hostnames | Available | project → **Deploys** |
 | App access to the project's databases (`database_access`, admin-only) | Available | app settings |
 | Step-by-step GitHub token help for private repos | Available | New app → *Private repository* |
-| **Connect a Git repository** (connect GitHub once, pick a repo, everything detected and pre-filled, token + webhook automatic) | **Being built** - use the manual form until `GET /v1/integrations/github` exists | Deploys → New app |
-| **Co-hosting, phase 1**: live two-way sync of a project's databases to a member's own PC, Git-style conflict resolution, per-row history | **Being built** - only when `GET /v1/projects/{id}/cohosting/eligibility` exists | Databases → Sync |
+| **Connect a Git repository** (connect GitHub once, pick a repo, everything detected and pre-filled, token + webhook automatic) | Available when `GET /v1/integrations/github` exists (older instances: manual form) | Deploys → New app |
+| **Co-hosting, phase 1**: live two-way sync of a project's databases to a member's own PC, Git-style conflict resolution, per-row history | **API available** (`GET /v1/projects/{id}/cohosting/eligibility`); the dashboard screens (Co-host toggle, *Copy to my device*, conflicts page) are **being built** - until then only via the API | Databases → Sync |
 | **Co-hosting, phase 2**: apps also running on co-host PCs behind one address with automatic failover | **Planned, not built** | - |
 | Apps running on host devices | **Not built** (apps run on the main Deployer PC only) | - |
 
@@ -109,14 +109,17 @@ Only after the user picked **this Deployer instance**. The code must be in a Git
 instance can clone over HTTPS (GitHub). For a private repository the **user** provides access -
 never ask for a token in chat:
 
-- **Today:** a fine-grained GitHub token (*Only select repositories* → the repo; *Contents:
-  Read-only*). The New app form shows the exact steps when *Private repository* is ticked; the user
-  pastes the token there.
-- **When "Connect a Git repository" is available** (see Feature status): the user clicks *Connect
-  GitHub* once in Deploys → New app, picks the repository, and Deployer detects the preset,
-  commands, output folder, port, environment variable names and whether the app needs database
-  access, then creates the push webhook itself. Your job is then only to check the detected values
-  with the user and fill in environment variable *values* they give you.
+- **Preferred - Connect a Git repository** (see Feature status): the user clicks *Connect GitHub*
+  once in Deploys → New app (it asks GitHub for repository read access and webhooks), picks the
+  repository, and Deployer detects the preset, commands, output folder, port, monorepo folder,
+  environment variable names (from `.env.example`) and whether the app needs database access, then
+  creates the push webhook itself (needs a public URL). Your job is only to check the detected values
+  with the user and fill in environment variable *values* they give you. API: `POST
+  /v1/projects/{id}/apps/detect {repo_url}` returns the draft; create with
+  `use_github_connection: true`.
+- **Fallback - a token:** a fine-grained GitHub token (*Only select repositories* → the repo;
+  *Contents: Read-only*). The New app form shows the exact steps under *Use a token instead*; the
+  user pastes the token there.
 
 1. Push the code to the repository's branch (default `main`). Commit any missing `package.json`
    build script or `requirements.txt` first; the preset decides the build:

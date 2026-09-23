@@ -5,10 +5,10 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from app.deps import CurrentUser, DbSession, ProjectAccess, require_role
-from app.errors import ApiError, forbidden, not_found
+from app.errors import ApiError, forbidden, not_found, validation_error
 from app.models import Project, ProjectInvite, ProjectMember, User, role_rank, utcnow
 from app.serializers import iso
-from app.services import audit, invites
+from app.services import audit, cohosting, invites
 from app.services.passwords import Email
 
 router = APIRouter(tags=["members"])
@@ -25,6 +25,7 @@ def member_out(member: ProjectMember, user: User) -> dict:
         "display_name": user.display_name,
         "avatar_url": user.avatar_url,
         "role": member.role,
+        "can_cohost": bool(member.can_cohost),  # docs/COHOSTING.md
         "created_at": iso(member.created_at),
     }
 
@@ -53,21 +54,33 @@ def list_members(access: Viewer, db: DbSession) -> list[dict]:
     return [member_out(m, u) for m, u in rows]
 
 
-class RoleUpdate(BaseModel):
-    role: AssignableRole
+class MemberUpdate(BaseModel):
+    role: AssignableRole | None = None
+    can_cohost: bool | None = None  # docs/COHOSTING.md "Roles"
 
 
 @router.patch("/projects/{project_id}/members/{user_id}")
-def update_member(user_id: str, body: RoleUpdate, request: Request, access: Admin, db: DbSession) -> dict:
+def update_member(user_id: str, body: MemberUpdate, request: Request, access: Admin, db: DbSession) -> dict:
+    if body.role is None and body.can_cohost is None:
+        raise validation_error("Nothing to change: send role and/or can_cohost")
     member = _get_member(db, access.project.id, user_id)
-    if member.role == "owner":
-        raise forbidden("The project owner's role can't be changed")
     is_self = user_id == access.user.id
+    if body.role is not None and member.role == "owner":
+        raise forbidden("The project owner's role can't be changed")
+    if member.role == "owner" and access.role != "owner":
+        raise forbidden("Only the project owner can change the owner's settings")
     if access.role != "owner" and member.role == "admin" and not is_self:
         raise forbidden("Only the project owner can change another admin's role")
-    old_role = member.role
-    member.role = body.role
-    if old_role != body.role:
+    old_role, old_cohost = member.role, bool(member.can_cohost)
+    if body.role is not None:
+        member.role = body.role
+    if body.can_cohost is not None:
+        if body.can_cohost and role_rank(member.role) < role_rank("developer"):
+            raise validation_error("Co-hosting needs the developer role or higher")
+        member.can_cohost = body.can_cohost
+    if role_rank(member.role) < role_rank("developer"):
+        member.can_cohost = False
+    if old_role != member.role:
         audit.record(
             db,
             "member.role_change",
@@ -76,8 +89,22 @@ def update_member(user_id: str, body: RoleUpdate, request: Request, access: Admi
             project_id=access.project.id,
             target_user_id=user_id,
             old_role=old_role,
-            new_role=body.role,
+            new_role=member.role,
         )
+    if old_cohost != bool(member.can_cohost):
+        audit.record(
+            db,
+            "member.cohost_change",
+            request=request,
+            user_id=access.user.id,
+            project_id=access.project.id,
+            target_user_id=user_id,
+            can_cohost=bool(member.can_cohost),
+        )
+        if not member.can_cohost:
+            cohosting.pause_member_replicas(
+                db, access.project.id, user_id, "Co-hosting was switched off for this member"
+            )
     db.commit()
     return member_out(member, db.get(User, user_id))
 
@@ -94,6 +121,7 @@ def remove_member(user_id: str, request: Request, access: Viewer, db: DbSession)
         if access.role != "owner" and member.role == "admin":
             raise forbidden("Only the project owner can remove an admin")
     db.delete(member)
+    cohosting.pause_member_replicas(db, access.project.id, user_id, "The device owner left the project")
     audit.record(
         db,
         "member.remove",

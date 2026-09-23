@@ -17,6 +17,7 @@ import { cn } from "../../lib/cn";
 import { QUERY_CONSOLE_MODES, useQueryConsoleMode, type QueryConsoleMode } from "../../lib/consoleMode";
 import { MIN_PASSWORD } from "../../lib/constants";
 import { formatDate } from "../../lib/format";
+import { GitHubAccountCard } from "../deploys/GitHubConnect";
 import { oauthErrorMessage, PROVIDER_LABELS } from "../../lib/oauthErrors";
 
 export function AccountSettingsPage() {
@@ -50,6 +51,7 @@ export function AccountSettingsPage() {
         <PreferencesCard />
         <PasswordCard user={user} />
         <LinkedAccountsCard user={user} />
+        <GitHubAccountCard />
       </div>
     </div>
   );
