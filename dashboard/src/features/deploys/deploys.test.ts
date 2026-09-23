@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { App } from "../../api/types";
 import {
   canRollback,
+  databaseEnvNames,
   deploymentDuration,
   DEPLOYMENT_STATUS,
   draftErrors,
@@ -10,6 +11,7 @@ import {
   emptyDraft,
   isActive,
   parseEnv,
+  reachableSources,
   rowsToEnv,
   shortSha,
   slugify,
@@ -141,5 +143,32 @@ describe("app draft", () => {
     expect(patch.repo_token).toBeNull();
     expect("env" in patch).toBe(false);
     expect(draftToPatch({ ...d, private_repo: true }, app).repo_token).toBeUndefined();
+  });
+});
+
+describe("database access", () => {
+  it("names variables like the worker (upper-case, non-alphanumerics to _)", () => {
+    expect(databaseEnvNames({ name: "shop-db", kind: "sql" })).toEqual([
+      "DEPLOYER_DB_SHOP_DB_HOST",
+      "DEPLOYER_DB_SHOP_DB_PORT",
+      "DEPLOYER_DB_SHOP_DB_USER",
+      "DEPLOYER_DB_SHOP_DB_PASSWORD",
+      "DEPLOYER_DB_SHOP_DB_DATABASE",
+      "DEPLOYER_DB_SHOP_DB_URL",
+    ]);
+    expect(databaseEnvNames({ name: "Docs Store", kind: "nosql" })).toEqual(["DEPLOYER_DB_DOCS_STORE_URL", "DEPLOYER_DB_DOCS_STORE_DATABASE"]);
+  });
+  it("only managed sources on the main server are reachable", () => {
+    const rows = [
+      { id: "a", mode: "managed" as const, device_id: null },
+      { id: "b", mode: "managed" as const, device_id: "dev" },
+      { id: "c", mode: "external" as const, device_id: null },
+    ];
+    expect(reachableSources(rows).map((r) => r.id)).toEqual(["a"]);
+  });
+  it("draft carries the flag", () => {
+    const d = { ...emptyDraft({ database_access: true } as App), name: "Shop", repo_url: "https://x" };
+    expect(draftToInput(d, []).database_access).toBe(true);
+    expect(draftToPatch({ ...d, database_access: false }, { has_repo_token: false } as App).database_access).toBe(false);
   });
 });

@@ -64,6 +64,9 @@ class FakeDockerCli(DockerCli):
         self._step("run", name, image)
         self.containers[name] = {"image": image, "labels": labels, "env": env}
 
+    def network_connect(self, network, container):
+        self._step("connect", network, container)
+
     def remove_container(self, name):
         self._step("rm", name)
         self.containers.pop(name, None)

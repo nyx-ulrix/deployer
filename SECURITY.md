@@ -28,3 +28,10 @@ Security fixes are made for the latest release. Update with `deployer update`.
   build commands run inside BuildKit / the app container, never in the worker process. Deployed app
   containers get no volumes, no extra capabilities, `no-new-privileges`, memory / CPU / pid limits and
   are reachable only through Caddy's per-app port and the app's hostnames.
+- **App database access** ([docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md) "Database access"): by default
+  app containers cannot reach the internal `backend` network. A project admin can opt an app in; the
+  worker then connects its container to `backend`, which also carries Redis (password-protected) and
+  the platform MariaDB. The app receives only its project's managed sources' own restricted
+  credentials (per-database users, never root), passed through the process environment, never argv
+  or the deployment log. Treat enabling it as trusting that app's code with network reach to those
+  services; developers can switch it off but not on.

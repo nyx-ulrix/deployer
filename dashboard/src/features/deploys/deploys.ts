@@ -1,4 +1,4 @@
-import type { App, AppInput, AppPatch, AppPreset, Deployment, DeploymentStatus, DeploymentTrigger } from "../../api/types";
+import type { App, AppInput, AppPatch, AppPreset, DataSource, Deployment, DeploymentStatus, DeploymentTrigger } from "../../api/types";
 import type { BadgeTone } from "../../components/ui/Badge";
 
 /** DNS-safe slug preview matching the API's rules: lowercase `[a-z0-9-]`, no leading/trailing `-`, max 63. */
@@ -153,6 +153,7 @@ export type AppDraft = {
   private_repo: boolean;
   repo_token: string;
   api_key_id: string;
+  database_access: boolean;
 };
 
 export function emptyDraft(app?: App): AppDraft {
@@ -170,6 +171,7 @@ export function emptyDraft(app?: App): AppDraft {
     private_repo: app?.has_repo_token ?? false,
     repo_token: "",
     api_key_id: app?.api_key_id ?? "",
+    database_access: app?.database_access ?? false,
   };
 }
 
@@ -205,6 +207,7 @@ export function draftToInput(d: AppDraft, env: EnvRow[]): AppInput {
     container_port: fields.has("container_port") && d.container_port.trim() ? Number(d.container_port) : null,
     env: rowsToEnv(env),
     api_key_id: d.api_key_id || null,
+    database_access: d.database_access,
   };
   if (d.private_repo && d.repo_token.trim()) body.repo_token = d.repo_token.trim();
   return body;
@@ -217,4 +220,16 @@ export function draftToPatch(d: AppDraft, app: App): AppPatch {
   if (d.private_repo && d.repo_token.trim()) patch.repo_token = d.repo_token.trim();
   else if (!d.private_repo && app.has_repo_token) patch.repo_token = null;
   return patch;
+}
+
+/** Variable names "database access" injects for a source (mirrors `deployments.database_env`). Values are never shown. */
+export function databaseEnvNames(source: Pick<DataSource, "name" | "kind">): string[] {
+  const prefix = `DEPLOYER_DB_${source.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_`;
+  const suffixes = source.kind === "sql" ? ["HOST", "PORT", "USER", "PASSWORD", "DATABASE", "URL"] : ["URL", "DATABASE"];
+  return suffixes.map((s) => prefix + s);
+}
+
+/** Sources an app with database access can reach: managed, on the main server. */
+export function reachableSources<T extends Pick<DataSource, "mode" | "device_id">>(sources: T[]): T[] {
+  return sources.filter((s) => s.mode === "managed" && !s.device_id);
 }

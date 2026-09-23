@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { api, qk } from "../../api/endpoints";
+import { useDataSources } from "../../api/hooks";
 import type { AppPreset } from "../../api/types";
 import { Checkbox, Field, Input, Select } from "../../components/ui/Input";
-import { FIELD_LABELS, PRESETS, REQUIRED_FIELDS, slugify, type AppDraft } from "./deploys";
+import { databaseEnvNames, FIELD_LABELS, PRESETS, reachableSources, REQUIRED_FIELDS, slugify, type AppDraft } from "./deploys";
 
 const PRESET_ORDER: AppPreset[] = ["static", "node", "python", "dockerfile"];
 
@@ -120,6 +121,48 @@ export function AppFormFields({
       ) : (
         <p className="text-xs text-muted">Project admins can attach an API key so the app gets DEPLOYER_API_KEY at runtime.</p>
       )}
+
+      <DatabaseAccess projectId={projectId} checked={draft.database_access} onChange={(v) => onChange({ database_access: v })} isAdmin={isAdmin} disabled={disabled} />
+    </div>
+  );
+}
+
+/** docs/DEPLOYMENTS.md "Database access": opt-in, only admins can switch it on. Shows variable names, never values. */
+function DatabaseAccess({ projectId, checked, onChange, isAdmin, disabled }: { projectId: string; checked: boolean; onChange: (v: boolean) => void; isAdmin: boolean; disabled: boolean }) {
+  const sources = useDataSources(projectId);
+  const reachable = reachableSources(sources.data ?? []);
+  return (
+    <div className="space-y-2">
+      <Checkbox
+        label="Connect to this project's databases"
+        description={
+          isAdmin
+            ? "Joins the app to the databases network and injects each managed source's own restricted credentials. Takes effect on the next deploy."
+            : "Only project admins can change this; ask a project admin."
+        }
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        disabled={disabled || !isAdmin}
+      />
+      <div className="pl-7 text-xs text-muted">
+        {reachable.length > 0 ? (
+          <>
+            Injects:{" "}
+            {reachable.map((s, i) => (
+              <span key={s.id}>
+                {i > 0 && "; "}
+                <code className="font-mono">{databaseEnvNames(s).join(", ")}</code>
+              </span>
+            ))}
+            . The app can then reach those databases with their own credentials.
+          </>
+        ) : (
+          <>No managed databases on this server yet; sources on host devices are not reachable from apps.</>
+        )}{" "}
+        An app that expects its own variable names (e.g. <code className="font-mono">HH_SQL_HOST</code>) can set them under Environment with host{" "}
+        <code className="font-mono">mariadb</code> / port <code className="font-mono">3306</code> or{" "}
+        <code className="font-mono">mongodb:27017</code>.
+      </div>
     </div>
   );
 }

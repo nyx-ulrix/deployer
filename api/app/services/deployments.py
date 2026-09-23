@@ -28,7 +28,7 @@ import time
 import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -36,12 +36,12 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.crypto import decrypt_json, decrypt_secret, encrypt_json, encrypt_secret, random_token
 from app.errors import ApiError, conflict, not_found
-from app.models import ApiKey, App, Deployment, Domain, Job, utcnow
+from app.models import ApiKey, App, DataSource, Deployment, Domain, Job, utcnow
 from app.redis_client import get_redis
 from app.serializers import iso
 from app.services import jobs
 from app.services.app_runner import DockerCli, DockerError, get_docker
-from app.services.connections import redact
+from app.services.connections import load_config, parse_mongo_uri, redact, sql_app_uri
 from app.services.instance_settings import public_url
 from app.services.remote_access import domain_out
 
@@ -202,6 +202,7 @@ def app_out(db: Session, app: App) -> dict:
         "env_keys": sorted(env_of(app)),
         "has_repo_token": app.repo_token_encrypted is not None,
         "api_key_id": app.api_key_id,
+        "database_access": bool(app.database_access),
         "port": app.port,
         "local_url": local_url(db, app),
         "urls": [f"https://{d.hostname}" for d in domains if d.status == "active"],
@@ -588,6 +589,50 @@ def _runtime_env(db: Session, app: App) -> dict[str, str]:
     return env
 
 
+def env_prefix(source_name: str) -> str:
+    return "DEPLOYER_DB_" + re.sub(r"[^A-Z0-9]", "_", source_name.upper()) + "_"
+
+
+def database_env(db: Session, app: App) -> tuple[dict[str, str], list[str]]:
+    """`DEPLOYER_DB_<NAME>_*` for the project's managed sources on this server (docs/DEPLOYMENTS.md
+    "Database access"), plus log notes. Host/port are the in-network names the API itself uses."""
+    env: dict[str, str] = {}
+    notes: list[str] = []
+    sources = db.scalars(
+        select(DataSource)
+        .where(
+            DataSource.project_id == app.project_id,
+            DataSource.mode == "managed",
+            DataSource.deleted_at.is_(None),
+        )
+        .order_by(DataSource.name)
+    )
+    for ds in sources:
+        if ds.device_id:
+            notes.append(f"Data source '{ds.name}' is on a host device and is not reachable from apps")
+            continue
+        config = load_config(ds)
+        prefix = env_prefix(ds.name)
+        database = str(config.get("database") or ds.database_name)
+        if ds.kind == "sql":
+            env[prefix + "HOST"] = str(config.get("host") or "")
+            env[prefix + "PORT"] = str(config.get("port") or 3306)
+            env[prefix + "USER"] = str(config.get("username") or "")
+            env[prefix + "PASSWORD"] = str(config.get("password") or "")
+            env[prefix + "URL"] = sql_app_uri(ds.engine, config)
+        else:
+            parsed = parse_mongo_uri(config.get("uri", ""))
+            user = quote(str(config.get("username") or parsed["username"] or ""), safe="")
+            pw = quote(str(config.get("password") or ""), safe="")
+            name = quote(database, safe="")
+            env[prefix + "URL"] = (
+                f"mongodb://{user}:{pw}@{parsed['host']}:{parsed['port']}/{name}"
+                f"?authSource={name}&directConnection=true"
+            )
+        env[prefix + "DATABASE"] = database
+    return env, notes
+
+
 def _prune_images(db: Session, cli: DockerCli, app: App, log_: _DeployLog) -> None:
     deps = list(
         db.scalars(
@@ -638,13 +683,22 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
             log_.step("Starting")
             name = container_name(app, dep.id)
             with factory() as db:
-                env = _runtime_env(db, app)
+                db_env, notes = database_env(db, app) if app.database_access else ({}, [])
+                env = {**db_env, **_runtime_env(db, app)}  # the app's own variables win
                 dep_row = db.get(Deployment, dep.id)
                 dep_row.status, dep_row.container_name = "deploying", name
                 db.commit()
+            secrets.extend(v for k, v in db_env.items() if k.endswith(("_PASSWORD", "_URL")))
+            for note in notes:
+                log_.write(note)
+            if db_env:
+                log_.write("Database variables: " + ", ".join(sorted(db_env)))
             cli.remove_container(name)  # a stale container of the same name from an interrupted run
             cli.run_container(name, tag, labels={"deployer.app": app.id, "deployer.deployment": dep.id}, env=env)
             new_container = name
+            if app.database_access:
+                cli.network_connect(get_settings().app_db_network, name)
+                log_.write("Connected to the project's databases network")
             port = internal_port(app)
             log_.write(f"Waiting for {name}:{port} to accept connections")
             if not cli.wait_tcp(name, port, HEALTH_TIMEOUT_S):

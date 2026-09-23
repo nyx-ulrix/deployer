@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     # network app containers join, their memory limit, and where checkouts are built (default: tmp).
     caddy_apps_dir: str = "/etc/caddy/apps"
     app_network: str = "deployer_public"
+    app_db_network: str = "deployer_backend"  # joined only by apps with database access
     app_mem_limit: str = "512m"
     app_build_dir: str = ""
 

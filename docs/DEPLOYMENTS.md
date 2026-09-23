@@ -55,6 +55,40 @@ GitHub push ──webhook──▶ api ──job app.deploy──▶ worker (roo
   (REMOTE_ACCESS.md). The API has no Docker access, so it then enqueues `app.route` (only when the
   app has a live deployment) and the worker rewrites the Caddy file with the host block above.
 
+## Database access
+
+Off by default. An app normally reaches its project's data only through the data API
+(`DEPLOYER_API_KEY`): app containers sit on the compose `public` network, while `mariadb` and
+`mongodb` live on `backend` (`internal: true`). Apps that talk to their managed databases directly
+(e.g. Flask + PyMySQL / PyMongo) need `apps.database_access` (migration `0007_app_database_access`).
+
+- **Why opt-in:** the `backend` network also carries Redis (password-protected) and the platform
+  MariaDB (the server that holds Deployer's own schema next to the managed databases). Joining it
+  only makes those hosts routable; each app still needs a source's own restricted credentials
+  (a per-database MariaDB user / Mongo `dbOwner` user), never the root ones.
+- **Who:** only project **admins** can switch it on (on create or PATCH; developers get 403
+  `forbidden` "Only project admins can give an app database access"). Developers may still edit an
+  app that has it on (re-sending `true` is fine) and may switch it off. Every change is audited as
+  `app.database_access` with `enabled`.
+- **Worker:** on every deploy and rollback of such an app, after `docker run` on the public network,
+  `docker network connect <APP_DB_NETWORK> <container>` (setting `app_db_network`, compose worker env
+  `APP_DB_NETWORK=deployer_backend`). The log says "Connected to the project's databases network" and
+  lists the injected variable **names**; passwords and URLs are redacted from the log.
+- **Injected environment** (the app's own variables with the same name win), for each non-deleted
+  managed source of the project on the main server, `NAME` = source name upper-cased with every
+  non-alphanumeric turned into `_`:
+  - SQL: `DEPLOYER_DB_<NAME>_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_DATABASE`, `_URL`
+    (`mysql://user:pass@mariadb:3306/db`, user and password URL-encoded);
+  - MongoDB: `DEPLOYER_DB_<NAME>_URL` (`mongodb://user:pass@mongodb:27017/db?authSource=db&directConnection=true`)
+    and `_DATABASE`.
+
+  Host/port come from the stored connection config, i.e. the in-network names the API itself uses.
+  Sources on host devices are skipped with a log line ("… is on a host device and is not reachable
+  from apps"); external sources are not injected (add their credentials under Environment).
+- An existing app with its own variable names (e.g. `HH_SQL_HOST`) can set them under Environment
+  with host `mariadb` / port `3306` and `mongodb:27017`, plus the source's credentials from
+  `GET /data-sources/{sid}/connection`.
+
 ## Presets
 
 | `preset` | Build | Run | Port |
@@ -77,7 +111,7 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
 
 | Table | Columns |
 |---|---|
-| `apps` | `id`, `project_id` FK CASCADE idx, `name` 120, `slug` 63 (unique per project, DNS-safe), `repo_url` 500 (https only), `branch` 120 (default `main`), `root_dir` 200 (default `.`), `preset` (`static|node|python|dockerfile`), `install_command`, `build_command`, `start_command`, `output_dir`, `container_port` int nullable, `env_encrypted` Text, `repo_token_encrypted` Text nullable (GitHub token for private repos; never logged), `webhook_secret_encrypted` Text, `api_key_id` FK api_keys SET NULL, `port` int unique (8100–8199), `live_deployment_id` String(36) nullable, `created_by_id`, `created_at`, `updated_at` |
+| `apps` | `id`, `project_id` FK CASCADE idx, `name` 120, `slug` 63 (unique per project, DNS-safe), `repo_url` 500 (https only), `branch` 120 (default `main`), `root_dir` 200 (default `.`), `preset` (`static|node|python|dockerfile`), `install_command`, `build_command`, `start_command`, `output_dir`, `container_port` int nullable, `env_encrypted` Text, `repo_token_encrypted` Text nullable (GitHub token for private repos; never logged), `webhook_secret_encrypted` Text, `api_key_id` FK api_keys SET NULL, `port` int unique (8100–8199), `live_deployment_id` String(36) nullable, `created_by_id`, `created_at`, `updated_at`; `database_access` Boolean NOT NULL default false (migration `0007`, see "Database access") |
 | `deployments` | `id`, `app_id` FK CASCADE idx, `job_id` FK jobs SET NULL, `status` (`queued|building|deploying|live|failed|cancelled|superseded`), `trigger` (`manual|webhook|rollback`), `commit_sha` 40 nullable, `commit_message` 200 nullable, `branch`, `image_tag` 200 nullable, `container_name` 100 nullable, `log` Text (capped 1 MB, tail kept), `error` Text nullable, `created_by_id`, `created_at` idx, `started_at`, `finished_at`, `rollback_of` String(36) nullable |
 | `domains` | + `app_id` FK apps CASCADE nullable; the existing `target_type` gains the value `app` |
 
@@ -110,9 +144,9 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
 | Method | Path | Role | Body / Query | Response |
 |---|---|---|---|---|
 | GET | `/apps` | viewer+ | – | `App[]` |
-| POST | `/apps` | developer+ | `{name, repo_url, branch?, root_dir?, preset, install_command?, build_command?, start_command?, output_dir?, container_port?, env?: {k:v}, repo_token?, api_key_id?}` | `App` (201); allocates `port`, generates `webhook_secret` |
+| POST | `/apps` | developer+ | `{name, repo_url, branch?, root_dir?, preset, install_command?, build_command?, start_command?, output_dir?, container_port?, env?: {k:v}, repo_token?, api_key_id?, database_access?}` | `App` (201); allocates `port`, generates `webhook_secret`; `database_access: true` needs admin+ |
 | GET | `/apps/{id}` | viewer+ | – | `App` |
-| PATCH | `/apps/{id}` | developer+ | partial of the above (`repo_token: null` clears) | `App` (changes apply on the next deploy) |
+| PATCH | `/apps/{id}` | developer+ | partial of the above (`repo_token: null` clears; turning `database_access` on needs admin+, 403 `forbidden`) | `App` (changes apply on the next deploy) |
 | DELETE | `/apps/{id}` | admin+ | – | `{job_id}` (`app.remove`) |
 | GET | `/apps/{id}/env` | admin+ | – | `{env: {k:v}}` plain values (audit `app.env.reveal`) |
 | GET | `/apps/{id}/webhook` | developer+ | – | `{url, secret}` — url `<public_url>/v1/hooks/github/{app_id}`; audit `app.webhook.reveal` |

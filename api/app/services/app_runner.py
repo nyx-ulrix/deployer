@@ -184,6 +184,10 @@ class DockerCli:
         args.append(image)
         self._run(args, env={**os.environ, **env})
 
+    def network_connect(self, network: str, container: str) -> None:
+        """Joins a running container to a second network (apps with database access)."""
+        self._run(["docker", "network", "connect", network, container])
+
     def remove_container(self, name: str) -> None:
         self._run(["docker", "rm", "-f", name], check=False)
 

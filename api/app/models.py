@@ -18,6 +18,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -490,6 +491,8 @@ class App(Base):
     repo_token_encrypted: Mapped[str | None] = mapped_column(Text)  # GitHub token for private repos; never logged
     webhook_secret_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     api_key_id: Mapped[str | None] = mapped_column(ForeignKey("api_keys.id", ondelete="SET NULL"))
+    # docs/DEPLOYMENTS.md "Database access": joins the databases network + DEPLOYER_DB_* env; admin-only.
+    database_access: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
     port: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)  # Caddy listener, 8100-8199, for life
     live_deployment_id: Mapped[str | None] = mapped_column(String(36))  # no FK: circular with deployments
     created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))

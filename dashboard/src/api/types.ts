@@ -836,6 +836,8 @@ export type App = {
   env_keys: string[];
   has_repo_token: boolean;
   api_key_id: string | null;
+  /** docs/DEPLOYMENTS.md "Database access": joins the databases network + DEPLOYER_DB_* env. Admin-only to enable. */
+  database_access: boolean;
   port: number;
   local_url: string;
   urls: string[];
@@ -859,6 +861,7 @@ export type AppInput = {
   env?: Record<string, string>;
   repo_token?: string;
   api_key_id?: string | null;
+  database_access?: boolean;
 };
 
 /** `repo_token: null` clears the stored token. */

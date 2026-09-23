@@ -194,6 +194,8 @@ services:
       # App containers: memory limit per container and the compose network Caddy reaches them on.
       APP_MEM_LIMIT: ${APP_MEM_LIMIT:-512m}
       APP_NETWORK: deployer_public
+      # Joined only by apps an admin gave database access (docs/DEPLOYMENTS.md "Database access").
+      APP_DB_NETWORK: deployer_backend
       CADDY_APPS_DIR: /etc/caddy/apps
     volumes:
       - backups:/backups

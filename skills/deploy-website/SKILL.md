@@ -104,6 +104,11 @@ instance can clone over HTTPS (GitHub; private repos need a fine-grained token w
    Attach the project API key with `api_key_id` so the container gets `DEPLOYER_API_KEY`,
    `DEPLOYER_URL` and `DEPLOYER_PROJECT_ID` automatically; use those names in the code instead of
    hard-coding the config JSON.
+   - If the code talks to the project's managed MariaDB / MongoDB **directly** (PyMySQL, PyMongo,
+     mysql2, mongoose…), a project **admin** must tick *Connect to this project's databases*
+     (`database_access: true`); the container then gets `DEPLOYER_DB_<SOURCE>_URL` (+ `_HOST`,
+     `_PORT`, `_USER`, `_PASSWORD`, `_DATABASE` for SQL). Prefer those names; an app with its own
+     names can set them under Environment with host `mariadb` / port `3306` or `mongodb:27017`.
 3. First deployment: *Deploy now* or `POST /v1/projects/{id}/apps/{app_id}/deploy` → a deployment
    in `queued` → `building` → `deploying` → `live`. Follow the build log with
    `GET .../deployments/{dep_id}?log=1` every few seconds; on `failed`, read `error` + the log tail,

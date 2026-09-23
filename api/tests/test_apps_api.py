@@ -51,11 +51,12 @@ def test_create_list_get_and_roles(client, env, db):
     assert set(app) == {
         "id", "project_id", "name", "slug", "repo_url", "branch", "root_dir", "preset", "install_command",
         "build_command", "start_command", "output_dir", "container_port", "env_keys", "has_repo_token",
-        "api_key_id", "port", "local_url", "urls", "live_deployment", "domains", "created_at", "updated_at",
+        "api_key_id", "database_access", "port", "local_url", "urls", "live_deployment", "domains", "created_at",
+        "updated_at",
     }  # fmt: skip
     assert (app["slug"], app["port"], app["branch"], app["root_dir"]) == ("my-shop", 8100, "main", ".")
     assert app["local_url"] == "http://localhost:8100" and app["urls"] == [] and app["live_deployment"] is None
-    assert app["env_keys"] == [] and app["has_repo_token"] is False
+    assert app["env_keys"] == [] and app["has_repo_token"] is False and app["database_access"] is False
     second = create(client, env, name="My Shop!!")
     assert (second["slug"], second["port"]) == ("my-shop-2", 8101)
     row = db.get(deployments.App, app["id"])
@@ -116,6 +117,26 @@ def test_patch_token_env_and_api_key(client, env, db):
     assert client.get(f"{url}/env", headers=env["dev"]).status_code == 403
     audit = db.scalars(select(AuditLog).where(AuditLog.action == "app.env.reveal")).all()
     assert len(audit) == 1 and audit[0].user_id == env["admin_user"].id and audit[0].details["app_id"] == app["id"]
+
+
+def test_database_access_is_admin_only(client, env, db):
+    resp = client.post(env["base"], json={**BODY, "database_access": True}, headers=env["dev"])
+    assert resp.status_code == 403 and resp.json()["error"]["code"] == "forbidden"
+    assert "Only project admins" in resp.json()["error"]["message"]
+    app = create(client, env)
+    url = f"{env['base']}/{app['id']}"
+    assert client.patch(url, json={"database_access": True}, headers=env["dev"]).status_code == 403
+    on = client.patch(url, json={"database_access": True}, headers=env["admin"])
+    assert on.status_code == 200 and on.json()["database_access"] is True
+    # A developer can still edit the app (even re-sending the current value) and switch it off.
+    same = client.patch(url, json={"name": "Renamed", "database_access": True}, headers=env["dev"])
+    assert same.status_code == 200 and same.json()["database_access"] is True
+    off = client.patch(url, json={"database_access": False}, headers=env["dev"])
+    assert off.status_code == 200 and off.json()["database_access"] is False
+    created = client.post(env["base"], json={**BODY, "database_access": True}, headers=env["admin"])
+    assert created.status_code == 201 and created.json()["database_access"] is True
+    audit = db.scalars(select(AuditLog).where(AuditLog.action == "app.database_access")).all()
+    assert sorted(a.details["enabled"] for a in audit) == [False, True, True]
 
 
 def test_webhook(client, env, db, fake_redis, set_setting):

@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from app.crypto import encrypt_secret
 from app.deps import DbSession, ProjectAccess, require_role
-from app.errors import ApiError, not_found
+from app.errors import ApiError, forbidden, not_found
 from app.models import App, Deployment, Domain
 from app.services import audit, deployments, jobs, rate_limit
 from app.services import remote_access as ra
@@ -53,6 +53,7 @@ class AppFields(BaseModel):
     env: dict[str, str] | None = None
     repo_token: str | None = Field(default=None, max_length=500)
     api_key_id: str | None = Field(default=None, max_length=36)
+    database_access: bool | None = None
 
     @field_validator("install_command", "build_command", "start_command", "output_dir", "repo_token", "branch")
     @classmethod
@@ -130,6 +131,24 @@ def _check_preset(app: App) -> None:
         )
 
 
+def _check_database_access(access: ProjectAccess, enable: bool | None) -> None:
+    """docs/DEPLOYMENTS.md "Database access": only admins switch it on; anyone who edits may turn it off."""
+    if enable and not access.at_least("admin"):
+        raise forbidden("Only project admins can give an app database access")
+
+
+def _audit_database_access(db, request: Request, access: ProjectAccess, app: App) -> None:
+    audit.record(
+        db,
+        "app.database_access",
+        request=request,
+        user_id=access.user.id,
+        project_id=app.project_id,
+        app_id=app.id,
+        enabled=app.database_access,
+    )
+
+
 def _dispatch(job) -> None:
     if job is not None:
         jobs.dispatch(job.id)
@@ -147,6 +166,7 @@ def list_apps(access: Viewer, db: DbSession) -> list[dict]:
 @router.post(BASE, status_code=201)
 def create_app(body: AppCreate, request: Request, access: Developer, db: DbSession) -> dict:
     project = access.project
+    _check_database_access(access, body.database_access)
     deployments.check_api_key(db, project.id, body.api_key_id)
     app = App(
         project_id=project.id,
@@ -162,6 +182,7 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
         output_dir=body.output_dir,
         container_port=body.container_port,
         api_key_id=body.api_key_id,
+        database_access=bool(body.database_access),
         port=deployments.allocate_port(db),
         created_by_id=access.user.id,
     )
@@ -181,6 +202,8 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
         app_id=app.id,
         preset=app.preset,
     )
+    if app.database_access:
+        _audit_database_access(db, request, access, app)
     db.commit()
     return deployments.app_out(db, app)
 
@@ -194,6 +217,9 @@ def get_app(app_id: str, access: Viewer, db: DbSession) -> dict:
 def update_app(app_id: str, body: AppFields, request: Request, access: Developer, db: DbSession) -> dict:
     app = deployments.get_app(db, access.project.id, app_id)
     changed = sorted(body.model_fields_set)
+    if "database_access" in changed:
+        _check_database_access(access, body.database_access and not app.database_access)
+    access_before = app.database_access
     for field in changed:
         value = getattr(body, field)
         if field == "env":
@@ -209,6 +235,8 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
             app.branch = value or "main"
         elif field == "root_dir":
             app.root_dir = value or "."
+        elif field == "database_access":
+            app.database_access = bool(value)
         elif value is not None or field in (
             "install_command",
             "build_command",
@@ -227,6 +255,8 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
         app_id=app.id,
         changes=changed,
     )
+    if app.database_access != access_before:
+        _audit_database_access(db, request, access, app)
     db.commit()
     return deployments.app_out(db, app)
 

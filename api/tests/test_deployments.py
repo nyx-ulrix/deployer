@@ -291,3 +291,104 @@ def test_generate_dockerfile_presets(db, project):
     assert 'CMD ["sh", "-c", "uvicorn main:app --port 8000"]' in text and "ENV PORT=8000" in text
     assert deployments.generate_dockerfile(make_app(db, project, "d", preset="dockerfile", container_port=5000)) is None
     assert deployments.internal_port(static) == 80 and deployments.internal_port(python) == 8000
+
+
+# --- database access (docs/DEPLOYMENTS.md "Database access") ------------------------------------
+
+
+def _source(db, project, name, kind, config, **fields):
+    from app.crypto import encrypt_json
+    from app.models import DataSource
+
+    ds = DataSource(
+        project_id=project.id,
+        name=name,
+        kind=kind,
+        engine="mariadb" if kind == "sql" else "mongodb",
+        mode=fields.pop("mode", "managed"),
+        database_name=config.get("database", "x"),
+        config_encrypted=encrypt_json(config),
+        **fields,
+    )
+    db.add(ds)
+    db.commit()
+    return ds
+
+
+def test_database_env_and_network(db, docker, project):
+    import secrets
+    from urllib.parse import quote, unquote, urlsplit
+
+    from app.models import Device, utcnow
+
+    sql_pw = "p@ss:/#% " + secrets.token_hex(4)  # characters that must be URL-encoded
+    mongo_pw = "m@/?" + secrets.token_hex(4)
+    sql_config = {"host": "mariadb", "port": 3306, "username": "u_sql", "password": sql_pw, "database": "p_shop"}
+    _source(db, project, "shop-db", "sql", sql_config)
+    uri = "mongodb://" + "u_mongo:" + quote(mongo_pw, safe="") + "@mongodb:27017/p_docs?authSource=p_docs"
+    mongo_config = {"uri": uri, "database": "p_docs", "username": "u_mongo", "password": mongo_pw}
+    _source(db, project, "Docs Store", "nosql", mongo_config)
+    _source(db, project, "old", "sql", {"database": "gone"}, deleted_at=utcnow())
+    _source(db, project, "ext", "sql", {"host": "db.example.com", "database": "ext"}, mode="external")
+    device = Device(name="pi", owner_id=project.owner_id, roles=["database_host"], token_hash=secrets.token_hex(32))
+    db.add(device)
+    db.commit()
+    _source(db, project, "edge", "sql", {"database": "edge"}, device_id=device.id)
+
+    # Off by default: no network join, no variables.
+    app = make_app(db, project, env={"DEPLOYER_DB_SHOP_DB_HOST": "override"})
+    dep, _ = deploy(db, app)
+    jobs.run_queued()
+    db.expire_all()
+    env = docker.containers[db.get(Deployment, dep.id).container_name]["env"]
+    assert "connect" not in docker.steps() and [k for k in env if k.startswith("DEPLOYER_DB_")] == [
+        "DEPLOYER_DB_SHOP_DB_HOST"
+    ]
+
+    app = db.get(App, app.id)
+    app.database_access = True
+    db.commit()
+    docker.calls.clear()
+    dep, _ = deploy(db, app)
+    jobs.run_queued()
+    db.expire_all()
+    dep = db.get(Deployment, dep.id)
+    assert dep.status == "live", dep.error
+    assert docker.steps() == ["clone", "build", "rm", "run", "connect", "health", "reload", "rm"]
+    assert docker.calls[4] == ("connect", "deployer_backend", dep.container_name)
+    env = docker.containers[dep.container_name]["env"]
+    assert env["DEPLOYER_DB_SHOP_DB_HOST"] == "override"  # the app's own variable wins
+    assert (env["DEPLOYER_DB_SHOP_DB_PORT"], env["DEPLOYER_DB_SHOP_DB_USER"]) == ("3306", "u_sql")
+    assert (env["DEPLOYER_DB_SHOP_DB_PASSWORD"], env["DEPLOYER_DB_SHOP_DB_DATABASE"]) == (sql_pw, "p_shop")
+    sql = urlsplit(env["DEPLOYER_DB_SHOP_DB_URL"])
+    assert (sql.scheme, sql.hostname, sql.port, sql.path, sql.username) == (
+        "mysql",
+        "mariadb",
+        3306,
+        "/p_shop",
+        "u_sql",
+    )
+    assert "@" not in sql.password and unquote(sql.password) == sql_pw
+    mongo = urlsplit(env["DEPLOYER_DB_DOCS_STORE_URL"])
+    assert (mongo.scheme, mongo.hostname, mongo.port, mongo.path) == ("mongodb", "mongodb", 27017, "/p_docs")
+    assert unquote(mongo.password) == mongo_pw and mongo.query == "authSource=p_docs&directConnection=true"
+    assert env["DEPLOYER_DB_DOCS_STORE_DATABASE"] == "p_docs"
+    assert not any(k.startswith(("DEPLOYER_DB_OLD_", "DEPLOYER_DB_EXT_", "DEPLOYER_DB_EDGE_")) for k in env)
+    assert "Data source 'edge' is on a host device and is not reachable from apps" in dep.log
+    assert "Connected to the project's databases network" in dep.log
+    assert "DEPLOYER_DB_SHOP_DB_PASSWORD" in dep.log
+    assert sql_pw not in dep.log and mongo_pw not in dep.log
+
+    # Rollback of an app with database access joins the network too.
+    docker.calls.clear()
+    rb, _ = deployments.rollback(db, app, dep, user_id=None)
+    db.commit()
+    jobs.run_queued()
+    db.expire_all()
+    assert db.get(Deployment, rb.id).status == "live"
+    assert ("connect", "deployer_backend", db.get(Deployment, rb.id).container_name) in docker.calls
+
+
+def test_env_prefix():
+    assert deployments.env_prefix("shop-db") == "DEPLOYER_DB_SHOP_DB_"
+    assert deployments.env_prefix("Main Store.v2") == "DEPLOYER_DB_MAIN_STORE_V2_"
