@@ -7,6 +7,49 @@ import { databaseEnvNames, FIELD_LABELS, PRESETS, reachableSources, REQUIRED_FIE
 
 const PRESET_ORDER: AppPreset[] = ["static", "node", "python", "dockerfile"];
 
+/** `owner/repo` of a GitHub https URL, for the token instructions; null when it isn't one. */
+function githubRepo(url: string): string | null {
+  const m = /^https:\/\/github\.com\/([^/\s]+)\/([^/\s]+?)(?:\.git)?\/?$/i.exec(url.trim());
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+/** Step-by-step for a read-only fine-grained token limited to this one repository. */
+function RepoTokenSteps({ repoUrl }: { repoUrl: string }) {
+  const repo = githubRepo(repoUrl);
+  const link = "https://github.com/settings/personal-access-tokens/new";
+  return (
+    <div className="rounded-xl border border-border bg-surface-2 p-3 text-sm">
+      <p className="font-medium">How to create the token (about 1 minute)</p>
+      <ol className="mt-2 list-decimal space-y-1 pl-5 text-muted">
+        <li>
+          Open{" "}
+          <a href={link} target="_blank" rel="noreferrer" className="font-medium text-accent hover:underline">
+            GitHub → Fine-grained personal access tokens → Generate new token
+          </a>{" "}
+          (sign in as the repository's owner, or someone with access).
+        </li>
+        <li>
+          <span className="text-fg">Token name:</span> e.g. “Deployer {repo ?? "deploy"}”. <span className="text-fg">Expiration:</span> pick
+          a date you'll remember — when it expires, deploys fail until you paste a new one here.
+        </li>
+        <li>
+          <span className="text-fg">Resource owner:</span> the account or organisation that owns the repository.{" "}
+          <span className="text-fg">Repository access:</span> <em>Only select repositories</em> →{" "}
+          {repo ? <code className="font-mono text-fg">{repo}</code> : "your repository"}.
+        </li>
+        <li>
+          <span className="text-fg">Permissions → Repository permissions → Contents:</span> <em>Read-only</em>. Leave everything else at{" "}
+          <em>No access</em> (Metadata: Read-only is added automatically).
+        </li>
+        <li>
+          Click <span className="text-fg">Generate token</span>, copy it (GitHub shows it once) and paste it below. Deployer stores it encrypted
+          and only uses it to clone.
+        </li>
+      </ol>
+    </div>
+  );
+}
+
 /** All app fields except env (edited separately); shared by the New app dialog and Settings. */
 export function AppFormFields({
   projectId,
@@ -62,11 +105,14 @@ export function AppFormFields({
         disabled={disabled}
       />
       {draft.private_repo && (
-        <Field label="GitHub token" optional={hasRepoToken} hint={hasRepoToken ? "A token is stored. Leave blank to keep it." : undefined}>
-          {(id) => (
-            <Input id={id} type="password" value={draft.repo_token} onChange={(e) => onChange({ repo_token: e.target.value })} placeholder="github_pat_…" autoComplete="off" disabled={disabled} />
-          )}
-        </Field>
+        <>
+          <RepoTokenSteps repoUrl={draft.repo_url} />
+          <Field label="GitHub token" optional={hasRepoToken} hint={hasRepoToken ? "A token is stored. Leave blank to keep it." : undefined}>
+            {(id) => (
+              <Input id={id} type="password" value={draft.repo_token} onChange={(e) => onChange({ repo_token: e.target.value })} placeholder="github_pat_…" autoComplete="off" disabled={disabled} />
+            )}
+          </Field>
+        </>
       )}
 
       <Field label="Preset" hint={preset.description}>
