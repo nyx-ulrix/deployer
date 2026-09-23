@@ -850,6 +850,7 @@ namespace DeployerSetup
             if (status == null) return;
             using (SettingsDialog d = new SettingsDialog(port, status.Lan, status.KeepAwake, status.Autostart, 0))
             {
+                d.OpenSignInApps = ShowSignInApps;
                 d.PlaceCentered(this);
                 if (d.ShowDialog(this) != DialogResult.OK) return;
                 List<string[]> commands = new List<string[]>();
@@ -858,6 +859,25 @@ namespace DeployerSetup
                 if (d.KeepAwake != status.KeepAwake) commands.Add(new[] { "keepawake", d.KeepAwake ? "on" : "off" });
                 if (d.Autostart != status.Autostart) commands.Add(new[] { "autostart", d.Autostart ? "on" : "off" });
                 if (commands.Count > 0) RunActions("Applying settings", commands);
+            }
+        }
+
+        void ShowSignInApps(Form owner)
+        {
+            string script;
+            try
+            {
+                script = DeployerCli.ScriptFor(installDir, ref extractedRoot);
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.Show(owner, "Couldn't open sign-in apps", "Couldn't prepare the Deployer scripts.", ex.ToString());
+                return;
+            }
+            using (SignInAppsDialog d = new SignInAppsDialog(script, installDir, 0))
+            {
+                d.PlaceCentered(owner);
+                d.ShowDialog(owner);
             }
         }
 
@@ -1104,6 +1124,8 @@ namespace DeployerSetup
         public bool Lan { get; private set; }
         public bool KeepAwake { get; private set; }
         public bool Autostart { get; private set; }
+        /// <summary>Opens the sign-in apps dialog over this one (set by Deployer Control).</summary>
+        public Action<Form> OpenSignInApps;
         readonly int originalPort;
         InputBox portInput;
         TextBlock portHint;
@@ -1162,7 +1184,24 @@ namespace DeployerSetup
                 "Stops sleep and hibernate while the charger is connected. Turning it off restores your previous settings.", KeepAwake, v => KeepAwake = v);
             y = Toggle(y, cw, pad, "Start Deployer when I sign in to Windows",
                 "Also shows the Deployer icon next to the clock.", Autostart, v => Autostart = v);
+
+            Rule signInRule = new Rule(Theme.Border);
+            signInRule.Bounds = new Rectangle(pad, y + ui.S(6), cw, Math.Max(1, ui.S(1)));
+            Controls.Add(signInRule);
             y += ui.S(18);
+            FlatButton signIn = new FlatButton(ui, "Set up…", ButtonStyle.Secondary);
+            int siw = signIn.PreferredWidth(ui.S(96));
+            TextBlock signInTitle = new TextBlock(ui, "Sign-in apps (Google & GitHub)", ui.SemiBold(10f), Theme.Text);
+            int th = signInTitle.LayoutAt(pad, y, cw - siw - ui.S(16)) + ui.S(2);
+            Controls.Add(signInTitle);
+            TextBlock signInText = new TextBlock(ui, "Let people sign in with Google or GitHub: enter your OAuth Client IDs and secrets.", ui.Font(9.5f), Theme.TextMuted);
+            th += signInText.LayoutAt(pad, y + th, cw - siw - ui.S(16));
+            Controls.Add(signInText);
+            int sbh = ui.S(34);
+            signIn.Bounds = new Rectangle(pad + cw - siw, y + Math.Max(0, (th - sbh) / 2), siw, sbh);
+            signIn.Click += delegate { if (OpenSignInApps != null) OpenSignInApps(this); };
+            Controls.Add(signIn);
+            y += Math.Max(th, sbh) + ui.S(18);
 
             Panel footer = new Panel();
             footer.BackColor = Theme.SurfaceAlt;

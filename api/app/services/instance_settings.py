@@ -1,12 +1,14 @@
 """Runtime instance settings stored in `instance_settings`, falling back to env defaults."""
 
 import json
+import re
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.crypto import decrypt_secret, encrypt_secret
+from app.errors import ApiError
 from app.models import InstanceSetting
 
 SECRET_KEYS = {
@@ -80,6 +82,46 @@ def oauth_app(db: Session, provider: str) -> OAuthApp:
         client_id=get_value(db, f"{provider}_client_id") or "",
         client_secret=get_value(db, f"{provider}_client_secret") or "",
     )
+
+
+OAUTH_KEYS = ("google_client_id", "google_client_secret", "github_client_id", "github_client_secret")
+_GOOGLE_ID = re.compile(r"^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$")
+_GITHUB_ID = re.compile(r"^((Ov23|Iv1\.|Iv23)[A-Za-z0-9._-]+|[A-Za-z0-9]{20})$")
+_LABEL = re.compile(r"^(client[ _-]?)?(id|secret)[\s:=]", re.I)
+# ASCII only: these messages also reach the Windows console through `python -m app.cli oauth set`.
+_EXAMPLES = {
+    "google_client_id": "1234-abc.apps.googleusercontent.com",
+    "google_client_secret": "GOCSPX-...",
+    "github_client_id": "Ov23li...",
+    "github_client_secret": "a 40-character hex string",
+}
+
+
+def validate_oauth_value(key: str, value: str) -> str:
+    """Trims and checks one OAuth app field; raises a 422 that says what was pasted wrong. "" passes (clears)."""
+    value = value.strip()
+    if not value:
+        return value
+    provider, _, part = key.partition("_")
+    name = f"{provider.title().replace('Github', 'GitHub')} {'Client ID' if part == 'client_id' else 'Client secret'}"
+    example = _EXAMPLES[key]
+
+    def bad(message: str) -> ApiError:
+        return ApiError(422, "validation_error", message, {"field": key})
+
+    if _LABEL.match(value) or any(c.isspace() for c in value):
+        raise bad(
+            f"Paste only the {name}, e.g. {example} - not the whole block "
+            "(the value has spaces or an ID/SECRET label in it)"
+        )
+    if part == "client_secret":
+        if _GOOGLE_ID.match(value) or value.endswith(".googleusercontent.com") or _GITHUB_ID.match(value):
+            raise bad(f"That looks like the Client ID, not the {name} - paste the secret, e.g. {example}")
+        return value
+    if not (_GOOGLE_ID if provider == "google" else _GITHUB_ID).match(value):
+        hint = " (that looks like the Client secret)" if value.startswith("GOCSPX-") else ""
+        raise bad(f"That is not a {name}{hint} - paste only the Client ID, e.g. {example}")
+    return value
 
 
 def oauth_callback_url(db: Session, provider: str) -> str:

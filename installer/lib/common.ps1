@@ -131,11 +131,13 @@ function Invoke-DeployerNative {
     <#
       Runs a program and captures stdout/stderr without PowerShell 5.1's stderr-to-ErrorRecord
       conversion. Returns an object with ExitCode, StdOut, StdErr and Output (both combined).
+      -StdinText is written to the program's stdin as UTF-8 (the way to hand it a secret: never argv).
     #>
     param(
         [Parameter(Mandatory = $true)][string]$FilePath,
         [string[]]$ArgumentList = @(),
-        [int]$TimeoutSeconds = 0
+        [int]$TimeoutSeconds = 0,
+        [string]$StdinText = ''
     )
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName = $FilePath
@@ -146,10 +148,21 @@ function Invoke-DeployerNative {
     $psi.CreateNoWindow = $true
     $psi.StandardOutputEncoding = [System.Text.Encoding]::UTF8
     $psi.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+    $psi.RedirectStandardInput = [bool]$StdinText
     try {
         $process = [System.Diagnostics.Process]::Start($psi)
     } catch {
         return [pscustomobject]@{ ExitCode = -1; StdOut = ''; StdErr = "$_"; Output = "$_" }
+    }
+    if ($StdinText) {
+        # Raw UTF-8 bytes: the .NET Framework stdin writer would use the console code page.
+        $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($StdinText)
+        try {
+            $process.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+            $process.StandardInput.Close()
+        } catch {
+            Write-Verbose "Writing stdin failed: $($_.Exception.Message)"
+        }
     }
     $outTask = $process.StandardOutput.ReadToEndAsync()
     $errTask = $process.StandardError.ReadToEndAsync()
@@ -651,9 +664,9 @@ function Invoke-DeployerCompose {
 }
 
 function Invoke-DeployerComposeCapture {
-    param([string]$InstallDir, [string]$Runtime, [string[]]$Arguments = @(), [int]$TimeoutSeconds = 0)
+    param([string]$InstallDir, [string]$Runtime, [string[]]$Arguments = @(), [int]$TimeoutSeconds = 0, [string]$StdinText = '')
     $inv = Get-DeployerComposeInvocation -InstallDir $InstallDir -Runtime $Runtime -Arguments $Arguments
-    return (Invoke-DeployerNative -FilePath $inv.File -ArgumentList $inv.Args -TimeoutSeconds $TimeoutSeconds)
+    return (Invoke-DeployerNative -FilePath $inv.File -ArgumentList $inv.Args -TimeoutSeconds $TimeoutSeconds -StdinText $StdinText)
 }
 
 function ConvertTo-DeployerRuntimePath {

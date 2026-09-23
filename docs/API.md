@@ -115,6 +115,14 @@ Provider callback URLs (shown in the setup wizard):
 | GET | `/instance/users` | – | `User[]` |
 | POST | `/instance/export` | `{passphrase}` | file download `deployer-instance-YYYYMMDD-HHMM.json` |
 
+OAuth values are trimmed and checked before they are stored (the same check backs
+`python -m app.cli oauth set`). Any whitespace inside a value or a leading `ID`/`SECRET`/`Client ID:`
+label is rejected; `google_client_id` must match `^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$`;
+`github_client_id` must start with `Ov23`, `Iv1.` or `Iv23`, or be 20 letters/digits; a secret that
+looks like a Client ID is rejected. Failures are `422 validation_error` with `details.field` set to the
+key and a message saying what to paste, e.g. "Paste only the Google Client ID, e.g.
+1234-abc.apps.googleusercontent.com - not the whole block".
+
 ```ts
 type InstanceSettings = {
   public_url: string; allow_signup: boolean;

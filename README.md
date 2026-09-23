@@ -141,6 +141,14 @@ public URL (default `http://localhost:8080`, shown in the wizard) as `<PUBLIC_UR
 | Google | `<PUBLIC_URL>/v1/auth/oauth/google/callback` |
 | GitHub | `<PUBLIC_URL>/v1/auth/oauth/github/callback` |
 
+With the default public URL these are `http://localhost:8080/v1/auth/oauth/google/callback` and
+`http://localhost:8080/v1/auth/oauth/github/callback`. The easiest place to enter the keys is
+**Deployer Control -> Settings -> Sign-in apps (Google & GitHub) -> Set up...**: it shows your exact
+callback URL with a *Copy* button, links to each console, and has one box for the Client ID and one
+for the Client secret. The dashboard's *Instance settings* and `deployer oauth set google|github`
+do the same. Paste **one value per box** - Deployer rejects a whole "ID ... SECRET ..." block, labels
+or spaces, and a Google Client ID must look like `1234-abc.apps.googleusercontent.com`.
+
 **Google**
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/) -> create or select a project.
@@ -149,14 +157,14 @@ public URL (default `http://localhost:8080`, shown in the wizard) as `<PUBLIC_UR
    may sign in as test users.
 3. *APIs & Services -> Credentials -> Create credentials -> OAuth client ID* -> *Web application*.
 4. Add the Google callback URL above under *Authorized redirect URIs*.
-5. Paste the client ID and client secret into the setup wizard (or *Instance settings*).
+5. Paste the client ID and client secret into Deployer Control's *Sign-in apps* page (or *Instance settings*).
 
 **GitHub**
 
 1. GitHub -> *Settings -> Developer settings -> OAuth Apps -> New OAuth App*.
 2. *Homepage URL*: `<PUBLIC_URL>`. *Authorization callback URL*: the GitHub callback URL above.
 3. Register, then *Generate a new client secret*.
-4. Paste the client ID and secret into the setup wizard.
+4. Paste the client ID and secret into Deployer Control's *Sign-in apps* page (or *Instance settings*).
 
 If your public URL changes (e.g. after moving to another PC or adding a tunnel), update the callback
 URLs in both OAuth apps. Client secrets are stored encrypted with your installation's `MASTER_KEY`.
@@ -242,6 +250,9 @@ Open a new terminal after installing:
 | `deployer status -Json` | Machine-readable status (used by Deployer Control) |
 | `deployer device status` | Whether this PC is a host device, its connection and hosted databases |
 | `deployer device detach [-Force]` | Forget the main Deployer this PC is attached to (asks you to confirm; `-Force` while it still hosts databases) |
+| `deployer oauth status [-Json]` | Google/GitHub sign-in apps: Client IDs, whether a secret is saved, callback URLs |
+| `deployer oauth set google\|github` | Save a Client ID and secret (asks for them; the secret is never put on a command line) |
+| `deployer oauth clear google\|github` | Remove a sign-in app |
 
 Autostart is a scheduled task named **Deployer** that runs at sign-in of the account that installed
 it. WSL distros belong to a single Windows account, so with the WSL runtime Deployer runs while that

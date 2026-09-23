@@ -98,6 +98,12 @@ namespace DeployerSetup
             Check(Marker.Parse("##deployer:error Something broke").Text == "Something broke", "error marker parses");
             Check(Marker.Parse("    [ok] not a marker") == null, "plain output is not a marker");
             Check(ProcessUtil.Quote(@"C:\Program Files\Deployer\") == "\"C:\\Program Files\\Deployer\\\\\"", "argument quoting doubles trailing backslashes");
+            string gid = "1234-abc.apps.googleusercontent.com";
+            Check(SignInAppsDialog.CheckValue("google", false, gid) == null
+                  && SignInAppsDialog.CheckValue("google", false, "ID " + gid + " SECRET x") != null
+                  && SignInAppsDialog.CheckValue("github", false, "ID Ov23liExample") != null
+                  && SignInAppsDialog.CheckValue("google", true, gid) != null
+                  && SignInAppsDialog.CheckValue("github", true, "secret:abc") != null, "sign-in app paste checks");
         }
 
         /// <summary>Renders a form that is never shown: handles are created, nothing appears on screen.</summary>
@@ -331,6 +337,16 @@ namespace DeployerSetup
             Save(ControlSample(scale, 3), dir, "control-not-responding");
 
             Save(new SettingsDialog(8080, false, true, true, scale), dir, "dialog-settings");
+            Save(new SignInAppsDialog(null, @"C:\ProgramData\Deployer", scale), dir, "dialog-signin-empty");
+            SignInAppsDialog signIn = new SignInAppsDialog(null, @"C:\ProgramData\Deployer", scale);
+            signIn.ApplyStatus(SampleOAuthStatus(), null);
+            Save(signIn, dir, "dialog-signin-google");
+            signIn = new SignInAppsDialog(null, @"C:\ProgramData\Deployer", scale);
+            signIn.provider = "github";
+            signIn.message = SignInAppsDialog.CheckValue("github", false, "ID Ov23liExample SECRET abc");
+            signIn.messageIsError = true;
+            signIn.ApplyStatus(SampleOAuthStatus(), null);
+            Save(signIn, dir, "dialog-signin-github-error");
             Dictionary<string, object> device = new Dictionary<string, object>();
             device["mode"] = "host";
             device["primary_url"] = "https://deployer.example.org";
@@ -381,6 +397,25 @@ namespace DeployerSetup
                 "redis-1      | 1:M 16 Sep 2026 10:14:01.112 * Ready to accept connections tcp"
             }));
             Save(logs, dir, "window-logs");
+        }
+
+        static Dictionary<string, object> SampleOAuthStatus()
+        {
+            Dictionary<string, object> google = new Dictionary<string, object>();
+            google["client_id"] = "1234567890-abc123def456.apps.googleusercontent.com";
+            google["has_secret"] = true;
+            google["configured"] = true;
+            google["callback_url"] = "https://deployer.example.org/v1/auth/oauth/google/callback";
+            Dictionary<string, object> github = new Dictionary<string, object>();
+            github["client_id"] = null;
+            github["has_secret"] = false;
+            github["configured"] = false;
+            github["callback_url"] = "https://deployer.example.org/v1/auth/oauth/github/callback";
+            Dictionary<string, object> s = new Dictionary<string, object>();
+            s["public_url"] = "https://deployer.example.org";
+            s["google"] = google;
+            s["github"] = github;
+            return s;
         }
 
         static WizardForm InstallSample(float scale, bool details)

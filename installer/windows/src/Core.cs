@@ -766,9 +766,11 @@ namespace DeployerSetup
             return all;
         }
 
-        public void Start(string scriptPath, IEnumerable<string> args)
+        /// <param name="env">Extra environment variables for the child only: the way to pass a secret (never argv).</param>
+        public void Start(string scriptPath, IEnumerable<string> args, IDictionary<string, string> env = null)
         {
             ProcessStartInfo psi = new ProcessStartInfo(AppInfo.PowerShellExe, ProcessUtil.JoinArgs(ScriptArgs(scriptPath, args)));
+            if (env != null) foreach (KeyValuePair<string, string> kv in env) psi.EnvironmentVariables[kv.Key] = kv.Value;
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
             psi.RedirectStandardOutput = true;

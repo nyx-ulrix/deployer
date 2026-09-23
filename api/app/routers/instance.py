@@ -10,11 +10,13 @@ from app.models import User
 from app.serializers import user_out
 from app.services import audit
 from app.services.instance_settings import (
+    OAUTH_KEYS,
     allow_signup,
     oauth_app,
     oauth_callback_url,
     public_url,
     set_value,
+    validate_oauth_value,
 )
 
 router = APIRouter(tags=["instance"])
@@ -95,6 +97,8 @@ def update_settings(body: SettingsUpdate, request: Request, owner: InstanceOwner
             value = value.strip()
             if key == "public_url" and value:
                 value = validate_public_url(value)
+            elif key in OAUTH_KEYS:
+                value = validate_oauth_value(key, value)
         set_value(db, key, value)
         changed.append(key)
     if changed:

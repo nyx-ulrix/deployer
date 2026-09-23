@@ -27,6 +27,13 @@
     deployer device status          Link to a main Deployer, connection state, hosted databases (JSON)
     deployer device detach [-Force] [-Yes]
                                     Forget the main Deployer on this PC (asks for confirmation)
+
+    Sign-in apps (Google / GitHub OAuth; no administrator rights needed):
+    deployer oauth status [-Json]   Client IDs, whether a secret is set, and the callback URLs to register
+    deployer oauth set google|github
+                                    Store a Client ID and secret: read from DEPLOYER_OAUTH_CLIENT_ID /
+                                    DEPLOYER_OAUTH_CLIENT_SECRET, else asked for (an empty secret keeps the stored one)
+    deployer oauth clear google|github
 #>
 [CmdletBinding()]
 param(
@@ -88,6 +95,10 @@ function Show-Help {
     Write-Host ''
     Write-Host '  deployer device status               Host device link, connection and hosted databases'
     Write-Host '  deployer device detach [-Force]      Forget the main Deployer on this PC (asks first)'
+    Write-Host ''
+    Write-Host '  deployer oauth status [-Json]        Google/GitHub sign-in apps and their callback URLs'
+    Write-Host '  deployer oauth set google|github     Save a Client ID and secret (asks, or reads DEPLOYER_OAUTH_CLIENT_ID/_SECRET)'
+    Write-Host '  deployer oauth clear google|github   Remove a sign-in app'
     Write-Host ''
     Write-Host "  Install directory: $InstallDir"
     Write-Host ''
@@ -416,6 +427,59 @@ function Invoke-Device {
     if ($code -ne 0) { throw "deployer device $sub failed (exit code $code)." }
 }
 
+function Read-OAuthSecretPrompt {
+    $secure = Read-Host '    Client secret (leave empty to keep the saved one)' -AsSecureString
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+}
+
+function Invoke-OAuth {
+    # Google/GitHub sign-in apps through the API's CLI: python -m app.cli oauth status|set|clear.
+    # The secret only ever travels on stdin - never on a command line and never into the log.
+    $ctx = Get-Context
+    $sub = $Service.ToLowerInvariant()
+    $provider = if ($Rest.Count -gt 0) { "$($Rest[0])".ToLowerInvariant() } else { '' }
+    $usage = 'Usage: deployer oauth status [-Json] | deployer oauth set google|github | deployer oauth clear google|github'
+    if ($sub -notin @('status', 'set', 'clear') -or ($sub -ne 'status' -and $provider -notin @('google', 'github'))) { throw $usage }
+    $stdin = ''
+    if ($sub -eq 'set') {
+        $id = $env:DEPLOYER_OAUTH_CLIENT_ID
+        $secret = $env:DEPLOYER_OAUTH_CLIENT_SECRET
+        if ($null -eq $id) {
+            try {
+                $id = Read-Host "    $provider Client ID"
+                $secret = Read-OAuthSecretPrompt
+            } catch {
+                throw 'Set DEPLOYER_OAUTH_CLIENT_ID and DEPLOYER_OAUTH_CLIENT_SECRET, or run this in an interactive PowerShell window.'
+            }
+        }
+        $stdin = ConvertTo-Json -Compress -InputObject @{ client_id = "$id"; client_secret = "$secret" }
+    }
+    if (-not (Test-DeployerDockerEngine -Runtime $ctx.Runtime)) {
+        throw 'Deployer is not running. Start it first with "deployer start".'
+    }
+    $cliArgs = @('exec', '-T', 'api', 'python', '-m', 'app.cli', 'oauth', $sub)
+    if ($sub -ne 'status') { $cliArgs += @('--provider', $provider) }
+    $r = Invoke-DeployerComposeCapture -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments $cliArgs -StdinText $stdin -TimeoutSeconds 120
+    $lines = @($r.Output -split "`r?`n" | Where-Object { $_.Trim() })
+    if ($r.ExitCode -ne 0) {
+        # The CLI prints one line saying what was wrong (e.g. the whole ID/secret block was pasted).
+        $why = if ($r.ExitCode -eq 2 -and $r.StdOut.Trim()) { $r.StdOut.Trim() } elseif ($lines) { $lines[-1] } else { "exit code $($r.ExitCode)" }
+        throw $why
+    }
+    if ($sub -ne 'status') { Write-DeployerOk $r.StdOut.Trim(); return }
+    if ($Json) { Write-Output $r.StdOut.Trim(); return }
+    $s = $r.StdOut | ConvertFrom-Json
+    foreach ($name in @('google', 'github')) {
+        $p = $s.$name
+        $state = if ($p.configured) { "configured (Client ID $($p.client_id))" } elseif ($p.client_id) { 'Client secret missing' } else { 'not configured' }
+        Write-Host ''
+        Write-Host "  $($name.Substring(0, 1).ToUpperInvariant() + $name.Substring(1)): $state"
+        Write-Host "    Callback URL: $($p.callback_url)"
+    }
+    Write-Host ''
+}
+
 function Invoke-Status {
     if ($Json) { Invoke-StatusJson; return }
     $ctx = Get-Context
@@ -664,6 +728,7 @@ try {
         'autostart' { Invoke-Autostart }
         'keepawake' { Invoke-KeepAwake }
         'device' { Invoke-Device }
+        'oauth' { Invoke-OAuth }
         { $_ -in @('help', '-h', '--help', '/?') } { Show-Help }
         default {
             Write-DeployerError "Unknown command '$Command'."
