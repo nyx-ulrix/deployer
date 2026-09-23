@@ -78,8 +78,9 @@ Off by default. An app normally reaches its project's data only through the data
   managed source of the project on the main server, `NAME` = source name upper-cased with every
   non-alphanumeric turned into `_`:
   - SQL: `DEPLOYER_DB_<NAME>_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_DATABASE`, `_URL`
-    (`mysql://user:pass@mariadb:3306/db`, user and password URL-encoded);
-  - MongoDB: `DEPLOYER_DB_<NAME>_URL` (`mongodb://user:pass@mongodb:27017/db?authSource=db&directConnection=true`)
+    (`mysql://<user>:<password>@mariadb:3306/<db>` with user and password URL-encoded; placeholders
+    in angle brackets here so the secret scanner doesn't read the example as a credential);
+  - MongoDB: `DEPLOYER_DB_<NAME>_URL` (`mongodb://<user>:<password>@mongodb:27017/<db>?authSource=<db>&directConnection=true`)
     and `_DATABASE`.
 
   Host/port come from the stored connection config, i.e. the in-network names the API itself uses.

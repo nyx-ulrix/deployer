@@ -10,6 +10,15 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+# Same table options as 0001-0006: without them MariaDB gives a new table the server's default
+# collation, and foreign keys to the utf8mb4 tables fail with errno 150 ("incorrectly formed").
+TABLE_OPTS = {
+    "mysql_engine": "InnoDB",
+    "mysql_charset": "utf8mb4",
+    "mariadb_engine": "InnoDB",
+    "mariadb_charset": "utf8mb4",
+}
+
 revision: str = "0008"
 down_revision: str | None = "0007"
 branch_labels: str | Sequence[str] | None = None
@@ -17,8 +26,11 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    with op.batch_alter_table("project_members") as batch_op:
-        batch_op.add_column(sa.Column("can_cohost", sa.Boolean(), nullable=False, server_default=sa.false()))
+    # MariaDB DDL is not transactional: a first 0008 run that failed later (the table options bug)
+    # left this column behind, so only add it when it is missing.
+    if "can_cohost" not in {c["name"] for c in sa.inspect(op.get_bind()).get_columns("project_members")}:
+        with op.batch_alter_table("project_members") as batch_op:
+            batch_op.add_column(sa.Column("can_cohost", sa.Boolean(), nullable=False, server_default=sa.false()))
 
     op.create_table(
         "source_replicas",
@@ -39,6 +51,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
         sa.UniqueConstraint("data_source_id", "device_id", name="uq_replica_source_device"),
+        **TABLE_OPTS,
     )
     op.create_index("ix_source_replicas_data_source_id", "source_replicas", ["data_source_id"])
     op.create_index("ix_source_replicas_device_id", "source_replicas", ["device_id"])
@@ -66,6 +79,7 @@ def upgrade() -> None:
         sa.Column("resolved_at", sa.DateTime()),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
+        **TABLE_OPTS,
     )
     op.create_index("ix_sync_conflicts_replica_id", "sync_conflicts", ["replica_id"])
     op.create_index("ix_sync_conflicts_status", "sync_conflicts", ["status"])
@@ -85,6 +99,7 @@ def upgrade() -> None:
         sa.Column("origin", sa.String(10), nullable=False),
         sa.Column("user_id", sa.String(36), sa.ForeignKey("users.id", ondelete="SET NULL")),
         sa.Column("synced_at", sa.DateTime(), nullable=False),
+        **TABLE_OPTS,
     )
     op.create_index("ix_sync_versions_replica_id", "sync_versions", ["replica_id"])
     op.create_index("ix_sync_versions_synced_at", "sync_versions", ["synced_at"])

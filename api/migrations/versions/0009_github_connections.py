@@ -11,6 +11,15 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
+# Same table options as 0001-0006: without them MariaDB gives a new table the server's default
+# collation, and foreign keys to the utf8mb4 tables fail with errno 150 ("incorrectly formed").
+TABLE_OPTS = {
+    "mysql_engine": "InnoDB",
+    "mysql_charset": "utf8mb4",
+    "mariadb_engine": "InnoDB",
+    "mariadb_charset": "utf8mb4",
+}
+
 revision: str = "0009"
 down_revision: str | None = "0008"
 branch_labels: str | Sequence[str] | None = None
@@ -30,6 +39,7 @@ def upgrade() -> None:
         sa.Column("scopes", sa.String(255), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
+        **TABLE_OPTS,
     )
     with op.batch_alter_table("apps") as batch_op:
         batch_op.add_column(sa.Column("github_connection_user_id", sa.String(36), nullable=True))
