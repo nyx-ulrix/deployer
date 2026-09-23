@@ -81,11 +81,42 @@ const { rows } = await res.json();
 Put the config's `url` and the key in the platform's environment variables (`DEPLOYER_URL`,
 `DEPLOYER_API_KEY`); commit only the `anon` key if any, never the `service` key.
 
+## Feature status (check before promising anything)
+
+Deployer changes quickly. Before telling the user a feature exists, confirm it on their instance
+(`GET <url>/v1/health` for the version; the dashboard tab or endpoint named below).
+
+| Feature | Status | Where |
+|---|---|---|
+| Projects, SQL + NoSQL databases, schema, data browser, query notebook/terminal | Available | dashboard tabs |
+| Backups + point-in-time restore, export/import | Available | Backups tab, Settings |
+| API keys (anon/service), reveal later, config JSON, data API | Available | API keys tab, `docs/DATA_API.md` |
+| Remote access with the user's domain (guided Cloudflare setup) | Available | Settings → Domains & remote access |
+| Push-to-deploy apps (static / Node / Python / Dockerfile), logs, rollback, app hostnames | Available | project → **Deploys** |
+| App access to the project's databases (`database_access`, admin-only) | Available | app settings |
+| Step-by-step GitHub token help for private repos | Available | New app → *Private repository* |
+| **Connect a Git repository** (connect GitHub once, pick a repo, everything detected and pre-filled, token + webhook automatic) | **Being built** - use the manual form until `GET /v1/integrations/github` exists | Deploys → New app |
+| **Co-hosting, phase 1**: live two-way sync of a project's databases to a member's own PC, Git-style conflict resolution, per-row history | **Being built** - only when `GET /v1/projects/{id}/cohosting/eligibility` exists | Databases → Sync |
+| **Co-hosting, phase 2**: apps also running on co-host PCs behind one address with automatic failover | **Planned, not built** | - |
+| Apps running on host devices | **Not built** (apps run on the main Deployer PC only) | - |
+
+Never describe a "being built" or "planned" feature as available; say what the user can do today
+instead (e.g. "paste a token by hand for now").
+
 ## Step 2a - Deploy on this Deployer instance
 
 Only after the user picked **this Deployer instance**. The code must be in a Git repository the
-instance can clone over HTTPS (GitHub; private repos need a fine-grained token with
-*Contents: read* that the **user** pastes in - never ask for it in chat).
+instance can clone over HTTPS (GitHub). For a private repository the **user** provides access -
+never ask for a token in chat:
+
+- **Today:** a fine-grained GitHub token (*Only select repositories* → the repo; *Contents:
+  Read-only*). The New app form shows the exact steps when *Private repository* is ticked; the user
+  pastes the token there.
+- **When "Connect a Git repository" is available** (see Feature status): the user clicks *Connect
+  GitHub* once in Deploys → New app, picks the repository, and Deployer detects the preset,
+  commands, output folder, port, environment variable names and whether the app needs database
+  access, then creates the push webhook itself. Your job is then only to check the detected values
+  with the user and fill in environment variable *values* they give you.
 
 1. Push the code to the repository's branch (default `main`). Commit any missing `package.json`
    build script or `requirements.txt` first; the preset decides the build:
@@ -115,7 +146,9 @@ instance can clone over HTTPS (GitHub; private repos need a fine-grained token w
    fix the repo, push, deploy again. A failed deployment never replaces the running one.
 4. Push-to-deploy: `GET .../apps/{app_id}/webhook` gives the payload URL and secret; the **user**
    adds them in GitHub (repo → Settings → Webhooks, content type `application/json`, just the
-   push event). From then on every push to the branch deploys.
+   push event). From then on every push to the branch deploys. (With a connected repository this
+   step is automatic.) GitHub can only reach the webhook when the instance has a public URL
+   (Cloudflare domain); on `http://localhost` the user deploys with *Deploy now* instead.
 5. URLs: `local_url` (`http://localhost:81xx`, LAN when enabled) always works. For the internet,
    the user links Cloudflare (Settings → Domains & remote access), then
    `POST .../apps/{app_id}/domains {hostname}` (admin) creates the DNS record, tunnel ingress and
@@ -136,11 +169,30 @@ Only after the user answered the platform question:
 | Netlify | `netlify deploy --prod`, or Git integration | same, in *Site settings → Environment* |
 | Cloudflare Pages | `wrangler pages deploy <dir>` or Git integration | same; the Deployer tunnel can share the zone |
 | GitHub Pages | workflow that builds and publishes `dist/` | only the `anon` key (static site, public) |
-| Deployer host device | not available yet (apps run on the main Deployer PC only). Offer "this Deployer instance". | - |
+| Deployer host device / co-host PC | not available yet (apps run on the main Deployer PC only; co-host failover is planned). Offer "this Deployer instance". | - |
 
 After deploying: open the site, run one real request against the data API from it, and check the
 project's query log / audit (Deployer dashboard) shows the call. Then tell the user the URL, the
 platform used, and where the key lives.
+
+## People, sign-in and co-hosting
+
+- **Adding people:** project → **Members → Invite** (single-use link, optionally locked to an
+  email, with a role: viewer = read-only, developer = edit data/schema and deploy, admin =
+  members/keys/settings). Public signup should stay **off** on an internet-facing instance: any
+  signed-in user can create a project and deploy code that runs on the owner's PC.
+- **Sign-in methods:** email + password always works with an invite. Google/GitHub sign-in need the
+  owner's own OAuth apps with the instance's public URL registered as callback
+  (`<url>/v1/auth/oauth/{google|github}/callback`); the dashboard (Settings → Instance) and Deployer
+  Control (*Sign-in apps*) show those URLs. A Google app in *Testing* mode only admits listed test
+  users; publishing it lifts that.
+- **Members don't need to install anything** to edit SQL/data: the web dashboard's Query, Data and
+  Schema tabs work for any member with the developer role.
+- **Co-hosting** (see Feature status): a member with the *Co-host* flag who has their own Deployer
+  attached as a host device can keep a live, two-way synced copy of the project's databases on
+  their PC. Offer it only when the eligibility endpoint says `offer: true`. Conflicts are never
+  resolved automatically: both versions are kept and a person picks or combines them in
+  *Databases → Sync*. Co-hosts never see the owner's API keys, OAuth settings or Cloudflare token.
 
 ## Do / don't
 
