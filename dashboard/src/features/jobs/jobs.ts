@@ -5,6 +5,7 @@ const TYPE_LABELS: [RegExp, string][] = [
   [/restore_deleted|deleted.*restore/, "Restore deleted database"],
   [/restore/, "Restore"],
   [/verify/, "Verify version"],
+  [/replica/, "Copy to device"],
   [/copy/, "Copy backup"],
   [/move/, "Move database"],
   [/prune/, "Prune old versions"],

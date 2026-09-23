@@ -12,15 +12,19 @@ import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { CopyField } from "../../components/ui/CopyField";
 import { Dialog } from "../../components/ui/Dialog";
-import { Field, Input, Select } from "../../components/ui/Input";
+import { Checkbox, Field, Input, Select } from "../../components/ui/Input";
 import { PageSpinner } from "../../components/ui/Spinner";
 import { Alert, Card, EmptyState, ErrorState } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { formatDate, formatDateTime } from "../../lib/format";
-import { ROLE_DESCRIPTIONS, ROLE_LABELS } from "../../lib/roles";
+import { hasRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "../../lib/roles";
 import { useProjectContext } from "./project-context";
 
 const ASSIGNABLE: InviteRole[] = ["admin", "developer", "viewer"];
+
+const COHOST_HINT =
+  "Co-hosts may keep a live, two-way copy of this project's databases on their own PC (a host device they attach). " +
+  "They never see the project's secrets. Needs the Developer role or higher.";
 
 export function MembersTab() {
   const { project, can } = useProjectContext();
@@ -40,6 +44,7 @@ function MembersCard() {
   const queryClient = useQueryClient();
   const members = useQuery({ queryKey: qk.members(project.id), queryFn: () => api.members.list(project.id) });
   const [removing, setRemoving] = useState<Member | null>(null);
+  const [stopCohost, setStopCohost] = useState<Member | null>(null);
 
   const updateRole = useMutation({
     mutationFn: ({ userId, role }: { userId: string; role: InviteRole }) =>
@@ -52,6 +57,29 @@ function MembersCard() {
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't change role"),
   });
+
+  // COHOSTING.md "Roles": switching it off pauses the member's copies (the API does that).
+  const setCohost = useMutation({
+    mutationFn: ({ userId, value }: { userId: string; value: boolean }) =>
+      api.cohosting.setMemberCohost(project.id, userId, value),
+    onSuccess: (m) => {
+      queryClient.setQueryData<Member[]>(qk.members(project.id), (list) =>
+        list?.map((x) => (x.user_id === m.user_id ? m : x)),
+      );
+      void queryClient.invalidateQueries({ queryKey: qk.dataSources(project.id) });
+      void queryClient.invalidateQueries({ queryKey: qk.cohostEligibility(project.id) });
+      setStopCohost(null);
+      const name = m.display_name || m.email;
+      toast.success(m.can_cohost ? `${name} can now co-host.` : `${name} can no longer co-host; their copies are paused.`);
+    },
+    onError: (e) => toast.error(errorMessage(e), "Couldn't change co-hosting"),
+  });
+
+  // Mirrors the API: admins+ change it for developer+ members; the owner's and other admins' only by the owner.
+  const cohostEditable = (m: Member) =>
+    can("admin") &&
+    hasRole(m.role, "developer") &&
+    (project.my_role === "owner" || m.role === "developer" || m.user_id === me.id);
 
   const remove = useMutation({
     mutationFn: (m: Member) => api.members.remove(project.id, m.user_id),
@@ -84,14 +112,32 @@ function MembersCard() {
               <li key={m.user_id} className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
                 <Avatar name={m.display_name || m.email} src={m.avatar_url} />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">
-                    {m.display_name || m.email}
-                    {isMe && <span className="ml-1.5 text-xs font-normal text-muted">(you)</span>}
+                  <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                    <span className="truncate">{m.display_name || m.email}</span>
+                    {isMe && <span className="text-xs font-normal text-muted">(you)</span>}
+                    {m.can_cohost && (
+                      <Badge tone="info" title={COHOST_HINT}>
+                        Co-host
+                      </Badge>
+                    )}
                   </p>
                   <p className="truncate text-xs text-muted">
                     {m.email} · joined {formatDate(m.created_at)}
                   </p>
                 </div>
+                {cohostEditable(m) && (
+                  <span title={COHOST_HINT}>
+                    <Checkbox
+                      label="Co-host"
+                      checked={Boolean(m.can_cohost)}
+                      disabled={setCohost.isPending}
+                      aria-label={`Allow ${m.email} to co-host`}
+                      onChange={(e) =>
+                        e.target.checked ? setCohost.mutate({ userId: m.user_id, value: true }) : setStopCohost(m)
+                      }
+                    />
+                  </span>
+                )}
                 {editable ? (
                   <Select
                     className="h-9 w-auto"
@@ -127,6 +173,17 @@ function MembersCard() {
             );
           })}
         </ul>
+      )}
+      {stopCohost && (
+        <ConfirmDialog
+          open
+          onClose={() => setStopCohost(null)}
+          onConfirm={() => setCohost.mutate({ userId: stopCohost.user_id, value: false })}
+          loading={setCohost.isPending}
+          title={`Stop co-hosting for ${stopCohost.display_name || stopCohost.email}?`}
+          description="Their copies stop syncing (paused). The data already on their PC stays there until the copy is removed on the Databases tab."
+          confirmLabel="Stop co-hosting"
+        />
       )}
       {removing && (
         <ConfirmDialog

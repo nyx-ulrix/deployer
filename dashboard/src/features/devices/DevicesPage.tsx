@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Ban, Download, HardDrive, Laptop, MoreVertical, Pencil, Play, Trash2 } from "lucide-react";
 import { errorMessage } from "../../api/client";
@@ -94,9 +94,11 @@ function DeviceCard({ device, showOwner }: { device: Device; showOwner: boolean 
   const user = useCurrentUser();
   const toast = useToast();
   const queryClient = useQueryClient();
-  const [editing, setEditing] = useState(false);
-  const [removing, setRemoving] = useState(false);
+  const [params] = useSearchParams();
   const isOwner = device.owner_id === user.id;
+  // `?edit=<id>` opens the settings straight away (linked from "Copy to my device" when a device isn't shared).
+  const [editing, setEditing] = useState(() => isOwner && params.get("edit") === device.id);
+  const [removing, setRemoving] = useState(false);
   const online = isDeviceOnline(device);
   const hosted = device.hosted_sources_count ?? 0;
 

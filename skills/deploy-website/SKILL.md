@@ -96,7 +96,7 @@ Deployer changes quickly. Before telling the user a feature exists, confirm it o
 | App access to the project's databases (`database_access`, admin-only) | Available | app settings |
 | Step-by-step GitHub token help for private repos | Available | New app → *Private repository* |
 | **Connect a Git repository** (connect GitHub once, pick a repo, everything detected and pre-filled, token + webhook automatic) | Available when `GET /v1/integrations/github` exists (older instances: manual form) | Deploys → New app |
-| **Co-hosting, phase 1**: live two-way sync of a project's databases to a member's own PC, Git-style conflict resolution, per-row history | **API available** (`GET /v1/projects/{id}/cohosting/eligibility`); the dashboard screens (Co-host toggle, *Copy to my device*, conflicts page) are **being built** - until then only via the API | Databases → Sync |
+| **Co-hosting, phase 1**: live two-way sync of a project's databases to a member's own PC, Git-style conflict resolution, per-row history | Available when `GET /v1/projects/{id}/cohosting/eligibility` exists (not yet exercised with a real second PC) | Members → *Co-host*; Databases → *Copy to my device*, copies, conflicts (`/projects/{id}/databases/{sid}/sync`) |
 | **Co-hosting, phase 2**: apps also running on co-host PCs behind one address with automatic failover | **Planned, not built** | - |
 | Apps running on host devices | **Not built** (apps run on the main Deployer PC only) | - |
 

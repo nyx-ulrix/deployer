@@ -4,8 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRightLeft, Database, History, Leaf, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { errorMessage, isDeviceOffline } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import { useDataSources } from "../../api/hooks";
-import type { DataSource } from "../../api/types";
+import { useCohostEligibility, useDataSourcesWithReplicas } from "../../api/hooks";
+import type { CohostEligibility, DataSource } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { CopyField } from "../../components/ui/CopyField";
@@ -16,6 +16,7 @@ import { Alert, EmptyState, ErrorState } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { relativeTime } from "../../lib/format";
 import { RecentlyDeletedCard } from "../backups/RecentlyDeleted";
+import { SourceCopies } from "../cohosting/SourceCopies";
 import { DeviceBadge } from "../devices/DeviceBits";
 import { MoveDatabaseDialog } from "../devices/MoveDatabaseDialog";
 import { useDeviceNames } from "../devices/useDeviceNames";
@@ -25,7 +26,9 @@ import { EngineBadge, KindBadge, ModeBadge, StatusBadge } from "./SourceBadges";
 
 export function DatabasesTab() {
   const { project, can } = useProjectContext();
-  const sources = useDataSources(project.id);
+  const sources = useDataSourcesWithReplicas(project.id);
+  // COHOSTING.md: decides whether "Copy to my device" appears at all; most members never see it.
+  const eligibility = useCohostEligibility(project.id);
   const [adding, setAdding] = useState(false);
   const [connectionFor, setConnectionFor] = useState<DataSource | null>(null);
   const [deleting, setDeleting] = useState<DataSource | null>(null);
@@ -72,6 +75,8 @@ export function DatabasesTab() {
             <li key={s.id}>
               <SourceCard
                 source={s}
+                allSources={sources.data}
+                eligibility={eligibility.data}
                 deviceName={deviceName(s)}
                 onConnection={() => setConnectionFor(s)}
                 onDelete={() => setDeleting(s)}
@@ -103,12 +108,16 @@ export function DatabasesTab() {
 
 function SourceCard({
   source,
+  allSources,
+  eligibility,
   deviceName,
   onConnection,
   onDelete,
   onMove,
 }: {
   source: DataSource;
+  allSources: DataSource[];
+  eligibility: CohostEligibility | undefined;
   deviceName: string | null;
   onConnection: () => void;
   onDelete: () => void;
@@ -184,6 +193,7 @@ function SourceCard({
           {source.status_message}
         </Alert>
       )}
+      <SourceCopies source={source} allSources={allSources} eligibility={eligibility} />
       <div className="mt-4 flex flex-wrap gap-2 border-t border-border pt-3">
         <Button size="sm" icon={<RefreshCw className="size-3.5" />} loading={check.isPending} onClick={() => check.mutate()}>
           Check status

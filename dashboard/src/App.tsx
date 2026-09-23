@@ -11,6 +11,7 @@ import { SignupPage } from "./features/auth/SignupPage";
 import { DataTab } from "./features/data/DataTab";
 import { BackupsTab } from "./features/backups/BackupsTab";
 import { InstanceBackupsPage } from "./features/backups/InstanceBackupsPage";
+import { SyncPage } from "./features/cohosting/SyncPage";
 import { DatabasesTab } from "./features/databases/DatabasesTab";
 import { AppPage } from "./features/deploys/AppPage";
 import { DeploysTab } from "./features/deploys/DeploysTab";
@@ -99,6 +100,8 @@ const router = createBrowserRouter([
                 children: [
                   { index: true, element: <OverviewTab /> },
                   { path: "databases", element: <DatabasesTab /> },
+                  // COHOSTING.md: copies, sync conflicts and per-row history of one source.
+                  { path: "databases/:sourceId/sync", element: <SyncPage /> },
                   {
                     path: "schema",
                     element: (

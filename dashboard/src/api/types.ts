@@ -48,6 +48,8 @@ export type Member = {
   display_name: string | null;
   avatar_url: string | null;
   role: Role;
+  /** docs/COHOSTING.md "Roles": may keep a live copy of the project's databases on their own PC. */
+  can_cohost?: boolean;
   created_at: string;
 };
 
@@ -80,6 +82,8 @@ export type DataSource = {
   device_id?: string | null;
   /** Name of the host device (DEVICES.md); the dashboard looks the device up itself if absent. */
   device_name?: string | null;
+  /** Live copies on co-host devices (docs/COHOSTING.md); empty/absent when there are none. */
+  replicas?: Replica[];
 };
 
 export type ApiKeyRole = "anon" | "service";
@@ -912,3 +916,83 @@ export type DeploymentPage = { deployments: Deployment[]; has_more: boolean };
 export type AppWebhook = { url: string; secret: string; hook_active?: boolean; warnings?: string[] };
 
 export type AppLogs = { lines: string[]; container: string | null };
+
+// ---- Co-hosting (docs/COHOSTING.md) ----
+
+export type ReplicaStatus = "copying" | "syncing" | "paused" | "error";
+
+export type Replica = {
+  id: string;
+  data_source_id: string;
+  device_id: string;
+  device_name: string | null;
+  /** Owner of the device = the co-host member. */
+  owner_id: string | null;
+  online: boolean;
+  status: ReplicaStatus;
+  lag_seconds: number | null;
+  last_synced_at: string | null;
+  error: string | null;
+  warnings: { table: string; message: string }[];
+  open_conflicts: number;
+  created_at: string;
+};
+
+export type ReplicaResponse = { replica: Replica; job?: Job };
+
+export type CohostEligibility = {
+  can_cohost: boolean;
+  /** The caller's own active database-host devices. */
+  devices: { id: string; name: string; online: boolean; granted: boolean }[];
+  offer: boolean;
+};
+
+export type SyncOp = "insert" | "update" | "delete";
+export type SyncSide = "primary" | "replica";
+export type ConflictChoice = SyncSide | "manual";
+
+export type ConflictField = {
+  name: string;
+  base: JsonValue;
+  primary: JsonValue;
+  replica: JsonValue;
+  changed_by: "both" | SyncSide;
+};
+
+export type SyncConflict = {
+  id: string;
+  replica_id: string;
+  table: string;
+  key: JsonObject;
+  status: "open" | "resolved";
+  /** `null` = deleted on that side (or, for `base`, unknown). */
+  base: JsonObject | null;
+  primary: JsonObject | null;
+  replica: JsonObject | null;
+  op_primary: SyncOp | null;
+  op_replica: SyncOp | null;
+  primary_changed_at: string | null;
+  replica_changed_at: string | null;
+  resolution: ConflictChoice | null;
+  resolved: JsonObject | null;
+  resolved_by_id: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+  fields: ConflictField[];
+  suggested: JsonObject | null;
+};
+
+export type SyncHistoryItem = {
+  type: "version" | "conflict";
+  id: string;
+  replica_id: string;
+  /** Versions: where the value came from. Conflicts: how they were resolved. */
+  origin: SyncSide | "resolution" | "restore" | "manual" | null;
+  value: JsonObject | null;
+  user_id: string | null;
+  at: string | null;
+  /** Conflicts only: the two sides before resolving. */
+  primary?: JsonObject | null;
+  replica?: JsonObject | null;
+};

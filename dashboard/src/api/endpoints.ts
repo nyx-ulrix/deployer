@@ -5,6 +5,12 @@ import type {
   ApiKeyCreateResponse,
   ApiKeyRole,
   App,
+  CohostEligibility,
+  ConflictChoice,
+  Replica,
+  ReplicaResponse,
+  SyncConflict,
+  SyncHistoryItem,
   AppCreated,
   AppDetectDraft,
   AppInput,
@@ -428,6 +434,38 @@ export const api = {
     disconnect: () => client.del<{ ok: true; apps_using_connection: number; message: string }>("/integrations/github"),
     repos: (q = "") => client.get<GitHubRepo[]>("/integrations/github/repos", { query: { q: q || undefined } }),
   },
+
+  // COHOSTING.md: live copies of managed databases on members' own PCs, sync conflicts, per-key history.
+  cohosting: {
+    setMemberCohost: (pid: string, userId: string, canCohost: boolean) =>
+      client.patch<Member>(`/projects/${e(pid)}/members/${e(userId)}`, { can_cohost: canCohost }),
+    eligibility: (pid: string) => client.get<CohostEligibility>(`/projects/${e(pid)}/cohosting/eligibility`),
+    replicas: (pid: string, sid: string) =>
+      client.get<Replica[]>(`/projects/${e(pid)}/data-sources/${e(sid)}/replicas`),
+    createReplica: (pid: string, sid: string, deviceId: string) =>
+      client.post<Required<ReplicaResponse>>(`/projects/${e(pid)}/data-sources/${e(sid)}/replicas`, {
+        device_id: deviceId,
+      }),
+    replicaAction: (pid: string, sid: string, rid: string, action: "pause" | "resume" | "recopy") =>
+      client.post<ReplicaResponse>(`/projects/${e(pid)}/data-sources/${e(sid)}/replicas/${e(rid)}/${action}`),
+    removeReplica: (pid: string, sid: string, rid: string, drop: boolean) =>
+      client.del<Ok>(`/projects/${e(pid)}/data-sources/${e(sid)}/replicas/${e(rid)}`, { query: { drop } }),
+    conflicts: (pid: string, sid: string, status: "open" | "resolved") =>
+      client.get<SyncConflict[]>(`/projects/${e(pid)}/data-sources/${e(sid)}/sync-conflicts`, { query: { status } }),
+    conflict: (pid: string, sid: string, cid: string) =>
+      client.get<SyncConflict>(`/projects/${e(pid)}/data-sources/${e(sid)}/sync-conflicts/${e(cid)}`),
+    resolve: (pid: string, sid: string, cid: string, body: { choice: ConflictChoice; value?: JsonObject | null }) =>
+      client.post<SyncConflict>(`/projects/${e(pid)}/data-sources/${e(sid)}/sync-conflicts/${e(cid)}/resolve`, body),
+    history: (pid: string, sid: string, table: string, key: JsonObject) =>
+      client.get<SyncHistoryItem[]>(`/projects/${e(pid)}/data-sources/${e(sid)}/sync-history`, {
+        query: { table, key: JSON.stringify(key) },
+      }),
+    restore: (pid: string, sid: string, body: { table: string; key: JsonObject; version_id: string }) =>
+      client.post<{ ok: true; resolved_conflict_id: string | null }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/sync-history/restore`,
+        body,
+      ),
+  },
 };
 
 export const qk = {
@@ -482,4 +520,12 @@ export const qk = {
   appLogs: (id: string, appId: string) => ["projects", id, "apps", appId, "logs"] as const,
   github: ["integrations", "github"] as const,
   githubRepos: (q: string) => ["integrations", "github", "repos", q] as const,
+  cohostEligibility: (id: string) => ["projects", id, "cohosting", "eligibility"] as const,
+  /** Everything sync-related of one source (prefix of the keys below), invalidated after each resolve/restore. */
+  syncFor: (id: string, sid: string) => ["projects", id, "sync", sid] as const,
+  syncConflicts: (id: string, sid: string, status: "open" | "resolved") =>
+    ["projects", id, "sync", sid, "conflicts", status] as const,
+  syncConflict: (id: string, sid: string, cid: string) => ["projects", id, "sync", sid, "conflict", cid] as const,
+  syncHistory: (id: string, sid: string, table: string, key: string) =>
+    ["projects", id, "sync", sid, "history", table, key] as const,
 };

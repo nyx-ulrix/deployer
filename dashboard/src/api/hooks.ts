@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api, qk } from "./endpoints";
-import type { JobStatus } from "./types";
+import type { DataSource, JobStatus, JsonObject } from "./types";
 import { isActive } from "../features/deploys/deploys";
 
 export function useSetupStatus() {
@@ -160,5 +160,59 @@ export function useDeployment(projectId: string, appId: string, depId: string | 
     enabled: Boolean(depId),
     refetchInterval: (query) => (opts.poll && isActive(query.state.data?.status) ? DEPLOY_POLL_MS : false),
     staleTime: 0,
+  });
+}
+
+// ---- Co-hosting (COHOSTING.md) ----
+
+/** Only decides whether to show any co-hosting UI; a failure just hides it (no retries). */
+export function useCohostEligibility(projectId: string) {
+  return useQuery({
+    queryKey: qk.cohostEligibility(projectId),
+    queryFn: () => api.cohosting.eligibility(projectId),
+    retry: false,
+    staleTime: 30_000,
+  });
+}
+
+const REPLICA_POLL_MS = 10_000;
+
+function hasLiveReplica(sources: DataSource[] | undefined): boolean {
+  return Boolean(sources?.some((s) => s.replicas?.some((r) => r.status === "copying" || r.status === "syncing")));
+}
+
+/**
+ * The project's sources, re-polled every 10 s while a copy is copying/syncing so lag and conflict counts
+ * stay fresh. Same cache entry as `useDataSources`; TanStack skips intervals while the browser tab is hidden.
+ */
+export function useDataSourcesWithReplicas(projectId: string) {
+  return useQuery({
+    queryKey: qk.dataSources(projectId),
+    queryFn: () => api.dataSources.list(projectId),
+    refetchInterval: (query) => (hasLiveReplica(query.state.data) ? REPLICA_POLL_MS : false),
+  });
+}
+
+export function useSyncConflicts(projectId: string, sourceId: string, status: "open" | "resolved") {
+  return useQuery({
+    queryKey: qk.syncConflicts(projectId, sourceId, status),
+    queryFn: () => api.cohosting.conflicts(projectId, sourceId, status),
+    refetchInterval: status === "open" ? 15_000 : false,
+  });
+}
+
+export function useSyncConflict(projectId: string, sourceId: string, conflictId: string | null) {
+  return useQuery({
+    queryKey: qk.syncConflict(projectId, sourceId, conflictId ?? ""),
+    queryFn: () => api.cohosting.conflict(projectId, sourceId, conflictId as string),
+    enabled: Boolean(conflictId),
+  });
+}
+
+export function useSyncHistory(projectId: string, sourceId: string, table: string, key: JsonObject | null) {
+  return useQuery({
+    queryKey: qk.syncHistory(projectId, sourceId, table, JSON.stringify(key)),
+    queryFn: () => api.cohosting.history(projectId, sourceId, table, key as JsonObject),
+    enabled: key !== null && table !== "",
   });
 }
