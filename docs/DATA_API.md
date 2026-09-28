@@ -6,10 +6,16 @@ Deployer's REST API without a user login. Keys are created by project admins in 
 
 | Role | Acts as | Use it for |
 |---|---|---|
-| `anon` | viewer: read rows/documents/schema, **read-only** queries | browsers, mobile apps, public clients |
+| `anon` | viewer: read rows/documents/schema of **every** table and collection, **read-only** queries | read-only scripts, dashboards and agents you trust; public clients only if all the project's data is public |
 | `service` | developer: everything `anon` can plus insert/update/delete and write queries | servers, cron jobs, backends |
 
 **Never ship a `service` key to a browser or a mobile app.** Anyone who can open the app can extract it.
+
+**An `anon` key can read ALL data in the project** - every table and collection, including users,
+emails, password hashes and orders. It cannot write, but it is not a "public" key: there is no per-table
+or per-row restriction yet. Only put it in a browser, a mobile app or a public repository if everything
+in the project is meant to be public. Otherwise keep the key on a server (a backend or serverless
+function) that calls Deployer and returns only what the page needs.
 Keys are project-scoped and only work on the data, query and schema endpoints listed below and on the
 MCP endpoint for AI agents ([MCP.md](MCP.md)); every other endpoint answers `401 api_key_not_allowed`.
 

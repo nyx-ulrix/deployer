@@ -1,6 +1,8 @@
 """Project API keys on the data, query and schema routes (docs/DATA_API.md)."""
 
+import re
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -165,3 +167,21 @@ def test_per_key_rate_limit(client, setup, set_setting):
 
     set_setting("api_key_rate_limit", 0)  # 0 = unlimited
     assert client.get(url, headers=h).status_code == 200
+
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def test_anon_key_is_not_advertised_as_public():
+    """A-004: an anon key reads every table and collection (no per-table allowlist yet), so the
+    docs, the agent skill and the dashboard must say so instead of calling it the public-client key."""
+    places = {
+        "docs/DATA_API.md": "read ALL data",
+        "skills/deploy-website/SKILL.md": "reads **all** data",
+        "dashboard/src/features/projects/ApiKeysTab.tsx": "can read ALL data",
+    }
+    misleading = re.compile(r"safe for browsers|public clients \||anon . public|Public key for client apps", re.I)
+    for rel, warning in places.items():
+        text = (REPO / rel).read_text(encoding="utf-8")
+        assert warning in text, rel
+        assert not misleading.search(text), (rel, misleading.search(text))

@@ -22,7 +22,7 @@ import { buildMcpSnippets, buildSnippets, SNIPPET_LANGS, type SnippetLang } from
 import { useProjectContext } from "./project-context";
 
 const ROLE_HELP: Record<ApiKeyRole, string> = {
-  anon: "Public key for client apps. Limited to what anonymous users may do.",
+  anon: "Read-only, but it can read ALL data in this project (every table and collection). Only put it in a browser, phone app or public repo if everything in the project is public.",
   service: "Full access to the project's data. Keep it on servers only — never ship it to browsers or phones.",
 };
 
@@ -199,7 +199,7 @@ export function ApiKeysTab() {
           {secrets[showing.id] ? (
             <div className="space-y-3">
               <CopyField label="Secret" value={secrets[showing.id]} secret />
-              {showing.role === "service" && <p className="text-xs text-danger">{ROLE_HELP.service}</p>}
+              <p className="text-xs text-danger">{ROLE_HELP[showing.role]}</p>
             </div>
           ) : reveal.isError ? (
             <Alert tone="danger">{keyErrorMessage(reveal.error)}</Alert>
@@ -308,8 +308,9 @@ function UsageDialog({
           </p>
         ) : (
           <p className="text-xs text-muted">
-            <span className="font-medium text-fg">anon</span> keys are read-only; <span className="font-medium text-fg">service</span>{" "}
-            keys can read and write. Never ship a service key to browsers or phones.{" "}
+            <span className="font-medium text-fg">anon</span> keys are read-only but can read every table and collection;{" "}
+            <span className="font-medium text-fg">service</span> keys can read and write. Never ship a service key to browsers
+            or phones, and ship an anon key only if all the project's data is public; otherwise call the API from your server.{" "}
             <a href={DOCS_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
               <BookOpen className="size-3.5" /> Full tutorial → docs/DATA_API.md
             </a>
@@ -357,7 +358,7 @@ function CreateKeyDialog({ projectId, onClose }: { projectId: string; onClose: (
             Project admins can reveal it again later from this page, so it's fine to close this now.
           </Alert>
           <CopyField label="Secret" value={secret} />
-          {role === "service" && <p className="text-xs text-danger">{ROLE_HELP.service}</p>}
+          <p className="text-xs text-danger">{ROLE_HELP[role]}</p>
         </div>
       </Dialog>
     );
@@ -387,7 +388,7 @@ function CreateKeyDialog({ projectId, onClose }: { projectId: string; onClose: (
         <Field label="Role" hint={ROLE_HELP[role]}>
           {(id) => (
             <Select id={id} value={role} onChange={(e) => setRole(e.target.value as ApiKeyRole)}>
-              <option value="anon">anon — public</option>
+              <option value="anon">anon — read-only, reads all data</option>
               <option value="service">service — full access</option>
             </Select>
           )}

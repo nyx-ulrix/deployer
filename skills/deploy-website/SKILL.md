@@ -69,7 +69,9 @@ The dashboard is at the instance's public URL (default `http://localhost:8080`; 
 3. **Schema and data**: Schema tab (ER diagram, DDL export), Data tab (rows/documents), Query tab
    (notebook or terminal).
 4. **API key for the site**: API keys tab → *Create key*.
-   - `anon` = read-only, safe for browsers;
+   - `anon` = read-only, but it reads **all** data in the project (every table and collection,
+     including users and password hashes). It is NOT safe to put in a browser, phone app or public
+     repo unless everything in the project is public;
    - `service` = read/write, **server-side only** (never ship it to a browser or phone).
    Admins can *Reveal* a key later and *Download config JSON*
    (`deployer-<project>-<role>.json` with `url`, `project_id`, `api_key`, `data_sources`,
@@ -79,7 +81,8 @@ The dashboard is at the instance's public URL (default `http://localhost:8080`; 
    Settings → Domains & remote access (docs/REMOTE_ACCESS.md). Never expose the plain `:8080`
    listener to the internet directly. (An app deployed *on* the instance reaches it directly.)
 
-Using the key from the site (example, JavaScript):
+Using the key from the site's server side (a backend, or a serverless / edge function on the
+hosting platform; example, JavaScript):
 
 ```js
 const cfg = await import("./deployer-myshop-anon.json", { with: { type: "json" } });
@@ -91,7 +94,9 @@ const { rows } = await res.json();
 ```
 
 Put the config's `url` and the key in the platform's environment variables (`DEPLOYER_URL`,
-`DEPLOYER_API_KEY`); commit only the `anon` key if any, never the `service` key.
+`DEPLOYER_API_KEY`) and read them only in server-side code; never commit a key. The function returns
+only the fields the page needs. Ship the `anon` key to the browser only if the user confirms that
+every table and collection in the project is public data.
 
 ### Connecting an AI agent (MCP)
 
@@ -232,7 +237,7 @@ Only after the user answered the platform question:
 | Vercel | `vercel` / `vercel --prod`, or connect the Git repo | env vars `DEPLOYER_URL`, `DEPLOYER_API_KEY` |
 | Netlify | `netlify deploy --prod`, or Git integration | same, in *Site settings → Environment* |
 | Cloudflare Pages | `wrangler pages deploy <dir>` or Git integration | same; the Deployer tunnel can share the zone |
-| GitHub Pages | workflow that builds and publishes `dist/` | only the `anon` key (static site, public) |
+| GitHub Pages | workflow that builds and publishes `dist/` | no server side: no key at all unless every table in the project is public (an `anon` key reads all data); otherwise pick a platform with functions |
 | AWS / Firebase through Deployer | See "Cloud targets" in Step 2a: the owner connects the account, an admin picks the target, then deploy as usual | `target`, `cloud_connection_id` on the app (admin) |
 | Deployer host device / co-host PC | Deploy on "this Deployer instance" first, then a project admin ticks *Co-host this app*: every co-host PC of the project (a member with the Co-host flag whose PC is shared with the project and, for apps with database access, holds live copies of its databases) builds and runs the same commit, and the app's hostnames fail over between PCs. Private repositories also need *Let co-hosts clone this private repository* (the token becomes readable on those PCs). | `cohost`, `cohost_share_repo_access` on the app (admin) |
 
@@ -264,7 +269,8 @@ platform used, and where the key lives.
 ## Do / don't
 
 - Do ask the platform question every time, even for a redeploy - the answer may change.
-- Do use the `anon` key on the client and the `service` key only on servers/functions.
+- Do keep keys on servers/functions. The `anon` key reads all project data, so put it on the client
+  only when the whole project is public; the `service` key never goes on the client.
 - Don't create accounts or enter passwords or secrets on the user's behalf; ask them to paste
   repository tokens, webhook secrets and keys into the platform's settings themselves.
 - Don't hand-run `docker` on the user's PC to "help" a deployment; use the app's deploy endpoint

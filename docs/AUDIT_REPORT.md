@@ -44,7 +44,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [ ] A-003 **[HIGH][usability]** No way to recover a forgotten password, for the owner or for members - `api/app/cli.py:144-158` - add `app.cli user reset-password` plus `deployer reset-password` and a Deployer Control action, and link them from the login page.
 
 **Data**
-- [ ] A-004 **[HIGH][security]** anon API keys read every row of every table and collection yet are advertised as the safe public-client key - `api/app/routers/data.py:16, 61-73, 96-107` (also `ApiKeysTab.tsx:24-27`, `docs/DATA_API.md:9`, `SKILL.md:72-94, 235`) - fix the wording everywhere now; then add a per-key table allowlist (empty by default for anon).
+- [x] A-004 **[HIGH][security]** anon API keys read every row of every table and collection yet are advertised as the safe public-client key - `api/app/routers/data.py:16, 61-73, 96-107` (also `ApiKeysTab.tsx:24-27`, `docs/DATA_API.md:9`, `SKILL.md:72-94, 235`) - fix the wording everywhere now; then add a per-key table allowlist (empty by default for anon).
 
 **Query console**
 - [x] A-005 **[HIGH][security]** Read-only (viewer/anon) SQL is only a text filter; side-effecting functions pass and the managed DB user has ALL PRIVILEGES - `api/app/services/query_console.py:194-209, 283-284, 299-306` - enforce with `SET SESSION TRANSACTION READ ONLY` and fail closed if it errors.

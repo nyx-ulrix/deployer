@@ -79,7 +79,8 @@ project role decides the tools (viewer = anon's tools, developer and up = all).
 ## Roles and security
 
 - `anon` key → the agent can **only read**: schema, rows, documents and read-only queries. App tools
-  (settings, build and runtime logs) need a `service` key: anon keys are meant for public clients.
+  (settings, build and runtime logs) need a `service` key. An anon key still reads every table and collection in the project, so
+  treat it as a secret unless all the project's data is public ([DATA_API.md](DATA_API.md)).
 - `service` key → the agent can also **write data** (rows, documents, any query, including `DROP`)
   and **read and deploy apps**. Give an agent a service key only if you would let it change production data;
   use an `anon` key for read-only agents.

@@ -19,9 +19,9 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 - **Schema viewer** - ER diagrams (crow's-foot notation) across SQL and NoSQL, convention checks,
   cross-database links, and **DDL export** (`.sql`, `mongosh` script, or a bundle).
 - **Data browser** for tables and collections.
-- **API keys** - give your apps a project-scoped key (`anon` read-only, `service` read/write) and use
-  the same rows, documents, query and schema endpoints from curl, JavaScript or Python; download a
-  ready-made config JSON per key ([docs/DATA_API.md](docs/DATA_API.md)).
+- **API keys** - give your apps a project-scoped key (`anon` read-only but reads all project data,
+  `service` read/write) and use the same rows, documents, query and schema endpoints from curl,
+  JavaScript or Python; download a ready-made config JSON per key ([docs/DATA_API.md](docs/DATA_API.md)).
 - **AI-agent skill** - [skills/deploy-website/SKILL.md](skills/deploy-website/SKILL.md) teaches agents
   such as Claude Code how to back a site with Deployer; it always asks which platform to deploy to,
   ordered by your past deployments. Install commands are on each project's Overview tab.

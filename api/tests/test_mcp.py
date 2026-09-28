@@ -18,7 +18,7 @@ READ_TOOLS = {
     "list_rows",
     "list_documents",
 }
-# App tools need a service key (or a developer+ session): anon keys are meant for public clients.
+# App tools need a service key (or a developer+ session): anon keys only get the read-only data tools.
 APP_TOOLS = {
     "list_apps",
     "get_app",
