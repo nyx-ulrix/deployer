@@ -57,7 +57,7 @@ the primary) only authorizes the device endpoints below.
 - **Bulk data:** `PUT/GET {primary}/v1/devices/transfers/{transfer_id}` (device token), streamed,
   used for backup copies, exports and moving databases. Transfers are temp files on the primary,
   deleted after download or after 24 h.
-- **Metrics:** cpu %, memory used/total, disk free/total for the Docker data root, uptime,
+- **Metrics:** cpu %, memory used/total, disk free/total (the fuller of the Docker data root and the host drive), uptime,
   engines available (`mariadb`, `mongodb` – false without AVX), Deployer version.
 
 ### RPC methods (device side)

@@ -412,15 +412,10 @@ def _member_devices(db: Session, project: Project) -> list[Device]:
 
 def placement_options(db: Session, project: Project) -> list[dict]:
     """Main server first, then every device owned by a project member (with eligibility)."""
-    import shutil
-
     from app.config import get_settings
-    from app.services import device_rpc
+    from app.services import device_host, device_rpc
 
-    try:
-        disk_free = shutil.disk_usage("/").free
-    except OSError:
-        disk_free = None
+    disk_free = device_host.disk_space()[0]
     out: list[dict] = [
         {
             "device_id": None,

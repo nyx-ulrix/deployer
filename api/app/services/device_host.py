@@ -289,20 +289,39 @@ def _uptime() -> float | None:
         return None
 
 
+def disk_space() -> tuple[int | None, int | None, str | None]:
+    """(free, total, label) of whichever disk has less free space: `/` (the Docker data root; on Windows
+    inside a sparse WSL ext4.vhdx that reports ~1 TB however full the drive under it is) or
+    DEVICE_DISK_PATH (compose bind-mounts a folder of the install dir there, so it reports the Windows
+    drive the vhdx grows on; DEVICE_DISK_DRIVE names it, e.g. "C:")."""
+    drive = os.environ.get("DEVICE_DISK_DRIVE")
+    disks = [
+        ("/", "the Docker disk"),
+        (os.environ.get("DEVICE_DISK_PATH"), f"drive {drive}" if drive else "the host drive"),
+    ]
+    best: tuple[int | None, int | None, str | None] = (None, None, None)
+    for path, label in disks:
+        if not path:
+            continue
+        try:
+            usage = shutil.disk_usage(path)
+        except OSError:
+            continue
+        if best[0] is None or usage.free < best[0]:
+            best = (usage.free, usage.total, label)
+    return best
+
+
 def collect_metrics() -> dict[str, Any]:
     used, total = _memory()
-    disk_path = os.environ.get("DEVICE_DISK_PATH") or "/"
-    try:
-        disk = shutil.disk_usage(disk_path)
-        disk_free, disk_total = disk.free, disk.total
-    except OSError:
-        disk_free = disk_total = None
+    disk_free, disk_total, disk_label = disk_space()
     return {
         "cpu_percent": _cpu_percent(),
         "memory_used_bytes": used,
         "memory_total_bytes": total,
         "disk_free_bytes": disk_free,
         "disk_total_bytes": disk_total,
+        "disk_label": disk_label,
         "uptime_seconds": _uptime(),
         "engines": {"mariadb": True, "mongodb": bool(get_settings().managed_mongodb_enabled)},
         "version": __version__,

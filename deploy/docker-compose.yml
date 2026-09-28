@@ -151,12 +151,18 @@ services:
       BACKUP_DIR: /backups
       # Host devices (docs/DEVICES.md): the worker runs the device agent + device maintenance.
       WORKER_PLUGINS: ${WORKER_PLUGINS:-app.services.device_worker}
+      # Disk alert (docs/MONITORING.md): `/` is inside the sparse WSL disk, which reports ~1 TB free
+      # however full the Windows drive under it is; /host-disk (below) reports that drive.
+      DEVICE_DISK_PATH: /host-disk
+      DEVICE_DISK_DRIVE: ${DEPLOYER_HOST_DRIVE:-}
       # Tests only: lets a device use http://host.docker.internal as its main Deployer URL.
       DEPLOYER_ALLOW_INSECURE_PRIMARY: ${DEPLOYER_ALLOW_INSECURE_PRIMARY:-}
     volumes:
       # Shared with the tunnel sidecar: desired.json (written by the API) / status.json.
       - tunnel_state:/tunnel
       - backups:/backups
+      # Any small folder of the install dir: only its free space is read (DEVICE_DISK_PATH).
+      - ./mongodb:/host-disk:ro
     depends_on:
       mariadb:
         condition: service_healthy
@@ -207,6 +213,7 @@ services:
       # Co-host devices (docs/COHOSTING.md "Websites on both PCs"): RPC `apps.tunnel` runs in the
       # worker and hands the apps tunnel's connector token to the tunnel sidecar (desired.json).
       - tunnel_state:/tunnel
+      - ./mongodb:/host-disk:ro
     depends_on:
       api:
         condition: service_healthy

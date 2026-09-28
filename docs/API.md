@@ -156,7 +156,8 @@ for other users, 401 `api_key_not_allowed` for API keys).
 
 ```ts
 type Host = { cpu_percent: number | null; memory_used_bytes: number | null; memory_total_bytes: number | null;
-  disk_free_bytes: number | null; disk_total_bytes: number | null; uptime_seconds: number | null; collected_at: string };
+  disk_free_bytes: number | null; disk_total_bytes: number | null; disk_label: string | null;  // the fuller of the Docker disk and the host drive
+  uptime_seconds: number | null; collected_at: string };
 type RequestTotals = { requests: number; errors_5xx: number; error_rate: number | null; p95_ms: number | null };
 type InstanceMetrics = {
   window: "1h" | "6h" | "24h"; step_seconds: number;   // 60 / 180 / 720: at most 120 points

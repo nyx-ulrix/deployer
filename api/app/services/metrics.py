@@ -1,8 +1,8 @@
 """Host, container and API request metrics kept in Redis (docs/MONITORING.md).
 
 - `metrics:host` (sorted set, score = minute epoch): one JSON point per minute - the last 15 s sample
-  of that minute (`collect_metrics`: CPU %, memory, disk free under the worker's `/`, which lives on the
-  Docker data root, uptime). Trimmed to 24 h, so at most 1440 members.
+  of that minute (`collect_metrics`: CPU %, memory, disk free of the fuller of the Docker data root and
+  the host drive under it (`device_host.disk_space`), uptime). Trimmed to 24 h, so at most 1440 members.
 - `metrics:containers` (string, TTL 5 min): the latest `DockerCli.stats()` of the compose project and
   the deployed app containers.
 - `metrics:req:<minute>` (hash, TTL 25 h): per route template `"<METHOD> <path>|n"` (requests), `|e`
@@ -39,6 +39,7 @@ HOST_FIELDS = (
     "memory_total_bytes",
     "disk_free_bytes",
     "disk_total_bytes",
+    "disk_label",
     "uptime_seconds",
 )
 UNHEALTHY_STATES = ("restarting", "dead")

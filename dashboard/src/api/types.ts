@@ -1110,6 +1110,8 @@ export type HostMetrics = {
   memory_total_bytes: number | null;
   disk_free_bytes: number | null;
   disk_total_bytes: number | null;
+  /** The disk the figures are for: the fuller of the Docker disk and the host drive. */
+  disk_label?: string | null;
   uptime_seconds: number | null;
   collected_at: string;
 };

@@ -64,7 +64,10 @@ def _host_rules(out: dict[str, Condition]) -> None:
     free, total = host.get("disk_free_bytes"), host.get("disk_total_bytes")
     if free is not None and total and (free < 0.10 * total or free < 5 * GB):
         out["disk_low"] = Condition(
-            "disk_low", "critical", f"Disk space low: {_fmt_gb(free)} free ({100 * free / total:.0f} %)"
+            "disk_low",
+            "critical",
+            f"Disk space low: {_fmt_gb(free)} free on {host.get('disk_label') or 'the host'} "
+            f"({100 * free / total:.0f} %)",
         )
     used, mem_total = host.get("memory_used_bytes"), host.get("memory_total_bytes")
     if used is not None and mem_total and used > 0.90 * mem_total:

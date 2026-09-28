@@ -222,11 +222,12 @@ function HostTiles({
         />
       </Tile>
       <Tile
-        label="Disk free (Docker data)"
+        label="Disk free"
         value={formatBytes(current?.disk_free_bytes)}
         detail={
           diskPct !== null
-            ? `${diskPct.toFixed(0)} % of ${formatBytes(current?.disk_total_bytes)}`
+            ? `${diskPct.toFixed(0)} % of ${formatBytes(current?.disk_total_bytes)}` +
+              (current?.disk_label ? ` on ${current.disk_label}` : "")
             : undefined
         }
         danger={diskLow}

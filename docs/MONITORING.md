@@ -12,9 +12,12 @@ kept in Redis for 24 hours; nothing leaves the PC unless you set an alert webhoo
 | Containers: status, health, restart count, CPU %, memory | worker (`DockerCli.stats()`: `docker ps`, `docker inspect`, `docker stats --no-stream`) | every 15 s | latest snapshot only |
 | API requests: count, 5xx count, latency histogram | API middleware, per route template (`GET /v1/projects/{project_id}`, never the raw path) | every request (not `/v1/health`) | 24 h, per minute |
 
-- **Disk** is measured for the worker's root filesystem, which lives on the Docker data root (inside
-  the WSL2 VM that is the `ext4.vhdx` disk). **Memory** and **CPU** are the engine VM's, which is what
-  Deployer can actually use.
+- **Disk** is whichever of two disks has less free space: the worker's root filesystem (the Docker
+  data root, inside the WSL2 VM's sparse `ext4.vhdx`, which reports about 1 TB whatever the drive
+  under it holds) and the Windows drive the install folder is on (`./mongodb` bind-mounted read-only
+  at `DEVICE_DISK_PATH=/host-disk`, named by `DEPLOYER_HOST_DRIVE` in `.env`). `disk_label` says which
+  (`drive C:`, `the Docker disk`). **Memory** and **CPU** are the engine VM's, which is what Deployer
+  can actually use.
 - **Containers**: the compose project's services (`COMPOSE_PROJECT`, default `deployer`) plus every
   container labelled `deployer.app` (deployed apps).
 - **p95 latency** is estimated from a fixed histogram (5 ms … 10 s buckets, interpolated), so it is
@@ -32,7 +35,7 @@ The worker that leads the scheduler evaluates these rules once a minute. A condi
 
 | Alert | Condition | Severity |
 |---|---|---|
-| `disk_low` | disk free < 10 % or < 5 GB | critical |
+| `disk_low` | disk free < 10 % or < 5 GB on the fuller of the Docker disk and the Windows drive | critical |
 | `memory_high` | memory used > 90 % for 5 minutes | warning |
 | `container_unhealthy` | a container `restarting`, `dead` or `unhealthy` for over 2 minutes | critical (Deployer service) / warning (app) |
 | `api_errors` | API 5xx rate > 5 % over the last 5 minutes (at least 20 requests) | warning |
@@ -52,10 +55,10 @@ encrypted because chat webhooks carry a token in the path). It must be `https://
 characters, with no `user:password@` or `#fragment`. When an alert opens or resolves, the worker POSTs:
 
 ```json
-{"alert": "disk_low", "severity": "critical", "message": "Disk space low: 3.2 GB free (4 %)",
+{"alert": "disk_low", "severity": "critical", "message": "Disk space low: 3.2 GB free on drive C: (4 %)",
  "status": "open", "started_at": "2026-09-28T10:00:00Z", "resolved_at": null,
  "instance": "https://deployer.example.com",
- "text": "[open] critical: Disk space low: 3.2 GB free (4 %) (https://deployer.example.com)"}
+ "text": "[open] critical: Disk space low: 3.2 GB free on drive C: (4 %) (https://deployer.example.com)"}
 ```
 
 `status` is `open` or `resolved`; `text` is a one-line summary so Slack-style incoming webhooks show

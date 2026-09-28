@@ -150,6 +150,36 @@ def test_alerts_open_hold_and_resolve(fake_redis, factory, monkeypatch):
     assert alerts.active() == []
 
 
+def test_disk_low_watches_the_host_drive_not_the_sparse_wsl_disk(fake_redis, factory, monkeypatch):
+    """A-013: `/` is a sparse ~1 TB WSL vhdx; the Windows drive under it (DEVICE_DISK_PATH) is what fills."""
+    from types import SimpleNamespace
+
+    from app.services import device_host
+
+    disks = {"/": SimpleNamespace(free=990 * GB, total=1000 * GB)}
+
+    def disk_usage(path):
+        if path not in disks:
+            raise FileNotFoundError(path)
+        return disks[path]
+
+    monkeypatch.setattr(device_host.shutil, "disk_usage", disk_usage)
+    monkeypatch.setenv("DEVICE_DISK_PATH", "/host-disk")
+    monkeypatch.setenv("DEVICE_DISK_DRIVE", "C:")
+    assert device_host.disk_space() == (990 * GB, 1000 * GB, "the Docker disk")  # mount missing: `/` only
+
+    disks["/host-disk"] = SimpleNamespace(free=3 * GB, total=200 * GB)
+    assert device_host.disk_space() == (3 * GB, 200 * GB, "drive C:")
+
+    monkeypatch.setattr(alerts, "deliver_async", lambda url, payload: None)
+    now = time.time()
+    host = device_host.collect_metrics()
+    put_host(fake_redis, {"t": metrics._minute(now), **{k: host[k] for k in metrics.HOST_FIELDS}})
+    assert metrics.current_host()["disk_label"] == "drive C:"
+    (event,) = alerts.evaluate(factory, now)
+    assert event[1]["alert"] == "disk_low" and "free on drive C:" in event[1]["message"]
+
+
 def test_backup_failure_and_api_error_rules(fake_redis, factory, db):
     now = time.time()
     db.add(Job(type="backup.platform_snapshot", status="failed", finished_at=utcnow() - timedelta(hours=1)))

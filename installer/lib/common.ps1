@@ -996,6 +996,8 @@ function Initialize-DeployerEnv {
     }
     $managed = [ordered]@{
         DEPLOYER_BIND           = $Bind
+        # Named in the disk-low alert: the drive the WSL disk grows on (docs/MONITORING.md).
+        DEPLOYER_HOST_DRIVE     = ([System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($InstallDir))).TrimEnd('\')
         DEPLOYER_IMAGE_PREFIX   = $ImagePrefix
         DEPLOYER_VERSION        = $Version
         DEPLOYER_SOURCE_DIR     = './src'
