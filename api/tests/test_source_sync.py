@@ -493,3 +493,66 @@ def test_rounds_of_different_copies_run_side_by_side(db, owner, make_project, ma
         rep = db.get(SourceReplica, rep_id)
         assert rep.status == "syncing" and rep.error is None
         assert sides[rep_id][1].row("t", {"id": n}) == {"id": n}
+
+
+def test_transaction_bigger_than_a_batch_is_split_across_rounds(monkeypatch):
+    """A-011: one bulk transaction used to be read whole (over the RPC size cap, stuck for good).
+    It is now split, and the position resumes inside it without losing or repeating a change."""
+    import pymysqlreplication
+    from pymysqlreplication.event import MariadbGtidEvent
+    from pymysqlreplication.row_event import WriteRowsEvent
+
+    def gtid(seq):
+        e = object.__new__(MariadbGtidEvent)
+        e.domain_id, e.server_id, e.gtid = 0, 1, f"0-1-{seq}"
+        return e
+
+    class Write(WriteRowsEvent):
+        rows = None  # a plain attribute instead of the parsed-on-demand property
+
+    def rows(ids):
+        e = object.__new__(Write)
+        e.schema, e.table, e.timestamp = "p_db", "t", 1
+        e.rows = [{"values": {"id": i}} for i in ids]
+        return e
+
+    # binlog: txn 1 = one row, txn 2 = 25 rows in three events, txn 3 = one row
+    binlog = [(1, [rows([0])]), (2, [rows(range(1, 11)), rows(range(11, 21)), rows(range(21, 26))]), (3, [rows([26])])]
+
+    class Reader:
+        def __init__(self, auto_position, **_):
+            done = int(auto_position.rsplit("-", 1)[1]) if auto_position else 0
+            self.events = [e for seq, evs in binlog if seq > done for e in [gtid(seq), *evs]]
+
+        def __iter__(self):
+            return iter(self.events)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(pymysqlreplication, "BinLogStreamReader", Reader)
+    monkeypatch.setattr(source_sync, "_primary_key", lambda db, t: (["id"], ["id"]))
+    seen, position, rounds = [], None, 0
+    while True:
+        out = source_sync.read_sql_changes("p_db", position, limit=8)
+        assert len(out["changes"]) <= 8
+        seen += [c["key"]["id"] for c in out["changes"]]
+        position, rounds = out["position"], rounds + 1
+        if not out["more"]:
+            break
+    assert seen == list(range(27))
+    assert position == {"gtid": "0-1-3"} and rounds == 4
+
+
+def test_oversized_row_error_says_to_re_copy(db, world, monkeypatch):
+    w = world()
+
+    def too_big(*a, **k):
+        raise ApiError(502, "result_too_large", "Device result is too large")
+
+    monkeypatch.setattr(source_sync, "sync_round", too_big)
+    source_sync._backoff.clear()
+    source_sync.run_due(now=8000.0)
+    db.expire_all()
+    rep = db.get(SourceReplica, w["rep"].id)
+    assert rep.status == "error" and "Re-copy" in rep.error

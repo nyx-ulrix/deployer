@@ -69,6 +69,10 @@ ROUND_WORKERS = 4  # copies synced side by side, so one slow device doesn't hold
 MAX_BACKOFF_S = 300.0
 VERSION_KEEP_DAYS = 7
 ABSENT = "-"  # hash of "no row"
+TOO_LARGE = (
+    "A single row change is too large to send between the PCs (8 MB limit), so syncing is stuck on it. "
+    "Click Re-copy on this copy to start it again from a fresh copy of the database."
+)
 
 # =============================================================================================
 # values: JSON-safe encoding (RPC, platform DB) and version hashes
@@ -553,11 +557,13 @@ def row_changes(table: str, pk: list[str], before: dict | None, after: dict | No
 def read_sql_changes(
     database: str, since: dict | None, limit: int = BATCH_LIMIT, *, skip_server_id: int | None = None
 ) -> dict:
-    """Row changes of `database` after GTID position `since`, whole transactions only.
+    """Row changes of `database` after position `since`.
 
-    Returns `{changes, position, skipped_tables, more}`. Transactions logged with `skip_server_id`
-    (changes this sync applied for that device) are passed over. Tables without a primary key are
-    not synced (`skipped_tables`).
+    Returns `{changes, position, skipped_tables, more}`. A batch ends at a transaction boundary when it
+    can; a transaction too big for one batch (bulk UPDATE, CSV import) is split: the position is then
+    `{gtid: <before it>, txn: <its GTID>, skip: <its changes already read>}` and the next read resumes
+    inside it. Transactions logged with `skip_server_id` (changes this sync applied for that device)
+    are passed over. Tables without a primary key are not synced (`skipped_tables`).
     """
     import pymysql
     from pymysqlreplication import BinLogStreamReader
@@ -566,11 +572,20 @@ def read_sql_changes(
 
     provisioning._check(provisioning.DB_NAME_RE, database, "database name")
     s = get_settings()
-    gtids = _parse_gtids((since or {}).get("gtid"))
+    since = since or {}
+    gtids = _parse_gtids(since.get("gtid"))
     changes: list[dict] = []
     skipped: set[str] = set()
     tables: dict[str, tuple[list[str], list[str]]] = {}
     size, more, skip_txn = 0, False, False
+    start, txn, taken, drop, cut = gtids, None, 0, 0, None  # the transaction being read; cut = split point
+
+    def full() -> bool:
+        return len(changes) >= limit or size >= MAX_BATCH_BYTES
+
+    def fmt(g: dict[int, str]) -> str:
+        return ",".join(g[d] for d in sorted(g))
+
     stream = BinLogStreamReader(
         connection_settings={
             "host": s.mariadb_host,
@@ -581,7 +596,7 @@ def read_sql_changes(
         server_id=100_000 + secrets.randbelow(2**30),  # unique per reader connection
         blocking=False,
         is_mariadb=True,
-        auto_position=",".join(gtids[d] for d in sorted(gtids)),
+        auto_position=fmt(gtids),
         only_schemas=[database],
         only_events=[MariadbGtidEvent, WriteRowsEvent, UpdateRowsEvent, DeleteRowsEvent],
         enable_logging=False,
@@ -589,10 +604,14 @@ def read_sql_changes(
     try:
         for event in stream:
             if isinstance(event, MariadbGtidEvent):
-                if len(changes) >= limit or size >= MAX_BATCH_BYTES:
+                if full():
                     more = True
                     break
+                start = dict(gtids)
                 gtids[event.domain_id] = event.gtid
+                txn, taken = event.gtid, 0
+                # resuming inside this transaction: its first `skip` changes were read already
+                drop = int(since.get("skip") or 0) if event.gtid == since.get("txn") else 0
                 skip_txn = skip_server_id is not None and event.server_id == skip_server_id
                 continue
             if skip_txn or event.schema != database:
@@ -611,8 +630,19 @@ def read_sql_changes(
                 else:
                     before, after = _named(row["before_values"], cols), _named(row["after_values"], cols)
                 for change in row_changes(event.table, pk, before, after, int(event.timestamp)):
+                    taken += 1
+                    if taken <= drop:
+                        continue
+                    if full():  # this transaction has more changes than fit: stop inside it
+                        cut = taken - 1
+                        break
                     size += len(json.dumps(change, default=str))
                     changes.append(change)
+                if cut is not None:
+                    break
+            if cut is not None:
+                more = True
+                break
     except pymysql.err.OperationalError as exc:
         if exc.args and exc.args[0] == 1236:
             raise ApiError(
@@ -621,12 +651,10 @@ def read_sql_changes(
         raise ApiError(503, "database_unavailable", f"Could not read the binary log: {_redact(exc)}") from exc
     finally:
         stream.close()
-    return {
-        "changes": changes,
-        "position": {"gtid": ",".join(gtids[d] for d in sorted(gtids))},
-        "skipped_tables": sorted(skipped),
-        "more": more,
-    }
+    position: dict[str, Any] = {"gtid": fmt(gtids)}
+    if cut is not None:
+        position = {"gtid": fmt(start), "txn": txn, "skip": cut}
+    return {"changes": changes, "position": position, "skipped_tables": sorted(skipped), "more": more}
 
 
 def _mongo_change(event: dict) -> dict | None:
@@ -1104,6 +1132,8 @@ def _run_one(replica_id: str, factory, now: float) -> int:
     except ApiError as exc:
         if exc.code in ("device_offline", "device_timeout", "device_busy"):
             _backoff[replica_id] = (now + 10.0, 10.0)  # connection trouble: keep status, retry soon
+        elif exc.code in ("result_too_large", "payload_too_large"):
+            _failed(replica_id, TOO_LARGE, now, delay, factory)
         else:
             _failed(replica_id, exc.message, now, delay, factory)
     except Exception as exc:  # noqa: BLE001
