@@ -143,11 +143,17 @@ def list_rows(
     offset: int = 0,
     order_by: str | None = None,
     order: str = "asc",
+    filters: dict | None = None,
 ) -> dict:
+    """`filters` ({column: value}, AND-ed equality, null = IS NULL) is used by the MCP tools (docs/MCP.md)."""
     table = reflect_table(engine, table_name)
     limit = max(1, min(int(limit), MAX_LIMIT))
     offset = max(0, int(offset))
-    stmt = select(table)
+    where = [
+        table.c[k].is_(None) if v is None else table.c[k] == v
+        for k, v in _validate_values(table, filters or {}, "filters").items()
+    ]
+    stmt = select(table).where(*where)
     direction = desc if (order or "asc").lower() == "desc" else asc
     if order_by:
         if order_by not in table.c:
@@ -159,7 +165,7 @@ def list_rows(
     try:
         with engine.connect() as conn:
             rows = [_row_out(r) for r in conn.execute(stmt)]
-            total = conn.execute(select(func.count()).select_from(table)).scalar_one()
+            total = conn.execute(select(func.count()).select_from(table).where(*where)).scalar_one()
     except SQLAlchemyError as exc:
         raise _db_error(exc) from exc
     return {

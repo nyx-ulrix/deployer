@@ -13,6 +13,7 @@ their design:
 | Query editor: query log (`/projects/{id}/query-log`) and saved queries (`/projects/{id}/saved-queries`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) |
 | Saved-query versions: strict version control (`/projects/{id}/saved-queries/{sid}/versions`, `/restore`, `409 version_conflict`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) "Phase 2 — versions" |
 | Push-to-deploy: apps (`/projects/{id}/apps`), deployments, rollback, runtime logs, app hostnames, and the unauthenticated GitHub webhook `POST /hooks/github/{app_id}` (HMAC `X-Hub-Signature-256`). `database_access` (opt-in, admin+ to enable) joins an app to the databases network and injects `DEPLOYER_DB_<NAME>_*` | [DEPLOYMENTS.md](DEPLOYMENTS.md) |
+| MCP server for AI agents: `POST /projects/{id}/mcp` (Streamable HTTP, JSON-RPC 2.0; project API key or session; `GET` 405). Tools for data, queries, schema and apps; anon keys get the read-only tools | [MCP.md](MCP.md) |
 | Connect a Git repository: the user's GitHub connection (`GET/DELETE /integrations/github`, `POST /integrations/github/connect`, `GET /integrations/github/repos?q=&page=`), `POST /projects/{id}/apps/detect` (suggested app settings), `use_github_connection` on `POST /apps` (automatic clone token + webhook) | [DEPLOYMENTS.md](DEPLOYMENTS.md) "Connect a Git repository" |
 
 Base path `/v1`. JSON in/out unless noted. Authenticated endpoints need
@@ -171,8 +172,9 @@ type InstanceSettings = {
 | GET | `/projects/{id}/api-keys/{key_id}/config` | admin+ | – | app config JSON download `deployer-<slug>-<role>.json` (same 409s) — [DATA_API.md](DATA_API.md) |
 
 `ApiKey` has `revealable: boolean`. Keys (`Authorization: Bearer dpl_...`) are accepted **only** by the
-data browser, `POST .../query` and the GET schema routes (marked `api_keys: true` below): `anon` acts
-as viewer, `service` as developer; elsewhere they get 401 `api_key_not_allowed`. See [DATA_API.md](DATA_API.md).
+data browser, `POST .../query`, the GET schema routes (marked `api_keys: true` below) and the MCP
+endpoint `POST /projects/{id}/mcp` ([MCP.md](MCP.md)): `anon` acts as viewer, `service` as developer;
+elsewhere they get 401 `api_key_not_allowed`. See [DATA_API.md](DATA_API.md).
 
 ## Data sources
 

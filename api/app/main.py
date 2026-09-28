@@ -16,6 +16,7 @@ from app.routers import (
     instance,
     integrations,
     jobs,
+    mcp,
     members,
     projects,
     query,
@@ -52,6 +53,7 @@ def create_app() -> FastAPI:
         apps,
         cohosting,
         integrations,
+        mcp,
     ):
         app.include_router(module.router, prefix="/v1")
     return app

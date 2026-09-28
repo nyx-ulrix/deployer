@@ -114,6 +114,7 @@ def run_local(ds: DataSource, op: str, args: dict | None = None) -> Any:
                 offset=int(args.get("offset", 0)),
                 order_by=args.get("order_by") or None,
                 order=args.get("order") or "asc",
+                filters=args.get("filters") or None,
             )
         if op == "rows.insert":
             return data_browser.insert_row(engine, table, args.get("values") or {})

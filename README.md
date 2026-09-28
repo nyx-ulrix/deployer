@@ -25,6 +25,9 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 - **AI-agent skill** - [skills/deploy-website/SKILL.md](skills/deploy-website/SKILL.md) teaches agents
   such as Claude Code how to back a site with Deployer; it always asks which platform to deploy to,
   ordered by your past deployments. Install commands are on each project's Overview tab.
+- **MCP server for AI agents** - connect Claude Code or any MCP client to a project with an API key:
+  it can read the schema, rows and documents, run queries, and (with a `service` key) change data and
+  deploy apps. Copy-ready config under API keys → *Show usage* → *AI agents (MCP)* ([docs/MCP.md](docs/MCP.md)).
 - **Query console** - SQL and MongoDB shell (`mongosh`) in the browser, per database, with the
   project's roles (viewers are limited to read-only queries) ([docs/QUERY_CONSOLE.md](docs/QUERY_CONSOLE.md)).
 - **Full export / import** - one encrypted JSON file with settings, users, projects **and all data**;
@@ -350,7 +353,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 3. Public data API - project-scoped REST endpoints authenticated by API keys. *(done: [docs/DATA_API.md](docs/DATA_API.md))*
 4. GitHub push-to-deploy - webhooks, build worker, per-app Caddy routing, rollbacks. *(done: [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md))*
 5. Google Cloud automation - per-install service account.
-6. MCP server for AI agents.
+6. MCP server for AI agents. *(done: [docs/MCP.md](docs/MCP.md))*
 7. Monitoring and hardening.
 
 ## Security

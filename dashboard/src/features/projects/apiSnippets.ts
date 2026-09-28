@@ -89,3 +89,19 @@ function render(lang: SnippetLang, url: string, key: string, r: Req): string {
       ].join("\n");
   }
 }
+
+export type McpInput = { baseUrl: string; projectId: string; key: string | null };
+
+/** Copy-ready configs for AI agents (docs/MCP.md): the Claude Code command and a generic `mcpServers` JSON block. */
+export function buildMcpSnippets({ baseUrl, projectId, key }: McpInput): Snippet[] {
+  const url = joinUrl(baseUrl, `/v1/projects/${projectId}/mcp`);
+  const auth = `Bearer ${key ?? KEY_PLACEHOLDER}`;
+  const config = { mcpServers: { deployer: { type: "http", url, headers: { Authorization: auth } } } };
+  return [
+    {
+      title: "Claude Code",
+      code: `claude mcp add --transport http deployer ${url} --header "Authorization: ${auth}"`,
+    },
+    { title: "Other MCP clients (JSON config)", code: JSON.stringify(config, null, 2) },
+  ];
+}

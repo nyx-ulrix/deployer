@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildSnippets, joinUrl, KEY_PLACEHOLDER, SNIPPET_LANGS, snippetBodies, type SnippetInput } from "./apiSnippets";
+import {
+  buildMcpSnippets,
+  buildSnippets,
+  joinUrl,
+  KEY_PLACEHOLDER,
+  SNIPPET_LANGS,
+  snippetBodies,
+  type SnippetInput,
+} from "./apiSnippets";
 
 const input: SnippetInput = {
   baseUrl: "https://deployer.local/",
@@ -48,6 +56,33 @@ describe("buildSnippets", () => {
       const bodyOf = (code: string) => JSON.parse(/-d '(.*)'$/.exec(code)?.[1] ?? "");
       expect(bodyOf(curl[1].code)).toEqual(bodies.insert);
       expect(bodyOf(curl[2].code)).toEqual(bodies.query);
+    }
+  });
+});
+
+describe("buildMcpSnippets", () => {
+  const mcp = { baseUrl: "https://deployer.local/", projectId: "p1", key: null };
+
+  it("builds the Claude Code command and a JSON config with the placeholder until revealed", () => {
+    const [cli, json] = buildMcpSnippets(mcp);
+    expect(cli.code).toBe(
+      `claude mcp add --transport http deployer https://deployer.local/v1/projects/p1/mcp --header "Authorization: Bearer ${KEY_PLACEHOLDER}"`,
+    );
+    expect(JSON.parse(json.code)).toEqual({
+      mcpServers: {
+        deployer: {
+          type: "http",
+          url: "https://deployer.local/v1/projects/p1/mcp",
+          headers: { Authorization: `Bearer ${KEY_PLACEHOLDER}` },
+        },
+      },
+    });
+  });
+
+  it("uses the revealed key", () => {
+    for (const s of buildMcpSnippets({ ...mcp, key: "dpl_abc123" })) {
+      expect(s.code).toContain("Bearer dpl_abc123");
+      expect(s.code).not.toContain(KEY_PLACEHOLDER);
     }
   });
 });

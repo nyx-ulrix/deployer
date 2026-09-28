@@ -81,6 +81,21 @@ const { rows } = await res.json();
 Put the config's `url` and the key in the platform's environment variables (`DEPLOYER_URL`,
 `DEPLOYER_API_KEY`); commit only the `anon` key if any, never the `service` key.
 
+### Connecting an AI agent (MCP)
+
+If the instance has the MCP server (see Feature status), you can work on the project through tools
+instead of raw HTTP: API keys tab → *Show usage* → **AI agents (MCP)** has the command, e.g.
+
+```bash
+claude mcp add --transport http deployer <url>/v1/projects/<project_id>/mcp --header "Authorization: Bearer <key>"
+```
+
+Tools: `list_data_sources`, `get_schema`, `run_query`, `list_rows`, `list_documents`, `list_apps`,
+`get_app`, `deployment_status`, `app_logs` (any key) plus `insert_/update_/delete_row`,
+`insert_/update_/delete_document` and `deploy_app` (service key only). Ask the user for an `anon` key
+unless they want the agent to change data or deploy; a `service` key can change production data.
+Limits: 200 rows / 256 KB per result, 60 tool calls a minute. Details: `docs/MCP.md`.
+
 ## Feature status (check before promising anything)
 
 Deployer changes quickly. Before telling the user a feature exists, confirm it on their instance
@@ -98,6 +113,7 @@ Deployer changes quickly. Before telling the user a feature exists, confirm it o
 | **Connect a Git repository** (connect GitHub once, pick a repo, everything detected and pre-filled, token + webhook automatic) | Available when `GET /v1/integrations/github` exists (older instances: manual form) | Deploys → New app |
 | **Co-hosting, phase 1**: live two-way sync of a project's databases to a member's own PC, Git-style conflict resolution, per-row history | Available when `GET /v1/projects/{id}/cohosting/eligibility` exists (not yet exercised with a real second PC) | Members → *Co-host*; Databases → *Copy to my device*, copies, conflicts (`/projects/{id}/databases/{sid}/sync`) |
 | **Co-hosting, phase 2**: apps also running on co-host PCs behind one address with automatic failover | Available when `GET /v1/projects/{id}/apps/{app_id}` returns `cohost` (not yet exercised with two real PCs) | App → Settings → *Co-host this app* (admin); per-PC status there; header "Also running on N co-host PCs" |
+| MCP server for AI agents (data, queries, schema, apps; anon = read-only tools) | Available when `POST /v1/projects/{id}/mcp` answers `initialize` | API keys → *Show usage* → *AI agents (MCP)*, `docs/MCP.md` |
 | Apps running on host devices | **Not built** (apps run on the main Deployer PC only) | - |
 
 Never describe a "being built" or "planned" feature as available; say what the user can do today

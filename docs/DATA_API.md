@@ -10,8 +10,8 @@ Deployer's REST API without a user login. Keys are created by project admins in 
 | `service` | developer: everything `anon` can plus insert/update/delete and write queries | servers, cron jobs, backends |
 
 **Never ship a `service` key to a browser or a mobile app.** Anyone who can open the app can extract it.
-Keys are project-scoped and only work on the data, query and schema endpoints listed below; every other
-endpoint answers `401 api_key_not_allowed`.
+Keys are project-scoped and only work on the data, query and schema endpoints listed below and on the
+MCP endpoint for AI agents ([MCP.md](MCP.md)); every other endpoint answers `401 api_key_not_allowed`.
 
 ## Sending the key
 
@@ -197,7 +197,7 @@ Every error is `{"error": {"code": "...", "message": "...", "details": {}}}`:
 |---|---|---|
 | 401 | `unauthorized` | missing header, or the key does not exist |
 | 401 | `api_key_revoked` | the key was revoked; switch to a new key |
-| 401 | `api_key_not_allowed` | a key was used outside the data, query and schema endpoints |
+| 401 | `api_key_not_allowed` | a key was used outside the data, query, schema and MCP endpoints |
 | 403 | `forbidden` | an `anon` key on a write endpoint |
 | 403 | `read_only_role` | an `anon` key ran a query that writes |
 | 404 | `not_found` | wrong project id for this key, unknown data source, table or collection |

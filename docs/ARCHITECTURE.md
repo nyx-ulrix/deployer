@@ -129,5 +129,5 @@ user's Google/GitHub OAuth apps if the public URL changed.
    ([DEPLOYMENTS.md](DEPLOYMENTS.md)). **Done** (host devices as app hosts: later).
 5. Google/GitHub sign-in setup — guided setup in the dashboard (Google offers no API to create OAuth
    clients, so it can't be automated). **Done.**
-6. MCP server for AI agents.
+6. MCP server for AI agents ([MCP.md](MCP.md)). **Done.**
 7. Monitoring and hardening.

@@ -18,7 +18,7 @@ import { Tabs } from "../../components/ui/Tabs";
 import { useToast } from "../../components/ui/toast-context";
 import { formatDate, relativeTime } from "../../lib/format";
 import { downloadText } from "../query/csv";
-import { buildSnippets, SNIPPET_LANGS, type SnippetLang } from "./apiSnippets";
+import { buildMcpSnippets, buildSnippets, SNIPPET_LANGS, type SnippetLang } from "./apiSnippets";
 import { useProjectContext } from "./project-context";
 
 const ROLE_HELP: Record<ApiKeyRole, string> = {
@@ -27,6 +27,11 @@ const ROLE_HELP: Record<ApiKeyRole, string> = {
 };
 
 const DOCS_URL = "https://github.com/nyx-ulrix/deployer/blob/main/docs/DATA_API.md";
+const MCP_DOCS_URL = "https://github.com/nyx-ulrix/deployer/blob/main/docs/MCP.md";
+
+type UsageTab = SnippetLang | "mcp";
+const USAGE_TABS: { value: UsageTab; label: string }[] = [...SNIPPET_LANGS, { value: "mcp", label: "AI agents (MCP)" }];
+
 const NOT_REVEALABLE = "This key was created before Deployer kept secrets. Create a new key to reveal or export it.";
 
 /** The API's 409 codes for reveal/config get a fuller explanation than their one-line message. */
@@ -234,41 +239,44 @@ function UsageDialog({
 }) {
   const setup = useSetupStatus();
   const sources = useDataSources(project.id);
-  const [lang, setLang] = useState<SnippetLang>("curl");
+  const [lang, setLang] = useState<UsageTab>("curl");
   const [sourceId, setSourceId] = useState<string | null>(null);
   const source = sources.data?.find((s) => s.id === sourceId) ?? sources.data?.[0] ?? null;
   const schema = useSourceSchema(project.id, source?.id ?? null);
   const kind = source?.kind ?? "sql";
   const entity = schema.data?.entities[0]?.name ?? (kind === "sql" ? "{table}" : "{collection}");
 
-  const snippets = buildSnippets(lang, {
-    baseUrl: setup.data?.public_url || window.location.origin,
-    projectId: project.id,
-    sourceId: source?.id ?? "{sid}",
-    kind,
-    entity,
-    key: secret,
-  });
+  const baseUrl = setup.data?.public_url || window.location.origin;
+  const mcp = lang === "mcp";
+  const snippets = mcp
+    ? buildMcpSnippets({ baseUrl, projectId: project.id, key: secret })
+    : buildSnippets(lang, { baseUrl, projectId: project.id, sourceId: source?.id ?? "{sid}", kind, entity, key: secret });
 
   return (
     <Dialog open onClose={onClose} title={`How to use “${apiKey.name}”`} size="lg">
       <div className="space-y-4">
         <div className="flex flex-wrap items-end gap-3">
-          <Field label="Data source" className="min-w-48 flex-1">
-            {(id) => (
-              <Select id={id} value={source?.id ?? ""} onChange={(e) => setSourceId(e.target.value)} disabled={!sources.data?.length}>
-                {sources.data?.length ? (
-                  sources.data.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} ({s.engine})
-                    </option>
-                  ))
-                ) : (
-                  <option value="">No data sources yet</option>
-                )}
-              </Select>
-            )}
-          </Field>
+          {mcp ? (
+            <p className="min-w-48 flex-1 text-sm text-muted">
+              Connect Claude Code, Claude Desktop or any MCP client to this project's databases and apps.
+            </p>
+          ) : (
+            <Field label="Data source" className="min-w-48 flex-1">
+              {(id) => (
+                <Select id={id} value={source?.id ?? ""} onChange={(e) => setSourceId(e.target.value)} disabled={!sources.data?.length}>
+                  {sources.data?.length ? (
+                    sources.data.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} ({s.engine})
+                      </option>
+                    ))
+                  ) : (
+                    <option value="">No data sources yet</option>
+                  )}
+                </Select>
+              )}
+            </Field>
+          )}
           {!secret && (
             <Button icon={<Eye className="size-4" />} loading={revealing} disabled={!apiKey.revealable} onClick={onReveal}>
               Reveal to fill in
@@ -277,7 +285,7 @@ function UsageDialog({
         </div>
         {!secret && !apiKey.revealable && <p className="text-xs text-muted">{NOT_REVEALABLE}</p>}
 
-        <Tabs<SnippetLang> items={SNIPPET_LANGS} value={lang} onChange={setLang} />
+        <Tabs<UsageTab> items={USAGE_TABS} value={lang} onChange={setLang} />
 
         {snippets.map((s) => (
           <div key={s.title}>
@@ -289,13 +297,24 @@ function UsageDialog({
           </div>
         ))}
 
-        <p className="text-xs text-muted">
-          <span className="font-medium text-fg">anon</span> keys are read-only; <span className="font-medium text-fg">service</span>{" "}
-          keys can read and write. Never ship a service key to browsers or phones.{" "}
-          <a href={DOCS_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
-            <BookOpen className="size-3.5" /> Full tutorial → docs/DATA_API.md
-          </a>
-        </p>
+        {mcp ? (
+          <p className="text-xs text-muted">
+            With an <span className="font-medium text-fg">anon</span> key the agent can only read; a{" "}
+            <span className="font-medium text-fg">service</span> key also lets it change data and deploy apps. Use
+            anon for read-only agents.{" "}
+            <a href={MCP_DOCS_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+              <BookOpen className="size-3.5" /> Tools and limits → docs/MCP.md
+            </a>
+          </p>
+        ) : (
+          <p className="text-xs text-muted">
+            <span className="font-medium text-fg">anon</span> keys are read-only; <span className="font-medium text-fg">service</span>{" "}
+            keys can read and write. Never ship a service key to browsers or phones.{" "}
+            <a href={DOCS_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
+              <BookOpen className="size-3.5" /> Full tutorial → docs/DATA_API.md
+            </a>
+          </p>
+        )}
       </div>
     </Dialog>
   );

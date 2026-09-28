@@ -36,7 +36,7 @@ def bearer_token(request: Request) -> str:
 
 
 def api_key_not_allowed() -> ApiError:
-    return ApiError(401, "api_key_not_allowed", "API keys can only call the data, query and schema endpoints")
+    return ApiError(401, "api_key_not_allowed", "API keys can only call the data, query, schema and MCP endpoints")
 
 
 def get_current_user(request: Request, db: DbSession) -> User:
