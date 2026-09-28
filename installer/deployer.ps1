@@ -192,7 +192,19 @@ function Invoke-Start {
         Write-DeployerLog 'INFO' $(if ($health) { 'Stack started.' } else { 'Stack started but the site is not answering.' })
         if ($ctx.Runtime -eq 'wsl-engine') {
             # Blocks for as long as the user is signed in, keeping the WSL VM (and the site) running.
-            Start-DeployerKeepAlive -Wait
+            # The keep-alive ends whenever the WSL VM stops (sleep/hibernate, `wsl --shutdown`, a WSL
+            # update); without it WSL idles out and the site goes down until someone starts Deployer
+            # again. So bring the stack back and resume keeping it alive, for as long as this runs.
+            while ($true) {
+                Start-DeployerKeepAlive -Wait
+                Write-DeployerLog 'WARN' 'The WSL keep-alive ended; starting Deployer again in 15 s.'
+                Start-Sleep -Seconds 15
+                $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--remove-orphans')
+                if (-not (Wait-DeployerHealth -Port $ctx.Port -TimeoutSeconds 180)) {
+                    [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--force-recreate', 'caddy'))
+                }
+                Write-DeployerLog 'INFO' "Stack restarted after the keep-alive ended (compose exit code $code)."
+            }
         }
         return
     }
