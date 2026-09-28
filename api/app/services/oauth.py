@@ -353,7 +353,9 @@ def _login(db: Session, request: Request, provider: str, profile: OAuthProfile, 
     if invite is not None and not invites.email_matches(invite, profile.email):
         raise OAuthFlowError("invite_email_mismatch")
     if invite is None and not allow_signup(db):
-        raise OAuthFlowError("signup_disabled")
+        # A link that carried an invite which is no longer valid deserves a precise message: the
+        # person was invited, the link just expired or was already used.
+        raise OAuthFlowError("invite_invalid" if record.get("invite_token") else "signup_disabled")
 
     user = User(
         email=profile.email,

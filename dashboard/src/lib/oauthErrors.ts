@@ -10,6 +10,7 @@ const MESSAGES: Record<string, string> = {
   invalid_credentials: "Wrong email or password.",
   rate_limited: "Too many attempts. Please wait a few minutes and try again.",
   invite_email_mismatch: "This invite is for a different email address. Sign in with the invited account.",
+  invite_invalid: "This invite link has expired or was already used. Ask the person who invited you for a new link.",
   github_connect_user_mismatch:
     "This browser is signed in to Deployer as someone else (or not at all). Sign in as yourself here and connect GitHub again.",
 };

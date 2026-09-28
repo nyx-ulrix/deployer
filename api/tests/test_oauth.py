@@ -195,8 +195,9 @@ def test_signup_with_invite(client, owner, providers, make_project, db):
     state = _start(client, invite_token=locked)
     assert _error_of(_callback(client, state=state)) == "invite_email_mismatch"
 
+    # An invite link that is invalid/expired/used says so instead of "signup disabled".
     state = _start(client, invite_token="not-a-token")
-    assert _error_of(_callback(client, state=state)) == "signup_disabled"
+    assert _error_of(_callback(client, state=state)) == "invite_invalid"
 
     state = _start(client, invite_token=open_token, redirect=f"/projects/{project.id}")
     resp = _callback(client, state=state)
