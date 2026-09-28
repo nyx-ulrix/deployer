@@ -421,7 +421,14 @@ function Start-DeployerKeepAlive {
         & (Get-DeployerWslExe) @wslArgs
         return
     }
-    Start-Process -FilePath (Get-DeployerWslExe) -ArgumentList ($wslArgs -join ' ') -WindowStyle Hidden | Out-Null
+    # Same reason as Register-DeployerTask: with Windows Terminal as the default terminal a hidden
+    # console app can still get a visible window, so use a headless console host when available.
+    $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+    if ([Environment]::OSVersion.Version.Build -ge 18362 -and (Test-Path -LiteralPath $conhost)) {
+        Start-Process -FilePath $conhost -ArgumentList (@('--headless', "`"$(Get-DeployerWslExe)`"") + $wslArgs -join ' ') -WindowStyle Hidden | Out-Null
+    } else {
+        Start-Process -FilePath (Get-DeployerWslExe) -ArgumentList ($wslArgs -join ' ') -WindowStyle Hidden | Out-Null
+    }
 }
 
 function Stop-DeployerKeepAlive {
@@ -1213,7 +1220,16 @@ function Register-DeployerTask {
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $script = Join-Path $InstallDir 'installer\deployer.ps1'
-    $action = New-ScheduledTaskAction -Execute $ps -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" start -Background' -f $script)
+    $psArgs = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" start -Background' -f $script
+    # `-WindowStyle Hidden` alone still flashes a console at sign-in, and when Windows Terminal is the
+    # default terminal (Windows 11) it opens a terminal window it cannot hide at all. A headless
+    # console host (Windows 10 1903+) runs the script with no window of any kind.
+    $conhost = Join-Path $env:SystemRoot 'System32\conhost.exe'
+    if ([Environment]::OSVersion.Version.Build -ge 18362 -and (Test-Path -LiteralPath $conhost)) {
+        $action = New-ScheduledTaskAction -Execute $conhost -Argument ('--headless "{0}" {1}' -f $ps, $psArgs)
+    } else {
+        $action = New-ScheduledTaskAction -Execute $ps -Argument $psArgs
+    }
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
     $trigger.Delay = 'PT20S'
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
