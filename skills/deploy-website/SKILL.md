@@ -96,7 +96,8 @@ const { rows } = await res.json();
 Put the config's `url` and the key in the platform's environment variables (`DEPLOYER_URL`,
 `DEPLOYER_API_KEY`) and read them only in server-side code; never commit a key. The function returns
 only the fields the page needs. Ship the `anon` key to the browser only if the user confirms that
-every table and collection in the project is public data.
+every table and collection in the project is public data. The data, query and schema endpoints allow
+cross-origin `fetch` (CORS, no cookies); an `https` page needs the instance's `https` remote-access URL.
 
 ### Connecting an AI agent (MCP)
 

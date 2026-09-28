@@ -28,6 +28,16 @@ Authorization: Bearer dpl_anon_...        (or dpl_service_...)
 Base URL: `<public_url>/v1`, e.g. `http://localhost:8080/v1` on a fresh install or
 `https://deployer.example.com/v1` with remote access. All bodies and responses are JSON.
 
+### Calling from a browser
+
+The rows, documents, query and schema endpoints answer CORS requests from any origin (no cookies:
+`Access-Control-Allow-Credentials` is never sent), so a web page on another origin can `fetch` them
+with the `Authorization` and `Content-Type` headers. No other endpoint sends CORS headers, and the MCP
+endpoint is for agents, not browsers. A page served over `https` can only call an `https` Deployer URL
+(remote access, [REMOTE_ACCESS.md](REMOTE_ACCESS.md)); `http://localhost:8080` works only from pages
+on the same PC or LAN over plain `http`. Everything above about the `anon` key still applies: a key in
+a page is readable by every visitor.
+
 Path parameters used below: `{pid}` project id, `{sid}` data source id (both are in the config file,
 see the end of this page), `{table}` SQL table name, `{name}` MongoDB collection name.
 

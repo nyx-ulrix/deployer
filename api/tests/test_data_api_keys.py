@@ -185,3 +185,23 @@ def test_anon_key_is_not_advertised_as_public():
         text = (REPO / rel).read_text(encoding="utf-8")
         assert warning in text, rel
         assert not misleading.search(text), (rel, misleading.search(text))
+
+
+def test_cors_only_on_key_routes_and_without_credentials(client, setup):
+    """A-018: browsers can call the data API with a key, but cookie/session routes stay same-origin."""
+    _, h = setup["make_key"]("anon")
+    origin = {"Origin": "https://site.example"}
+    preflight = {**origin, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization"}
+
+    resp = client.options(setup["rows"], headers=preflight)
+    assert resp.status_code == 200
+    assert resp.headers["access-control-allow-origin"] == "*"
+    assert "authorization" in resp.headers["access-control-allow-headers"].lower()
+    assert "access-control-allow-credentials" not in resp.headers
+
+    resp = client.get(setup["rows"], headers={**h, **origin})
+    assert resp.status_code == 200 and resp.headers["access-control-allow-origin"] == "*"
+
+    for path in ("/v1/auth/refresh", f"/v1/projects/{setup['project'].id}/api-keys"):
+        resp = client.options(path, headers=preflight)
+        assert "access-control-allow-origin" not in resp.headers, path

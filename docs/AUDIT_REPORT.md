@@ -72,7 +72,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [ ] A-017 **[HIGH][usability]** New project fails by default on PCs without AVX (the MongoDB box is pre-ticked) - `dashboard/src/features/projects/ProjectsPage.tsx:51, 110-111, 185-196` - expose `managed_mongodb` in /setup/status; untick and disable the box with a plain hint.
 
 **Docs / skill**
-- [ ] A-018 **[HIGH][bug]** Browser use of the data API is documented, but the API sends no CORS headers - `docs/DATA_API.md:9` (also `SKILL.md:72-91, 235`) - either add scoped CORSMiddleware for bearer-key routes, or document server-side use only.
+- [x] A-018 **[HIGH][bug]** Browser use of the data API is documented, but the API sends no CORS headers - `docs/DATA_API.md:9` (also `SKILL.md:72-91, 235`) - either add scoped CORSMiddleware for bearer-key routes, or document server-side use only.
 
 ### Medium
 

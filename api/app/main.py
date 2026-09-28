@@ -1,6 +1,8 @@
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.middleware.cors import CORSMiddleware
 
 from app import __version__
 from app.config import seal_process
@@ -33,6 +35,33 @@ from app.routers import (
 )
 from app.services.metrics import RequestMetricsMiddleware
 
+# Routes that accept project API keys (docs/DATA_API.md "Calling from a browser"). Only these get CORS.
+KEY_ROUTES = re.compile(
+    r"^/v1/projects/[^/]+/(schema(/export|/links)?"
+    r"|data-sources/[^/]+/(query|tables/[^/]+/rows|collections/[^/]+/documents(/[^/]+)?))$"
+)
+
+
+class KeyRoutesCORS:
+    """CORS for browsers calling the data API with a bearer key. Any origin but no credentials:
+    cookies are never sent or readable cross-origin, and a key works from curl anyway."""
+
+    def __init__(self, app):
+        self.app = app
+        self.cors = CORSMiddleware(
+            app,
+            allow_origins=["*"],
+            allow_methods=["GET", "POST", "PATCH", "DELETE"],
+            allow_headers=["Authorization", "Content-Type"],
+            max_age=600,
+        )
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and KEY_ROUTES.match(scope["path"]):
+            await self.cors(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -50,6 +79,7 @@ def create_app() -> FastAPI:
     )
     install_error_handlers(app)
     app.add_middleware(RequestMetricsMiddleware)  # docs/MONITORING.md
+    app.add_middleware(KeyRoutesCORS)
     for module in (
         health,
         setup,
