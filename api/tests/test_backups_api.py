@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from app.crypto import encrypt_json
+from app.errors import ApiError
 from app.models import Backup, BackupCopy, BackupLogSegment, BackupPolicy, DataSource, Job, utcnow
 from app.services import backup_engine, backups, executors, jobs, provisioning
 
@@ -483,6 +484,43 @@ def test_soft_delete_and_restore_deleted_source(client, env, db):
     assert env["created"] == [("p_shop_abc123", "u_0123456789ab")]  # same database name and user
     restore = [c[1] for c in env["fake"].calls if c[0] == "restore"][-1]
     assert restore["target_database_name"] == "p_shop_abc123"
+
+
+def test_restore_deleted_source_can_be_retried_after_a_failure(client, env, db, monkeypatch):
+    ds = env["ds"]
+    base = env["pbase"]
+    live = {"p_shop_abc123"}
+
+    def create(name, user, pw):
+        if name in live:
+            raise ApiError(503, "database_unavailable", f"database {name} exists")
+        live.add(name)
+        return {}
+
+    monkeypatch.setattr(provisioning, "create_mariadb_database", create)
+    monkeypatch.setattr(provisioning, "drop_managed_source", lambda db, ds: live.discard(ds.database_name))
+    _snapshot(client, env)
+    client.delete(f"{base}/data-sources/{ds.id}?drop=true", headers=env["owner"])
+    jobs.run_queued()
+    assert live == set()
+
+    fail = {"restore": True}
+    real_restore = env["fake"].restore
+
+    def restore(**kwargs):
+        if fail.pop("restore", False):
+            raise RuntimeError("restore failed")
+        return real_restore(**kwargs)
+
+    monkeypatch.setattr(env["fake"], "restore", restore)
+    url = f"{base}/deleted-sources/{ds.id}/restore"
+    job_id = client.post(url, json={}, headers=env["admin"]).json()["job"]["id"]
+    assert dict(jobs.run_queued())[job_id] == "failed"
+    assert live == set()  # the half-restored database was dropped again
+    job_id = client.post(url, json={}, headers=env["admin"]).json()["job"]["id"]
+    assert dict(jobs.run_queued())[job_id] == "succeeded"
+    db.expire_all()
+    assert db.get(DataSource, ds.id).deleted_at is None and live == {"p_shop_abc123"}
 
 
 def test_pre_drop_safety_snapshot(client, env, db, monkeypatch):

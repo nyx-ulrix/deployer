@@ -51,7 +51,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-006 **[HIGH][security]** Mongo read-only blocklist misses user/role admin and server helpers; the managed user is dbOwner - `api/app/services/query_console.py:335-386` - add the missing names now; later provision a `read`-role user for read-only runs.
 
 **Backups**
-- [ ] A-007 **[HIGH][bug]** Restoring a dropped database from Recently deleted cannot be retried after one failure - `api/app/services/backups.py:1712-1745` - undo the recreate on failure, move cleanup into `finally`, or tolerate an existing empty DB.
+- [x] A-007 **[HIGH][bug]** Restoring a dropped database from Recently deleted cannot be retried after one failure - `api/app/services/backups.py:1712-1745` - undo the recreate on failure, move cleanup into `finally`, or tolerate an existing empty DB.
 
 **Devices / co-hosting**
 - [ ] A-008 **[HIGH][bug]** Moving a database loses writes: live apps keep writing to the old copy, and the dialog wrongly says writes are paused - `api/app/services/device_moves.py:14-15, 236-268` - make the old copy read-only first, refuse (409) while db-access apps are live, and fix the dialog text.

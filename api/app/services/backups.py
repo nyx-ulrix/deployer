@@ -1717,31 +1717,49 @@ def _job_undelete(ctx: jobs.JobContext) -> dict:
             host = ds.device_id
             config = decrypt_json(ds.config_encrypted)
             ctx.progress(0.1, "Recreating the database", force=True)
-            if host is None:
-                creator = (
-                    provisioning.create_mariadb_database if ds.kind == "sql" else provisioning.create_mongo_database
-                )
-                creator(ds.database_name, config["username"], config["password"])
-            else:
-                from app.crypto import encrypt_json
+            recreated = False
+            staged: list[str] = []
+            try:
+                if host is None:
+                    creator = (
+                        provisioning.create_mariadb_database if ds.kind == "sql" else provisioning.create_mongo_database
+                    )
+                    creator(ds.database_name, config["username"], config["password"])
+                else:
+                    from app.crypto import encrypt_json
 
-                new_config = executors.executor_for(host).ensure_database(kind=ds.kind, database_name=ds.database_name)
-                ds.config_encrypted = encrypt_json(new_config)
-            snap_ref, _, staged = _stage_artifacts(session, snap, [], host)
-            session.commit()
-            executors.executor_for(host).restore(
-                kind=ds.kind,
-                engine=ds.engine,
-                target_database_name=ds.database_name,
-                snapshot_ref=snap_ref,
-                segments=[],
-                until=None,
-                on_progress=lambda f, m=None: ctx.progress(f, m),
-                source_database_name=ds.database_name,
-                consistent_point=dict(snap.consistent_point or {}),
-            )
-            for ref in staged:
-                executors.executor_for(host).delete_artifact(ref)
+                    new_config = executors.executor_for(host).ensure_database(
+                        kind=ds.kind, database_name=ds.database_name
+                    )
+                    ds.config_encrypted = encrypt_json(new_config)
+                recreated = True
+                snap_ref, _, staged = _stage_artifacts(session, snap, [], host)
+                session.commit()
+                executors.executor_for(host).restore(
+                    kind=ds.kind,
+                    engine=ds.engine,
+                    target_database_name=ds.database_name,
+                    snapshot_ref=snap_ref,
+                    segments=[],
+                    until=None,
+                    on_progress=lambda f, m=None: ctx.progress(f, m),
+                    source_database_name=ds.database_name,
+                    consistent_point=dict(snap.consistent_point or {}),
+                )
+            except BaseException:
+                # Undo the recreate so a retry can create the database and its user again.
+                if recreated:
+                    try:
+                        provisioning.drop_managed_source(session, ds)
+                    except Exception:  # noqa: BLE001
+                        log.exception("dropping the half-restored database of %s failed", ds.id)
+                raise
+            finally:
+                for ref in staged:
+                    try:
+                        executors.executor_for(host).delete_artifact(ref)
+                    except Exception:  # noqa: BLE001
+                        log.exception("removing staged artifact %s failed", ref)
             result.update(restored_data=True, backup_id=snap.id)
         ds.name = name
         ds.deleted_at = None
