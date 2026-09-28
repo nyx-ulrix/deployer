@@ -42,6 +42,7 @@ class SignupIn(BaseModel):
 
 @router.post("/auth/signup")
 def signup(body: SignupIn, request: Request, response: Response, db: DbSession) -> dict:
+    rate_limit.check_login(client_ip(request))
     if db.scalar(select(User.id).limit(1)) is None:
         raise conflict("not_initialized", "Create the instance owner first")
     invite = None

@@ -87,7 +87,7 @@ type ApiKey = { id: string; name: string; prefix: string; role: "anon" | "servic
 | Method | Path | Auth | Body | Response |
 |---|---|---|---|---|
 | GET | `/auth/providers` | – | – | `{google:boolean, github:boolean, allow_signup:boolean}` |
-| POST | `/auth/signup` | – | `{email, password, display_name?, invite_token?}` | `AuthResponse`. Allowed if `allow_signup` or a valid invite token (email-locked invites must match) |
+| POST | `/auth/signup` | – | `{email, password, display_name?, invite_token?}` | `AuthResponse`. Allowed if `allow_signup` or a valid invite token (email-locked invites must match); 429 `rate_limited` (shares the per-IP login limit) |
 | POST | `/auth/login` | – | `{email, password}` | `AuthResponse`; 401 `invalid_credentials`; 429 `rate_limited` |
 | POST | `/auth/refresh` | cookie | – | `AuthResponse` (rotates cookie); 401 `unauthorized` |
 | POST | `/auth/logout` | cookie | – | `{ok:true}` (revokes refresh token, clears cookie) |

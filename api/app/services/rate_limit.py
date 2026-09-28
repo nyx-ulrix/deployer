@@ -10,6 +10,8 @@ log = logging.getLogger(__name__)
 
 LOGIN_LIMIT = 10
 LOGIN_WINDOW_SECONDS = 15 * 60
+# Per-IP cap on password logins + signups (each costs an argon2 hash), across all emails.
+LOGIN_IP_LIMIT = 30
 
 
 def hit(key: str, limit: int, window_seconds: int) -> tuple[bool, int]:
@@ -41,8 +43,11 @@ def login_key(ip: str | None, email: str) -> str:
     return "rl:login:" + sha256_hex(f"{ip or '-'}|{email}")
 
 
-def check_login(ip: str | None, email: str) -> None:
-    allowed, retry_after = hit(login_key(ip, email), LOGIN_LIMIT, LOGIN_WINDOW_SECONDS)
+def check_login(ip: str | None, email: str | None = None) -> None:
+    """Per-IP bucket for every attempt, plus a per-(ip,email) bucket when an email is given."""
+    allowed, retry_after = hit(f"rl:login-ip:{ip or '-'}", LOGIN_IP_LIMIT, LOGIN_WINDOW_SECONDS)
+    if allowed and email is not None:
+        allowed, retry_after = hit(login_key(ip, email), LOGIN_LIMIT, LOGIN_WINDOW_SECONDS)
     if not allowed:
         raise ApiError(
             429,

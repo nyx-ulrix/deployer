@@ -1,6 +1,7 @@
 """Account credential helpers: email normalisation and argon2id password hashing/policy."""
 
 import re
+import threading
 from typing import Annotated
 
 from argon2 import PasswordHasher
@@ -15,6 +16,10 @@ MAX_PASSWORD_LENGTH = 1024
 
 # argon2-cffi defaults are argon2id (RFC 9106 low-memory profile). Tests swap this for a cheaper one.
 hasher = PasswordHasher()
+
+# Each argon2 hash/verify allocates 64 MiB; unauthenticated login/signup must not be able to run an
+# unbounded number at once (40 threadpool threads x 64 MiB OOMs the 768 MB container). Extra callers queue.
+_hash_slots = threading.BoundedSemaphore(2)
 
 _dummy_hash: str | None = None
 
@@ -49,7 +54,8 @@ def validate_password(password: str) -> None:
 
 
 def hash_password(password: str) -> str:
-    return hasher.hash(password)
+    with _hash_slots:
+        return hasher.hash(password)
 
 
 def verify_password(password_hash: str | None, password: str) -> bool:
@@ -57,14 +63,16 @@ def verify_password(password_hash: str | None, password: str) -> bool:
     global _dummy_hash
     if not password_hash:
         if _dummy_hash is None:
-            _dummy_hash = hasher.hash("dummy-password-for-timing")
-        try:
-            hasher.verify(_dummy_hash, password)
-        except (VerificationError, InvalidHashError):
-            pass
+            _dummy_hash = hash_password("dummy-password-for-timing")
+        _verify(_dummy_hash, password)
         return False
+    return _verify(password_hash, password)
+
+
+def _verify(password_hash: str, password: str) -> bool:
     try:
-        return hasher.verify(password_hash, password)
+        with _hash_slots:
+            return hasher.verify(password_hash, password)
     except (VerifyMismatchError, VerificationError, InvalidHashError):
         return False
 

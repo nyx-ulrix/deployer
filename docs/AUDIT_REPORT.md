@@ -40,7 +40,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 ### High
 
 **API core**
-- [ ] A-002 **[HIGH][security]** Unauthenticated login/signup can OOM the API with unbounded concurrent 64 MiB argon2 hashes - `api/app/services/passwords.py:17, 51-69` - BoundedSemaphore(2) around hash/verify, an IP-only login bucket, and optionally a lighter argon2 profile.
+- [x] A-002 **[HIGH][security]** Unauthenticated login/signup can OOM the API with unbounded concurrent 64 MiB argon2 hashes - `api/app/services/passwords.py:17, 51-69` - BoundedSemaphore(2) around hash/verify, an IP-only login bucket, and optionally a lighter argon2 profile.
 - [ ] A-003 **[HIGH][usability]** No way to recover a forgotten password, for the owner or for members - `api/app/cli.py:144-158` - add `app.cli user reset-password` plus `deployer reset-password` and a Deployer Control action, and link them from the login page.
 
 **Data**

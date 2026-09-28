@@ -64,6 +64,59 @@ def test_login_rate_limited(client, owner):
     assert resp.status_code == 401
 
 
+def test_login_and_signup_share_a_per_ip_limit(client, owner, set_setting):
+    # A-002: random emails each cost an argon2 hash, so one IP is capped across all emails.
+    set_setting("allow_signup", True)
+    for i in range(29):
+        resp = client.post("/v1/auth/login", json={"email": f"rand{i}@example.com", "password": "wrong-password"})
+        assert resp.status_code == 401
+    resp = client.post("/v1/auth/signup", json={"email": "new@example.com", "password": DEFAULT_PASSWORD})
+    assert resp.status_code == 200, resp.text
+    resp = client.post("/v1/auth/login", json={"email": "owner@example.com", "password": DEFAULT_PASSWORD})
+    assert resp.status_code == 429
+    resp = client.post("/v1/auth/signup", json={"email": "new2@example.com", "password": DEFAULT_PASSWORD})
+    assert resp.status_code == 429
+
+
+def test_argon2_runs_at_most_two_at_once(monkeypatch):
+    # A-002: each hash is 64 MiB in production; concurrent callers must queue, not stack up.
+    import threading
+    import time
+
+    from app.services import passwords
+
+    running, peak, lock = 0, 0, threading.Lock()
+    real = passwords.hasher
+
+    class Slow:
+        def _track(self, fn, *args):
+            nonlocal running, peak
+            with lock:
+                running += 1
+                peak = max(peak, running)
+            time.sleep(0.05)
+            with lock:
+                running -= 1
+            return fn(*args)
+
+        def hash(self, pw):
+            return self._track(real.hash, pw)
+
+        def verify(self, h, pw):
+            return self._track(real.verify, h, pw)
+
+    monkeypatch.setattr(passwords, "hasher", Slow())
+    stored = real.hash("correct-horse")
+    threads = [threading.Thread(target=passwords.hash_password, args=("x" * 12,)) for _ in range(4)]
+    threads += [threading.Thread(target=passwords.verify_password, args=(stored, "wrong-pass")) for _ in range(4)]
+    threads += [threading.Thread(target=passwords.verify_password, args=(None, "wrong-pass")) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert peak == 2
+
+
 def test_refresh_rotates_and_detects_reuse(client, owner, login, db):
     login("owner@example.com")
     first = client.cookies.get(REFRESH_COOKIE)
