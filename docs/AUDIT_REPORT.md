@@ -68,7 +68,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-015 **[HIGH][bug]** `deployer stop` / Control Stop is undone about 15 s later by the autostart keep-alive loop (WSL engine) - `installer/deployer.ps1:198-207, 218-232` (also `ControlForm.cs:328, 1004`) - `Stop-ScheduledTask` in Invoke-Stop, and wait on an existing keep-alive instead of spinning.
 
 **Dashboard shell**
-- [ ] A-016 **[HIGH][bug]** Signing up from an invite ends on "This invite isn't valid" even though the user joined - `dashboard/src/features/auth/InvitePage.tsx:41, 51-65, 139` - on 404 while authenticated, call the idempotent accept and navigate to the project.
+- [x] A-016 **[HIGH][bug]** Signing up from an invite ends on "This invite isn't valid" even though the user joined - `dashboard/src/features/auth/InvitePage.tsx:41, 51-65, 139` - on 404 while authenticated, call the idempotent accept and navigate to the project.
 - [ ] A-017 **[HIGH][usability]** New project fails by default on PCs without AVX (the MongoDB box is pre-ticked) - `dashboard/src/features/projects/ProjectsPage.tsx:51, 110-111, 185-196` - expose `managed_mongodb` in /setup/status; untick and disable the box with a plain hint.
 
 **Docs / skill**

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MailCheck } from "lucide-react";
@@ -40,7 +41,15 @@ export function InvitePage() {
 
   const here = `/invite/${encodeURIComponent(token)}`;
 
-  if (preview.isPending) {
+  // Sign-up (password or OAuth) already accepts the invite and then lands back here, where the used
+  // token now 404s. Accept is idempotent for the user who used it, so retry it and go to the project.
+  const notFound = preview.isError && isApiError(preview.error) && preview.error.status === 404;
+  const recovering = notFound && (status === "loading" || (status === "authenticated" && !accept.isError));
+  useEffect(() => {
+    if (notFound && status === "authenticated" && accept.isIdle) accept.mutate();
+  }, [notFound, status, accept]);
+
+  if (preview.isPending || recovering) {
     return (
       <AuthShell>
         <PageSpinner />
@@ -49,7 +58,6 @@ export function InvitePage() {
   }
 
   if (preview.isError) {
-    const notFound = isApiError(preview.error) && preview.error.status === 404;
     return (
       <AuthShell>
         <Alert tone="danger" title={notFound ? "This invite isn't valid" : "Couldn't load the invite"}>
