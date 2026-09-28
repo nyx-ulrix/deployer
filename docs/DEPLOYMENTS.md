@@ -115,7 +115,8 @@ Off by default. An app normally reaches its project's data only through the data
 
 `apps.cohost` (admin-only, default false): every deployment that goes live also runs on the project's
 co-host devices (job `app.replicate` per device, RPC `apps.deploy` on the device's own worker), and the
-app's hostnames move to the separate **apps tunnel** so Cloudflare fails over between PCs.
+app's hostnames move to the separate **apps tunnel** so Cloudflare fails over between PCs. Only one
+app per installation can be co-hosted for now (409 `cohost_limit`; COHOSTING.md "Honest limits").
 `apps.cohost_share_repo_access` (admin-only, default false) sends the clone token to those devices;
 without it a private repository can't be built there. Devices never receive `DEPLOYER_API_KEY` or the
 main server's database credentials; with database access they inject `DEPLOYER_DB_*` for their own

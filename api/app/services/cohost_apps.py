@@ -29,7 +29,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.errors import ApiError
+from app.errors import ApiError, conflict
 from app.models import App, AppReplica, DataSource, Deployment, Device, Project, ProjectMember, SourceReplica, utcnow
 from app.serializers import iso
 from app.services import app_runner, deployments, device_rpc, devices, jobs
@@ -251,7 +251,28 @@ def deploy_params(db: Session, app: App, dep: Deployment, job_id: str) -> tuple[
     return params, token
 
 
+def check_single_cohost(db: Session, app_id: str | None) -> None:
+    """409 `cohost_limit` when another app of this installation is co-hosted already. Every co-hosted
+    hostname rides the one apps tunnel, whose connectors Cloudflare balances between, so a device running
+    only app A would get (and read) the visitors of app B (audit A-010)."""
+    query = select(App.id).where(App.cohost.is_(True))
+    if app_id:
+        query = query.where(App.id != app_id)
+    if db.scalar(query.limit(1)) is not None:
+        raise conflict(
+            "cohost_limit",
+            "Only one app on this Deployer can be co-hosted for now, and another app already is. "
+            "Turn co-hosting off there first.",
+        )
+
+
 def apps_tunnel_token(db: Session) -> str | None:
+    """The token devices get, or None while more than one app is co-hosted (older data, or two admins at
+    once): the devices then drop their connector and only the main server, which runs every app, serves
+    the apps tunnel."""
+    if len(db.scalars(select(App.id).where(App.cohost.is_(True)).limit(2)).all()) > 1:
+        log.warning("more than one app is co-hosted: the apps tunnel stays on the main server only")
+        return None
     return get_value(db, "cloudflare_apps_tunnel_token") or None
 
 

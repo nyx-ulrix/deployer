@@ -274,6 +274,8 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
     _check_database_access(access, body.database_access)
     if (body.cohost or body.cohost_share_repo_access) and not access.at_least("admin"):
         raise forbidden("Only project admins can change co-hosting")
+    if body.cohost:
+        cohost_apps.check_single_cohost(db, None)
     deployments.check_api_key(db, project.id, body.api_key_id)
     if body.use_github_connection:
         if body.repo_token:
@@ -356,6 +358,8 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
     cohost_before = app.cohost
     target_before = (app.target, app.cloud_connection_id, app.cloud_state)
     cohost_changed = _check_cohost(access, app, body)
+    if "cohost" in changed and body.cohost and not app.cohost:
+        cohost_apps.check_single_cohost(db, app.id)
     if "repo_url" in changed and body.repo_url and body.repo_url != app.repo_url and app.github_connection_user_id:
         # The webhook belongs to the old repository; only the connection's owner may point it elsewhere.
         github.delete_hook(db, app)

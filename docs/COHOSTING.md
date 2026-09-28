@@ -233,6 +233,11 @@ logs through `apps.logs` (503 while that PC is offline).
 
 ### Honest limits (phase 2)
 
+- **One co-hosted app per installation.** Every co-hosted hostname shares the one apps tunnel, and
+  Cloudflare sends each visitor to any of its connectors, so a PC running only app A would receive (and
+  could read) app B's visitors. Until each app gets its own tunnel, switching co-hosting on for a second
+  app (in any project) is refused with 409 `cohost_limit`; if two are co-hosted anyway (older data), no
+  device gets the apps tunnel token and only the main server serves them.
 - **Each copy talks to its own PC's database copy.** Writes made by the app on a co-host PC land in that
   PC's copy and reach the main server through the phase-1 sync (seconds, or once the PCs can reach each
   other again) - with the same conflict rules. Two visitors served by different PCs can briefly see
@@ -263,7 +268,7 @@ logs through `apps.logs` (503 while that PC is offline).
 | POST | `/data-sources/{sid}/sync-conflicts/{cid}/resolve` | co-host owner or admin+ (developer+) | `{choice: "primary"\|"replica"\|"manual", value?: object\|null}` → `SyncConflict`; 409 `conflict_resolved` / `conflict_changed` / `write_rejected` / `sync_busy`; 503 `device_offline` |
 | GET | `/data-sources/{sid}/sync-history?table=&key=<JSON>` | developer+ | `HistoryItem[]` newest first (max 200) |
 | POST | `/data-sources/{sid}/sync-history/restore` | co-host owner or admin+ (developer+) | `{table, key, version_id}` → `{ok, resolved_conflict_id}` |
-| PATCH | `/apps/{id}` | admin+ for these fields | `{cohost?, cohost_share_repo_access?}` → `App` (+ `cohost`, `cohost_share_repo_access`, `replicas[]`); moves the app's hostnames between the dashboard and apps tunnels (Cloudflare errors: nothing saved); developers get 403 `forbidden`; audit `app.cohost` |
+| PATCH | `/apps/{id}` | admin+ for these fields | `{cohost?, cohost_share_repo_access?}` → `App` (+ `cohost`, `cohost_share_repo_access`, `replicas[]`); moves the app's hostnames between the dashboard and apps tunnels (Cloudflare errors: nothing saved); developers get 403 `forbidden`; 409 `cohost_limit` while another app of the installation is co-hosted; audit `app.cohost` |
 | GET | `/apps/{id}/logs?device_id=&tail=` | viewer+ | a co-host copy's runtime logs `{lines, container, device_id}`; 404 when that PC runs no copy; 503 `device_offline` |
 
 ```ts

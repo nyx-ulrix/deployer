@@ -302,6 +302,36 @@ def test_sweep_token_only_to_cohost_devices_and_cleanup(db, team, fake_device, m
     ]
 
 
+def test_only_one_cohosted_app_shares_the_apps_tunnel(
+    client, db, team, make_project, fake_device, set_setting, auth_headers
+):
+    """A-010: every co-hosted hostname rides the one apps tunnel, so a device may only carry its connector
+    while a single app is co-hosted; a second one is refused, and older data with two keeps devices off it."""
+    t = team
+    set_setting("cloudflare_apps_tunnel_token", secrets.token_urlsafe(24))
+    shop = make_app(db, t["project"], cohost=True)
+    other = make_project(t["users"]["admin"], "Blog")  # another project, same installation
+    blog = make_app(db, other, "Blog")
+    admin = auth_headers(t["users"]["admin"])
+    resp = client.patch(f"/v1/projects/{other.id}/apps/{blog.id}", json={"cohost": True}, headers=admin)
+    assert resp.status_code == 409 and resp.json()["error"]["code"] == "cohost_limit"
+    assert db.get(App, blog.id).cohost is False
+    body = {"name": "Wiki", "repo_url": "https://github.com/acme/wiki", "preset": "node", "cohost": True}
+    resp = client.post(f"/v1/projects/{other.id}/apps", json=body, headers=admin)
+    assert resp.status_code == 409 and resp.json()["error"]["code"] == "cohost_limit"
+    # Re-saving the co-hosted app itself is fine.
+    resp = client.patch(f"/v1/projects/{t['project'].id}/apps/{shop.id}", json={"cohost": True}, headers=admin)
+    assert resp.status_code == 200
+
+    # Two co-hosted apps from before the limit: the device is told to drop its connector.
+    db.get(App, blog.id).cohost = True
+    db.commit()
+    home = fake_device(t["device"].id, handler_for({"apps": [], "tunnel": "old"}))
+    cohost_apps.sweep(jobs.get_sessionmaker())
+    assert ("apps.tunnel", {"token": None}) in home.calls
+    assert all(p["token"] is None for m, p in home.calls if m == "apps.tunnel")
+
+
 # --- apps tunnel ---------------------------------------------------------------------------------
 
 
