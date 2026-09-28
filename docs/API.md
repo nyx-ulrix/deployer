@@ -78,7 +78,7 @@ type ApiKey = { id: string; name: string; prefix: string; role: "anon" | "servic
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/health` | – | `{status:"ok", version, services:{mariadb:bool, mongodb:bool, redis:bool}}` |
-| GET | `/setup/status` | – | `{initialized:boolean, version, public_url, providers:{google:boolean, github:boolean}, allow_signup:boolean, device_mode:"standalone"\|"host"}` (`device_mode`: [DEVICES.md](DEVICES.md)) |
+| GET | `/setup/status` | – | `{initialized:boolean, version, public_url, providers:{google:boolean, github:boolean}, allow_signup:boolean, device_mode:"standalone"\|"host", managed_mongodb:boolean}` (`device_mode`: [DEVICES.md](DEVICES.md); `managed_mongodb` is false on CPUs without AVX, and the dashboard then unticks MongoDB in "New project") |
 | POST | `/setup/owner` | `{email, password, display_name?}` | `AuthResponse` (+ refresh cookie). 409 `already_initialized` if any user exists |
 | POST | `/setup/import` | multipart: `file`, `passphrase` | `{ok:true, summary:{users, projects, data_sources, rows, documents}}`. Only while not initialized; `scope` must be `instance`. 400 `bad_passphrase` / `invalid_export` |
 

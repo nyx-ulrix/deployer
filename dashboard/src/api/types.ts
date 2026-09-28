@@ -130,6 +130,8 @@ export type SetupStatus = {
   allow_signup: boolean;
   /** docs/DEVICES.md: "host" when this installation is attached to another Deployer. */
   device_mode?: "standalone" | "host";
+  /** False when this PC's CPU can't run MongoDB (no AVX). */
+  managed_mongodb?: boolean;
 };
 
 export type ImportSummary = {

@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Database, FolderPlus, Leaf, Plus } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import { useDevices, useProjects } from "../../api/hooks";
+import { useDevices, useProjects, useSetupStatus } from "../../api/hooks";
 import type { Project } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
@@ -25,8 +25,11 @@ import {
 } from "../devices/eligibility";
 import { ROLE_LABELS } from "../../lib/roles";
 
+const NO_MONGODB_HINT = "This PC's processor can't run MongoDB; you can connect a free MongoDB Atlas database later.";
+
 export function ProjectsPage() {
   const projects = useProjects();
+  const mongodb = useSetupStatus().data?.managed_mongodb !== false;
   const [creating, setCreating] = useState(false);
 
   return (
@@ -48,7 +51,7 @@ export function ProjectsPage() {
         <EmptyState
           icon={<FolderPlus className="size-5" />}
           title="No projects yet"
-          description="Create a project to get a managed MariaDB (SQL) and MongoDB (NoSQL) database, or connect databases you already have."
+          description={`Create a project to get a managed MariaDB (SQL)${mongodb ? " and MongoDB (NoSQL)" : ""} database, or connect databases you already have.`}
           action={
             <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setCreating(true)}>
               Create your first project
@@ -108,11 +111,15 @@ function NewProjectForm({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [sql, setSql] = useState(true);
-  const [nosql, setNosql] = useState(true);
+  const [wantNosql, setNosql] = useState(true);
   const user = useCurrentUser();
   const devices = useDevices("mine");
   const hosts = newProjectHosts(devices.data ?? [], user.id);
   const [host, setHost] = useState(MAIN_SERVER_VALUE);
+  // A-017: without AVX the main server can't run MongoDB, so the box is off instead of failing "Create".
+  const mainMongodb = useSetupStatus().data?.managed_mongodb !== false;
+  const nosqlBlocked = host === MAIN_SERVER_VALUE && !mainMongodb;
+  const nosql = wantNosql && !nosqlBlocked;
   const hostReason = (deviceId: string): string | null => {
     const d = hosts.find((x) => x.id === deviceId);
     if (!d) return null;
@@ -190,9 +197,10 @@ function NewProjectForm({ onClose }: { onClose: () => void }) {
           />
           <Checkbox
             checked={nosql}
+            disabled={nosqlBlocked}
             onChange={(e) => setNosql(e.target.checked)}
             label="Managed NoSQL database (MongoDB)"
-            description="Flexible JSON documents."
+            description={nosqlBlocked ? NO_MONGODB_HINT : "Flexible JSON documents."}
           />
           <p className="text-xs text-muted">A project can use SQL and NoSQL together.</p>
           {hosts.length > 0 && (sql || nosql) && (

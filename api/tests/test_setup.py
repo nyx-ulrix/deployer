@@ -19,6 +19,16 @@ def test_status_uninitialized(client):
     assert body["version"]
 
 
+def test_status_reports_managed_mongodb(client, monkeypatch):
+    # A-017: the "New project" dialog reads this to untick MongoDB on CPUs without AVX.
+    from app.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "managed_mongodb_enabled", False)
+    assert client.get("/v1/setup/status").json()["managed_mongodb"] is False
+    monkeypatch.setattr(get_settings(), "managed_mongodb_enabled", True)
+    assert client.get("/v1/setup/status").json()["managed_mongodb"] is True
+
+
 def test_create_owner_then_already_initialized(client, db):
     resp = client.post(
         "/v1/setup/owner",

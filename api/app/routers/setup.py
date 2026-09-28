@@ -3,6 +3,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app import __version__
+from app.config import get_settings
 from app.deps import DbSession
 from app.errors import conflict
 from app.models import User
@@ -26,6 +27,8 @@ def setup_status(db: DbSession) -> dict:
         "providers": {p: oauth_app(db, p).configured for p in ("google", "github")},
         "allow_signup": allow_signup(db),
         "device_mode": _device_mode(db),
+        # False on CPUs without AVX: the dashboard unticks the MongoDB box instead of failing "New project".
+        "managed_mongodb": get_settings().managed_mongodb_enabled,
     }
 
 
