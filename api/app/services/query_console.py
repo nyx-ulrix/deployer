@@ -401,6 +401,7 @@ MONGO_WRITE_NAMES = (
     "createCollection",
     "createIndex",
     "createIndexes",
+    "ensureIndex",
     "createView",
     "renameCollection",
     "convertToCapped",

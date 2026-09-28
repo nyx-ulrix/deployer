@@ -291,6 +291,7 @@ def test_mongo_read_only_accepts(code):
         "db.fsyncLock()",
         "db.killOp(1)",
         "db.setProfilingLevel(2)",
+        "db.items.ensureIndex({a: 1})",
         "rs.stepDown()",
         "sh.enableSharding('x')",
         "db.items.initializeUnorderedBulkOp().find({}).removeOne()",

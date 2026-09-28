@@ -43,7 +43,7 @@ real boundary (use an external source with a read-only user for strict enforceme
   comments included - over-matching is the safe direction): `insert`, `insertOne`, `insertMany`,
   `update`, `updateOne`, `updateMany`, `replaceOne`, `delete`, `deleteOne`, `deleteMany`, `remove`,
   `save`, `drop`, `dropDatabase`, `dropIndex`, `dropIndexes`, `createCollection`, `createIndex`,
-  `createIndexes`, `createView`, `renameCollection`, `convertToCapped`, `reIndex`, `bulkWrite`,
+  `createIndexes`, `ensureIndex`, `createView`, `renameCollection`, `convertToCapped`, `reIndex`, `bulkWrite`,
   `findOneAndUpdate`, `findOneAndReplace`, `findOneAndDelete`, `findAndModify`, `mapReduce`, `$out`,
   `$merge`, `runCommand`, `adminCommand`, bulk and search/encryption index helpers (`removeOne`,
   `initializeOrderedBulkOp`, `hideIndex`, `createSearchIndex`, ...), every user and role helper
