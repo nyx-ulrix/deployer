@@ -120,7 +120,7 @@ tokens are rejected there, device tokens are rejected on every user endpoint).
 | PATCH | `/devices/{id}` | device owner or instance owner (`status`: instance owner only) | `{name?, roles?, sharing_mode?, project_ids?, status?:"active"\|"disabled"}` | `Device`; disabling closes its socket |
 | DELETE | `/devices/{id}?force=false` | device owner or instance owner (`force`: instance owner) | – | `{ok:true}`; 409 `device_in_use` `{details.data_sources}` while it hosts databases; `force=true` marks them `status=error, "device removed"` |
 | GET | `/projects/{id}/placement-options` | admin+ | – | `PlacementOption[]` (main server first) |
-| POST | `/projects/{id}/data-sources/{sid}/move` | admin+ | `{device_id: string\|null}` | `{job: Job}` (`type:"device.move"`, BACKUPS.md `Job`); 400 `not_managed`; 409 `already_there` / `move_in_progress`; 503 `device_offline`; 422 `device_not_eligible` |
+| POST | `/projects/{id}/data-sources/{sid}/move` | admin+ | `{device_id: string\|null}` | `{job: Job}` (`type:"device.move"`, BACKUPS.md `Job`); 400 `not_managed`; 409 `already_there` / `move_in_progress` / `has_replicas` / `apps_use_database` (`{details.apps}`: live apps with database access still hold the current copy's `DEPLOYER_DB_*`; turn their access off and redeploy, or delete them); 503 `device_offline`; 422 `device_not_eligible` |
 | POST | `/projects/{id}/data-sources` | admin+ | `DataSourceInput` + `device_id?` (managed only) | `DataSource` |
 | POST | `/projects` | user | `provision:{sql, nosql, device_id?}` | `Project` |
 | WS | `/devices/connect` | device | protocol above | close codes: 4403 disabled/removed, 4000 replaced by a newer connection, 4408 no heartbeat, 1009 message too large |
@@ -171,7 +171,7 @@ device, never stored on the primary) with an `external_hint` and `device_id`.
 | `device_in_use` | 409 | Removing a device that still hosts live databases (`details.data_sources`) |
 | `device_not_eligible` | 422 | Placement on a device that may not host databases for this project |
 | `managed_mongodb_unavailable` | 409 | Placement of a MongoDB database on a device (or main server) without managed MongoDB |
-| `not_managed`, `already_there`, `move_in_progress` | 400 / 409 / 409 | Move preconditions |
+| `not_managed`, `already_there`, `move_in_progress`, `apps_use_database` | 400 / 409 / 409 / 409 | Move preconditions |
 | `device_offline` | 503 | The device is not connected (also for every schema/data/backup route of its sources) |
 | `device_timeout` | 504 | The device did not answer an RPC in time |
 | `device_busy` | 503 | The device's call queue is full |
@@ -210,6 +210,12 @@ Errors raised **on the device** and re-raised on the primary with the same statu
   (`POST .../data-sources/{sid}/move`, which snapshots, restores on the target, switches over and
   keeps the old copy for 7 days). `?force=true` (instance owner only) detaches anyway and marks those
   sources `status=error, status_message="device removed"`.
+- Moving a database never pauses writes, so nothing may write to the old copy after it is dumped: the
+  move is refused (`409 apps_use_database`) while apps with database access are live, and a database
+  on the main server is made read-only (its user keeps `SELECT` only, open connections are closed) from
+  the dump on. Writes during the move fail instead of being lost; a failed move gives write access
+  back, a finished one leaves the old copy read-only until it is dropped. A database on a host device
+  is not locked (only Deployer itself writes to it), so API writes made during that move are lost.
 - A device that is offline makes its sources return `503 device_offline`; everything else keeps working.
 - On the device itself, while attached: the local dashboard shows a **Host device status** page
   (main Deployer URL, connection state, hosted databases, disk, last backup) instead of the setup

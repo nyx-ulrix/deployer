@@ -366,3 +366,74 @@ def test_move_job_heartbeats_while_running(db, owner, make_project, make_device,
     )
     device_moves.run_move(job.id)
     assert alive == [1]
+
+
+def _main_source(db, project):
+    from app.crypto import encrypt_json
+
+    ds = DataSource(
+        project_id=project.id,
+        name="main",
+        kind="sql",
+        engine="mariadb",
+        mode="managed",
+        database_name="p_shop_main",
+        config_encrypted=encrypt_json({"host": "mariadb", "username": "u_main0123456", "database": "p_shop_main"}),
+        status="ok",
+    )
+    db.add(ds)
+    db.commit()
+    return ds
+
+
+def test_move_refused_while_db_access_apps_are_live(client, db, owner, owner_headers, make_project, make_device):
+    """A-008: live apps hold the current copy's DEPLOYER_DB_* and would keep writing to it after the move."""
+    from tests.apps_support import make_app
+
+    project = make_project(owner, "Shop")
+    device, _ = make_device(owner)
+    device_rpc.mark_online(device.id, "c")
+    ds = _main_source(db, project)
+    make_app(db, project, "Store", database_access=True, live_deployment_id="dep-1")
+    url = f"/v1/projects/{project.id}/data-sources/{ds.id}/move"
+    resp = client.post(url, json={"device_id": device.id}, headers=owner_headers)
+    assert resp.status_code == 409 and resp.json()["error"]["code"] == "apps_use_database", resp.text
+    assert resp.json()["error"]["details"]["apps"] == ["Store"]
+
+
+def test_move_makes_the_old_main_copy_read_only(db, owner, make_project, make_device, monkeypatch, tmp_path):
+    """A-008: the old copy is read-only from the dump on; a failed move gives write access back."""
+    from app.errors import ApiError
+    from app.models import User
+    from app.services import provisioning
+
+    project = make_project(owner, "Shop")
+    device, _ = make_device(owner)
+    ds = _main_source(db, project)
+    calls = []
+    monkeypatch.setattr(provisioning, "set_mariadb_read_only", lambda *a: calls.append(a))
+    monkeypatch.setattr(device_moves, "_safety_snapshot", lambda sid, uid: None)
+    monkeypatch.setattr(device_moves, "dump_source", lambda ds: calls.append("dump") or tmp_path / "dump.json.gz")
+    monkeypatch.setattr(device_moves, "provision_target", lambda p, ds, t: ("p_shop_dev", {"username": "u"}))
+    monkeypatch.setattr(device_moves, "drop_copy", lambda *a: None)
+
+    def broken_restore(target, dump):
+        raise ApiError(502, "import_failed", "restore broke")
+
+    monkeypatch.setattr(device_moves, "restore_into", broken_restore)
+    job = device_moves.create_move_job(db, ds, device.id, db.get(User, owner.id))
+    db.commit()
+    device_moves.run_move(job.id)
+    locked, unlocked = ("p_shop_main", "u_main0123456", True), ("p_shop_main", "u_main0123456", False)
+    assert calls == [locked, "dump", unlocked]
+    db.expire_all()
+    assert db.get(Job, job.id).status == "failed" and db.get(DataSource, ds.id).device_id is None
+
+    calls.clear()
+    monkeypatch.setattr(device_moves, "restore_into", lambda target, dump: {"rows": 0})
+    job = device_moves.create_move_job(db, ds, device.id, db.get(User, owner.id))
+    db.commit()
+    device_moves.run_move(job.id)
+    db.expire_all()
+    assert db.get(Job, job.id).status == "succeeded"
+    assert calls == [locked, "dump"]  # kept read-only until the cleanup drops it

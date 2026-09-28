@@ -54,7 +54,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-007 **[HIGH][bug]** Restoring a dropped database from Recently deleted cannot be retried after one failure - `api/app/services/backups.py:1712-1745` - undo the recreate on failure, move cleanup into `finally`, or tolerate an existing empty DB.
 
 **Devices / co-hosting**
-- [ ] A-008 **[HIGH][bug]** Moving a database loses writes: live apps keep writing to the old copy, and the dialog wrongly says writes are paused - `api/app/services/device_moves.py:14-15, 236-268` - make the old copy read-only first, refuse (409) while db-access apps are live, and fix the dialog text.
+- [x] A-008 **[HIGH][bug]** Moving a database loses writes: live apps keep writing to the old copy, and the dialog wrongly says writes are paused - `api/app/services/device_moves.py:14-15, 236-268` - make the old copy read-only first, refuse (409) while db-access apps are live, and fix the dialog text.
 - [ ] A-009 **[HIGH][bug]** Device removal/detach ignores co-host copies and apps, leaving data, stale apps and a tunnel connector on the PC - `api/app/routers/devices.py:240-259` - refuse (409) while replicas exist or clean them up first; detach removes co-host apps and the token.
 - [ ] A-010 **[HIGH][security]** One apps tunnel is shared by every co-hosted app in every project - `api/app/services/cohost_apps.py:254-259, 361-367` - one tunnel per co-hosted app (or device set); until then allow only one app on it.
 - [ ] A-011 **[HIGH][bug]** A single large transaction stops a co-host copy's sync for good - `api/app/services/source_sync.py:590-615` - allow splitting a transaction across batches (`{gtid, skip_rows}`) and show plain "Re-copy" guidance.

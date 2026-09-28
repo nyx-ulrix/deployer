@@ -105,9 +105,10 @@ export function MoveDatabaseDialog({
             </Alert>
           )}
           <Alert tone="warning" title="What happens">
-            Deployer takes a safety version, restores it on the new host, briefly pauses writes while it switches the
-            project over, and keeps the old copy for 7 days. Apps using the connection details may need the new host
-            name afterwards.
+            Deployer takes a safety version, copies the data to the new host, switches the project over and keeps the
+            old copy for 7 days. Writes are not paused: a database on the main server is made read-only for the whole
+            move, so writes fail until it finishes. Moving is refused while apps with database access are live, and
+            anything else using the connection details needs the new ones afterwards.
           </Alert>
           {move.error && <ErrorAlert error={move.error} />}
         </div>

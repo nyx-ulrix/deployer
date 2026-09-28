@@ -175,6 +175,25 @@ def drop_mariadb_database(database: str, username: str | None) -> None:
             conn.exec_driver_sql(f"DROP USER IF EXISTS '{username}'@'%%'")
 
 
+def set_mariadb_read_only(database: str, username: str, read_only: bool) -> None:
+    """Leaves the source's own user SELECT only (or gives ALL back). Database-level privileges only
+    apply to a session on its next USE, so that user's open connections are closed."""
+    _check(DB_NAME_RE, database, "database name")
+    _check(USER_RE, username, "user name")
+    with mariadb_root_engine().connect() as conn:
+        if not read_only:
+            conn.exec_driver_sql(f"GRANT ALL PRIVILEGES ON `{database}`.* TO '{username}'@'%%'")
+            return
+        conn.exec_driver_sql(f"REVOKE ALL PRIVILEGES ON `{database}`.* FROM '{username}'@'%%'")
+        conn.exec_driver_sql(f"GRANT SELECT, SHOW VIEW ON `{database}`.* TO '{username}'@'%%'")
+        ids = conn.exec_driver_sql("SELECT ID FROM information_schema.PROCESSLIST WHERE USER = %s", (username,))
+        for (thread_id,) in ids.fetchall():
+            try:
+                conn.exec_driver_sql(f"KILL CONNECTION {int(thread_id)}")
+            except Exception:  # noqa: BLE001 - it may have ended on its own
+                pass
+
+
 # ---------------------------------------------------------------------------------------------
 # MongoDB
 # ---------------------------------------------------------------------------------------------
@@ -213,6 +232,14 @@ def drop_mongo_database(database: str, username: str | None) -> None:
             if "not found" not in str(exc).lower():
                 raise
     client.drop_database(database)
+
+
+def set_mongo_read_only(database: str, username: str, read_only: bool) -> None:
+    """`read` instead of `dbOwner` for the source's own user (applies to its open connections too)."""
+    _check(DB_NAME_RE, database, "database name")
+    _check(USER_RE, username, "user name")
+    role = "read" if read_only else "dbOwner"
+    mongo_root_client()[database].command("updateUser", username, roles=[{"role": role, "db": database}])
 
 
 # ---------------------------------------------------------------------------------------------

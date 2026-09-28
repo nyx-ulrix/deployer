@@ -25,7 +25,7 @@ from sqlalchemy import select
 from app.db import get_sessionmaker
 from app.deps import CurrentUser, DbSession, ProjectAccess, client_ip, require_role
 from app.errors import ApiError, forbidden, not_found
-from app.models import DataSource, Device, DeviceEnrollment, Job, User, utcnow
+from app.models import App, DataSource, Device, DeviceEnrollment, Job, User, utcnow
 from app.services import audit, device_executor, device_moves, device_rpc, devices, jobs, rate_limit
 from app.services.instance_settings import public_url
 from app.services.sources import get_source
@@ -313,6 +313,21 @@ def move_data_source(source_id: str, body: MoveInput, access: Admin, db: DbSessi
     if db.scalar(select(SourceReplica.id).where(SourceReplica.data_source_id == ds.id)):
         # docs/COHOSTING.md: copies follow the main server's database; remove them before moving it.
         raise ApiError(409, "has_replicas", "Remove this database's co-host copies before moving it")
+    if ds.device_id is None:
+        # Apps got the current copy's DEPLOYER_DB_* at deploy time and would keep writing to it.
+        live_apps = db.scalars(
+            select(App.name)
+            .where(App.project_id == ds.project_id, App.database_access.is_(True), App.live_deployment_id.is_not(None))
+            .order_by(App.name)
+        ).all()
+        if live_apps:
+            raise ApiError(
+                409,
+                "apps_use_database",
+                f"Live apps with database access would keep writing to the current copy ({', '.join(live_apps)}). "
+                "Turn off their database access and redeploy them, or delete them, before moving this database.",
+                {"apps": list(live_apps)},
+            )
     job = device_moves.create_move_job(db, ds, target, access.user)
     audit.record(
         db,

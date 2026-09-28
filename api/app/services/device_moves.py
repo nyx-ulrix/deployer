@@ -11,8 +11,12 @@ it in a background thread of the API process (the process that receives device u
 5. keep the old copy for 7 days: a cleanup entry is scheduled and dropped later by
    `run_due_cleanups()` (worker maintenance loop).
 
-Writes that reach the old copy while the move runs are not carried over; moves are meant for quiet
-periods (the dashboard says so).
+Nothing may write to the old copy once it has been dumped, or those writes would be lost:
+- the move is refused (409 `apps_use_database`) while apps with database access are live, since they
+  got the old copy's `DEPLOYER_DB_*` at deploy time (only main-server databases are given to apps);
+- a main-server source's own user is made read-only before the dump (and its open connections are
+  closed), so late writes fail instead of vanishing; a failed move gives write access back. Host
+  devices have no RPC for this; only Deployer itself writes to their databases.
 """
 
 from __future__ import annotations
@@ -186,6 +190,17 @@ def drop_copy(kind: str, device_id: str | None, database: str, config_encrypted:
         provisioning.drop_mongo_database(database, username)
 
 
+def set_read_only(kind: str, database: str, config_encrypted: str | None, read_only: bool) -> None:
+    """Main-server copies only (see the module docstring)."""
+    username = decrypt_json(config_encrypted).get("username") if config_encrypted else None
+    if not username:
+        return
+    if kind == "sql":
+        provisioning.set_mariadb_read_only(database, username, read_only)
+    else:
+        provisioning.set_mongo_read_only(database, username, read_only)
+
+
 def _safety_snapshot(data_source_id: str, user_id: str | None) -> None:
     """`pre_move` snapshot on the current host (docs/BACKUPS.md "Safety snapshots"), when the source's
     policy asks for one. A failed snapshot aborts the move before anything changed."""
@@ -210,6 +225,7 @@ def _run_move(job_id: str) -> None:
     dump: Path | None = None
     created: tuple[str | None, str, str] | None = None  # (device_id, kind, database) of the new copy
     new_config: dict | None = None
+    locked: tuple[str, str, str | None] | None = None  # the old main-server copy while it is read-only
     try:
         job = session.get(Job, job_id)
         ds = session.get(DataSource, job.data_source_id) if job else None
@@ -217,11 +233,17 @@ def _run_move(job_id: str) -> None:
             return
         project = session.get(Project, ds.project_id)
         target = (job.params or {}).get("to_device_id")
-        source_device = ds.device_id
+        source_device, source_id = ds.device_id, ds.id
         session.commit()
 
         _update(job_id, progress=0.05, message="Taking a safety snapshot")
         _safety_snapshot(ds.id, job.created_by_id)
+
+        if source_device is None:
+            _update(job_id, progress=0.1, message="Making the current copy read-only")
+            locked = (ds.kind, ds.database_name, ds.config_encrypted)
+            set_read_only(*locked, True)
+            connections.invalidate(ds.id)
 
         _update(job_id, progress=0.15, message="Copying data from the current host")
         dump = dump_source(ds)
@@ -262,6 +284,7 @@ def _run_move(job_id: str) -> None:
         ds.last_checked_at = utcnow()
         session.commit()
         created = None
+        locked = None  # the old copy stays read-only until it is dropped
         connections.invalidate(ds.id)
         connections.invalidate(target_ds.id)
         expires = utcnow() + timedelta(days=KEEP_OLD_COPY_DAYS)
@@ -294,6 +317,12 @@ def _run_move(job_id: str) -> None:
                 drop_copy(kind, device_id, database, encrypt_json(new_config) if new_config else None)
             except Exception:  # noqa: BLE001
                 log.warning("could not drop partial copy %s", database, exc_info=True)
+        if locked is not None:
+            try:
+                set_read_only(*locked, False)
+                connections.invalidate(source_id)
+            except Exception:  # noqa: BLE001
+                log.warning("could not give write access back to %s", locked[1], exc_info=True)
         try:
             _update(job_id, status="failed", error=message[:2000], message="Move failed", finished_at=utcnow())
         except Exception:  # noqa: BLE001
