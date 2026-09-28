@@ -127,6 +127,7 @@ user's Google/GitHub OAuth apps if the public URL changed.
 4. GitHub push-to-deploy — apps built from a Git repository by the worker (BuildKit), run as
    containers behind Caddy, GitHub webhooks, rollbacks, app hostnames
    ([DEPLOYMENTS.md](DEPLOYMENTS.md)). **Done** (host devices as app hosts: later).
-5. Google Cloud automation — per-install service account.
+5. Google/GitHub sign-in setup — guided setup in the dashboard (Google offers no API to create OAuth
+   clients, so it can't be automated). **Done.**
 6. MCP server for AI agents.
 7. Monitoring and hardening.

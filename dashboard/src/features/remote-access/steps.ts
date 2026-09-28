@@ -1,6 +1,7 @@
 import type { RemoteAccess } from "../../api/types";
+import type { StepStatus } from "../../components/ui/StepCard";
 
-export type StepStatus = "done" | "current" | "todo";
+export type { StepStatus };
 
 /** Local (non-API) inputs that affect step status. */
 export type StepInputs = {

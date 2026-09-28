@@ -9,6 +9,7 @@ import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { CopyButton, CopyField } from "../../components/ui/CopyField";
 import { Field, Input, Select } from "../../components/ui/Input";
 import { StatusDot } from "../../components/ui/Progress";
+import { StepCard } from "../../components/ui/StepCard";
 import { Alert } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
@@ -23,7 +24,7 @@ import {
   REQUIRED_PERMISSIONS,
   type DnsRecord,
 } from "./remoteAccess";
-import { connectorHint, deriveSteps, sameUrl, STEP_TITLES, tunnelHealthy, type StepStatus } from "./steps";
+import { connectorHint, deriveSteps, sameUrl, STEP_TITLES, tunnelHealthy } from "./steps";
 
 const ext = "inline-flex items-center gap-1 font-medium text-accent hover:underline";
 
@@ -32,39 +33,6 @@ function ExtLink({ href, children }: { href: string; children: ReactNode }) {
     <a href={href} target="_blank" rel="noopener noreferrer" className={ext}>
       {children} <ExternalLink className="size-3" />
     </a>
-  );
-}
-
-/** One collapsible step. Open while it's the current step; the user can open any other one. */
-function StepCard({ n, status, summary, children }: { n: number; status: StepStatus; summary?: ReactNode; children: ReactNode }) {
-  const title = STEP_TITLES[n - 1];
-  return (
-    <details open={status === "current"} className="group rounded-xl border border-border bg-surface open:shadow-xs">
-      <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-3 select-none sm:px-4 [&::-webkit-details-marker]:hidden">
-        <span
-          className={cn(
-            "flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold",
-            status === "done" && "border-accent bg-accent text-accent-fg",
-            status === "current" && "border-accent bg-surface text-accent",
-            status === "todo" && "border-border bg-surface text-muted",
-          )}
-          aria-hidden="true"
-        >
-          {status === "done" ? <Check className="size-4" /> : n}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className={cn("block font-semibold", status === "todo" && "text-muted")}>
-            <span className="sr-only">Step {n}, {status === "done" ? "done" : status === "current" ? "current step" : "to do"}: </span>
-            {title}
-          </span>
-          {summary && <span className="block truncate text-xs text-muted">{summary}</span>}
-        </span>
-        <Badge tone={status === "done" ? "success" : status === "current" ? "accent" : "neutral"}>
-          {status === "done" ? "Done" : status === "current" ? "Now" : "To do"}
-        </Badge>
-      </summary>
-      <div className="border-t border-border px-3 py-3 text-sm sm:px-4">{children}</div>
-    </details>
   );
 }
 
@@ -115,11 +83,11 @@ export function CloudflareSetup({
         </Alert>
       )}
 
-      <StepCard n={1} status={steps[0]} summary={zones.length > 0 ? zones.map((z) => z.name).join(", ") : "Free plan is enough"}>
+      <StepCard n={1} title={STEP_TITLES[0]} status={steps[0]} summary={zones.length > 0 ? zones.map((z) => z.name).join(", ") : "Free plan is enough"}>
         <AccountStep zones={zones} done={steps[0] === "done"} onAcknowledge={() => setAcknowledged(true)} />
       </StepCard>
 
-      <StepCard n={2} status={steps[1]} summary={linked ? "Token stored (encrypted)" : "Four permissions, one paste"}>
+      <StepCard n={2} title={STEP_TITLES[1]} status={steps[1]} summary={linked ? "Token stored (encrypted)" : "Four permissions, one paste"}>
         {linked ? (
           <p className="text-muted">
             Your token is stored encrypted on this PC.{" "}
@@ -138,7 +106,7 @@ export function CloudflareSetup({
         )}
       </StepCard>
 
-      <StepCard n={3} status={steps[2]} summary={linked ? `${cf.account?.name ?? "—"} · ${cf.tunnel?.name ?? "tunnel"}` : "One click"}>
+      <StepCard n={3} title={STEP_TITLES[2]} status={steps[2]} summary={linked ? `${cf.account?.name ?? "—"} · ${cf.tunnel?.name ?? "tunnel"}` : "One click"}>
         {linked ? (
           <p className="text-muted">
             Linked to <strong className="text-fg">{cf.account?.name ?? "—"}</strong>
@@ -166,7 +134,7 @@ export function CloudflareSetup({
         )}
       </StepCard>
 
-      <StepCard n={4} status={steps[3]} summary={cf.domains.length ? cf.domains.map((d) => d.hostname).join(", ") : "e.g. deployer.example.com"}>
+      <StepCard n={4} title={STEP_TITLES[3]} status={steps[3]} summary={cf.domains.length ? cf.domains.map((d) => d.hostname).join(", ") : "e.g. deployer.example.com"}>
         {linked ? (
           <HostnameStep data={data} zones={zones} onNeedZones={() => setReplacing(true)} />
         ) : (
@@ -174,11 +142,11 @@ export function CloudflareSetup({
         )}
       </StepCard>
 
-      <StepCard n={5} status={steps[4]} summary={tunnelSummary(data)}>
+      <StepCard n={5} title={STEP_TITLES[4]} status={steps[4]} summary={tunnelSummary(data)}>
         <TunnelStep data={data} onTurnOffQuick={onTurnOffQuick} />
       </StepCard>
 
-      <StepCard n={6} status={steps[5]} summary={publicDomain ? publicDomain.url : "Sign-in, invites and host devices use it"}>
+      <StepCard n={6} title={STEP_TITLES[5]} status={steps[5]} summary={publicDomain ? publicDomain.url : "Sign-in, invites and host devices use it"}>
         <PublicUrlStep data={data} publicDomain={publicDomain} onUse={(id) => onUsePublicUrl({ domain_id: id })} busy={usingPublicUrl} />
       </StepCard>
     </div>

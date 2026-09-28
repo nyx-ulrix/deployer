@@ -133,8 +133,15 @@ installation keeps the runtime it was installed with unless you run setup again 
 
 ## Google and GitHub sign-in (your own OAuth apps)
 
-Deployer has no shared OAuth apps. Create your own - it takes a few minutes and is free. Use your
-public URL (default `http://localhost:8080`, shown in the wizard) as `<PUBLIC_URL>`:
+Deployer has no shared OAuth apps. Create your own - it takes a few minutes and is free. The easiest
+way is the **guided setup** in the dashboard (*Instance settings -> Sign in with Google/GitHub ->
+Guided setup*, also in the setup wizard): step-by-step cards with deep links into each console, your
+exact callback URLs with *Copy* buttons, a GitHub link that opens the new-OAuth-app form pre-filled,
+instant checks on what you paste, and a *Test sign-in* link once saved. Google offers no API for
+creating OAuth web clients, so the Google part stays a guided manual setup (about 5 minutes).
+
+To do it by hand, use your public URL (default `http://localhost:8080`, shown in the wizard) as
+`<PUBLIC_URL>`:
 
 | Provider | Callback / redirect URL |
 |---|---|
@@ -151,12 +158,13 @@ or spaces, and a Google Client ID must look like `1234-abc.apps.googleuserconten
 
 **Google**
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) -> create or select a project.
-2. *APIs & Services -> OAuth consent screen*: choose *External*, fill in the app name and your email,
-   add scopes `openid`, `email`, `profile`. While in *Testing* mode, add the Google accounts that
-   may sign in as test users.
-3. *APIs & Services -> Credentials -> Create credentials -> OAuth client ID* -> *Web application*.
-4. Add the Google callback URL above under *Authorized redirect URIs*.
+1. Go to [Google Cloud Console](https://console.cloud.google.com/projectcreate) -> create or select a project.
+2. *Google Auth Platform -> Branding*: app name, user support email, developer contact email.
+3. *Audience*: choose *External*. In *Testing* only the Google accounts listed as test users can sign
+   in; *Publish app* lets any Google account in (no Google review is needed for the basic sign-in
+   scopes Deployer uses).
+4. *Clients -> Create client* -> *Web application*; add the Google callback URL above under
+   *Authorized redirect URIs*. Copy the client secret right away - Google shows it only once.
 5. Paste the client ID and client secret into Deployer Control's *Sign-in apps* page (or *Instance settings*).
 
 **GitHub**
