@@ -93,7 +93,7 @@ jobs:
           for f in $(git ls-files '*.sh'); do bash -n "$f" && echo "OK  $f"; done
       - name: Keep-alive loop checks (no WSL needed)
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer	ests\keepalive.tests.ps1; exit $LASTEXITCODE
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/keepalive.tests.ps1; exit $LASTEXITCODE
       - name: install.ps1 -DryRun (read-only, prints progress markers)
         shell: powershell
         run: |

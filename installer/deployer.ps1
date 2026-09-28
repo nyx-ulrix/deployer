@@ -208,6 +208,11 @@ function Invoke-Start {
     } else {
         Write-DeployerWarn "Started, but http://localhost:$($ctx.Port)/v1/health is not answering yet. Check 'deployer logs api'."
     }
+    # `deployer stop` ends the sign-in task's loop; start it again so the stack comes back after sleep
+    # or a WSL restart. A no-op while it still runs (IgnoreNew).
+    if ($ctx.Runtime -eq 'wsl-engine' -and (Test-DeployerTaskRegistered)) {
+        try { Start-ScheduledTask -TaskName $script:DeployerTaskName -ErrorAction Stop } catch { Write-DeployerWarn "Could not start the sign-in task ($($_.Exception.Message)); Deployer will not come back by itself after sleep until you sign in again." }
+    }
 }
 
 function Invoke-Stop {
