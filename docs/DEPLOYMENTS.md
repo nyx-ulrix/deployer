@@ -201,7 +201,8 @@ BuildKit; the user's build commands run inside the build image, never on the hos
 Every git/docker command has a hard deadline (clone/fetch 10 min, build/push 45 min, most others
 2 min) enforced by a watchdog that kills the process group even when it prints nothing, so a
 stalled clone or a build command that never exits (e.g. `npm start`) fails the deploy instead of
-holding a worker runner.
+holding a worker runner. The same watchdog checks the job's cancel flag every 2 s, so **Cancel**
+also stops a running clone, build or push.
 
 Environment: `apps.env_encrypted` (JSON object, `encrypt_json`), values shown masked in the
 dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (public URL + `/v1`),
@@ -226,7 +227,7 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
   <branch> <url>` with the token in the URL via a credential helper env, never argv, never the log;
   or `git fetch` of a given sha for webhook deploys), record `commit_sha`/`commit_message`, build,
   run, health wait, route, stop old, prune images. Progress messages: `Cloning`, `Building`,
-  `Starting`, `Routing`, `Cleaning up`. Cancel between steps via `ctx.check_cancelled()`. One active
+  `Starting`, `Routing`, `Cleaning up`. Cancel between steps via `ctx.check_cancelled()`, and inside a running git/docker command via the `_run` watchdog. One active
   deploy per app (`jobs.active_job(key=app_id)`), a second request while one runs is queued behind
   it (status `queued`).
 - `app.remove` (`{app_id, slug}`): stop/remove containers and images, delete the Caddy file, reload —

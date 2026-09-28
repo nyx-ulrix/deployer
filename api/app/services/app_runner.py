@@ -22,6 +22,7 @@ import threading
 import time
 import uuid
 from collections.abc import Callable
+from contextvars import ContextVar
 
 from app.config import get_settings
 
@@ -31,7 +32,11 @@ MAX_OUTPUT = 256 * 1024
 GIT_TIMEOUT = 600
 BUILD_TIMEOUT = 45 * 60
 DOCKER_TIMEOUT = 120
+CANCEL_POLL_S = 2.0
 LineFn = Callable[[str], None]
+# Set by a job (e.g. to JobContext.cancelled) so a long git/docker command stops when the job is
+# cancelled instead of only between steps.
+cancel_check: ContextVar[Callable[[], bool] | None] = ContextVar("deployer_cancel_check", default=None)
 _SHA = re.compile(r"[0-9a-f]{7,40}")
 
 _docker: DockerCli | None = None
@@ -95,11 +100,14 @@ class DockerCli:
             start_new_session=os.name == "posix",  # own process group: the watchdog kills git's helpers too
         )
         # A watchdog, not a check between lines: a silent process (a stalled clone, a build that
-        # runs a server) never yields a line, so the deadline must fire on its own.
-        fired = threading.Event()
+        # runs a server) never yields a line, so the deadline and the job's cancel must fire on their own.
+        fired: list[str] = []
+        done = threading.Event()
+        cancelled = cancel_check.get()
+        deadline = time.monotonic() + timeout
 
-        def _kill() -> None:
-            fired.set()
+        def _kill(reason: str) -> None:
+            fired.append(reason)
             try:
                 if os.name == "posix":
                     os.killpg(proc.pid, signal.SIGKILL)
@@ -108,9 +116,17 @@ class DockerCli:
             except OSError:
                 pass
 
-        watchdog = threading.Timer(timeout, _kill)
-        watchdog.daemon = True
-        watchdog.start()
+        def _watch() -> None:
+            while not done.wait(min(CANCEL_POLL_S, max(0.0, deadline - time.monotonic()))):
+                if time.monotonic() >= deadline:
+                    return _kill(f"timed out after {int(timeout)} s")
+                try:
+                    if cancelled is not None and cancelled():
+                        return _kill("cancelled")
+                except Exception:  # noqa: BLE001, S110 - a failed cancel check must not stop the deadline
+                    pass
+
+        threading.Thread(target=_watch, daemon=True).start()
         chunks: list[str] = []
         size = 0
         assert proc.stdout is not None
@@ -127,13 +143,13 @@ class DockerCli:
                     size += len(line)
             code = proc.wait()
         except BaseException:
-            _kill()
+            _kill("interrupted")
             raise
         finally:
-            watchdog.cancel()
+            done.set()
             proc.stdout.close()
-        if fired.is_set():
-            raise DockerError(f"{args[0]} {args[1]} timed out after {int(timeout)} s", "".join(chunks))
+        if fired:
+            raise DockerError(f"{args[0]} {args[1]} {fired[0]}", "".join(chunks))
         output = "".join(chunks)
         if check and code != 0:
             raise DockerError(f"{args[0]} {args[1]} failed (exit {code})", output)

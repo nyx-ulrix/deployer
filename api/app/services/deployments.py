@@ -40,7 +40,7 @@ from app.models import ApiKey, App, CloudConnection, DataSource, Deployment, Dom
 from app.redis_client import get_redis
 from app.serializers import iso
 from app.services import github, jobs
-from app.services.app_runner import DockerCli, DockerError, get_docker
+from app.services.app_runner import DockerCli, DockerError, cancel_check, get_docker
 from app.services.connections import load_config, parse_mongo_uri, redact, sql_app_uri
 from app.services.instance_settings import public_url
 from app.services.remote_access import domain_out
@@ -746,6 +746,7 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
     log_ = _DeployLog(factory, dep.id, secrets)
     workdir = tempfile.mkdtemp(prefix="deployer-build-", dir=get_settings().app_build_dir or None)
     new_container: str | None = None
+    cancel_token = cancel_check.set(ctx.cancelled)  # a cancel stops the running clone/build/push too
     try:
         try:
             if dep.trigger == "rollback" and dep.image_tag:
@@ -823,6 +824,7 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
             except Exception:  # noqa: BLE001 - the scheduler sweep retries
                 log.exception("could not start the co-host copies of app %s", app.id)
         except DockerError as exc:
+            ctx.check_cancelled()  # killed by the cancel watchdog: end as cancelled, not failed
             raise jobs.JobError(_docker_failure(exc, secrets)) from exc
     except jobs.JobCancelled:
         log_.write("Cancelled")
@@ -838,6 +840,7 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
         _update(factory, dep.id, status="failed", error=message, finished_at=utcnow())
         raise jobs.JobError(message) from exc
     finally:
+        cancel_check.reset(cancel_token)
         log_.flush()
         shutil.rmtree(workdir, ignore_errors=True)
         try:

@@ -440,3 +440,18 @@ def test_run_times_out_a_silent_process():
     with pytest.raises(app_runner.DockerError, match="timed out after 1 s"):
         app_runner.DockerCli()._run([sys.executable, "-c", "import time; time.sleep(30)"], timeout=1)
     assert time.monotonic() - start < 10
+
+
+def test_run_stops_a_silent_process_when_the_job_is_cancelled():
+    # A-012: cancel used to be checked only between deploy steps, so it could not stop a hung build.
+    import sys
+    import time
+
+    token = app_runner.cancel_check.set(lambda: True)
+    try:
+        start = time.monotonic()
+        with pytest.raises(app_runner.DockerError, match="cancelled"):
+            app_runner.DockerCli()._run([sys.executable, "-c", "import time; time.sleep(30)"], timeout=60)
+        assert time.monotonic() - start < 10
+    finally:
+        app_runner.cancel_check.reset(token)
