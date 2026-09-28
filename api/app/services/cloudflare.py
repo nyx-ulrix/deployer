@@ -233,6 +233,19 @@ class CloudflareClient:
     def update_cname(self, zone_id: str, record_id: str, name: str, target: str) -> dict:
         return self._result("PUT", f"/zones/{zone_id}/dns_records/{record_id}", json=_cname_body(name, target))
 
+    def create_record(self, zone_id: str, type_: str, name: str, content: str) -> dict:
+        """A DNS-only record a cloud target asks for (docs/CLOUD.md "Custom domains"): certificate
+        validation CNAMEs and the hostname's own record must not go through Cloudflare's proxy."""
+        body = {
+            "type": type_,
+            "name": name,
+            "content": content,
+            "proxied": False,
+            "ttl": 1,
+            "comment": "Managed by Deployer (cloud hosting)",
+        }
+        return self._result("POST", f"/zones/{zone_id}/dns_records", json=body)
+
     def delete_dns_record(self, zone_id: str, record_id: str) -> None:
         self._request("DELETE", f"/zones/{zone_id}/dns_records/{record_id}")
 

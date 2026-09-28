@@ -17,6 +17,15 @@ class ApiError(Exception):
         self.details = details or {}
 
 
+class CloudError(Exception):
+    """An AWS / Google Cloud call failed (docs/CLOUD.md). `message` is the provider's own error text,
+    never request data or credentials; `code` is the provider's error code when there is one."""
+
+    def __init__(self, message: str, *, code: str = "", status: int = 0):
+        super().__init__(message)
+        self.message, self.code, self.status = message, code, status
+
+
 def not_found(what: str = "Resource") -> ApiError:
     return ApiError(404, "not_found", f"{what} not found")
 

@@ -1,19 +1,24 @@
 ---
 name: deploy-website
-description: "Use when the user wants to deploy, publish, host or 'put online' a website or web app, or asks how to use their self-hosted Deployer instance for a site. Walks an agent through Deployer (projects, databases, API keys, remote access, push-to-deploy apps) and, before anything is deployed, ALWAYS asks the user which platform to deploy to - with the options ordered by their past deployment activity. Never deploys without that answer."
+description: "Use when the user wants to deploy, publish, host or 'put online' a website or web app, or asks how to use their self-hosted Deployer instance for a site. Walks an agent through Deployer (projects, databases, API keys, remote access, push-to-deploy apps on the PC or on the user's own AWS / Firebase account) and, before anything is deployed, ALWAYS asks the user which platform to deploy to - with the options ordered by their past deployment activity. Never deploys without that answer."
 ---
 
 # Deploy a website with Deployer
 
 Deployer is a self-hosted backend + deployment platform (MariaDB, MongoDB, Redis, a data API,
 backups, host devices, Cloudflare tunnels, push-to-deploy) that runs on the user's own Windows PC.
-A site can be deployed in two ways:
+A site can be deployed in three ways:
 
 1. **On the Deployer instance itself** (`docs/DEPLOYMENTS.md`): an *app* built from the site's
    Git repository, run as a container on the PC, served on a local port and, when Cloudflare is
    linked, on the user's own hostname. Good for hobby/LAN/home-server sites and anything that
-   should stay on the user's hardware.
-2. **On an external platform** (Vercel, Netlify, Cloudflare Pages, GitHub Pages...) with the data
+   should stay on the user's hardware. Stops serving when the PC is off.
+2. **Through Deployer on the user's own AWS or Firebase account** (`docs/CLOUD.md`): the same app,
+   built on the PC, but served from the cloud - AWS S3 + CloudFront or Firebase Hosting for static
+   sites, AWS App Runner or Firebase + Cloud Run for full apps (Node, Python, Dockerfile). It **keeps
+   serving when the PC is off**, is billed by AWS / Google to the user, and gets only its own
+   environment variables (no `DEPLOYER_URL` / `DEPLOYER_API_KEY` / `DEPLOYER_DB_*`).
+3. **On an external platform** (Vercel, Netlify, Cloudflare Pages, GitHub Pages...) with the data
    and API living in Deployer (Step 1 below). Good for global CDN reach and serverless functions.
 
 ## Hard rule: always ask which platform
@@ -29,14 +34,21 @@ Gather evidence first (read-only, fast):
 - git history: `git log --oneline -30` for deploy/publish commits and CI workflow names;
 - the user's memory notes and earlier conversation (platforms they used, accounts they have);
 - an existing Deployer project / API key / app for this site (a `deployer-<slug>-<role>.json`
-  config, or `GET <url>/v1/projects/{id}/apps` listing an app whose `repo_url` is this repo).
+  config, or `GET <url>/v1/projects/{id}/apps` listing an app whose `repo_url` is this repo - its
+  `target` says whether it already runs on the PC or on AWS / Firebase);
+- the cloud accounts connected to Deployer: MCP `list_cloud_targets` / `list_cloud_connections`, or
+  `GET <url>/v1/projects/{id}/cloud/targets` (`available: true` = an account is connected).
 
 Then ask, in this exact shape (adapt the list; keep the first line):
 
 > Which platform should I deploy this site to? Based on what I found, in order:
 > 1. **This Deployer instance** - an app for this repo already exists in project "Shop" (recommended)
-> 2. **Vercel** - `vercel.json` present and the last 3 deploy commits used it
-> 3. **Cloudflare Pages** / **Netlify** / **GitHub Pages** - no past use found
+> 2. **AWS through Deployer** (S3 + CloudFront for a static site, App Runner for a server) - keeps
+>    serving when the PC is off; an AWS account is connected in Deployer
+> 3. **Firebase through Deployer** (Hosting for a static site, Cloud Run for a server) - keeps serving
+>    when the PC is off; no Firebase account connected yet
+> 4. **Vercel** - `vercel.json` present and the last 3 deploy commits used it
+> 5. **Cloudflare Pages** / **Netlify** / **GitHub Pages** - no past use found
 >
 > Reply with a number or a name. I won't deploy until you pick one.
 
@@ -90,9 +102,10 @@ instead of raw HTTP: API keys tab → *Show usage* → **AI agents (MCP)** has t
 claude mcp add --transport http deployer <url>/v1/projects/<project_id>/mcp --header "Authorization: Bearer <key>"
 ```
 
-Tools: `list_data_sources`, `get_schema`, `run_query`, `list_rows`, `list_documents`, `list_apps`,
-`get_app`, `deployment_status`, `app_logs` (any key) plus `insert_/update_/delete_row`,
-`insert_/update_/delete_document` and `deploy_app` (service key only). Ask the user for an `anon` key
+Tools: `list_data_sources`, `get_schema`, `run_query`, `list_rows`, `list_documents` (any key) plus
+`insert_/update_/delete_row`, `insert_/update_/delete_document`, `list_apps`, `get_app`,
+`deploy_app`, `deployment_status`, `app_logs`, `list_cloud_connections` and `list_cloud_targets`
+(service key only; app tools report each app's `target` and cloud URL). Ask the user for an `anon` key
 unless they want the agent to change data or deploy; a `service` key can change production data.
 Limits: 200 rows / 256 KB per result, 60 tool calls a minute. Details: `docs/MCP.md`.
 
@@ -114,6 +127,10 @@ Deployer changes quickly. Before telling the user a feature exists, confirm it o
 | **Co-hosting, phase 1**: live two-way sync of a project's databases to a member's own PC, Git-style conflict resolution, per-row history | Available when `GET /v1/projects/{id}/cohosting/eligibility` exists (not yet exercised with a real second PC) | Members → *Co-host*; Databases → *Copy to my device*, copies, conflicts (`/projects/{id}/databases/{sid}/sync`) |
 | **Co-hosting, phase 2**: apps also running on co-host PCs behind one address with automatic failover | Available when `GET /v1/projects/{id}/apps/{app_id}` returns `cohost` (not yet exercised with two real PCs) | App → Settings → *Co-host this app* (admin); per-PC status there; header "Also running on N co-host PCs" |
 | MCP server for AI agents (data, queries, schema, apps; anon = read-only tools) | Available when `POST /v1/projects/{id}/mcp` answers `initialize` | API keys → *Show usage* → *AI agents (MCP)*, `docs/MCP.md` |
+| **AWS hosting** through Deployer: static sites on S3 + CloudFront (`aws_static`), full apps on App Runner (`aws_app`), custom domains; keeps serving with the PC off | Available when `GET /v1/projects/{id}/cloud/targets` exists and lists them `available` (an AWS account connected); not yet exercised against a live AWS account | Settings → Cloud accounts (owner); app → *Where should this run?* (admin); `docs/CLOUD.md` |
+| **Firebase hosting** through Deployer: Firebase Hosting (`firebase_hosting`), full apps on Cloud Run behind Hosting (`firebase_app`, Blaze plan), custom domains; keeps serving with the PC off | Available when `GET /v1/projects/{id}/cloud/targets` exists and lists them `available` (a Firebase account connected); not yet exercised against a live Google account | same as AWS |
+| Cloud databases (RDS, DynamoDB, Firestore, Realtime Database) | **Not built** (planned, `docs/CLOUD.md` C2) - cloud apps use their own database credentials under Environment for now | - |
+| Deploys that run without the PC (GitHub Actions builds) | **Not built** (planned, `docs/CLOUD.md` C3) - cloud apps serve with the PC off, but deploying needs it on | - |
 | Apps running on host devices | **Not built** (apps run on the main Deployer PC only) | - |
 
 Never describe a "being built" or "planned" feature as available; say what the user can do today
@@ -121,7 +138,8 @@ instead (e.g. "paste a token by hand for now").
 
 ## Step 2a - Deploy on this Deployer instance
 
-Only after the user picked **this Deployer instance**. The code must be in a Git repository the
+Only after the user picked **this Deployer instance**, **AWS through Deployer** or **Firebase through
+Deployer** (the cloud ones: see "Cloud targets" at the end of this step). The code must be in a Git repository the
 instance can clone over HTTPS (GitHub). For a private repository the **user** provides access -
 never ask for a token in chat:
 
@@ -178,6 +196,33 @@ never ask for a token in chat:
 Limits to tell the user: one PC, 512 MB RAM per app by default, no persistent volumes (use the
 project's databases), builds run through Docker on that PC and take a few minutes the first time.
 
+### Cloud targets (AWS / Firebase through Deployer)
+
+The same app, served from the user's own cloud account so it **keeps running when the PC is off**
+(check Feature status first):
+
+1. **Account**: the instance **owner** connects it under *Settings → Cloud accounts* (guided: an IAM
+   user with the policy shown there, or a Firebase service account with the listed roles; Deployer
+   validates it). Never ask for AWS keys or a service-account file in chat - the user pastes them there.
+2. **Target**: a project **admin** picks it under the app's *Where should this run?* (New app or app
+   Settings), or `target` + `cloud_connection_id` on `POST/PATCH .../apps`:
+   - static sites (preset `static`): `aws_static` (S3 + CloudFront) or `firebase_hosting`;
+   - servers (Node / Python / Dockerfile): `aws_app` (App Runner) or `firebase_app` (Cloud Run behind
+     Firebase Hosting; needs the Blaze plan).
+   Each costs money on the user's account (the chooser explains the cost drivers) - confirm with the user.
+3. **Environment**: cloud apps get **only their own variables** - no `DEPLOYER_URL`,
+   `DEPLOYER_API_KEY` or `DEPLOYER_DB_*`, because the PC may be off. A cloud app that needs data must use
+   a database reachable from the cloud with credentials set under Environment (Deployer's own cloud
+   databases are not built yet).
+4. **Deploy** as above (*Deploy now*, `deploy_app`, push webhook). The build log shows the cloud steps
+   (upload, rollout status); `deployment_status` returns `target_url`. First CloudFront rollouts take
+   ~15 minutes to answer.
+5. **Domain**: `POST .../apps/{app_id}/domains {hostname}` (admin, after the first deploy): with
+   Cloudflare linked the DNS records are created automatically; otherwise the app's Domains card lists
+   the records for the user to add, then *Check again*.
+6. **Moving or deleting** the app removes what Deployer created in the cloud account (the dashboard
+   lists it first; failures are reported by the teardown job).
+
 ## Step 2b - Frontend / serverless on an external platform
 
 Only after the user answered the platform question:
@@ -188,6 +233,7 @@ Only after the user answered the platform question:
 | Netlify | `netlify deploy --prod`, or Git integration | same, in *Site settings → Environment* |
 | Cloudflare Pages | `wrangler pages deploy <dir>` or Git integration | same; the Deployer tunnel can share the zone |
 | GitHub Pages | workflow that builds and publishes `dist/` | only the `anon` key (static site, public) |
+| AWS / Firebase through Deployer | See "Cloud targets" in Step 2a: the owner connects the account, an admin picks the target, then deploy as usual | `target`, `cloud_connection_id` on the app (admin) |
 | Deployer host device / co-host PC | Deploy on "this Deployer instance" first, then a project admin ticks *Co-host this app*: every co-host PC of the project (a member with the Co-host flag whose PC is shared with the project and, for apps with database access, holds live copies of its databases) builds and runs the same commit, and the app's hostnames fail over between PCs. Private repositories also need *Let co-hosts clone this private repository* (the token becomes readable on those PCs). | `cohost`, `cohost_share_repo_access` on the app (admin) |
 
 After deploying: open the site, run one real request against the data API from it, and check the

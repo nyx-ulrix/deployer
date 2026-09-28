@@ -18,6 +18,7 @@ import re
 import socket
 import subprocess
 import time
+import uuid
 from collections.abc import Callable
 
 from app.config import get_settings
@@ -77,11 +78,12 @@ class DockerCli:
         timeout: float = DOCKER_TIMEOUT,
         on_line: LineFn | None = None,
         check: bool = True,
+        stdin_text: str | None = None,
     ) -> str:
         log.debug("exec: %s", " ".join(args[:4]))
         proc = subprocess.Popen(  # noqa: S603 - argv list, no shell
             args,
-            stdin=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL if stdin_text is None else subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             cwd=cwd,
@@ -89,6 +91,10 @@ class DockerCli:
             text=True,
             errors="replace",
         )
+        if stdin_text is not None:  # secrets (registry passwords) travel on stdin, never in argv
+            assert proc.stdin is not None
+            proc.stdin.write(stdin_text)
+            proc.stdin.close()
         chunks: list[str] = []
         size = 0
         deadline = time.monotonic() + timeout
@@ -148,6 +154,33 @@ class DockerCli:
             timeout=BUILD_TIMEOUT,
             on_line=on_line,
         )
+
+    def export_dir(self, image: str, path: str, dest: str) -> None:
+        """Copies `path` out of `image` into the new directory `dest` (docs/CLOUD.md: a static site's
+        build output). Symlinks are copied as links; callers must not follow them."""
+        name = f"deployer-export-{uuid.uuid4().hex[:12]}"
+        self._run(["docker", "create", "--name", name, image])
+        try:
+            self._run(["docker", "cp", f"{name}:{path}/.", dest], timeout=600)
+        finally:
+            self._run(["docker", "rm", "-f", name], check=False)
+
+    def push(
+        self, local_tag: str, remote: str, *, registry: str, username: str, password: str, config_dir: str, on_line=None
+    ) -> None:
+        """Tags and pushes an image to a cloud registry (docs/CLOUD.md). The registry password goes to
+        `docker login --password-stdin`; the login lands in the throw-away `config_dir` (DOCKER_CONFIG),
+        never in the worker's own ~/.docker. Both tags are removed locally afterwards."""
+        env = {**os.environ, "DOCKER_CONFIG": config_dir}
+        self._run(
+            ["docker", "login", "--username", username, "--password-stdin", registry], env=env, stdin_text=password
+        )
+        self._run(["docker", "tag", local_tag, remote], env=env)
+        try:
+            self._run(["docker", "push", remote], env=env, timeout=BUILD_TIMEOUT, on_line=on_line)
+        finally:
+            self._run(["docker", "logout", registry], env=env, check=False)
+            self._run(["docker", "rmi", "-f", remote, local_tag], env=env, check=False)
 
     def run_container(self, name: str, image: str, *, labels: dict[str, str], env: dict[str, str]) -> None:
         """Starts a detached app container. Env values are passed through the process environment

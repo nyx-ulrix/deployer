@@ -17,7 +17,7 @@ import { AppSettings } from "./AppSettings";
 import { BuildLog } from "./BuildLog";
 import { DeploymentsTable } from "./DeploymentsTable";
 import { AppStatusDot } from "./DeploysTab";
-import { cohostSummary, isActive, PRESETS } from "./deploys";
+import { cohostSummary, DEPLOYMENT_STATUS, isActive, PRESETS, TARGET_SHORT } from "./deploys";
 import { RuntimeLogs } from "./RuntimeLogs";
 
 type Section = "deployments" | "logs" | "settings";
@@ -65,7 +65,7 @@ export function AppPage() {
     return <ErrorState title={missing ? "App not found" : "Couldn't load app"} error={app.error} onRetry={missing ? undefined : () => void app.refetch()} />;
   }
   const a = app.data;
-  const links = [...a.urls, a.local_url];
+  const links = [...a.urls, ...(a.local_url ? [a.local_url] : [])];
 
   return (
     <div className="space-y-4">
@@ -76,6 +76,7 @@ export function AppPage() {
         <AppStatusDot app={a} active={Boolean(active)} />
         <h2 className="min-w-0 truncate text-lg font-semibold">{a.name}</h2>
         <Badge>{PRESETS[a.preset].label}</Badge>
+        {a.target !== "local" && <Badge tone="info">{TARGET_SHORT[a.target]}</Badge>}
         <Badge tone={a.live_deployment?.status === "live" ? "success" : "neutral"}>{a.live_deployment?.status === "live" ? "Live" : "Not live"}</Badge>
         {cohostSummary(a) && <Badge tone="info">{cohostSummary(a)}</Badge>}
         {can("developer") && (
@@ -99,6 +100,18 @@ export function AppPage() {
           </a>
         ))}
       </div>
+
+      {a.cloud && (
+        <p className="text-xs text-muted">
+          Served from {a.cloud.connection_name ? `the ${a.cloud.connection_name} account` : "the cloud"} ({TARGET_SHORT[a.target]}): it keeps
+          running when this PC is off.{" "}
+          {active
+            ? `Rollout: ${DEPLOYMENT_STATUS[active.status].label.toLowerCase()}…`
+            : a.cloud.url
+              ? null
+              : "Not published yet — deploy to create the cloud resources."}
+        </p>
+      )}
 
       <Tabs<Section>
         value={section}
@@ -138,7 +151,17 @@ export function AppPage() {
             )}
           </div>
         ))}
-      {section === "logs" && <RuntimeLogs projectId={project.id} appId={appId} />}
+      {section === "logs" &&
+        (a.target === "local" ? (
+          <RuntimeLogs projectId={project.id} appId={appId} />
+        ) : (
+          <Card>
+            <p className="text-sm text-muted">
+              This app runs in the cloud: its runtime logs are in the {a.cloud?.provider === "aws" ? "AWS console (App Runner or CloudFront)" : "Google Cloud console (Cloud Run → Logs)"}. Build
+              and rollout logs are on each deployment.
+            </p>
+          </Card>
+        ))}
       {section === "settings" && <AppSettings projectId={project.id} app={a} canEdit={can("developer")} isAdmin={can("admin")} />}
     </div>
   );

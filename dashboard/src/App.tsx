@@ -26,6 +26,7 @@ import { ProjectLayout } from "./features/projects/ProjectLayout";
 import { ProjectSettingsTab } from "./features/projects/ProjectSettingsTab";
 import { ProjectsPage } from "./features/projects/ProjectsPage";
 import { AccountSettingsPage } from "./features/settings/AccountSettingsPage";
+import { CloudAccountsPage } from "./features/settings/CloudAccountsPage";
 import { InstanceSettingsPage } from "./features/settings/InstanceSettingsPage";
 import { MonitoringPage } from "./features/monitoring/MonitoringPage";
 import { RemoteAccessPage } from "./features/remote-access/RemoteAccessPage";
@@ -152,6 +153,14 @@ const router = createBrowserRouter([
                 element: (
                   <RequireInstanceOwner>
                     <RemoteAccessPage />
+                  </RequireInstanceOwner>
+                ),
+              },
+              {
+                path: "/settings/cloud",
+                element: (
+                  <RequireInstanceOwner>
+                    <CloudAccountsPage />
                   </RequireInstanceOwner>
                 ),
               },

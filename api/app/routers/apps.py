@@ -15,9 +15,9 @@ from sqlalchemy import select
 from app.crypto import encrypt_secret
 from app.db import get_sessionmaker
 from app.deps import DbSession, ProjectAccess, require_role
-from app.errors import ApiError, forbidden, not_found
+from app.errors import ApiError, conflict, forbidden, not_found
 from app.models import App, AppReplica, Deployment, Domain
-from app.services import audit, cohost_apps, deployments, device_rpc, github, jobs, rate_limit
+from app.services import audit, cloud, cloud_deploy, cohost_apps, deployments, device_rpc, github, jobs, rate_limit
 from app.services import remote_access as ra
 
 router = APIRouter(tags=["apps"])
@@ -29,6 +29,7 @@ Admin = Annotated[ProjectAccess, Depends(require_role("admin"))]
 BASE = "/projects/{project_id}/apps"
 _COMMAND = Field(default=None, max_length=500)
 _BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
+Target = Literal["local", "aws_static", "aws_app", "firebase_hosting", "firebase_app"]
 
 
 def _one_line(value: str | None) -> str | None:
@@ -58,6 +59,9 @@ class AppFields(BaseModel):
     # docs/COHOSTING.md "Websites on both PCs" (admin-only)
     cohost: bool | None = None
     cohost_share_repo_access: bool | None = None
+    # docs/CLOUD.md: where it runs (admin-only to change) and with which cloud connection.
+    target: Target | None = None
+    cloud_connection_id: str | None = Field(default=None, max_length=36)
 
     @field_validator("install_command", "build_command", "start_command", "output_dir", "repo_token", "branch")
     @classmethod
@@ -185,6 +189,71 @@ def _audit_cohost(db, request: Request, access: ProjectAccess, app: App) -> None
     )
 
 
+def _check_target(db, app: App) -> None:
+    """docs/CLOUD.md: a cloud target needs a usable connection of its provider, a static preset for the
+    static targets, and none of the switches that tie an app to this PC."""
+    if app.target == "local":
+        app.cloud_connection_id = None
+        return
+    cloud.usable_connection(db, app.project_id, app.cloud_connection_id, app.target)
+    if app.target in cloud.STATIC_TARGETS and app.preset != "static":
+        raise ApiError(
+            422,
+            "validation_error",
+            f"{cloud.TARGETS[app.target]['label']} serves static files: use the static preset, or a full-app target",
+            {"field": "target"},
+        )
+    for field in ("database_access", "cohost", "api_key_id"):
+        if getattr(app, field):
+            raise ApiError(
+                422,
+                "validation_error",
+                f"{field} ties an app to this PC and is not available on cloud targets",
+                {"field": field},
+            )
+
+
+def _switch_target(db, request: Request, access: ProjectAccess, app: App, before: tuple) -> str | None:
+    """The target or connection changed: the old target's resources are torn down (job), the local
+    container removed, deployments forget their artifacts (they belong to the old target). Returns the job id."""
+    target, connection_id, state = before
+    if db.scalar(
+        select(Deployment.id).where(Deployment.app_id == app.id, Deployment.status.in_(deployments.ACTIVE_STATUSES))
+    ):
+        raise conflict("deployment_active", "Wait for the running deployment to finish (or cancel it) first")
+    if deployments.app_domains(db, app.id):
+        raise conflict("domains_exist", "Remove the app's custom domains first; add them again on the new target")
+    old = App(id=app.id, project_id=app.project_id, target=target, cloud_connection_id=connection_id, cloud_state=state)
+    job_id = cloud_deploy.enqueue_teardown(db, old, access.user.id)
+    if target == "local" and app.live_deployment_id:
+        job_id = jobs.enqueue(
+            db,
+            type="app.remove",
+            params={"app_id": app.id, "slug": app.slug},
+            project_id=app.project_id,
+            created_by_id=access.user.id,
+        ).id
+    for dep in db.scalars(select(Deployment).where(Deployment.app_id == app.id)):
+        dep.image_tag = None
+        if dep.status == "live":
+            dep.status = "superseded"
+    app.live_deployment_id, app.cloud_state = None, None
+    if app.target != "local":  # the switches that tie an app to this PC go off
+        app.database_access, app.cohost, app.cohost_share_repo_access, app.api_key_id = False, False, False, None
+    audit.record(
+        db,
+        "app.target",
+        request=request,
+        user_id=access.user.id,
+        project_id=app.project_id,
+        app_id=app.id,
+        target=app.target,
+        previous=target,
+        cloud_connection_id=app.cloud_connection_id,
+    )
+    return job_id
+
+
 def _dispatch(job) -> None:
     if job is not None:
         jobs.dispatch(job.id)
@@ -234,8 +303,13 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
         port=deployments.allocate_port(db),
         created_by_id=access.user.id,
         github_connection_user_id=access.user.id if body.use_github_connection else None,
+        target=body.target or "local",
+        cloud_connection_id=body.cloud_connection_id,
     )
     _check_preset(app)
+    if app.target != "local" and not access.at_least("admin"):
+        raise forbidden("Only project admins can put an app on a cloud target (it is billed to the cloud account)")
+    _check_target(db, app)
     deployments.set_env(app, body.env or {})
     if body.repo_token:
         app.repo_token_encrypted = encrypt_secret(body.repo_token)
@@ -251,6 +325,7 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
         project_id=project.id,
         app_id=app.id,
         preset=app.preset,
+        target=app.target,
     )
     if app.database_access:
         _audit_database_access(db, request, access, app)
@@ -279,6 +354,7 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
         _check_database_access(access, body.database_access and not app.database_access)
     access_before = app.database_access
     cohost_before = app.cohost
+    target_before = (app.target, app.cloud_connection_id, app.cloud_state)
     cohost_changed = _check_cohost(access, app, body)
     if "repo_url" in changed and body.repo_url and body.repo_url != app.repo_url and app.github_connection_user_id:
         # The webhook belongs to the old repository; only the connection's owner may point it elsewhere.
@@ -310,15 +386,26 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
             app.root_dir = value or "."
         elif field in ("database_access", "cohost", "cohost_share_repo_access"):
             setattr(app, field, bool(value))
+        elif field == "target":
+            app.target = value or "local"
         elif value is not None or field in (
             "install_command",
             "build_command",
             "start_command",
             "output_dir",
             "container_port",
+            "cloud_connection_id",
         ):
             setattr(app, field, value)
     _check_preset(app)
+    teardown_job = None
+    if app.target == "local":
+        app.cloud_connection_id = None
+    if (app.target, app.cloud_connection_id) != target_before[:2]:
+        if not access.at_least("admin"):
+            raise forbidden("Only project admins can change where an app runs")
+        teardown_job = _switch_target(db, request, access, app, target_before)
+    _check_target(db, app)
     audit.record(
         db,
         "app.update",
@@ -335,18 +422,22 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
     if cohost_changed:
         _audit_cohost(db, request, access, app)
     db.commit()
+    if teardown_job:
+        jobs.dispatch(teardown_job)
     if cohost_changed:
         cohost_apps.replicate(get_sessionmaker(), app.id, user_id=access.user.id, retry=True)
         ra.sync_desired(db)  # the apps tunnel may be new: start its connector on this PC
     db.refresh(app)
-    return deployments.app_out(db, app)
+    return {**deployments.app_out(db, app), "teardown_job_id": teardown_job}
 
 
 @router.delete(BASE + "/{app_id}")
 def delete_app(app_id: str, request: Request, access: Admin, db: DbSession) -> dict:
     app = deployments.get_app(db, access.project.id, app_id)
+    teardown_job = cloud_deploy.enqueue_teardown(db, app, access.user.id)  # also the cloud domains' records
     for domain in deployments.app_domains(db, app.id):
-        ra.remove_hostname(db, domain.id, request=request, user_id=access.user.id)  # DNS + ingress; commits
+        if domain.target_type != "cloud_app":
+            ra.remove_hostname(db, domain.id, request=request, user_id=access.user.id)  # DNS + ingress; commits
     for dep in db.scalars(
         select(Deployment).where(Deployment.app_id == app.id, Deployment.status.in_(deployments.ACTIVE_STATUSES))
     ):
@@ -371,7 +462,9 @@ def delete_app(app_id: str, request: Request, access: Admin, db: DbSession) -> d
     db.delete(app)
     db.commit()
     jobs.dispatch(job.id)
-    return {"job_id": job.id}
+    if teardown_job:
+        jobs.dispatch(teardown_job)
+    return {"job_id": job.id, "teardown_job_id": teardown_job}
 
 
 @router.get(BASE + "/{app_id}/env")
@@ -553,6 +646,8 @@ def _reroute(db: DbSession, app: App, user_id: str) -> None:
 def add_domain(app_id: str, body: HostnameBody, request: Request, access: Admin, db: DbSession) -> dict:
     app = deployments.get_app(db, access.project.id, app_id)
     host = ra.normalize_hostname(body.hostname)
+    if app.target != "local":
+        return _add_cloud_domain(db, request, access, app, host)
     zone = ra.zone_for_hostname(db, host)
     out = ra.add_hostname(
         db,
@@ -569,12 +664,70 @@ def add_domain(app_id: str, body: HostnameBody, request: Request, access: Admin,
     return out
 
 
+def _add_cloud_domain(db, request: Request, access: ProjectAccess, app: App, host: str) -> dict:
+    """docs/CLOUD.md "Custom domains": the target is asked for the hostname; with Cloudflare linked (and a
+    zone containing it) the records it needs are created there, otherwise listed to add by hand."""
+    if db.scalar(select(Domain.id).where(Domain.hostname == host)) is not None:
+        raise conflict("domain_exists", f"{host} is already configured")
+    zone = None
+    if ra.is_linked(db):
+        try:
+            zone = ra.zone_for_hostname(db, host)
+        except ApiError as exc:
+            if exc.code != "zone_not_found":
+                raise
+    domain = cloud_deploy.add_domain(db, app, host, zone)
+    job_id = cloud_deploy.enqueue_domain_check(db, domain, access.user.id)
+    audit.record(
+        db,
+        "app.domain_add",
+        request=request,
+        user_id=access.user.id,
+        project_id=app.project_id,
+        app_id=app.id,
+        hostname=host,
+        target=app.target,
+        cloudflare=zone is not None,
+    )
+    db.commit()
+    jobs.dispatch(job_id)
+    return ra.domain_out(domain)
+
+
+@router.post(BASE + "/{app_id}/domains/{domain_id}/check", status_code=202)
+def check_domain(app_id: str, domain_id: str, access: Admin, db: DbSession) -> dict:
+    """Cloud targets: look for the DNS records / validation again (after adding them by hand)."""
+    app = deployments.get_app(db, access.project.id, app_id)
+    domain = db.get(Domain, domain_id)
+    if domain is None or domain.app_id != app.id or domain.target_type != "cloud_app":
+        raise not_found("Domain")
+    job_id = cloud_deploy.enqueue_domain_check(db, domain, access.user.id)
+    db.commit()
+    jobs.dispatch(job_id)
+    return {"job_id": job_id}
+
+
 @router.delete(BASE + "/{app_id}/domains/{domain_id}")
 def remove_domain(app_id: str, domain_id: str, request: Request, access: Admin, db: DbSession) -> dict:
     app = deployments.get_app(db, access.project.id, app_id)
     domain = db.get(Domain, domain_id)
     if domain is None or domain.app_id != app.id:
         raise not_found("Domain")
+    if domain.target_type == "cloud_app":
+        warnings = cloud_deploy.remove_domain(db, app, domain)
+        hostname = domain.hostname
+        db.delete(domain)
+        audit.record(
+            db,
+            "app.domain_remove",
+            request=request,
+            user_id=access.user.id,
+            project_id=app.project_id,
+            app_id=app.id,
+            hostname=hostname,
+        )
+        db.commit()
+        return {"ok": True, "warnings": warnings}
     ra.remove_hostname(db, domain.id, request=request, user_id=access.user.id)
     _reroute(db, app, access.user.id)
     return {"ok": True}

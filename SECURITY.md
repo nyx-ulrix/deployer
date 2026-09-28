@@ -71,6 +71,21 @@ Security fixes are made for the latest release. Update with `deployer update`.
   user who started the flow. Disconnecting (Account settings) deletes the token; revoke the grant at
   github.com/settings/applications as well. Prefer a fine-grained, read-only per-repository token
   (the manual path) when that broad scope is not acceptable.
+- **Cloud accounts** ([docs/CLOUD.md](docs/CLOUD.md)): the instance owner stores an AWS access key
+  (optionally assuming a role) or a Google service-account key per connection, encrypted with
+  `MASTER_KEY` (AES-256-GCM), validated on save and never returned by any endpoint, log, audit entry or
+  MCP tool (lists show the account id / project and the key's last 4 characters only). Scope it: a
+  dedicated IAM user with the policy shown in the dashboard (every resource named `deployer-*`, one
+  IAM role it may create and pass) or a dedicated service account with the listed roles; a connection
+  can be limited to one project. Project admins choose which connection an app uses, so they can
+  create billable resources in that account; developers and API keys cannot. In the worker the keys
+  live only in memory for a job: registry passwords/tokens reach `docker login` on stdin with a
+  throw-away `DOCKER_CONFIG`, never argv; the Google token endpoint is fixed (a key file's `token_uri`
+  is ignored), Google URLs are built from validated ids, and the Hosting upload URL must be Google's.
+  Cloud apps receive only their own environment variables - no API key, no data API URL, no database
+  credentials of this PC. Build output uploaded to S3 / Hosting skips symlinks, so a build cannot
+  publish the worker's own files. Removing a connection deletes the stored key; delete the key
+  in AWS / Google too when you no longer need it.
 - **Rate limits:** sign-in 10 attempts / 15 min per IP+email; project API keys 600 requests / min per
   key (instance setting `api_key_rate_limit`); MCP 60 tool calls / min per key; GitHub webhooks per
   app. Over a limit: `429 rate_limited` with a `Retry-After` header.

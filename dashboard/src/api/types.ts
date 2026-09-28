@@ -764,7 +764,13 @@ export type Domain = {
   status: "pending" | "active" | "error";
   status_message: string | null;
   url: string;
+  /** cloudflare (tunnel hostname) | aws | firebase (a cloud target's custom domain, docs/CLOUD.md). */
+  provider?: string;
+  /** docs/CLOUD.md "Custom domains": records the cloud target needs; `created` = made in Cloudflare. */
+  dns_records?: DnsRecord[];
 };
+
+export type DnsRecord = { type: string; name: string; value: string; created: boolean; error: string | null };
 
 export type RemoteAccessMode = "off" | "cloudflare" | "quick";
 
@@ -826,6 +832,70 @@ export type Deployment = {
   /** Only with `?log=1`. */
   log?: string;
   job_id: string | null;
+  /** docs/CLOUD.md: the cloud URL this deployment went live on (null for `local`). */
+  target_url?: string | null;
+};
+
+// ---- Cloud hosting (docs/CLOUD.md) ----
+
+export type AppTarget = "local" | "aws_static" | "aws_app" | "firebase_hosting" | "firebase_app";
+export type CloudProvider = "aws" | "firebase";
+
+export type CloudTarget = {
+  id: AppTarget;
+  label: string;
+  provider: CloudProvider | null;
+  kind: "any" | "static" | "app";
+  for: string;
+  when_pc_off: string;
+  cost: string;
+  uses_deployer_data: boolean;
+  /** Whether this project has a connection for it. */
+  available: boolean;
+};
+
+export type CloudConnection = {
+  id: string;
+  provider: CloudProvider;
+  name: string;
+  project_id: string | null;
+  status: "ok" | "error";
+  status_message: string | null;
+  account: {
+    account_id?: string | null;
+    region?: string | null;
+    role_arn?: string | null;
+    access_key_id_last4?: string;
+    project_id?: string | null;
+    client_email?: string | null;
+  };
+  apps_using?: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CloudConnectionInput = {
+  provider: CloudProvider;
+  name: string;
+  project_id?: string | null;
+  aws?: { access_key_id: string; secret_access_key: string; region: string; role_arn?: string | null };
+  firebase?: { service_account_json: string; project_id?: string | null; region?: string | null };
+};
+
+export type CloudRequirements = {
+  aws: { policy: unknown };
+  firebase: {
+    roles: { role: string; title: string; why: string }[];
+    apis: { api: string; title: string; only_for?: string }[];
+  };
+};
+
+export type AppCloud = {
+  provider: CloudProvider | null;
+  connection_name: string | null;
+  url: string | null;
+  /** What Deployer created in the cloud account (removed on delete / target switch). */
+  resources: string[];
 };
 
 export type App = {
@@ -855,8 +925,13 @@ export type App = {
   /** Set when the app clones (and got its webhook) through someone's GitHub connection. */
   github: { connected_by_email: string; hook_active: boolean } | null;
   port: number;
-  local_url: string;
+  /** null for cloud targets. */
+  local_url: string | null;
   urls: string[];
+  /** docs/CLOUD.md: where it runs; `cloud` is null for `local`. */
+  target: AppTarget;
+  cloud_connection_id: string | null;
+  cloud: AppCloud | null;
   live_deployment: Deployment | null;
   domains: Domain[];
   created_at: string;
@@ -882,6 +957,9 @@ export type AppInput = {
   cohost_share_repo_access?: boolean;
   /** Clone + add the push webhook with the caller's GitHub connection (instead of `repo_token`). */
   use_github_connection?: boolean;
+  /** docs/CLOUD.md (admin-only to change). */
+  target?: AppTarget;
+  cloud_connection_id?: string | null;
 };
 
 /** `POST /apps` also returns what couldn't be set up automatically (e.g. the webhook). */

@@ -4,7 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Eye, Globe, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import type { App, AppPatch, AppReplica, AppWebhook, Domain } from "../../api/types";
+import type { App, AppPatch, AppReplica, AppWebhook, DnsRecord, Domain } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -15,7 +15,7 @@ import { useToast } from "../../components/ui/toast-context";
 import { relativeTime } from "../../lib/format";
 import { JobProgressPanel } from "../jobs/JobProgress";
 import { AppFormFields } from "./AppForm";
-import { draftErrors, draftToPatch, emptyDraft, envToRows, rowsToEnv, type EnvRow } from "./deploys";
+import { draftErrors, draftToPatch, emptyDraft, envToRows, rowsToEnv, TARGET_SHORT, type EnvRow } from "./deploys";
 import { EnvEditor } from "./EnvEditor";
 
 type Props = { projectId: string; app: App; canEdit: boolean; isAdmin: boolean };
@@ -27,7 +27,7 @@ export function AppSettings(props: Props) {
       <EnvCard {...props} />
       <WebhookCard {...props} />
       <DomainsCard {...props} />
-      {(props.isAdmin || props.app.cohost) && <CohostCard {...props} />}
+      {(props.isAdmin || props.app.cohost) && props.app.target === "local" && <CohostCard {...props} />}
       {props.isAdmin && <DeleteCard {...props} />}
     </div>
   );
@@ -38,21 +38,29 @@ function GeneralCard({ projectId, app, canEdit, isAdmin }: Props) {
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState(() => emptyDraft(app));
   const [submitted, setSubmitted] = useState(false);
+  const [confirmMove, setConfirmMove] = useState(false);
+  const [teardownJob, setTeardownJob] = useState<string | null>(null);
   const errors = submitted ? draftErrors(draft) : {};
+  const moving =
+    draft.target !== app.target || (draft.target !== "local" && draft.cloud_connection_id !== (app.cloud_connection_id ?? ""));
   const save = useMutation({
     mutationFn: () => api.apps.update(projectId, app.id, draftToPatch(draft, app)),
-    onSuccess: (updated) => {
+    onSuccess: ({ teardown_job_id, ...updated }) => {
       queryClient.setQueryData(qk.app(projectId, app.id), updated);
       setDraft(emptyDraft(updated));
       setSubmitted(false);
-      toast.success("Settings saved. They apply on the next deploy.");
+      setConfirmMove(false);
+      if (teardown_job_id) setTeardownJob(teardown_job_id);
+      toast.success(moving ? "Target changed. Deploy to publish the app there." : "Settings saved. They apply on the next deploy.");
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't save"),
   });
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     setSubmitted(true);
-    if (Object.keys(draftErrors(draft)).length === 0) save.mutate();
+    if (Object.keys(draftErrors(draft)).length > 0) return;
+    if (moving) setConfirmMove(true);
+    else save.mutate();
   };
   return (
     <Card title="General" description="Repository, preset and build settings. Changes apply on the next deploy.">
@@ -90,7 +98,39 @@ function GeneralCard({ projectId, app, canEdit, isAdmin }: Props) {
           </div>
         )}
       </form>
+      {teardownJob && <JobProgressPanel projectId={projectId} jobId={teardownJob} title="Removing the previous target's resources" />}
+      <ConfirmDialog
+        open={confirmMove}
+        onClose={() => setConfirmMove(false)}
+        onConfirm={() => save.mutate()}
+        loading={save.isPending}
+        title={`Move “${app.name}” to ${TARGET_SHORT[draft.target]}?`}
+        description="The app stops being served where it runs now; deploy afterwards to publish it on the new target. Earlier deployments can no longer be rolled back to."
+        confirmLabel="Move app"
+      >
+        <TeardownList app={app} />
+      </ConfirmDialog>
     </Card>
+  );
+}
+
+/** What moving / deleting removes (docs/CLOUD.md): listed before confirming; failures are reported by the job. */
+function TeardownList({ app }: { app: App }) {
+  if (app.target === "local") {
+    return <p className="text-sm text-muted">Its container on this PC is stopped and removed.</p>;
+  }
+  const resources = app.cloud?.resources ?? [];
+  if (resources.length === 0) return <p className="text-sm text-muted">Nothing was created in the cloud account yet.</p>;
+  return (
+    <div className="text-sm">
+      <p className="font-medium">Deleted from the {app.cloud?.connection_name ?? "cloud"} account:</p>
+      <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted">
+        {resources.map((r) => (
+          <li key={r}>{r}</li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-muted">Removal runs as a job; anything that can't be removed is reported there, never skipped silently.</p>
+    </div>
   );
 }
 
@@ -115,7 +155,11 @@ function EnvCard({ projectId, app, isAdmin }: Props) {
   return (
     <Card
       title="Environment variables"
-      description="Stored encrypted; PORT, DEPLOYER_URL and DEPLOYER_PROJECT_ID are always added."
+      description={
+        app.target === "local"
+          ? "Stored encrypted; PORT, DEPLOYER_URL and DEPLOYER_PROJECT_ID are always added."
+          : "Stored encrypted and sent to the cloud service as its environment: only these, nothing from Deployer (no DEPLOYER_* variables)."
+      }
       actions={
         isAdmin && rows === null ? (
           <Button size="sm" icon={<Eye className="size-3.5" />} loading={reveal.isPending} onClick={() => reveal.mutate()}>
@@ -238,25 +282,40 @@ function DomainsCard({ projectId, app, isAdmin }: Props) {
   const [hostname, setHostname] = useState("");
   const [removing, setRemoving] = useState<Domain | null>(null);
   const refresh = () => queryClient.invalidateQueries({ queryKey: qk.app(projectId, app.id) });
+  const cloud = app.target !== "local";
   const add = useMutation({
     mutationFn: () => api.apps.addDomain(projectId, app.id, hostname.trim()),
     onSuccess: (d) => {
       setHostname("");
       void refresh();
-      toast.success(`${d.hostname} added. DNS can take a minute.`);
+      toast.success(cloud ? `${d.hostname} added. Validation can take a few minutes.` : `${d.hostname} added. DNS can take a minute.`);
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't add the hostname"),
   });
   const remove = useMutation({
     mutationFn: (d: Domain) => api.apps.removeDomain(projectId, app.id, d.id),
-    onSuccess: () => {
+    onSuccess: (r) => {
       setRemoving(null);
+      for (const w of r.warnings ?? []) toast.info(w, "Finish by hand");
       void refresh();
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't remove the hostname"),
   });
+  const check = useMutation({
+    mutationFn: (d: Domain) => api.apps.checkDomain(projectId, app.id, d.id),
+    onSuccess: () => toast.info("Checking again; the status updates in a moment."),
+    onError: (e) => toast.error(errorMessage(e), "Couldn't check"),
+  });
+  const reachable = cloud ? app.cloud?.url : app.local_url;
   return (
-    <Card title="Domains" description={`Always reachable at ${app.local_url}. Add a Cloudflare hostname for the public internet.`}>
+    <Card
+      title="Domains"
+      description={
+        cloud
+          ? `${reachable ? `Always reachable at ${reachable}. ` : ""}Add your own domain: with Cloudflare linked Deployer creates the DNS records, otherwise it lists them for you to add.`
+          : `Always reachable at ${reachable}. Add a Cloudflare hostname for the public internet.`
+      }
+    >
       {app.domains.length > 0 && (
         <ul className="mb-3 divide-y divide-border">
           {app.domains.map((d) => (
@@ -268,18 +327,25 @@ function DomainsCard({ projectId, app, isAdmin }: Props) {
               <Badge tone={d.status === "active" ? "success" : d.status === "error" ? "danger" : "warning"} title={d.status_message ?? undefined}>
                 {d.status}
               </Badge>
+              {isAdmin && cloud && d.status !== "active" && (
+                <Button size="sm" variant="ghost" icon={<RefreshCw className="size-3.5" />} loading={check.isPending} onClick={() => check.mutate(d)}>
+                  Check again
+                </Button>
+              )}
               {isAdmin && (
                 <Button size="icon-sm" variant="ghost" aria-label={`Remove ${d.hostname}`} onClick={() => setRemoving(d)}>
                   <Trash2 className="size-4" />
                 </Button>
               )}
+              {cloud && d.status_message && <p className="w-full text-xs text-muted">{d.status_message}</p>}
+              {cloud && (d.dns_records ?? []).length > 0 && <DnsRecords records={d.dns_records ?? []} />}
             </li>
           ))}
         </ul>
       )}
       {!isAdmin ? (
         app.domains.length === 0 && <p className="text-sm text-muted">No custom hostnames. Admins can add one.</p>
-      ) : linked ? (
+      ) : linked || cloud ? (
         <form
           className="flex flex-wrap gap-2"
           onSubmit={(e) => {
@@ -308,7 +374,11 @@ function DomainsCard({ projectId, app, isAdmin }: Props) {
           onConfirm={() => remove.mutate(removing)}
           loading={remove.isPending}
           title={`Remove ${removing.hostname}?`}
-          description="The DNS record and tunnel route are deleted; the app stays reachable on its local URL."
+          description={
+            cloud
+              ? "The hostname is detached from the cloud target and the DNS records Deployer created are deleted."
+              : "The DNS record and tunnel route are deleted; the app stays reachable on its local URL."
+          }
           confirmLabel="Remove"
         />
       )}
@@ -391,12 +461,19 @@ function DeleteCard({ projectId, app }: Props) {
     mutationFn: () => api.apps.remove(projectId, app.id),
     onSuccess: (r) => {
       setConfirming(false);
-      setJobId(r.job_id);
+      setJobId(r.teardown_job_id ?? r.job_id); // cloud apps: follow the teardown so its errors are shown
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't delete the app"),
   });
   return (
-    <Card title="Delete app" description="Stops and removes the containers, images, routes and hostnames. Deployments are gone for good.">
+    <Card
+      title="Delete app"
+      description={
+        app.target === "local"
+          ? "Stops and removes the containers, images, routes and hostnames. Deployments are gone for good."
+          : "Deletes everything Deployer created in the cloud account, and the app's deployments, for good."
+      }
+    >
       {jobId ? (
         <JobProgressPanel
           projectId={projectId}
@@ -425,7 +502,41 @@ function DeleteCard({ projectId, app }: Props) {
         description="This cannot be undone."
         confirmText={app.slug}
         confirmLabel="Delete app"
-      />
+      >
+        {app.target !== "local" && <TeardownList app={app} />}
+      </ConfirmDialog>
     </Card>
+  );
+}
+
+/** docs/CLOUD.md "Custom domains": the records the cloud target asks for. */
+function DnsRecords({ records }: { records: DnsRecord[] }) {
+  return (
+    <div className="w-full overflow-x-auto">
+      <table className="w-full text-left font-mono text-xs">
+        <thead className="text-muted">
+          <tr>
+            <th className="py-1 pr-3 font-normal">Type</th>
+            <th className="py-1 pr-3 font-normal">Name</th>
+            <th className="py-1 pr-3 font-normal">Value</th>
+            <th className="py-1 font-normal">
+              <span className="sr-only">Status</span>
+            </th>
+          </tr>
+        </thead>
+        <tbody>
+          {records.map((r) => (
+            <tr key={`${r.type} ${r.name} ${r.value}`} className="align-top">
+              <td className="py-1 pr-3">{r.type}</td>
+              <td className="break-all py-1 pr-3">{r.name}</td>
+              <td className="break-all py-1 pr-3">{r.value}</td>
+              <td className="py-1 font-sans">
+                {r.created ? <Badge tone="success">in Cloudflare</Badge> : r.error ? <span className="text-danger">{r.error}</span> : <Badge>add by hand</Badge>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }

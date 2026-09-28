@@ -17,6 +17,10 @@ import type {
   AppLogs,
   AppPatch,
   AppWebhook,
+  CloudConnection,
+  CloudConnectionInput,
+  CloudRequirements,
+  CloudTarget,
   AuthResponse,
   Deployment,
   DeploymentPage,
@@ -418,8 +422,11 @@ export const api = {
     detect: (pid: string, repo_url: string, branch?: string) =>
       client.post<AppDetectDraft>(`/projects/${e(pid)}/apps/detect`, branch ? { repo_url, branch } : { repo_url }),
     get: (pid: string, id: string) => client.get<App>(`/projects/${e(pid)}/apps/${e(id)}`),
-    update: (pid: string, id: string, body: AppPatch) => client.patch<App>(`/projects/${e(pid)}/apps/${e(id)}`, body),
-    remove: (pid: string, id: string) => client.del<{ job_id: string }>(`/projects/${e(pid)}/apps/${e(id)}`),
+    /** `teardown_job_id`: the target changed and the old cloud resources are being removed (docs/CLOUD.md). */
+    update: (pid: string, id: string, body: AppPatch) =>
+      client.patch<App & { teardown_job_id?: string | null }>(`/projects/${e(pid)}/apps/${e(id)}`, body),
+    remove: (pid: string, id: string) =>
+      client.del<{ job_id: string; teardown_job_id: string | null }>(`/projects/${e(pid)}/apps/${e(id)}`),
     env: (pid: string, id: string) => client.get<{ env: Record<string, string> }>(`/projects/${e(pid)}/apps/${e(id)}/env`),
     webhook: (pid: string, id: string) => client.get<AppWebhook>(`/projects/${e(pid)}/apps/${e(id)}/webhook`),
     rotateWebhook: (pid: string, id: string) => client.post<AppWebhook>(`/projects/${e(pid)}/apps/${e(id)}/webhook/rotate`),
@@ -438,7 +445,20 @@ export const api = {
     addDomain: (pid: string, id: string, hostname: string) =>
       client.post<Domain>(`/projects/${e(pid)}/apps/${e(id)}/domains`, { hostname }),
     removeDomain: (pid: string, id: string, domainId: string) =>
-      client.del<Ok>(`/projects/${e(pid)}/apps/${e(id)}/domains/${e(domainId)}`),
+      client.del<Ok & { warnings?: string[] }>(`/projects/${e(pid)}/apps/${e(id)}/domains/${e(domainId)}`),
+    checkDomain: (pid: string, id: string, domainId: string) =>
+      client.post<{ job_id: string }>(`/projects/${e(pid)}/apps/${e(id)}/domains/${e(domainId)}/check`),
+  },
+
+  // docs/CLOUD.md: the owner's cloud accounts, and the targets / connections a project may use.
+  cloud: {
+    list: () => client.get<{ connections: CloudConnection[] }>("/instance/cloud"),
+    requirements: () => client.get<CloudRequirements>("/instance/cloud/requirements"),
+    create: (body: CloudConnectionInput) => client.post<CloudConnection>("/instance/cloud", body),
+    check: (id: string) => client.post<CloudConnection>(`/instance/cloud/${e(id)}/check`),
+    remove: (id: string) => client.del<Ok>(`/instance/cloud/${e(id)}`),
+    projectConnections: (pid: string) => client.get<CloudConnection[]>(`/projects/${e(pid)}/cloud/connections`),
+    targets: (pid: string) => client.get<CloudTarget[]>(`/projects/${e(pid)}/cloud/targets`),
   },
 
   // DEPLOYMENTS.md "Connect a Git repository": the signed-in user's GitHub connection.
@@ -536,6 +556,10 @@ export const qk = {
   deployment: (id: string, appId: string, dep: string) => ["projects", id, "apps", appId, "deployments", dep] as const,
   appLogs: (id: string, appId: string) => ["projects", id, "apps", appId, "logs"] as const,
   github: ["integrations", "github"] as const,
+  cloudConnections: ["instance", "cloud"] as const,
+  cloudRequirements: ["instance", "cloud", "requirements"] as const,
+  projectCloudConnections: (id: string) => ["projects", id, "cloud", "connections"] as const,
+  cloudTargets: (id: string) => ["projects", id, "cloud", "targets"] as const,
   githubRepos: (q: string) => ["integrations", "github", "repos", q] as const,
   cohostEligibility: (id: string) => ["projects", id, "cohosting", "eligibility"] as const,
   /** Everything sync-related of one source (prefix of the keys below), invalidated after each resolve/restore. */

@@ -386,16 +386,20 @@ class Domain(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     hostname: Mapped[str] = mapped_column(String(253), unique=True, nullable=False)
+    # cloudflare (tunnel hostnames) | aws | firebase (docs/CLOUD.md: a cloud target's custom domain)
     provider: Mapped[str] = mapped_column(String(20), default="cloudflare", nullable=False)
     zone_id: Mapped[str | None] = mapped_column(String(64))
     zone_name: Mapped[str | None] = mapped_column(String(253))
     dns_record_id: Mapped[str | None] = mapped_column(String(64))
-    # dashboard | project | app (docs/DEPLOYMENTS.md: app hostnames route to the app's container)
+    # dashboard | project | app (docs/DEPLOYMENTS.md: app hostnames route to the app's container) |
+    # cloud_app (docs/CLOUD.md: served by the app's cloud target, never by the tunnel)
     target_type: Mapped[str] = mapped_column(String(12), default="dashboard", nullable=False)
     project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
     app_id: Mapped[str | None] = mapped_column(ForeignKey("apps.id", ondelete="CASCADE"), index=True)
     status: Mapped[str] = mapped_column(String(10), default="pending", nullable=False)  # pending | active | error
     status_message: Mapped[str | None] = mapped_column(Text)
+    # docs/CLOUD.md "Custom domains": DNS records a cloud target asks for ({type, name, value, cf_id?, zone_id?}).
+    dns_records: Mapped[list | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
@@ -506,6 +510,11 @@ class App(Base):
     )
     port: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)  # Caddy listener, 8100-8199, for life
     live_deployment_id: Mapped[str | None] = mapped_column(String(36))  # no FK: circular with deployments
+    # docs/CLOUD.md: local | aws_static | aws_app | firebase_hosting | firebase_app (admin-only to change)
+    target: Mapped[str] = mapped_column(String(20), default="local", server_default="local", nullable=False)
+    cloud_connection_id: Mapped[str | None] = mapped_column(ForeignKey("cloud_connections.id", ondelete="SET NULL"))
+    # Ids/names of the cloud resources Deployer created for the target (bucket, distribution, service...).
+    cloud_state: Mapped[dict | None] = mapped_column(JSON)
     created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
@@ -532,6 +541,27 @@ class Deployment(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
     rollback_of: Mapped[str | None] = mapped_column(String(36))
+    target_url: Mapped[str | None] = mapped_column(String(500))  # docs/CLOUD.md: the cloud URL it went live on
+
+
+class CloudConnection(Base):
+    """A user's own AWS or Firebase/Google Cloud credentials (docs/CLOUD.md "Cloud connections")."""
+
+    __tablename__ = "cloud_connections"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    provider: Mapped[str] = mapped_column(String(10), nullable=False)  # aws | firebase
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    # NULL = every project of the instance may use it; else only this project.
+    project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)
+    # encrypt_json: aws {access_key_id, secret_access_key, region, role_arn?, account_id}
+    #               firebase {service_account: {...}, project_id, region}
+    config_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(10), default="ok", nullable=False)  # ok | error
+    status_message: Mapped[str | None] = mapped_column(Text)
+    created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
 
 class AppReplica(Base):

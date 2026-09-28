@@ -44,6 +44,11 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
   (static site, Node, Python or your own Dockerfile) and adds the webhook; every push builds it on this PC and swaps it in behind Caddy with zero downtime,
   rollbacks, build and runtime logs, and `https://shop.example.com` through the same Cloudflare
   tunnel ([docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md)).
+- **Cloud hosting on your own AWS or Firebase account** - pick per app where it runs: this PC, AWS
+  (static sites on S3 + CloudFront, full apps on App Runner) or Firebase (Hosting, full apps on Cloud
+  Run). Cloud apps keep serving when this PC is off, get custom domains (DNS records created in
+  Cloudflare when linked) and are billed by AWS / Google to you; connect an account under
+  *Settings → Cloud accounts* ([docs/CLOUD.md](docs/CLOUD.md)).
 - **Monitoring and alerts** - CPU, memory, disk, every container and app, API traffic and error
   rate on *Settings → Monitoring*; alerts for low disk, crash-looping containers, failed backups, a
   down tunnel and more, sent to your own webhook (Slack, Discord, ntfy)
@@ -211,6 +216,10 @@ For push-to-deploy, copy the webhook URL and secret from the app's **Settings** 
 repository (*Settings → Webhooks*, content type `application/json`, just the push event). Every push
 to the configured branch becomes a deployment; a failed build or start leaves the previous one
 running, and older successful deployments can be rolled back to. Details: [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md).
+
+To serve an app from the cloud instead (it keeps running when this PC is off), the instance owner
+connects an AWS or Firebase account under *Settings → Cloud accounts*, and a project admin picks the
+target under *Where should this run?* in the app's settings ([docs/CLOUD.md](docs/CLOUD.md)).
 
 ## Deployer Control
 

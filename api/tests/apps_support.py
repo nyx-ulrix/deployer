@@ -60,6 +60,25 @@ class FakeDockerCli(DockerCli):
         if on_line:
             on_line("#1 [internal] load build definition")
 
+    # docs/CLOUD.md: static build output and registry pushes
+    site = {"index.html": "<h1>hi</h1>", "assets/app-1a2b3c4d.js": "console.log(1)", "logo.png": "png"}
+
+    def export_dir(self, image, path, dest):
+        self._step("export", image, path)
+        for rel, text in self.site.items():
+            os.makedirs(os.path.dirname(os.path.join(dest, rel)), exist_ok=True)
+            with open(os.path.join(dest, rel), "w", encoding="utf-8") as fh:
+                fh.write(text)
+        try:  # a build that links to the worker's own files: never uploaded
+            os.symlink(os.path.abspath(__file__), os.path.join(dest, "leak.txt"))
+        except OSError:
+            pass  # Windows without symlink rights
+
+    def push(self, local_tag, remote, *, registry, username, password, config_dir, on_line=None):
+        self._step("push", local_tag, remote, registry, username)
+        self.passwords = [*getattr(self, "passwords", []), password]
+        self.images.discard(local_tag)
+
     def run_container(self, name, image, *, labels, env):
         self._step("run", name, image)
         self.containers[name] = {"image": image, "labels": labels, "env": env}

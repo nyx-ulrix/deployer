@@ -19,7 +19,15 @@ READ_TOOLS = {
     "list_documents",
 }
 # App tools need a service key (or a developer+ session): anon keys are meant for public clients.
-APP_TOOLS = {"list_apps", "get_app", "deployment_status", "app_logs", "deploy_app"}
+APP_TOOLS = {
+    "list_apps",
+    "get_app",
+    "deployment_status",
+    "app_logs",
+    "deploy_app",
+    "list_cloud_connections",
+    "list_cloud_targets",
+}
 WRITE_TOOLS = {"insert_row", "update_row", "delete_row", "insert_document", "update_document", "delete_document"}
 
 

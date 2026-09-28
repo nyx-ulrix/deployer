@@ -53,7 +53,7 @@ def test_create_list_get_and_roles(client, env, db):
         "build_command", "start_command", "output_dir", "container_port", "env_keys", "has_repo_token",
         "api_key_id", "database_access", "cohost", "cohost_share_repo_access", "replicas", "github", "port",
         "local_url", "urls", "live_deployment", "domains",
-        "created_at", "updated_at", "warnings",
+        "created_at", "updated_at", "warnings", "target", "cloud_connection_id", "cloud",
     }  # fmt: skip
     assert app["github"] is None and app["warnings"] == []
     assert (app["slug"], app["port"], app["branch"], app["root_dir"]) == ("my-shop", 8100, "main", ".")

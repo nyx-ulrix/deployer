@@ -3,6 +3,7 @@ import { api, qk } from "../../api/endpoints";
 import { useDataSources } from "../../api/hooks";
 import type { AppPreset } from "../../api/types";
 import { Checkbox, Field, Input, Select } from "../../components/ui/Input";
+import { TargetChooser } from "./TargetChooser";
 import { databaseEnvNames, FIELD_LABELS, PRESETS, reachableSources, REQUIRED_FIELDS, slugify, type AppDraft } from "./deploys";
 
 const PRESET_ORDER: AppPreset[] = ["static", "node", "python", "dockerfile"];
@@ -154,7 +155,9 @@ export function AppFormFields({
         </Field>
       </div>
 
-      {isAdmin ? (
+      <TargetChooser projectId={projectId} draft={draft} onChange={onChange} isAdmin={isAdmin} error={errors.target} disabled={disabled} />
+
+      {draft.target !== "local" ? null : isAdmin ? (
         <Field label="Attach an API key" optional hint="Injected as DEPLOYER_API_KEY (with DEPLOYER_URL and DEPLOYER_PROJECT_ID) so the app can call this project's data API.">
           {(id) => (
             <Select id={id} value={draft.api_key_id} onChange={(e) => onChange({ api_key_id: e.target.value })} disabled={disabled || keys.isPending}>
@@ -173,7 +176,9 @@ export function AppFormFields({
         <p className="text-xs text-muted">Project admins can attach an API key so the app gets DEPLOYER_API_KEY at runtime.</p>
       )}
 
-      <DatabaseAccess projectId={projectId} checked={draft.database_access} onChange={(v) => onChange({ database_access: v })} isAdmin={isAdmin} disabled={disabled} />
+      {draft.target === "local" && (
+        <DatabaseAccess projectId={projectId} checked={draft.database_access} onChange={(v) => onChange({ database_access: v })} isAdmin={isAdmin} disabled={disabled} />
+      )}
     </div>
   );
 }

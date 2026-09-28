@@ -55,6 +55,27 @@ GitHub push ──webhook──▶ api ──job app.deploy──▶ worker (roo
   (REMOTE_ACCESS.md). The API has no Docker access, so it then enqueues `app.route` (only when the
   app has a live deployment) and the worker rewrites the Caddy file with the host block above.
 
+## Hosting targets (docs/CLOUD.md)
+
+Where an app runs is its `target`: `local` (default, everything in this document) or a cloud target on
+the user's own AWS / Firebase account, which keeps serving when this PC is off:
+
+| `target` | Serves | Preset |
+|---|---|---|
+| `local` | container on this PC behind Caddy | any |
+| `aws_static` | S3 (private) + CloudFront | `static` |
+| `aws_app` | ECR image on App Runner | any |
+| `firebase_hosting` | Firebase Hosting | `static` |
+| `firebase_app` | Artifact Registry image on Cloud Run, behind Firebase Hosting | any |
+
+Cloud targets are built on this PC exactly like `local` apps (same presets, same build log), then
+published by `cloud_deploy.go_live` instead of `docker run` + Caddy. They never get `DEPLOYER_URL`,
+`DEPLOYER_API_KEY` or `DEPLOYER_DB_*` (so `api_key_id`, `database_access` and `cohost` are refused for
+them), only the app's own variables. Only project admins pick a target and its cloud connection
+(`cloud_connection_id`); moving or deleting a cloud app tears down what Deployer created there (job
+`app.cloud_teardown`). Custom domains of cloud apps go to the cloud target (with DNS records created in
+Cloudflare when linked) instead of the tunnel. Details, API and permissions: [CLOUD.md](CLOUD.md).
+
 ## Database access
 
 Off by default. An app normally reaches its project's data only through the data API
@@ -226,10 +247,10 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
 |---|---|---|---|---|
 | GET | `/apps` | viewer+ | – | `App[]` |
 | POST | `/apps/detect` | developer+ | `{repo_url, branch?}` | draft `{name, repo_url, branch, root_dir, preset, install_command, build_command, start_command, output_dir, container_port, env_keys, database_access_suggested, detected: [{what, from}], warnings, private}`, never stored ("Connect a Git repository") |
-| POST | `/apps` | developer+ | `{name, repo_url, branch?, root_dir?, preset, install_command?, build_command?, start_command?, output_dir?, container_port?, env?: {k:v}, repo_token?, use_github_connection?, api_key_id?, database_access?, cohost?, cohost_share_repo_access?}` | `App & {warnings: string[]}` (201); allocates `port`, generates `webhook_secret`; `database_access: true` needs admin+; `use_github_connection` clones with the creator's GitHub connection and adds the webhook |
+| POST | `/apps` | developer+ | `{name, repo_url, branch?, root_dir?, preset, install_command?, build_command?, start_command?, output_dir?, container_port?, env?: {k:v}, repo_token?, use_github_connection?, api_key_id?, database_access?, cohost?, cohost_share_repo_access?, target?, cloud_connection_id?}` (a cloud `target` needs admin+, CLOUD.md) | `App & {warnings: string[]}` (201); allocates `port`, generates `webhook_secret`; `database_access: true` needs admin+; `use_github_connection` clones with the creator's GitHub connection and adds the webhook |
 | GET | `/apps/{id}` | viewer+ | – | `App` |
 | PATCH | `/apps/{id}` | developer+ | partial of the above (`repo_token: null` clears; turning `database_access` on needs admin+, 403 `forbidden`; changing `cohost` / `cohost_share_repo_access` needs admin+) | `App` (changes apply on the next deploy; `cohost` moves the hostnames between tunnels at once and starts the co-host copies of the live deployment) |
-| DELETE | `/apps/{id}` | admin+ | – | `{job_id}` (`app.remove`) |
+| DELETE | `/apps/{id}` | admin+ | – | `{job_id, teardown_job_id}` (`app.remove`; `app.cloud_teardown` for cloud targets, else null) |
 | GET | `/apps/{id}/env` | admin+ | – | `{env: {k:v}}` plain values (audit `app.env.reveal`) |
 | GET | `/apps/{id}/webhook` | developer+ | – | `{url, secret}` — url `<public_url>/v1/hooks/github/{app_id}`; audit `app.webhook.reveal` |
 | POST | `/apps/{id}/webhook/rotate` | developer+ | – | `{url, secret, hook_active, warnings}` (also updates the GitHub hook of a connected app) |
@@ -240,7 +261,8 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
 | POST | `/apps/{id}/deployments/{dep}/rollback` | developer+ | – | `Deployment` (202, new one) |
 | GET | `/apps/{id}/logs?tail=200&device_id=` | viewer+ | – | `{lines: string[], container}` — the last `tail` (≤ 500) lines the worker copied from `docker logs` of the live container into Redis (see below); `container` is the live container name or null. With `device_id`: the co-host copy's logs, read from that device (`apps.logs`; 503 `device_offline`) |
 | POST | `/apps/{id}/domains` | admin+ (uses the instance owner's Cloudflare link; 409 `not_linked`) | `{hostname, overwrite?}` | `Domain` (same rules as REMOTE_ACCESS.md, `target_type: app`, `app_id`; zone resolved from the hostname) |
-| DELETE | `/apps/{id}/domains/{domain_id}` | admin+ | – | `{ok}` |
+| DELETE | `/apps/{id}/domains/{domain_id}` | admin+ | – | `{ok}` (cloud targets: `{ok, warnings}`) |
+| POST | `/apps/{id}/domains/{domain_id}/check` | admin+ | – | `{job_id}` - cloud targets: look for the DNS records / validation again (CLOUD.md "Custom domains") |
 
 Webhook (no auth header): `POST /v1/hooks/github/{app_id}` with GitHub's `X-Hub-Signature-256`
 (HMAC-SHA256 of the raw body with the app's secret, constant-time compare; 401 `bad_signature`
@@ -263,10 +285,12 @@ type App = { id; project_id; name; slug; repo_url; branch; root_dir; preset; ins
   replicas: {device_id; device_name; online: boolean; status: "pending"|"building"|"live"|"failed"|"stopped";
              deployment_id; error; last_seen_at}[];
   github: {connected_by_email: string; hook_active: boolean} | null;  // "Connect a Git repository"
-  port: number; local_url: string; urls: string[]; live_deployment: Deployment|null;
+  port: number; local_url: string|null; urls: string[]; live_deployment: Deployment|null;
+  target: "local"|"aws_static"|"aws_app"|"firebase_hosting"|"firebase_app"; cloud_connection_id: string|null;
+  cloud: {provider; connection_name; url: string|null; resources: string[]} | null;   // docs/CLOUD.md
   domains: Domain[]; created_at; updated_at };
 type Deployment = { id; app_id; status; trigger; commit_sha; commit_message; branch; image_tag; created_at;
-  started_at; finished_at; error; rollback_of; log?: string; job_id };
+  started_at; finished_at; error; rollback_of; log?: string; job_id; target_url: string|null };
 ```
 
 `local_url` is `http://localhost:<port>` (or the public URL's host with the port when the public URL is

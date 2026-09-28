@@ -23,7 +23,7 @@ from app.errors import ApiError
 from app.routers import apps as apps_router
 from app.routers import query as query_router
 from app.routers import schema as schema_router
-from app.services import audit, introspection, rate_limit, source_ops
+from app.services import audit, cloud, deployments, introspection, rate_limit, source_ops
 from app.services.sources import get_source, project_sources
 
 log = logging.getLogger(__name__)
@@ -158,14 +158,29 @@ def t_get_app(ctx: Ctx, args: dict) -> Any:
     return apps_router.get_app(args["app_id"], ctx.access, ctx.db)
 
 
+def _where(ctx: Ctx, app_id: str) -> dict:
+    """docs/CLOUD.md: the app's target and the URL it serves on there."""
+    app = deployments.get_app(ctx.db, ctx.access.project.id, app_id)
+    cloud_info = deployments.cloud_out(ctx.db, app)
+    return {"target": app.target, "cloud_url": cloud_info["url"] if cloud_info else None}
+
+
 def t_deploy_app(ctx: Ctx, args: dict) -> Any:
-    return apps_router.deploy(args["app_id"], ctx.request, ctx.access, ctx.db, None)
+    return {**apps_router.deploy(args["app_id"], ctx.request, ctx.access, ctx.db, None), **_where(ctx, args["app_id"])}
 
 
 def t_deployment_status(ctx: Ctx, args: dict) -> Any:
     out = apps_router.get_deployment(args["app_id"], args["deployment_id"], ctx.access, ctx.db, log=1)
     out["log_tail"] = "\n".join((out.pop("log") or "").splitlines()[-LOG_TAIL_LINES:])
-    return out
+    return {**out, **_where(ctx, args["app_id"])}
+
+
+def t_list_cloud_connections(ctx: Ctx, args: dict) -> Any:
+    return [cloud.connection_out(c) for c in cloud.list_connections(ctx.db, ctx.access.project.id)]
+
+
+def t_list_cloud_targets(ctx: Ctx, args: dict) -> Any:
+    return {"targets": cloud.targets_out(ctx.db, ctx.access.project.id), "note": cloud.CLOUD_ENV_NOTE}
 
 
 def t_app_logs(ctx: Ctx, args: dict) -> Any:
@@ -295,28 +310,47 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     ),
     "list_apps": (
         "developer",
-        "List the project's apps (websites deployed from Git): id, name, repo, URLs, live deployment.",
+        "List the project's apps (websites deployed from Git): id, name, repo, target (local or a cloud "
+        "target), URLs, live deployment.",
         _schema(),
         t_list_apps,
     ),
     "get_app": (
         "developer",
-        "One app's settings, URLs, hostnames and live deployment.",
+        "One app's settings, target (where it runs: this PC or AWS / Firebase), cloud URL and resources, "
+        "URLs, hostnames and live deployment.",
         _schema(["app_id"], app_id=APP),
         t_get_app,
     ),
     "deploy_app": (
         "developer",
-        "Start a new deployment of an app from its branch. Poll deployment_status with the returned id.",
+        "Start a new deployment of an app from its branch, on the app's target (this PC, or its AWS / "
+        "Firebase account: cloud targets keep serving when the PC is off). Poll deployment_status with the "
+        "returned id.",
         _schema(["app_id"], app_id=APP),
         t_deploy_app,
     ),
     "deployment_status": (
         "developer",
         f"A deployment's status (queued, building, deploying, live, failed, cancelled, superseded), "
-        f"error and the last {LOG_TAIL_LINES} build log lines.",
+        f"error, target and target_url (the cloud URL it went live on) and the last {LOG_TAIL_LINES} log lines.",
         _schema(["app_id", "deployment_id"], app_id=APP, deployment_id=_p("string", "Deployment id")),
         t_deployment_status,
+    ),
+    "list_cloud_connections": (
+        "developer",
+        "The AWS / Firebase accounts this project's apps may deploy to: id, provider, name, account id / "
+        "project id, region, status. Never any credentials. Choosing one for an app is done by a project "
+        "admin in the dashboard (it is billed to that account).",
+        _schema(),
+        t_list_cloud_connections,
+    ),
+    "list_cloud_targets": (
+        "developer",
+        "Where an app can run: local (this PC) and the cloud targets aws_static, aws_app, firebase_hosting, "
+        "firebase_app, with what each is for, cost drivers, and whether this project has a connection for it.",
+        _schema(),
+        t_list_cloud_targets,
     ),
     "app_logs": (
         "developer",

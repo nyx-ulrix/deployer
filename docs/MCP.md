@@ -64,10 +64,12 @@ Results are text content holding compact JSON. API errors come back as tool resu
 | `insert_document` | `source_id`, `collection`, `document` | service | inserts a document, returns it with `_id` |
 | `update_document` | `source_id`, `collection`, `document_id`, `set?`, `unset?` | service | `$set` / `$unset` on one document |
 | `delete_document` | `source_id`, `collection`, `document_id` | service | deletes one document |
-| `list_apps` | – | service | the project's apps (push-to-deploy, [DEPLOYMENTS.md](DEPLOYMENTS.md)) |
-| `get_app` | `app_id` | service | one app: settings, URLs, hostnames, live deployment |
-| `deploy_app` | `app_id` | service | starts a deployment from the app's branch |
-| `deployment_status` | `app_id`, `deployment_id` | service | status, error and the last 100 build log lines |
+| `list_apps` | – | service | the project's apps (push-to-deploy, [DEPLOYMENTS.md](DEPLOYMENTS.md)) with their `target` |
+| `get_app` | `app_id` | service | one app: settings, `target`, `cloud` (`url`, `resources`), URLs, hostnames, live deployment |
+| `deploy_app` | `app_id` | service | starts a deployment from the app's branch on the app's target; adds `target` and `cloud_url` |
+| `deployment_status` | `app_id`, `deployment_id` | service | status, error, `target`, `target_url` (the cloud URL it went live on), `cloud_url` and the last 100 log lines |
+| `list_cloud_connections` | – | service | the AWS / Firebase accounts the project's apps may use ([CLOUD.md](CLOUD.md)): `id`, `provider`, `name`, account id / project id, region, `status` - never credentials |
+| `list_cloud_targets` | – | service | where an app can run (`local`, `aws_static`, `aws_app`, `firebase_hosting`, `firebase_app`): what each is for, that cloud targets keep serving with the PC off, cost drivers, `available` for this project |
 | `app_logs` | `app_id`, `tail?` | service | runtime log lines of the live container (1..500, default 100) |
 
 Tools a key's role can't use are **not listed** by `tools/list` and calling them is a JSON-RPC error
@@ -87,6 +89,8 @@ project role decides the tools (viewer = anon's tools, developer and up = all).
   arguments. Queries also land in the project's query log with `layout = "api"`, like any key-driven
   run ([QUERY_EDITOR.md](QUERY_EDITOR.md)).
 - Keys never change app settings and never reach members, env values, backups or any other endpoint.
+  Putting an app on a cloud target (billed to that cloud account) is a dashboard action for project
+  admins; agents can list the targets and connections and deploy apps already on one.
 
 ## Limits
 

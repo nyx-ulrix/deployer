@@ -19,7 +19,9 @@ import {
   rowsToEnv,
   seedEnv,
   shortSha,
+  recommendedTarget,
   slugify,
+  targetFits,
   unfilledKeys,
 } from "./deploys";
 
@@ -258,5 +260,35 @@ describe("cohostSummary", () => {
     expect(cohostSummary({ cohost: true, replicas: [r("live")] })).toBe("Also running on 1 co-host PC");
     expect(cohostSummary({ cohost: true, replicas: [r("pending")] })).toBeNull();
     expect(cohostSummary({ cohost: false, replicas: [r("live")] })).toBeNull();
+  });
+});
+
+describe("cloud targets (docs/CLOUD.md)", () => {
+  const all = (["local", "aws_static", "aws_app", "firebase_hosting", "firebase_app"] as const).map((id) => ({ id, available: true }));
+
+  it("static targets need the static preset", () => {
+    expect(targetFits("aws_static", "static")).toBe(true);
+    expect(targetFits("firebase_hosting", "node")).toBe(false);
+    expect(targetFits("aws_app", "python")).toBe(true);
+    expect(targetFits("local", "dockerfile")).toBe(true);
+  });
+
+  it("recommends a CDN for static sites and a container service for servers, among connected accounts", () => {
+    expect(recommendedTarget("static", all)).toBe("firebase_hosting");
+    expect(recommendedTarget("node", all)).toBe("aws_app");
+    const awsOnly = all.map((t) => ({ ...t, available: !t.id.startsWith("firebase") }));
+    expect(recommendedTarget("static", awsOnly)).toBe("aws_static");
+    expect(recommendedTarget("python", all.map((t) => ({ ...t, available: t.id === "local" })))).toBe("local");
+  });
+
+  it("cloud apps never send this PC's API key or database access, and need an account", () => {
+    const d = { ...emptyDraft(), name: "Site", repo_url: "https://github.com/a/b", target: "aws_static" as const };
+    expect(draftErrors(d).target).toMatch(/cloud account/);
+    const ready = { ...d, cloud_connection_id: "c1", api_key_id: "k1", database_access: true };
+    expect(draftErrors(ready).target).toBeUndefined();
+    const body = draftToInput(ready, []);
+    expect(body).toMatchObject({ target: "aws_static", cloud_connection_id: "c1", api_key_id: null, database_access: false });
+    expect(draftErrors({ ...ready, preset: "node" }).target).toMatch(/static files/);
+    expect(draftToInput({ ...ready, target: "local" }, []).cloud_connection_id).toBeNull();
   });
 });

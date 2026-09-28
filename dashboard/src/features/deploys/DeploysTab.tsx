@@ -10,7 +10,7 @@ import { PageSpinner } from "../../components/ui/Spinner";
 import { EmptyState, ErrorState } from "../../components/ui/States";
 import { relativeTime } from "../../lib/format";
 import { useProjectContext } from "../projects/project-context";
-import { isActive, PRESETS } from "./deploys";
+import { isActive, PRESETS, TARGET_SHORT } from "./deploys";
 import { NewAppDialog } from "./NewAppDialog";
 
 /** Live status: green when routed, amber pulse while a deploy runs, grey otherwise. */
@@ -67,20 +67,23 @@ export function DeploysTab() {
                 <AppStatusDot app={a} />
                 <span className="min-w-0 flex-1 basis-40 truncate font-medium">{a.name}</span>
                 <Badge>{PRESETS[a.preset].label}</Badge>
+                {a.target !== "local" && <Badge tone="info">{TARGET_SHORT[a.target]}</Badge>}
                 <span className="truncate font-mono text-xs text-muted">{a.branch}</span>
                 <span className="basis-full text-xs text-muted sm:basis-auto sm:ml-auto">
                   {a.live_deployment ? `Deployed ${relativeTime(a.live_deployment.finished_at ?? a.live_deployment.created_at)}` : "Never deployed"}
                 </span>
+                {(a.urls[0] ?? a.local_url) && (
                 <a
-                  href={a.urls[0] ?? a.local_url}
+                  href={a.urls[0] ?? a.local_url ?? undefined}
                   target="_blank"
                   rel="noreferrer"
                   onClick={(e) => e.stopPropagation()}
                   className="inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline"
                 >
-                  {(a.urls[0] ?? a.local_url).replace(/^https?:\/\//, "")}
+                  {(a.urls[0] ?? a.local_url ?? "").replace(/^https?:\/\//, "")}
                   <ExternalLink className="size-3" />
                 </a>
+                )}
               </Link>
             </li>
           ))}

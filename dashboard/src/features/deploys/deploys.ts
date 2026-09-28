@@ -4,6 +4,8 @@ import type {
   AppInput,
   AppPatch,
   AppPreset,
+  AppTarget,
+  CloudTarget,
   DataSource,
   Deployment,
   DeploymentStatus,
@@ -167,6 +169,9 @@ export type AppDraft = {
   database_access: boolean;
   /** New app only: clone + webhook through the creator's GitHub connection (no token field). */
   use_github_connection: boolean;
+  /** docs/CLOUD.md: where it runs ("" connection = none picked yet). */
+  target: AppTarget;
+  cloud_connection_id: string;
 };
 
 export function emptyDraft(app?: App): AppDraft {
@@ -186,6 +191,8 @@ export function emptyDraft(app?: App): AppDraft {
     api_key_id: app?.api_key_id ?? "",
     database_access: app?.database_access ?? false,
     use_github_connection: false,
+    target: app?.target ?? "local",
+    cloud_connection_id: app?.cloud_connection_id ?? "",
   };
 }
 
@@ -196,6 +203,8 @@ export function draftErrors(d: AppDraft): Partial<Record<keyof AppDraft, string>
   if (!/^https:\/\/\S+$/.test(d.repo_url.trim())) errors.repo_url = "Use an https:// repository URL.";
   if (!d.branch.trim()) errors.branch = "Branch is required.";
   for (const f of REQUIRED_FIELDS[d.preset] ?? []) if (!d[f].trim()) errors[f] = "Required for this preset.";
+  if (!targetFits(d.target, d.preset)) errors.target = "This target serves static files: pick the Static site preset or a full-app target.";
+  else if (d.target !== "local" && !d.cloud_connection_id) errors.target = "Pick the cloud account to deploy to.";
   if (d.preset === "dockerfile" && d.container_port.trim()) {
     const n = Number(d.container_port);
     if (!Number.isInteger(n) || n < 1 || n > 65535) errors.container_port = "Port must be 1–65535.";
@@ -220,8 +229,11 @@ export function draftToInput(d: AppDraft, env: EnvRow[]): AppInput {
     output_dir: fields.has("output_dir") ? blank(d.output_dir) : null,
     container_port: fields.has("container_port") && d.container_port.trim() ? Number(d.container_port) : null,
     env: rowsToEnv(env),
-    api_key_id: d.api_key_id || null,
-    database_access: d.database_access,
+    // Cloud targets never get this PC's data API key or databases (docs/CLOUD.md).
+    api_key_id: d.target === "local" ? d.api_key_id || null : null,
+    database_access: d.target === "local" && d.database_access,
+    target: d.target,
+    cloud_connection_id: d.target === "local" ? null : d.cloud_connection_id || null,
   };
   if (d.use_github_connection) body.use_github_connection = true;
   else if (d.private_repo && d.repo_token.trim()) body.repo_token = d.repo_token.trim();
@@ -300,4 +312,28 @@ export function unfilledKeys(keys: string[], rows: EnvRow[]): string[] {
 export function cohostSummary(app: Pick<App, "cohost" | "replicas">): string | null {
   const live = app.cohost ? (app.replicas ?? []).filter((r) => r.status === "live").length : 0;
   return live ? `Also running on ${live} co-host PC${live === 1 ? "" : "s"}` : null;
+}
+
+// --- Cloud hosting targets (docs/CLOUD.md) --------------------------------------------------------
+
+export const TARGET_SHORT: Record<AppTarget, string> = {
+  local: "This PC",
+  aws_static: "AWS S3 + CloudFront",
+  aws_app: "AWS App Runner",
+  firebase_hosting: "Firebase Hosting",
+  firebase_app: "Firebase + Cloud Run",
+};
+
+const STATIC_TARGETS: AppTarget[] = ["aws_static", "firebase_hosting"];
+
+/** Static targets serve files only: they need the static preset. */
+export function targetFits(target: AppTarget, preset: AppPreset): boolean {
+  return !STATIC_TARGETS.includes(target) || preset === "static";
+}
+
+/** The cloud target to suggest for a preset: static sites → a CDN, servers → a container service; among the
+ * targets this project has an account for. `local` when there is none. */
+export function recommendedTarget(preset: AppPreset, targets: Pick<CloudTarget, "id" | "available">[]): AppTarget {
+  const order: AppTarget[] = preset === "static" ? ["firebase_hosting", "aws_static"] : ["aws_app", "firebase_app"];
+  return order.find((t) => targets.some((x) => x.id === t && x.available)) ?? "local";
 }

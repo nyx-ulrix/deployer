@@ -80,6 +80,7 @@ from app.models import (
     ApiKey,
     App,
     BackupPolicy,
+    CloudConnection,
     DataSource,
     Device,
     DeviceProjectGrant,
@@ -288,6 +289,12 @@ def _app_model(db: Session, row: dict, **overrides: Any) -> App:
     )
     if app.api_key_id and db.get(ApiKey, app.api_key_id) is None:
         app.api_key_id = None
+    # docs/CLOUD.md: cloud connections are not exported (credentials). An app keeps its cloud target only
+    # when it keeps its id and the connection exists here; otherwise it comes back on this PC (`local`) so
+    # two apps never share (and tear down) the same cloud resources.
+    keep_cloud = "id" not in overrides and app.cloud_connection_id and db.get(CloudConnection, app.cloud_connection_id)
+    if not keep_cloud:
+        app.target, app.cloud_connection_id, app.cloud_state = "local", None, None
     return app
 
 

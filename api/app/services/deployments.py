@@ -36,7 +36,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.crypto import decrypt_json, decrypt_secret, encrypt_json, encrypt_secret, random_token
 from app.errors import ApiError, conflict, not_found
-from app.models import ApiKey, App, DataSource, Deployment, Domain, Job, User, utcnow
+from app.models import ApiKey, App, CloudConnection, DataSource, Deployment, Domain, Job, User, utcnow
 from app.redis_client import get_redis
 from app.serializers import iso
 from app.services import github, jobs
@@ -196,10 +196,26 @@ def deployment_out(dep: Deployment, *, with_log: bool = False) -> dict:
         "error": dep.error,
         "rollback_of": dep.rollback_of,
         "job_id": dep.job_id,
+        "target_url": dep.target_url,
     }
     if with_log:
         out["log"] = dep.log or ""
     return out
+
+
+def cloud_out(db: Session, app: App) -> dict | None:
+    """docs/CLOUD.md: where a cloud app serves and what Deployer created for it (no secrets)."""
+    from app.services import cloud_deploy
+
+    if app.target == "local":
+        return None
+    conn = db.get(CloudConnection, app.cloud_connection_id) if app.cloud_connection_id else None
+    return {
+        "provider": conn.provider if conn else None,
+        "connection_name": conn.name if conn else None,
+        "url": cloud_deploy.cloud_url(app),
+        "resources": cloud_deploy.resources(app.target, app.cloud_state),
+    }
 
 
 def app_out(db: Session, app: App) -> dict:
@@ -208,6 +224,8 @@ def app_out(db: Session, app: App) -> dict:
     domains = app_domains(db, app.id)
     live = db.get(Deployment, app.live_deployment_id) if app.live_deployment_id else None
     connected_by = db.get(User, app.github_connection_user_id) if app.github_connection_user_id else None
+    cloud = cloud_out(db, app)
+    urls = [cloud["url"]] if cloud and cloud["url"] else []
     return {
         "id": app.id,
         "project_id": app.project_id,
@@ -235,8 +253,11 @@ def app_out(db: Session, app: App) -> dict:
             else None
         ),
         "port": app.port,
-        "local_url": local_url(db, app),
-        "urls": [f"https://{d.hostname}" for d in domains if d.status == "active"],
+        "local_url": local_url(db, app) if app.target == "local" else None,
+        "urls": urls + [f"https://{d.hostname}" for d in domains if d.status == "active"],
+        "target": app.target,
+        "cloud_connection_id": app.cloud_connection_id,
+        "cloud": cloud,
         "live_deployment": deployment_out(live) if live else None,
         "domains": [domain_out(d) for d in domains],
         "created_at": iso(app.created_at),
@@ -737,6 +758,12 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
                 ctx.progress(0.2, "Building", force=True)
                 tag = _build(ctx, cli, app, dep, workdir, checkout, log_)
             ctx.check_cancelled()
+            if app.target != "local":  # docs/CLOUD.md: publish on the cloud target instead of running here
+                from app.services import cloud_deploy
+
+                cloud_deploy.go_live(ctx, cli, app, dep, tag, workdir, log_, secrets)
+                log_.write("Done")
+                return {"deployment_id": dep.id, "status": "live"}
             ctx.progress(0.7, "Starting", force=True)
             log_.step("Starting")
             name = container_name(app, dep.id)

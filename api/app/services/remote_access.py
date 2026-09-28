@@ -258,6 +258,18 @@ def domain_out(domain: Domain) -> dict:
         "status": domain.status,
         "status_message": domain.status_message,
         "url": f"https://{domain.hostname}",
+        "provider": domain.provider,
+        # docs/CLOUD.md "Custom domains": records a cloud target needs; `created` = made in Cloudflare.
+        "dns_records": [
+            {
+                "type": r.get("type"),
+                "name": r.get("name"),
+                "value": r.get("value"),
+                "created": bool(r.get("cf_id")),
+                "error": r.get("error"),
+            }
+            for r in domain.dns_records or []
+        ],
     }
 
 
