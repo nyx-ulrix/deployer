@@ -174,6 +174,7 @@ function Invoke-Start {
         Write-DeployerLog 'INFO' "Autostart (runtime $($ctx.Runtime))"
     }
     Write-DeployerStep 'Starting Deployer'
+    Remove-Item -LiteralPath (Join-Path $InstallDir $script:DeployerStopMarker) -Force -ErrorAction SilentlyContinue
     $timeout = if ($Background) { 900 } else { 300 }
     Initialize-Engine -Ctx $ctx -TimeoutSeconds $timeout
     if ($ctx.Runtime -eq 'wsl-engine' -and -not $Background) { Start-DeployerKeepAlive }
@@ -191,14 +192,8 @@ function Invoke-Start {
     if ($Background) {
         Write-DeployerLog 'INFO' $(if ($health) { 'Stack started.' } else { 'Stack started but the site is not answering.' })
         if ($ctx.Runtime -eq 'wsl-engine') {
-            # Blocks for as long as the user is signed in, keeping the WSL VM (and the site) running.
-            # The keep-alive ends whenever the WSL VM stops (sleep/hibernate, `wsl --shutdown`, a WSL
-            # update); without it WSL idles out and the site goes down until someone starts Deployer
-            # again. So bring the stack back and resume keeping it alive, for as long as this runs.
-            while ($true) {
-                Start-DeployerKeepAlive -Wait
-                Write-DeployerLog 'WARN' 'The WSL keep-alive ended; starting Deployer again in 15 s.'
-                Start-Sleep -Seconds 15
+            # Blocks while the user is signed in; brings the stack back when the WSL VM stopped under it.
+            Invoke-DeployerKeepAliveLoop -InstallDir $InstallDir -Restart {
                 $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--remove-orphans')
                 if (-not (Wait-DeployerHealth -Port $ctx.Port -TimeoutSeconds 180)) {
                     [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--force-recreate', 'caddy'))
@@ -218,6 +213,12 @@ function Invoke-Start {
 function Invoke-Stop {
     $ctx = Get-Context
     Write-DeployerStep 'Stopping Deployer'
+    # Tell the sign-in task's keep-alive loop this stop is on purpose, before its keep-alive is ended.
+    try {
+        Set-Content -LiteralPath (Join-Path $InstallDir $script:DeployerStopMarker) -Value (Get-Date -Format 'o') -Encoding ASCII
+    } catch {
+        Write-DeployerWarn "Could not record the stop ($($_.Exception.Message)); the sign-in task may start Deployer again."
+    }
     if (Test-DeployerDockerEngine -Runtime $ctx.Runtime) {
         $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('stop')
         if ($code -ne 0) { throw "docker compose stop failed (exit code $code)." }

@@ -8,6 +8,8 @@ $script:DeployerTaskName = 'Deployer'
 $script:DeployerTrayTaskName = 'Deployer Tray'
 $script:DeployerControlExe = 'DeployerControl.exe'
 $script:DeployerFirewallRule = 'Deployer-HTTP'
+# Written by `deployer stop` (in the install dir) so the sign-in task's keep-alive loop does not undo it.
+$script:DeployerStopMarker = 'stop-requested'
 $script:DeployerLogFile = $null
 $script:DeployerQuiet = $false
 
@@ -414,7 +416,13 @@ function Get-DeployerKeepAliveProcess {
 function Start-DeployerKeepAlive {
     # WSL stops idle distros; a long-running process keeps the Docker engine (and the site) up.
     param([switch]$Wait)
-    if (Get-DeployerKeepAliveProcess) { return }
+    $existing = @(Get-DeployerKeepAliveProcess)
+    if ($existing.Count -gt 0) {
+        # -Wait must block while the VM is kept alive, even by someone else's keep-alive; returning at
+        # once made the sign-in task's loop run `compose up` every 15 s.
+        if ($Wait) { Wait-Process -Id @($existing | ForEach-Object { $_.ProcessId }) -ErrorAction SilentlyContinue }
+        return
+    }
     $wslArgs = @('-d', $script:DeployerDistro, '-u', 'root', '--exec', 'sleep', 'infinity')
     if ($Wait) {
         Write-DeployerLog 'INFO' 'Keep-alive running in the foreground (scheduled task).'
@@ -428,6 +436,24 @@ function Start-DeployerKeepAlive {
         Start-Process -FilePath $conhost -ArgumentList (@('--headless', "`"$(Get-DeployerWslExe)`"") + $wslArgs -join ' ') -WindowStyle Hidden | Out-Null
     } else {
         Start-Process -FilePath (Get-DeployerWslExe) -ArgumentList ($wslArgs -join ' ') -WindowStyle Hidden | Out-Null
+    }
+}
+
+function Invoke-DeployerKeepAliveLoop {
+    # The sign-in task: keep the WSL VM (and the site) up for as long as the user is signed in. The
+    # keep-alive ends whenever the VM stops (sleep/hibernate, `wsl --shutdown`, a WSL update), so bring
+    # the stack back with $Restart - unless `deployer stop` ended it on purpose (the stop marker).
+    param([string]$InstallDir, [scriptblock]$Restart, [int]$DelaySeconds = 15)
+    $marker = Join-Path $InstallDir $script:DeployerStopMarker
+    while ($true) {
+        Start-DeployerKeepAlive -Wait
+        Start-Sleep -Seconds $DelaySeconds
+        if (Test-Path -LiteralPath $marker) {
+            Write-DeployerLog 'INFO' 'The WSL keep-alive ended after "deployer stop"; not starting again until the next start or sign-in.'
+            return
+        }
+        Write-DeployerLog 'WARN' 'The WSL keep-alive ended; starting Deployer again.'
+        & $Restart
     }
 }
 
