@@ -9,6 +9,7 @@ Each part is skipped unless its URL is set. The tests create and drop their own 
 """
 
 import os
+import re
 import shutil
 import time
 from urllib.parse import unquote, urlsplit
@@ -207,9 +208,14 @@ def test_mongosh_timeout(mongo):
     assert time.monotonic() - started < 6
 
 
-def test_mongosh_secrets_stay_out_of_argv(mongo):
+def test_mongosh_secrets_stay_out_of_argv(mongo, monkeypatch):
     password = connections.mongo_uri_password(MONGO_URI)
     assert password
+    with pytest.raises(ApiError) as err:
+        sh(mongo, "require('fs')")
+    assert err.value.code == "shell_code_refused"
+    # The name filter is best effort (string building gets past it): check what a bypass would see.
+    monkeypatch.setattr(query_console, "_MONGO_ESCAPE_RE", re.compile(r"(?!)"))
     out = sh(
         mongo,
         "const fs = require('fs');\n"

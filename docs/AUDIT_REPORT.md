@@ -35,7 +35,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 ### Critical
 
 **Query console**
-- [ ] A-001 **[CRITICAL][security]** mongosh lets developers and service keys run code in the API container and read every instance secret - `api/app/services/query_console.py:399-446, 554-568, 641-642` - set PR_SET_DUMPABLE=0 at startup, pop secret env vars after Settings load, block `require`/`process` for all roles; real fix is a secret-less mongosh sidecar.
+- [x] A-001 **[CRITICAL][security]** mongosh lets developers and service keys run code in the API container and read every instance secret - `api/app/services/query_console.py:399-446, 554-568, 641-642` - set PR_SET_DUMPABLE=0 at startup, pop secret env vars after Settings load, block `require`/`process` for all roles; real fix is a secret-less mongosh sidecar.
 
 ### High
 

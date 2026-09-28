@@ -14,7 +14,14 @@ database from a selector; everything runs through the control plane with the pro
 | `max_rows` | int 1..5000, default 500 | rows returned per result set / documents printed |
 | `timeout_seconds` | int 1..120, default 30 | per statement (SQL) or for the whole script (MongoDB) |
 
-Roles: **developer+** can run anything. **viewer** may run only read-only queries, otherwise
+Every role: MongoDB shell code may not name a Node.js escape hatch - `require`, `process`,
+`child_process`, `fs`, `module`, `global`, `globalThis`, `eval`, `Function`, `constructor`, `Reflect`,
+`import`, `load`, `snippet` - matched as whole identifiers anywhere, strings and comments included
+(`{kind: "import"}` is refused too; `{kind: "imp" + "ort"}` is the workaround), otherwise
+`403 shell_code_refused`. The shell runs as the API's uid inside the API container, so this is a
+speed bump, not a sandbox (see [SECURITY.md](../SECURITY.md) "Query console").
+
+Roles: **developer+** can run anything else. **viewer** may run only read-only queries, otherwise
 `403 read_only_role`. The classification is textual and best effort (the source's database user is
 the real boundary; use an external source with a read-only user for strict enforcement):
 - SQL: every statement must start with `SELECT`, `WITH`, `SHOW`, `EXPLAIN`, `DESCRIBE`, `DESC`,
@@ -31,12 +38,11 @@ the real boundary; use an external source with a read-only user for strict enfor
   `createIndexes`, `createView`, `renameCollection`, `convertToCapped`, `reIndex`, `bulkWrite`,
   `findOneAndUpdate`, `findOneAndReplace`, `findOneAndDelete`, `findAndModify`, `mapReduce`, `$out`,
   `$merge`, `runCommand`, `adminCommand`, `createUser`, `updateUser`, `dropUser`, `createRole`,
-  `getSiblingDB`, `getMongo`, `load`, `require`, `process`, `fs`, `child_process`, `eval`,
-  `Function`, `constructor`, `globalThis`, `Reflect`, `import`.
+  `getSiblingDB`, `getMongo` (plus the Node.js names above).
   Regardless of role the script always starts against the source's own database only (`db` is bound
   to it by the wrapper) with the source's own credentials, never root.
 
-Errors: `404 not_found`, `403 forbidden` / `read_only_role`, `422 validation_error` (also for a SQL
+Errors: `404 not_found`, `403 forbidden` / `read_only_role` / `shell_code_refused`, `422 validation_error` (also for a SQL
 script without any statement), `503 device_offline`, `503 database_unavailable` (cannot connect /
 authenticate), `504 query_timeout` (MongoDB script killed), `501 mongosh_unavailable`,
 `429 too_many_queries` (MongoDB, more than 4 shells at once). Query errors are **not** HTTP errors:

@@ -1,3 +1,6 @@
+import ctypes
+import os
+import sys
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -86,3 +89,31 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
+
+
+# Settings fields that hold secrets (their env var names): removed from os.environ by seal_process().
+SECRET_ENV = (
+    "MARIADB_PASSWORD",
+    "MARIADB_ROOT_PASSWORD",
+    "MONGO_ROOT_PASSWORD",
+    "REDIS_URL",
+    "JWT_SECRET",
+    "MASTER_KEY",
+    "GOOGLE_CLIENT_SECRET",
+    "GITHUB_CLIENT_SECRET",
+)
+PR_SET_DUMPABLE = 4
+
+
+def seal_process() -> None:
+    """SECURITY.md "Query console": loads the Settings, then drops the secrets from `os.environ` (no
+    child process inherits them) and marks the process non-dumpable. The kernel then makes
+    /proc/<pid>/environ, /mem, /fd... root-owned and refuses ptrace, so another process of the same
+    uid (the mongosh query shell) cannot read the secrets the process started with. Linux only."""
+    get_settings()
+    for key in SECRET_ENV:
+        os.environ.pop(key, None)
+    if sys.platform.startswith("linux"):
+        libc = ctypes.CDLL(None, use_errno=True)
+        if libc.prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0:
+            raise OSError(ctypes.get_errno(), "prctl(PR_SET_DUMPABLE, 0) failed")

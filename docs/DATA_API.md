@@ -200,6 +200,7 @@ Every error is `{"error": {"code": "...", "message": "...", "details": {}}}`:
 | 401 | `api_key_not_allowed` | a key was used outside the data, query, schema and MCP endpoints |
 | 403 | `forbidden` | an `anon` key on a write endpoint |
 | 403 | `read_only_role` | an `anon` key ran a query that writes |
+| 403 | `shell_code_refused` | MongoDB shell code named a Node.js escape hatch (`require`, `process`, ...; any key) |
 | 404 | `not_found` | wrong project id for this key, unknown data source, table or collection |
 | 422 | `validation_error` | malformed body or query parameters (`details.errors` says which) |
 | 429 | `rate_limited` | more than 600 requests in a minute with this key (instance setting `api_key_rate_limit`, [MONITORING.md](MONITORING.md)); wait `details.retry_after` seconds (also the `Retry-After` header) |

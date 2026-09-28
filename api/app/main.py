@@ -1,6 +1,9 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 
 from app import __version__
+from app.config import seal_process
 from app.errors import install_error_handlers
 from app.routers import (
     api_keys,
@@ -31,8 +34,20 @@ from app.routers import (
 from app.services.metrics import RequestMetricsMiddleware
 
 
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    seal_process()  # SECURITY.md "Query console": mongosh runs as this uid
+    yield
+
+
 def create_app() -> FastAPI:
-    app = FastAPI(title="Deployer API", version=__version__, docs_url="/v1/docs", openapi_url="/v1/openapi.json")
+    app = FastAPI(
+        title="Deployer API",
+        version=__version__,
+        docs_url="/v1/docs",
+        openapi_url="/v1/openapi.json",
+        lifespan=lifespan,
+    )
     install_error_handlers(app)
     app.add_middleware(RequestMetricsMiddleware)  # docs/MONITORING.md
     for module in (

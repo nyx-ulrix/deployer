@@ -40,7 +40,7 @@ from collections.abc import Callable
 import redis
 from redis.exceptions import WatchError
 
-from app.config import get_settings
+from app.config import get_settings, seal_process
 from app.services import jobs
 
 log = logging.getLogger("app.worker")
@@ -250,6 +250,7 @@ def main() -> None:
         level=os.environ.get("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+    seal_process()  # SECURITY.md "Query console": device-hosted mongosh queries run in this container
     log.info("worker %s starting", WORKER_ID)
     _load_plugins()
     try:

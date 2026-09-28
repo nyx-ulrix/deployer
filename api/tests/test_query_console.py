@@ -3,6 +3,8 @@ read-only classification, the route, audit and device routing. Real servers: tes
 
 import datetime as dt
 import json
+import os
+import subprocess
 import sys
 import textwrap
 import threading
@@ -475,6 +477,49 @@ def test_mongosh_secrets_only_in_environment(fake_mongosh):
     out = run_fake("secret")
     assert password not in out["output"] and "***" in out["output"]
     assert password not in json.dumps(out["result"])
+
+
+@pytest.mark.parametrize(
+    "code",
+    [
+        "require('child_process').execSync('id')",
+        "process.env",
+        "globalThis.process",
+        "(() => 0).constructor('return 1')()",
+        "module.require('fs')",
+        "load('/tunnel/desired.json')",
+        "db.items.find({kind: 'import'})",  # strings count too (over-matching is the safe direction)
+    ],
+)
+def test_mongosh_node_escapes_refused_for_developers(fake_mongosh, code):
+    # SECURITY.md "Query console": refused before any shell starts, for every role.
+    with pytest.raises(ApiError) as err:
+        run_fake(code, read_only=False)
+    assert err.value.status_code == 403 and err.value.code == "shell_code_refused"
+    assert run_fake("db.processes.find({required: 1})", read_only=False)["error"] is None  # whole names only
+
+
+def test_seal_process_drops_secrets_and_proc_access(tmp_path):
+    """The API process (PID 1 of its container, same uid as mongosh) must not expose its secrets
+    through os.environ or /proc/<pid>/environ once sealed. Runs in a child so pytest stays intact."""
+    script = textwrap.dedent(
+        """
+        import os, subprocess, sys
+        from app.config import get_settings, seal_process
+        seal_process()
+        assert "MASTER_KEY" not in os.environ and "JWT_SECRET" not in os.environ
+        assert get_settings().master_key == "sealed-master-key"
+        if sys.platform.startswith("linux") and os.geteuid() != 0:
+            peek = f"open('/proc/{os.getpid()}/environ', 'rb').read()"
+            done = subprocess.run([sys.executable, "-c", peek], capture_output=True)
+            assert done.returncode != 0 and b"PermissionError" in done.stderr, done
+        print("sealed")
+        """
+    )
+    env = {**os.environ, "MASTER_KEY": "sealed-master-key", "JWT_SECRET": "sealed-jwt"}
+    api_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    done = subprocess.run([sys.executable, "-c", script], env=env, cwd=api_dir, capture_output=True, text=True)
+    assert done.returncode == 0 and done.stdout.strip() == "sealed", done.stderr
 
 
 def test_mongosh_read_only_and_concurrency(fake_mongosh, monkeypatch):

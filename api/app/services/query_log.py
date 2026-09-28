@@ -23,7 +23,7 @@ LIST_TEXT_LIMIT = 2_000
 def _outcome(result: dict | None, error: ApiError | None) -> tuple[str, int, int, int | None, str | None]:
     """`(status, statements, rows, affected_rows, error_message)` of a run."""
     if error is not None:
-        if error.code == "read_only_role":
+        if error.code in ("read_only_role", "shell_code_refused"):
             status = "refused"
         elif error.code == "query_timeout":
             status = "timeout"

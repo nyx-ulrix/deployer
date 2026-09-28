@@ -60,6 +60,18 @@ Security fixes are made for the latest release. Update with `deployer update`.
   device refuses app environments carrying `DEPLOYER_API_KEY`/`DEPLOYER_DB_*` and injects only
   databases in its hosted-credentials list. A co-host PC serves the app's visitors: its owner can see
   and alter that traffic.
+- **Query console** ([docs/QUERY_CONSOLE.md](docs/QUERY_CONSOLE.md)): MongoDB shell code from project
+  developers and `service` keys runs in a real `mongosh` (full Node.js) inside the API container, as
+  the API's uid. Mitigations: the shell gets a minimal environment and no secrets on argv; code naming
+  `require`, `process`, `constructor`, `load`, ... is refused for every role (a textual filter, so
+  best effort); and the API process (and the worker, which runs device-hosted queries) removes its
+  secrets from its environment after loading them and marks itself non-dumpable
+  (`prctl(PR_SET_DUMPABLE, 0)`), so `/proc/1/environ` and `/proc/1/mem` are unreadable to the shell.
+  A script that gets past the filter can still read the files that uid can (`/backups`, `/tunnel`),
+  reach the internal networks, and see concurrent shells' environments; for a device-hosted source
+  the shell runs in that device's worker, which holds the Docker socket (root on that PC). Treat developer access to a
+  MongoDB source (and `service` keys) as trusted until the planned fix lands: running mongosh in a
+  separate container with no secrets and no volumes.
 - **GitHub repository access** ([docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md) "Connect a Git repository"):
   connecting GitHub grants the instance's GitHub OAuth app the `repo` and `admin:repo_hook` scopes,
   which GitHub does not narrow further: read/write access to every repository the user can reach, and

@@ -13,6 +13,7 @@ code against NoSQL data sources.
   with the result. URI, file path and marker reach the shell only through the child's environment
   (never argv), HOME is a private temporary directory, the process is killed at the timeout, its
   output is size-capped and at most `MAX_SHELLS` shells run per API process.
+- Every role: MongoDB code may not name Node.js escape hatches (`MONGO_ESCAPE_NAMES`).
 - Read-only role (viewers): statements / code must pass the textual classifiers below. They are
   best effort by design (`db.items["insert" + "One"]` slips through); the database user of the
   source is the real boundary.
@@ -372,19 +373,35 @@ MONGO_WRITE_NAMES = (
     "createRole",
     "getSiblingDB",
     "getMongo",
-    "load",
+)
+# Node.js escape hatches refused for EVERY role (SECURITY.md "Query console"): the shell runs as the
+# API's uid next to /backups and /tunnel, so these would hand user code the API's files, processes
+# and network. Same matching as above. Best effort: string building (`this["req" + "uire"]`) still
+# gets through, which is why the API process is also sealed (config.seal_process).
+MONGO_ESCAPE_NAMES = (
     "require",
     "process",
-    "fs",
     "child_process",
+    "fs",
+    "module",
+    "global",
+    "globalThis",
     "eval",
     "Function",
     "constructor",
-    "globalThis",
     "Reflect",
     "import",
+    "load",
+    "snippet",
 )
-_MONGO_WRITE_RE = re.compile(r"(?<![\w$])(?:" + "|".join(re.escape(n) for n in MONGO_WRITE_NAMES) + r")(?![\w$])")
+
+
+def _names_re(names: Iterable[str]) -> re.Pattern[str]:
+    return re.compile(r"(?<![\w$])(?:" + "|".join(re.escape(n) for n in names) + r")(?![\w$])")
+
+
+_MONGO_WRITE_RE = _names_re(MONGO_WRITE_NAMES + MONGO_ESCAPE_NAMES)
+_MONGO_ESCAPE_RE = _names_re(MONGO_ESCAPE_NAMES)
 _MONGO_URI_RE = re.compile(r"^(mongodb(?:\+srv)?://[^/?]*)(/[^?]*)?(\?.*)?$")
 _shells = threading.BoundedSemaphore(MAX_SHELLS)
 
@@ -607,6 +624,13 @@ def run_mongosh(
     config: dict[str, Any], database: str, query: str, *, max_rows: int, timeout_seconds: int, read_only: bool
 ) -> dict:
     """Runs MongoDB shell code in `mongosh`; see the module docstring and docs/QUERY_CONSOLE.md."""
+    escape = _MONGO_ESCAPE_RE.search(query)
+    if escape:
+        message = (
+            f"MongoDB shell code may not use `{escape.group()}` (Node.js access is blocked for every role, "
+            "also inside strings and comments)"
+        )
+        raise ApiError(403, "shell_code_refused", message)
     if read_only and not mongo_is_read_only(query):
         raise _read_only_refused("nosql")
     command = mongosh_command()

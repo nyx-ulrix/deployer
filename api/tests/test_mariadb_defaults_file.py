@@ -8,13 +8,10 @@ UNIVERSAL_CLIENT_OPTIONS = {"user", "password", "host", "port", "socket", "proto
 
 
 def test_client_group_only_has_options_mariadb_binlog_accepts(monkeypatch):
-    monkeypatch.setenv("MARIADB_ROOT_PASSWORD", "unit-test-password")
-    backup_engine.get_settings.cache_clear()
-    try:
-        with backup_engine.mariadb_defaults_file() as cnf:
-            lines = [ln.strip() for ln in cnf.read_text(encoding="utf-8").splitlines() if ln.strip()]
-    finally:
-        backup_engine.get_settings.cache_clear()
+    # Patch the cached Settings: the API lifespan (config.seal_process) removes secrets from os.environ.
+    monkeypatch.setattr(backup_engine.get_settings(), "mariadb_root_password", "unit-test-password")
+    with backup_engine.mariadb_defaults_file() as cnf:
+        lines = [ln.strip() for ln in cnf.read_text(encoding="utf-8").splitlines() if ln.strip()]
 
     assert lines[0] == "[client]"
     for line in lines[1:]:
