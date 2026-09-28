@@ -74,7 +74,7 @@ the primary) only authorizes the device endpoints below.
 | `transfer.upload` | `{transfer_id, local_ref}` | `{sha256, size}` — device PUTs a local file (e.g. a backup blob) to the primary |
 | `transfer.download` | `{transfer_id, local_ref}` | `{sha256, size}` — device GETs a transfer into its local store |
 | `storage.delete` | `{local_ref}` | `{}` |
-| `device.detach` | `{}` | `{}` — device forgets its credentials after confirming no hosted databases remain (409 `databases_remain` otherwise) |
+| `device.detach` | `{}` | `{}` — device stops its co-hosted apps and the apps tunnel connector, then forgets its credentials, after confirming no hosted databases remain (409 `databases_remain` otherwise) |
 | `device.ping` / `device.status` | `{}` | `{pong, time, version}` / `{hosted_sources, metrics}` |
 | `sync.position` | `{kind, database_name, auto_increment?: {increment: 10, offset: 2..10}}` | `{gtid}` (sql) / `{token}` (nosql) — current end of the change history of a hosted database; sql: also checks/sets the binlog prerequisites and this device's auto_increment step/offset ([COHOSTING.md](COHOSTING.md)) |
 | `sync.sql_changes` | `{database_name, since: {gtid}, limit ≤ 1000, auto_increment?}` | `{changes, position, skipped_tables, more}` — row changes of that database from the device's own binlog (whole transactions, ≤ 4 MB) |
@@ -118,7 +118,7 @@ tokens are rejected there, device tokens are rejected on every user endpoint).
 | GET | `/devices?scope=mine\|all` | user | `all` only for the instance owner (ignored otherwise) | `Device[]` |
 | GET | `/devices/{id}` | device owner or instance owner | – | `Device` |
 | PATCH | `/devices/{id}` | device owner or instance owner (`status`: instance owner only) | `{name?, roles?, sharing_mode?, project_ids?, status?:"active"\|"disabled"}` | `Device`; disabling closes its socket |
-| DELETE | `/devices/{id}?force=false` | device owner or instance owner (`force`: instance owner) | – | `{ok:true}`; 409 `device_in_use` `{details.data_sources}` while it hosts databases; `force=true` marks them `status=error, "device removed"` |
+| DELETE | `/devices/{id}?force=false` | device owner or instance owner (`force`: instance owner) | – | `{ok:true}`; 409 `device_in_use` `{details.data_sources}` while it hosts databases, 409 `device_has_copies` `{details.replicas}` while it holds co-host copies; `force=true` marks hosted sources `status=error, "device removed"` and drops the copies |
 | GET | `/projects/{id}/placement-options` | admin+ | – | `PlacementOption[]` (main server first) |
 | POST | `/projects/{id}/data-sources/{sid}/move` | admin+ | `{device_id: string\|null}` | `{job: Job}` (`type:"device.move"`, BACKUPS.md `Job`); 400 `not_managed`; 409 `already_there` / `move_in_progress` / `has_replicas` / `apps_use_database` (`{details.apps}`: live apps with database access still hold the current copy's `DEPLOYER_DB_*`; turn their access off and redeploy, or delete them); 503 `device_offline`; 422 `device_not_eligible` |
 | POST | `/projects/{id}/data-sources` | admin+ | `DataSourceInput` + `device_id?` (managed only) | `DataSource` |
@@ -208,8 +208,10 @@ Errors raised **on the device** and re-raised on the primary with the same statu
   sharing, and remove their device.
 - Removing a device requires it to host no databases — move them first
   (`POST .../data-sources/{sid}/move`, which snapshots, restores on the target, switches over and
-  keeps the old copy for 7 days). `?force=true` (instance owner only) detaches anyway and marks those
-  sources `status=error, status_message="device removed"`.
+  keeps the old copy for 7 days), and no co-host copies (COHOSTING.md) — remove them with "Also delete
+  the copy on the device" first (`409 device_has_copies`). `?force=true` (instance owner only) detaches
+  anyway, marks hosted sources `status=error, status_message="device removed"` and, while the device is
+  online, drops its co-host copies. Detaching also stops the device's co-hosted apps and apps tunnel.
 - Moving a database never pauses writes, so nothing may write to the old copy after it is dumped: the
   move is refused (`409 apps_use_database`) while apps with database access are live, and a database
   on the main server is made read-only (its user keeps `SELECT` only, open connections are closed) from

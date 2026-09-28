@@ -617,6 +617,9 @@ def m_detach(params: dict, ctx: CallContext) -> dict:
     try:
         if load_credentials(session):
             raise ApiError(409, "databases_remain", "This device still hosts databases; move them first")
+        from app.services import device_apps
+
+        device_apps.remove_all()
         clear_link(session)
         session.commit()
     finally:

@@ -501,6 +501,19 @@ def test_device_apps_tunnel_token(db, state_dir):  # noqa: F811
     assert desired(state_dir) == {"mode": "off"}
 
 
+def test_device_detach_stops_cohost_apps_and_tunnel(db, docker, hosted, state_dir, set_setting):  # noqa: F811
+    # A-009: a removed PC must not keep serving a stale copy of the app through the apps tunnel.
+    ctx = device_host.CallContext(detach=lambda: None)
+    device_host.dispatch("apps.deploy", deploy_params(), ctx)
+    device_host.dispatch("apps.tunnel", {"token": secrets.token_urlsafe(24)}, ctx)
+    set_setting("device_hosted_credentials", json.dumps({}))  # its database copies were removed first
+    set_setting("device_link", json.dumps({"primary_url": "https://main.example.com", "device_id": "d1"}))
+    assert device_host.dispatch("device.detach", {}, ctx) == {}
+    assert docker.containers == {} and docker.images == set()
+    assert device_host.dispatch("apps.status", {}, ctx) == {"apps": [], "tunnel": None}
+    assert desired(state_dir) == {"mode": "off"}
+
+
 # --- migration ------------------------------------------------------------------------------------
 
 

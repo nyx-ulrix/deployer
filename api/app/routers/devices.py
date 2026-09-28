@@ -25,8 +25,8 @@ from sqlalchemy import select
 from app.db import get_sessionmaker
 from app.deps import CurrentUser, DbSession, ProjectAccess, client_ip, require_role
 from app.errors import ApiError, forbidden, not_found
-from app.models import App, DataSource, Device, DeviceEnrollment, Job, User, utcnow
-from app.services import audit, device_executor, device_moves, device_rpc, devices, jobs, rate_limit
+from app.models import App, DataSource, Device, DeviceEnrollment, Job, SourceReplica, User, utcnow
+from app.services import audit, cohosting, device_executor, device_moves, device_rpc, devices, jobs, rate_limit
 from app.services.instance_settings import public_url
 from app.services.sources import get_source
 
@@ -248,6 +248,21 @@ def remove_device(device_id: str, user: CurrentUser, db: DbSession, request: Req
         )
     if force and active and not user.is_instance_owner:
         raise forbidden("Only the instance owner can force-remove a device that hosts databases")
+    # docs/COHOSTING.md: co-host copies would otherwise cascade away while the full data stays on the PC.
+    copies = db.execute(
+        select(SourceReplica.id, DataSource.kind, DataSource.database_name, DataSource.project_id, DataSource.name)
+        .join(DataSource, DataSource.id == SourceReplica.data_source_id)
+        .where(SourceReplica.device_id == device.id)
+        .order_by(DataSource.name)
+    ).all()
+    if copies and not (force and user.is_instance_owner):
+        raise ApiError(
+            409,
+            "device_has_copies",
+            f"This device still holds co-host copies of databases ({', '.join(c.name for c in copies)}). "
+            'On each of those databases choose Remove copy, with "Also delete the copy on the device", first.',
+            {"replicas": [{"id": c.id, "project_id": c.project_id, "name": c.name} for c in copies]},
+        )
     for ds in hosted:
         ds.status = "error"
         ds.status_message = "device removed"
@@ -256,6 +271,9 @@ def remove_device(device_id: str, user: CurrentUser, db: DbSession, request: Req
         try:
             # Old copies of databases moved away are only kept for rollback; the device is leaving.
             device_moves.drop_copies_on_device(device.id)
+            for c in copies:  # force only: the main server keeps the data, these are just copies
+                cohosting._drop_device_copy(device.id, c.kind, c.database_name)
+            # The device also stops its co-hosted apps and the apps tunnel connector (device_apps.remove_all).
             device_rpc.call(device.id, "device.detach", {}, timeout=15)
         except ApiError as exc:
             log.info("device %s did not detach cleanly: %s", device.id, exc.message)
@@ -266,8 +284,9 @@ def remove_device(device_id: str, user: CurrentUser, db: DbSession, request: Req
         user_id=user.id,
         device_id=device.id,
         name=device.name,
-        forced=bool(force and active),
+        forced=bool(force and (active or copies)),
         orphaned_sources=[ds.id for ds in active],
+        removed_replicas=[c.id for c in copies],
     )
     db.delete(device)
     db.commit()
@@ -308,8 +327,6 @@ def move_data_source(source_id: str, body: MoveInput, access: Admin, db: DbSessi
     )
     if running:
         raise ApiError(409, "move_in_progress", "This database is already being moved")
-    from app.models import SourceReplica
-
     if db.scalar(select(SourceReplica.id).where(SourceReplica.data_source_id == ds.id)):
         # docs/COHOSTING.md: copies follow the main server's database; remove them before moving it.
         raise ApiError(409, "has_replicas", "Remove this database's co-host copies before moving it")

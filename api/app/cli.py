@@ -63,6 +63,15 @@ def _detach(force: bool) -> int:
                 file=sys.stderr,
             )
             return 2
+        from app.services import device_apps
+
+        try:
+            device_apps.remove_all()
+        except Exception as exc:  # noqa: BLE001 - Docker or the tunnel sidecar may be down
+            print(f"Could not stop this PC's co-hosted apps and apps tunnel: {exc}", file=sys.stderr)
+            if not force:
+                print("Fix that and try again, or run with --force to detach anyway.", file=sys.stderr)
+                return 2
         device_host.clear_link(session)
         session.commit()
     finally:

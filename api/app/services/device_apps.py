@@ -339,6 +339,16 @@ def m_tunnel(params: dict, ctx: device_host.CallContext) -> dict:
     return {"tunnel": fingerprint(token)}
 
 
+def remove_all() -> None:
+    """Detaching: stop the apps tunnel connector and every co-hosted app, or they keep serving visitors."""
+    with get_sessionmaker()() as db:
+        token = instance_settings.get_value(db, TUNNEL_KEY)
+    if token:
+        m_tunnel({"token": None}, device_host.CallContext())
+    for app_id in sorted(_state()):
+        m_remove({"app_id": app_id}, device_host.CallContext())
+
+
 METHODS: dict[str, Any] = {
     "apps.deploy": m_deploy,
     "apps.remove": m_remove,

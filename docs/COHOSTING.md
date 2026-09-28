@@ -35,6 +35,9 @@ through the same address whichever PC is up (phase 2, built; not yet exercised w
 5. Tables **without a primary key** are not synced (a warning on the copy lists them).
 6. Moving a database that has copies to another host is refused (`409 has_replicas`); remove the
    copies first. Sources placed on a host device can't be copied (`409 replica_unsupported`, v1).
+7. Removing a device that holds copies is refused too (`409 device_has_copies`); remove them with
+   "Also delete the copy on the device" first. Detaching a device stops its co-hosted apps and its apps
+   tunnel connector.
 
 ## Roles
 

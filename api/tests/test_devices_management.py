@@ -5,7 +5,7 @@ import zipfile
 
 from sqlalchemy import select
 
-from app.models import BackupPolicy, DataSource, Device, DeviceProjectGrant, Job
+from app.models import BackupPolicy, DataSource, Device, DeviceProjectGrant, Job, SourceReplica
 from app.services import device_moves, device_rpc, devices
 from tests import devices_support
 from tests.devices_support import device_source
@@ -236,6 +236,29 @@ def test_remove_device(client, db, owner, owner_headers, make_user, make_project
     empty, _ = make_device(alice, "Empty")
     assert client.delete(f"/v1/devices/{empty.id}", headers=auth_headers(make_user())).status_code == 404
     assert client.delete(f"/v1/devices/{empty.id}", headers=auth_headers(alice)).status_code == 200
+
+
+def test_remove_device_with_cohost_copies(
+    client, db, owner, owner_headers, make_user, make_project, auth_headers, make_device, fake_device
+):
+    # A-009: co-host copies used to cascade away while the full database stayed on the PC.
+    alice = make_user()
+    project = make_project(alice, "Shop")
+    device, _ = make_device(alice)
+    ds = device_source(db, project, device, database_name="p_shop_abc123")
+    ds.device_id = None  # the database itself lives on the main server
+    db.add(SourceReplica(data_source_id=ds.id, device_id=device.id, status="syncing"))
+    db.commit()
+    url = f"/v1/devices/{device.id}"
+    for force in ("false", "true"):  # only the instance owner may force it
+        resp = client.delete(f"{url}?force={force}", headers=auth_headers(alice))
+        assert resp.status_code == 409 and resp.json()["error"]["code"] == "device_has_copies"
+        assert [r["name"] for r in resp.json()["error"]["details"]["replicas"]] == [ds.name]
+    fd = fake_device(device.id, lambda method, params: {})
+    assert client.delete(f"{url}?force=true", headers=owner_headers).status_code == 200
+    assert fd.calls == [("datasource.drop", {"kind": "sql", "database_name": "p_shop_abc123"}), ("device.detach", {})]
+    db.expunge_all()
+    assert db.scalars(select(SourceReplica)).first() is None and db.get(DataSource, ds.id).status == "ok"
 
 
 def test_move_validation(client, db, owner, owner_headers, make_project, make_device, monkeypatch):
