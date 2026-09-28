@@ -267,14 +267,15 @@ def remove_device(device_id: str, user: CurrentUser, db: DbSession, request: Req
         ds.status = "error"
         ds.status_message = "device removed"
         ds.device_id = None
-    if not active and device_rpc.is_online(device.id):
+    if device_rpc.is_online(device.id):
         try:
-            # Old copies of databases moved away are only kept for rollback; the device is leaving.
-            device_moves.drop_copies_on_device(device.id)
             for c in copies:  # force only: the main server keeps the data, these are just copies
                 cohosting._drop_device_copy(device.id, c.kind, c.database_name)
-            # The device also stops its co-hosted apps and the apps tunnel connector (device_apps.remove_all).
-            device_rpc.call(device.id, "device.detach", {}, timeout=15)
+            if not active:
+                # Old copies of databases moved away are only kept for rollback; the device is leaving.
+                device_moves.drop_copies_on_device(device.id)
+                # The device also stops its co-hosted apps and the apps tunnel connector (device_apps.remove_all).
+                device_rpc.call(device.id, "device.detach", {}, timeout=15)
         except ApiError as exc:
             log.info("device %s did not detach cleanly: %s", device.id, exc.message)
     audit.record(

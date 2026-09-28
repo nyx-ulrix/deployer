@@ -261,6 +261,22 @@ def test_remove_device_with_cohost_copies(
     assert db.scalars(select(SourceReplica)).first() is None and db.get(DataSource, ds.id).status == "ok"
 
 
+def test_force_remove_hosting_device_drops_cohost_copies(
+    client, db, owner, owner_headers, make_project, make_device, fake_device
+):
+    # Detach is skipped while databases remain, but the copies must not stay behind on the PC.
+    project = make_project(owner, "Shop")
+    device, _ = make_device(owner)
+    device_source(db, project, device, name="hosted", database_name="p_hosted_abc123")
+    ds = device_source(db, project, device, name="copied", database_name="p_shop_abc123")
+    ds.device_id = None
+    db.add(SourceReplica(data_source_id=ds.id, device_id=device.id, status="syncing"))
+    db.commit()
+    fd = fake_device(device.id, lambda method, params: {})
+    assert client.delete(f"/v1/devices/{device.id}?force=true", headers=owner_headers).status_code == 200
+    assert fd.calls == [("datasource.drop", {"kind": "sql", "database_name": "p_shop_abc123"})]
+
+
 def test_move_validation(client, db, owner, owner_headers, make_project, make_device, monkeypatch):
     project = make_project(owner, "Shop")
     device, _ = make_device(owner)
