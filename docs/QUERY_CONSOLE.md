@@ -45,8 +45,15 @@ real boundary (use an external source with a read-only user for strict enforceme
   `save`, `drop`, `dropDatabase`, `dropIndex`, `dropIndexes`, `createCollection`, `createIndex`,
   `createIndexes`, `createView`, `renameCollection`, `convertToCapped`, `reIndex`, `bulkWrite`,
   `findOneAndUpdate`, `findOneAndReplace`, `findOneAndDelete`, `findAndModify`, `mapReduce`, `$out`,
-  `$merge`, `runCommand`, `adminCommand`, `createUser`, `updateUser`, `dropUser`, `createRole`,
-  `getSiblingDB`, `getMongo` (plus the Node.js names above).
+  `$merge`, `runCommand`, `adminCommand`, bulk and search/encryption index helpers (`removeOne`,
+  `initializeOrderedBulkOp`, `hideIndex`, `createSearchIndex`, ...), every user and role helper
+  (`createUser`, `dropAllUsers`, `changeUserPassword`, `grantRolesToUser`, `dropRole`, ...), server
+  helpers (`shutdownServer`, `fsyncLock`, `killOp`, `setProfilingLevel`, ...), the `rs`, `sh` and
+  `sp` globals, `getSiblingDB`, `getMongo`, `Mongo`, `connect` and the shell internals `_mongo`,
+  `_serviceProvider`, `_run*Command` (full list: `MONGO_WRITE_NAMES` in
+  `api/app/services/query_console.py`; plus the Node.js names above). This is a textual blocklist:
+  the source's database user is still `dbOwner` on its database, so a determined viewer who builds a
+  name from strings gets that user's rights.
   Regardless of role the script always starts against the source's own database only (`db` is bound
   to it by the wrapper) with the source's own credentials, never root.
 

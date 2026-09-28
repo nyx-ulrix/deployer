@@ -280,6 +280,23 @@ def test_mongo_read_only_accepts(code):
         "db.items.find({ $where: 'this.insertOne' })",  # over-matching inside strings is the safe direction
         "eval('1')",
         "globalThis.process",
+        # A-006: user / role administration and server helpers
+        "db.dropAllUsers()",
+        "db.changeUserPassword('app', 'x')",
+        "db.grantRolesToUser('app', ['dbOwner'])",
+        "db.revokeRolesFromUser('app', ['readWrite'])",
+        "db.dropAllRoles()",
+        "db.updateRole('r', {roles: []})",
+        "db.shutdownServer()",
+        "db.fsyncLock()",
+        "db.killOp(1)",
+        "db.setProfilingLevel(2)",
+        "rs.stepDown()",
+        "sh.enableSharding('x')",
+        "db.items.initializeUnorderedBulkOp().find({}).removeOne()",
+        "db._mongo._serviceProvider.insertOne('x', 'items', {})",
+        "new Mongo('mongodb://localhost').getDB('x')",
+        "connect('mongodb://localhost/x')",
     ],
 )
 def test_mongo_read_only_refuses(code):

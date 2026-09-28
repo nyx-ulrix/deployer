@@ -48,7 +48,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 
 **Query console**
 - [x] A-005 **[HIGH][security]** Read-only (viewer/anon) SQL is only a text filter; side-effecting functions pass and the managed DB user has ALL PRIVILEGES - `api/app/services/query_console.py:194-209, 283-284, 299-306` - enforce with `SET SESSION TRANSACTION READ ONLY` and fail closed if it errors.
-- [ ] A-006 **[HIGH][security]** Mongo read-only blocklist misses user/role admin and server helpers; the managed user is dbOwner - `api/app/services/query_console.py:335-386` - add the missing names now; later provision a `read`-role user for read-only runs.
+- [x] A-006 **[HIGH][security]** Mongo read-only blocklist misses user/role admin and server helpers; the managed user is dbOwner - `api/app/services/query_console.py:335-386` - add the missing names now; later provision a `read`-role user for read-only runs.
 
 **Backups**
 - [ ] A-007 **[HIGH][bug]** Restoring a dropped database from Recently deleted cannot be retried after one failure - `api/app/services/backups.py:1712-1745` - undo the recreate on failure, move cleanup into `finally`, or tolerate an existing empty DB.
