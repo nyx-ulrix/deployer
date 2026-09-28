@@ -437,3 +437,38 @@ def test_move_makes_the_old_main_copy_read_only(db, owner, make_project, make_de
     db.expire_all()
     assert db.get(Job, job.id).status == "succeeded"
     assert calls == [locked, "dump"]  # kept read-only until the cleanup drops it
+
+
+def test_stale_read_only_lock_is_released(db, owner, make_project, make_device, monkeypatch, fake_redis):
+    """A-008: a move cut short without unlocking (API restart, failed unlock) gives write access back later."""
+    from app.models import User
+    from app.services import provisioning
+
+    project = make_project(owner, "Shop")
+    device, _ = make_device(owner)
+    ds = _main_source(db, project)
+    calls = []
+
+    def unlock_fails(*a):
+        calls.append(a)
+        if not a[2]:
+            raise RuntimeError("mariadb restarting")
+
+    monkeypatch.setattr(provisioning, "set_mariadb_read_only", unlock_fails)
+    monkeypatch.setattr(device_moves, "_safety_snapshot", lambda sid, uid: None)
+    monkeypatch.setattr(device_moves, "dump_source", lambda ds: (_ for _ in ()).throw(RuntimeError("dump broke")))
+    job = device_moves.create_move_job(db, ds, device.id, db.get(User, owner.id))
+    db.commit()
+    device_moves.run_move(job.id)
+    assert fake_redis.hlen(device_moves.LOCKS_KEY) == 1  # still read-only: the unlock failed
+
+    running = device_moves.create_move_job(db, ds, device.id, db.get(User, owner.id))
+    db.commit()
+    calls.clear()
+    monkeypatch.setattr(provisioning, "set_mariadb_read_only", lambda *a: calls.append(a))
+    assert device_moves.release_stale_locks() == 0 and calls == []  # another move of it is running
+    running.status = "failed"
+    db.commit()
+    assert device_moves.release_stale_locks() == 1
+    assert calls == [("p_shop_main", "u_main0123456", False)]
+    assert fake_redis.hlen(device_moves.LOCKS_KEY) == 0

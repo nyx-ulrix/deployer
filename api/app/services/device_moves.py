@@ -15,8 +15,10 @@ Nothing may write to the old copy once it has been dumped, or those writes would
 - the move is refused (409 `apps_use_database`) while apps with database access are live, since they
   got the old copy's `DEPLOYER_DB_*` at deploy time (only main-server databases are given to apps);
 - a main-server source's own user is made read-only before the dump (and its open connections are
-  closed), so late writes fail instead of vanishing; a failed move gives write access back. Host
-  devices have no RPC for this; only Deployer itself writes to their databases.
+  closed), so late writes fail instead of vanishing; a failed move gives write access back. The lock
+  is recorded in Redis (`LOCKS_KEY`) first, so a move cut short by an API restart is unlocked by
+  `release_stale_locks()` (worker maintenance loop) once its job is no longer running. Host devices
+  have no RPC for this; only Deployer itself writes to their databases.
 """
 
 from __future__ import annotations
@@ -32,6 +34,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.crypto import decrypt_json, encrypt_json
@@ -47,6 +50,7 @@ log = logging.getLogger(__name__)
 MOVE_JOB = "device.move"
 KEEP_OLD_COPY_DAYS = 7
 CLEANUP_KEY = "device:cleanup:moved_copies"
+LOCKS_KEY = "device:moves:read_only"  # hash job_id -> old main-server copy while it is read-only
 LONG_TIMEOUT = 6 * 3600
 
 
@@ -242,6 +246,7 @@ def _run_move(job_id: str) -> None:
         if source_device is None:
             _update(job_id, progress=0.1, message="Making the current copy read-only")
             locked = (ds.kind, ds.database_name, ds.config_encrypted)
+            get_redis().hset(LOCKS_KEY, job_id, json.dumps({"data_source_id": source_id, "lock": locked}))
             set_read_only(*locked, True)
             connections.invalidate(ds.id)
 
@@ -285,6 +290,7 @@ def _run_move(job_id: str) -> None:
         session.commit()
         created = None
         locked = None  # the old copy stays read-only until it is dropped
+        _forget_lock(job_id)
         connections.invalidate(ds.id)
         connections.invalidate(target_ds.id)
         expires = utcnow() + timedelta(days=KEEP_OLD_COPY_DAYS)
@@ -321,6 +327,7 @@ def _run_move(job_id: str) -> None:
             try:
                 set_read_only(*locked, False)
                 connections.invalidate(source_id)
+                _forget_lock(job_id)
             except Exception:  # noqa: BLE001
                 log.warning("could not give write access back to %s", locked[1], exc_info=True)
         try:
@@ -366,6 +373,44 @@ def drop_copies_on_device(device_id: str) -> int:
             else:
                 log.warning("could not drop old copy %s on removed device: %s", entry.get("database_name"), exc.message)
     return dropped
+
+
+def _forget_lock(job_id: str) -> None:
+    try:
+        get_redis().hdel(LOCKS_KEY, job_id)
+    except Exception:  # noqa: BLE001 - release_stale_locks() skips it once the source moved
+        log.warning("could not clear the read-only record of move %s", job_id, exc_info=True)
+
+
+def release_stale_locks() -> int:
+    """Gives write access back to main-server copies whose move stopped without doing so (API restart,
+    or a failed unlock), unless the source already moved off that copy or another move is running."""
+    r = get_redis()
+    released = 0
+    session = get_sessionmaker()()
+    try:
+        for job_id, raw in r.hgetall(LOCKS_KEY).items():
+            entry = json.loads(raw)
+            ds_id, (kind, database, config_encrypted) = entry["data_source_id"], entry["lock"]
+            running = session.scalar(
+                select(Job.id).where(
+                    Job.data_source_id == ds_id, Job.type == MOVE_JOB, Job.status.in_(("queued", "running"))
+                )
+            )
+            if running is not None:
+                continue
+            ds = session.get(DataSource, ds_id)
+            if ds is not None and ds.device_id is None and ds.database_name == database:
+                try:
+                    set_read_only(kind, database, config_encrypted, False)
+                except Exception:  # noqa: BLE001 - retried next round
+                    log.warning("could not give write access back to %s", database, exc_info=True)
+                    continue
+                released += 1
+            r.hdel(LOCKS_KEY, job_id)
+    finally:
+        session.close()
+    return released
 
 
 def run_due_cleanups(now: float | None = None, limit: int = 20) -> int:

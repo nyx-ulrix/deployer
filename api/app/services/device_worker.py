@@ -8,7 +8,8 @@ Loaded as a worker plugin: `WORKER_PLUGINS=app.services.device_worker`. Importin
   - `device-agent`: the outbound connection to the main Deployer; it idles until this installation
     has a `device_link` (so the same worker image works on main servers and devices);
   - `device-maintenance`: every minute, drops old copies of moved databases whose keep period ended
-    and deletes expired transfer files (main server side).
+    and deletes expired transfer files (main server side), and gives write access back to databases
+    left read-only by a move that was cut short.
 """
 
 from __future__ import annotations
@@ -48,6 +49,7 @@ def maintenance_task(stop: threading.Event) -> None:
     while not stop.is_set():
         try:
             device_moves.run_due_cleanups()
+            device_moves.release_stale_locks()
             device_rpc.cleanup_transfers()
         except Exception:  # noqa: BLE001
             log.warning("device maintenance failed", exc_info=True)

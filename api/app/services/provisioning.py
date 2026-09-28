@@ -177,15 +177,15 @@ def drop_mariadb_database(database: str, username: str | None) -> None:
 
 def set_mariadb_read_only(database: str, username: str, read_only: bool) -> None:
     """Leaves the source's own user SELECT only (or gives ALL back). Database-level privileges only
-    apply to a session on its next USE, so that user's open connections are closed."""
+    apply to a session on its next USE, so that user's open connections are closed either way."""
     _check(DB_NAME_RE, database, "database name")
     _check(USER_RE, username, "user name")
     with mariadb_root_engine().connect() as conn:
-        if not read_only:
+        if read_only:
+            conn.exec_driver_sql(f"REVOKE ALL PRIVILEGES ON `{database}`.* FROM '{username}'@'%%'")
+            conn.exec_driver_sql(f"GRANT SELECT, SHOW VIEW ON `{database}`.* TO '{username}'@'%%'")
+        else:
             conn.exec_driver_sql(f"GRANT ALL PRIVILEGES ON `{database}`.* TO '{username}'@'%%'")
-            return
-        conn.exec_driver_sql(f"REVOKE ALL PRIVILEGES ON `{database}`.* FROM '{username}'@'%%'")
-        conn.exec_driver_sql(f"GRANT SELECT, SHOW VIEW ON `{database}`.* TO '{username}'@'%%'")
         ids = conn.exec_driver_sql("SELECT ID FROM information_schema.PROCESSLIST WHERE USER = %s", (username,))
         for (thread_id,) in ids.fetchall():
             try:

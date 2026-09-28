@@ -214,7 +214,8 @@ Errors raised **on the device** and re-raised on the primary with the same statu
   move is refused (`409 apps_use_database`) while apps with database access are live, and a database
   on the main server is made read-only (its user keeps `SELECT` only, open connections are closed) from
   the dump on. Writes during the move fail instead of being lost; a failed move gives write access
-  back, a finished one leaves the old copy read-only until it is dropped. A database on a host device
+  back (a move cut short by a restart is unlocked by the worker's maintenance loop once its job
+  has failed), a finished one leaves the old copy read-only until it is dropped. A database on a host device
   is not locked (only Deployer itself writes to it), so API writes made during that move are lost.
 - A device that is offline makes its sources return `503 device_offline`; everything else keeps working.
 - On the device itself, while attached: the local dashboard shows a **Host device status** page
