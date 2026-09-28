@@ -9,9 +9,12 @@ from app.errors import ApiError
 from app.models import User
 from app.serializers import user_out
 from app.services import audit
+from app.services.alerts import validate_webhook_url
 from app.services.instance_settings import (
     OAUTH_KEYS,
     allow_signup,
+    api_key_rate_limit,
+    get_value,
     oauth_app,
     oauth_callback_url,
     public_url,
@@ -37,6 +40,9 @@ def settings_out(db) -> dict:
         "allow_signup": allow_signup(db),
         "google": provider("google"),
         "github": provider("github"),
+        # docs/MONITORING.md
+        "alert_webhook_url": get_value(db, "alert_webhook_url") or None,
+        "api_key_rate_limit": api_key_rate_limit(db),
     }
 
 
@@ -77,6 +83,8 @@ class SettingsUpdate(BaseModel):
     google_client_secret: str | None = Field(default=None, max_length=500)
     github_client_id: str | None = Field(default=None, max_length=500)
     github_client_secret: str | None = Field(default=None, max_length=500)
+    alert_webhook_url: str | None = Field(default=None, max_length=500)  # "" clears
+    api_key_rate_limit: int | None = Field(default=None, ge=0, le=100_000)  # per key per minute, 0 = off
 
 
 @router.put("/instance/settings")
@@ -89,6 +97,8 @@ def update_settings(body: SettingsUpdate, request: Request, owner: InstanceOwner
         "google_client_secret",
         "github_client_id",
         "github_client_secret",
+        "alert_webhook_url",
+        "api_key_rate_limit",
     ):
         value = getattr(body, key)
         if value is None:
@@ -99,6 +109,8 @@ def update_settings(body: SettingsUpdate, request: Request, owner: InstanceOwner
                 value = validate_public_url(value)
             elif key in OAUTH_KEYS:
                 value = validate_oauth_value(key, value)
+            elif key == "alert_webhook_url" and value:
+                value = validate_webhook_url(value)
         set_value(db, key, value)
         changed.append(key)
     if changed:

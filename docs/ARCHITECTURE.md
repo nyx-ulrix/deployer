@@ -32,7 +32,7 @@ Browser / phone / AI agent
    backend network (internal: true)
    ├── mariadb:11   platform metadata DB `deployer` + managed SQL databases `p_<ref>` (binlog on)
    ├── mongo:5.0    managed NoSQL databases `p_<ref>` (single-node replica set for the oplog)
-   ├── redis:7      OAuth state, rate limits, job queue, device RPC routing, app runtime logs
+   ├── redis:7      OAuth state, rate limits, job queue, device RPC routing, app runtime logs, metrics
    └── worker       jobs + scheduler: backups, log archiving, pruning, verification; app builds and
                     containers (root + /var/run/docker.sock, writes the Caddy app files); on a host
                     device also the outbound connection to the main Deployer
@@ -46,7 +46,7 @@ Browser / phone / AI agent
 | `dashboard/` | React + TypeScript + Vite SPA, Dockerfile (nginx) |
 | `deploy/` | `docker-compose.yml`, `docker-compose.dev.yml` (API hot reload for checkouts), `Caddyfile`, `.env.example`, `mongodb/` (replica-set entrypoint), `tunnel/` (cloudflared sidecar image) |
 | `installer/` | `install.ps1` (Windows bootstrap), `deployer.ps1` (manage CLI), WSL engine scripts, `windows/` (`DeployerSetup.exe`: setup wizard + Deployer Control, C# WinForms on .NET Framework 4.8) |
-| `docs/` | This file, `API.md` (HTTP contract), `CONVENTIONS.md` (schema conventions), `DEVICES.md` (host devices), `BACKUPS.md` (backups & recovery), `REMOTE_ACCESS.md` (Cloudflare domains), `DEPLOYMENTS.md` (push-to-deploy) |
+| `docs/` | This file, `API.md` (HTTP contract), `CONVENTIONS.md` (schema conventions), `DEVICES.md` (host devices), `BACKUPS.md` (backups & recovery), `REMOTE_ACCESS.md` (Cloudflare domains), `DEPLOYMENTS.md` (push-to-deploy), `MONITORING.md` (metrics & alerts), `SECURITY_REVIEW.md` |
 
 ## Data model (platform DB, MariaDB `deployer`)
 
@@ -81,7 +81,8 @@ Source of truth: `api/app/models.py`.
   account is refused with `account_exists_link_required`; the user signs in the usual way and links
   from *Settings → Account*. An identity can belong to only one user. A user cannot remove their last
   login method.
-- Login rate limit: 10 attempts / 15 min per IP+email (Redis).
+- Login rate limit: 10 attempts / 15 min per IP+email (Redis). Project API keys: 600 requests/min per
+  key by default (`api_key_rate_limit`), 429 with `Retry-After` ([MONITORING.md](MONITORING.md)).
 - Managed databases get their own DB user restricted to that database only.
 
 ## Export / import format
@@ -130,4 +131,8 @@ user's Google/GitHub OAuth apps if the public URL changed.
 5. Google/GitHub sign-in setup — guided setup in the dashboard (Google offers no API to create OAuth
    clients, so it can't be automated). **Done.**
 6. MCP server for AI agents ([MCP.md](MCP.md)). **Done.**
-7. Monitoring and hardening.
+7. Monitoring and hardening ([MONITORING.md](MONITORING.md), [SECURITY_REVIEW.md](SECURITY_REVIEW.md)).
+   **Done:** host/container/API metrics (24 h in Redis) on *Settings → Monitoring*, alert rules
+   (disk, memory, containers, API 5xx, backups, tunnel, co-host copies) with an https webhook,
+   per-API-key rate limits, and a security review of the deploy/co-hosting/MCP code. **Not covered:**
+   metrics of host devices and co-host PCs, email alerts, custom thresholds, a Prometheus endpoint.

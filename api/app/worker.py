@@ -16,6 +16,8 @@ Threads started by `start_background_tasks()`:
 - `app-logs`: every 10 s copies new `docker logs` lines of live app containers into Redis
   (docs/DEPLOYMENTS.md); the scheduler tick also removes orphan app containers and reconciles the
   co-hosted app copies on devices (docs/COHOSTING.md, `cohost_apps.sweep`).
+- `metrics`: every 15 s samples host metrics and container stats into Redis (docs/MONITORING.md); the
+  scheduler leader evaluates the alert rules once a minute (`alerts.evaluate`).
 - any task added with `register_background_task(name, fn)`.
 
 Extension point (host devices): call `register_background_task("device-agent", fn)` before
@@ -131,17 +133,21 @@ def release_leadership(client: redis.Redis, me: str = WORKER_ID) -> None:
 
 PRUNE_QUERY_LOG_EVERY_S = 24 * 3600
 _last_query_log_prune = float("-inf")  # module-level: the leader is one process, ticks every TICK_EVERY_S
+_last_alerts = float("-inf")
 
 
 def scheduler_tick() -> None:
-    global _last_query_log_prune
-    from app.services import backups, cohost_apps, deployments, query_log
+    global _last_query_log_prune, _last_alerts
+    from app.services import alerts, backups, cohost_apps, deployments, query_log
 
     jobs.recover_stale()
     jobs.redispatch_queued()
     backups.scheduler_tick(jobs.get_sessionmaker())
     deployments.scheduler_tick(jobs.get_sessionmaker())
     cohost_apps.sweep(jobs.get_sessionmaker())  # docs/COHOSTING.md: co-hosted apps on devices
+    if time.monotonic() - _last_alerts >= alerts.EVALUATE_EVERY_S:
+        _last_alerts = time.monotonic()
+        alerts.evaluate(jobs.get_sessionmaker())  # docs/MONITORING.md
     if time.monotonic() - _last_query_log_prune >= PRUNE_QUERY_LOG_EVERY_S:
         _last_query_log_prune = time.monotonic()
         with jobs.get_sessionmaker()() as session:
@@ -208,13 +214,14 @@ def _load_plugins() -> None:
 def start_background_tasks(stop: threading.Event, *, concurrency: int | None = None) -> list[threading.Thread]:
     concurrency = concurrency or max(1, int(os.environ.get("WORKER_CONCURRENCY", "2")))
     specs: list[tuple[str, BackgroundTask]] = [(f"runner-{i + 1}", runner_loop) for i in range(concurrency)]
-    from app.services import deployments, source_sync
+    from app.services import deployments, metrics, source_sync
 
     specs += [
         ("scheduler", scheduler_loop),
         ("mongo-replset", mongo_replset_loop),
         ("app-logs", deployments.logs_loop),
         ("source-sync", source_sync.sync_loop),
+        ("metrics", metrics.sample_loop),
         *_tasks,
     ]
     threads = []

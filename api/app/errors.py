@@ -44,7 +44,12 @@ def _body(code: str, message: str, details: dict[str, Any] | None = None) -> dic
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, exc: ApiError) -> JSONResponse:
-        return JSONResponse(status_code=exc.status_code, content=_body(exc.code, exc.message, exc.details))
+        # 429s carry `details.retry_after`; mirror it in the standard header for HTTP clients.
+        retry_after = exc.details.get("retry_after") if exc.status_code == 429 else None
+        headers = {"Retry-After": str(max(int(retry_after), 1))} if isinstance(retry_after, int) else None
+        return JSONResponse(
+            status_code=exc.status_code, content=_body(exc.code, exc.message, exc.details), headers=headers
+        )
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:

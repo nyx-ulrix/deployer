@@ -169,6 +169,9 @@ export type InstanceSettings = {
   allow_signup: boolean;
   google: ProviderSettings;
   github: ProviderSettings;
+  /** docs/MONITORING.md */
+  alert_webhook_url: string | null;
+  api_key_rate_limit: number;
 };
 
 /** Empty string clears a value. */
@@ -179,6 +182,8 @@ export type InstanceSettingsUpdate = {
   google_client_secret?: string;
   github_client_id?: string;
   github_client_secret?: string;
+  alert_webhook_url?: string;
+  api_key_rate_limit?: number;
 };
 
 // ---- Projects ----
@@ -1013,4 +1018,77 @@ export type SyncHistoryItem = {
   /** Conflicts only: the two sides before resolving. */
   primary?: JsonObject | null;
   replica?: JsonObject | null;
+};
+
+// ---- Monitoring (docs/MONITORING.md) ----
+
+export type MetricsWindow = "1h" | "6h" | "24h";
+
+export type HostMetrics = {
+  cpu_percent: number | null;
+  memory_used_bytes: number | null;
+  memory_total_bytes: number | null;
+  disk_free_bytes: number | null;
+  disk_total_bytes: number | null;
+  uptime_seconds: number | null;
+  collected_at: string;
+};
+
+export type MetricsPoint = {
+  t: string;
+  cpu_percent: number | null;
+  memory_percent: number | null;
+  disk_free_bytes: number | null;
+  requests_per_min: number;
+  error_rate: number | null;
+  p95_ms: number | null;
+};
+
+export type RequestTotals = {
+  requests: number;
+  errors_5xx: number;
+  error_rate: number | null;
+  p95_ms: number | null;
+};
+
+export type ContainerStat = {
+  name: string;
+  service: string | null;
+  app_id: string | null;
+  status: string | null;
+  health: string | null;
+  restarts: number | null;
+  started_at: string | null;
+  cpu_percent: number | null;
+  memory_bytes: number | null;
+  memory_limit_bytes: number | null;
+};
+
+export type InstanceMetrics = {
+  window: MetricsWindow;
+  step_seconds: number;
+  current: HostMetrics | null;
+  points: MetricsPoint[];
+  requests: RequestTotals;
+  routes: (RequestTotals & { route: string })[];
+  containers: { collected_at: string; containers: ContainerStat[] } | null;
+};
+
+export type InstanceAlert = {
+  id: string;
+  alert: string;
+  severity: "warning" | "critical";
+  message: string;
+  first_seen: string | null;
+  last_seen: string | null;
+  opened_at: string | null;
+  dismissed: boolean;
+  snoozed_until: string | null;
+};
+
+export type MetricsSummary = {
+  current: HostMetrics | null;
+  requests_5m: RequestTotals;
+  containers: { total: number; running: number; problems: number } | null;
+  alerts: { active: number; visible: number; critical: number; top: InstanceAlert | null };
 };

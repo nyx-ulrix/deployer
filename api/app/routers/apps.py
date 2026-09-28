@@ -285,6 +285,14 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
         github.delete_hook(db, app)
         if app.github_connection_user_id != access.user.id:
             app.github_connection_user_id = None
+    if (
+        "repo_url" in changed
+        and body.repo_url
+        and "repo_token" not in changed
+        and urlsplit(body.repo_url).netloc.lower() != urlsplit(app.repo_url).netloc.lower()
+    ):
+        # The stored token was given for the old host: git would hand it to the new one.
+        app.repo_token_encrypted = None
     for field in changed:
         value = getattr(body, field)
         if field == "env":
@@ -574,6 +582,18 @@ def remove_domain(app_id: str, domain_id: str, request: Request, access: Admin, 
 
 # --- GitHub webhook (no bearer auth: HMAC of the raw body with the app's secret) ------------------
 
+WEBHOOK_MAX_BODY = 5 * 2**20  # push payloads are a few KB; GitHub caps any payload at 25 MB
+
+
+async def read_body_capped(request: Request, limit: int) -> bytes:
+    """The request body, but at most `limit + 1` bytes are read (longer means too large)."""
+    data = bytearray()
+    async for chunk in request.stream():
+        data += chunk
+        if len(data) > limit:
+            break
+    return bytes(data[: limit + 1])
+
 
 @router.post("/hooks/github/{app_id}")
 async def github_webhook(app_id: str, request: Request, db: DbSession) -> Any:
@@ -585,7 +605,9 @@ async def github_webhook(app_id: str, request: Request, db: DbSession) -> Any:
         raise ApiError(
             429, "rate_limited", "Too many webhook deliveries; try again later", {"retry_after": retry_after}
         )
-    body = await request.body()
+    body = await read_body_capped(request, WEBHOOK_MAX_BODY)
+    if len(body) > WEBHOOK_MAX_BODY:
+        raise ApiError(413, "payload_too_large", f"Webhook payloads are limited to {WEBHOOK_MAX_BODY // 2**20} MB")
     if not deployments.verify_signature(
         deployments.webhook_secret(app), body, request.headers.get("X-Hub-Signature-256")
     ):

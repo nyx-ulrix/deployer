@@ -114,7 +114,7 @@ Provider callback URLs (shown in the setup wizard):
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/instance/settings` | – | `InstanceSettings` |
-| PUT | `/instance/settings` | `{public_url?, allow_signup?, google_client_id?, google_client_secret?, github_client_id?, github_client_secret?}` (empty string clears) | `InstanceSettings` |
+| PUT | `/instance/settings` | `{public_url?, allow_signup?, google_client_id?, google_client_secret?, github_client_id?, github_client_secret?, alert_webhook_url?, api_key_rate_limit?}` (empty string clears) | `InstanceSettings` |
 | GET | `/instance/users` | – | `User[]` |
 | POST | `/instance/export` | `{passphrase}` | file download `deployer-instance-YYYYMMDD-HHMM.json` |
 
@@ -131,7 +131,48 @@ type InstanceSettings = {
   public_url: string; allow_signup: boolean;
   google: { client_id: string | null; secret_set: boolean; configured: boolean; callback_url: string };
   github: { client_id: string | null; secret_set: boolean; configured: boolean; callback_url: string };
+  alert_webhook_url: string | null;  // https only, no user:password@ (MONITORING.md)
+  api_key_rate_limit: number;        // requests/min per project API key, default 600, 0 = unlimited
 };
+```
+
+`alert_webhook_url` failures are `422 validation_error` with `details.field: "alert_webhook_url"`;
+`api_key_rate_limit` must be 0-100000.
+
+### Monitoring (instance owner only)
+
+[MONITORING.md](MONITORING.md). Metrics and alerts live in Redis; everything here is owner-only (403
+for other users, 401 `api_key_not_allowed` for API keys).
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/instance/metrics?window=1h\|6h\|24h` | – | `InstanceMetrics` (default `1h`; other windows 422) |
+| GET | `/instance/metrics/summary` | – | `MetricsSummary` (for the header bell; cheap) |
+| GET | `/instance/alerts` | – | `Alert[]` (open alerts, critical first; muted ones included with their flags) |
+| POST | `/instance/alerts/{id}/dismiss` | – | `Alert` (hidden from the bell until it resolves); 404 if not active |
+| POST | `/instance/alerts/{id}/snooze` | `{minutes}` (5-10080) | `Alert` |
+| POST | `/instance/alerts/webhook-test` | `{url?}` (default: the saved URL) | `{ok, detail}` (`detail`: `HTTP 204`, `ConnectTimeout`, ...); 422 if no URL is set |
+
+```ts
+type Host = { cpu_percent: number | null; memory_used_bytes: number | null; memory_total_bytes: number | null;
+  disk_free_bytes: number | null; disk_total_bytes: number | null; uptime_seconds: number | null; collected_at: string };
+type RequestTotals = { requests: number; errors_5xx: number; error_rate: number | null; p95_ms: number | null };
+type InstanceMetrics = {
+  window: "1h" | "6h" | "24h"; step_seconds: number;   // 60 / 180 / 720: at most 120 points
+  current: Host | null;                                // null if the worker hasn't sampled for 3 minutes
+  points: { t: string; cpu_percent: number | null; memory_percent: number | null; disk_free_bytes: number | null;
+            requests_per_min: number; error_rate: number | null; p95_ms: number | null }[];
+  requests: RequestTotals;                             // whole window
+  routes: (RequestTotals & { route: string })[];       // top 15 by count, e.g. "GET /v1/projects/{project_id}"
+  containers: { collected_at: string; containers: { name: string; service: string | null; app_id: string | null;
+    status: string | null; health: string | null; restarts: number | null; started_at: string | null;
+    cpu_percent: number | null; memory_bytes: number | null; memory_limit_bytes: number | null }[] } | null;
+};
+type MetricsSummary = { current: Host | null; requests_5m: RequestTotals;
+  containers: { total: number; running: number; problems: number } | null;
+  alerts: { active: number; visible: number; critical: number; top: Alert | null } };
+type Alert = { id: string; alert: string; severity: "warning" | "critical"; message: string;
+  first_seen: string; last_seen: string; opened_at: string; dismissed: boolean; snoozed_until: string | null };
 ```
 
 ## Projects

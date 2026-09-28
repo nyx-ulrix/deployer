@@ -294,13 +294,13 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         t_delete_document,
     ),
     "list_apps": (
-        "viewer",
+        "developer",
         "List the project's apps (websites deployed from Git): id, name, repo, URLs, live deployment.",
         _schema(),
         t_list_apps,
     ),
     "get_app": (
-        "viewer",
+        "developer",
         "One app's settings, URLs, hostnames and live deployment.",
         _schema(["app_id"], app_id=APP),
         t_get_app,
@@ -312,14 +312,14 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         t_deploy_app,
     ),
     "deployment_status": (
-        "viewer",
+        "developer",
         f"A deployment's status (queued, building, deploying, live, failed, cancelled, superseded), "
         f"error and the last {LOG_TAIL_LINES} build log lines.",
         _schema(["app_id", "deployment_id"], app_id=APP, deployment_id=_p("string", "Deployment id")),
         t_deployment_status,
     ),
     "app_logs": (
-        "viewer",
+        "developer",
         "Recent runtime log lines of an app's live container.",
         _schema(
             ["app_id"], app_id=APP, tail=_p("integer", "Lines to return (1-500, default 100)", minimum=1, maximum=500)
@@ -502,5 +502,5 @@ def handle(raw: bytes, request: Request, access: ProjectAccess, db) -> Response:
 async def mcp_endpoint(request: Request, access: Access, db: DbSession) -> Response:
     """Streamable HTTP: one JSON-RPC message per POST, answered with application/json. GET (the SSE
     stream) and DELETE (sessions) are not offered, so they get 405."""
-    raw = await request.body()
+    raw = await apps_router.read_body_capped(request, MAX_BODY)  # never buffers more than 1 MB
     return await run_in_threadpool(handle, raw, request, access, db)

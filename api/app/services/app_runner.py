@@ -11,8 +11,10 @@ job can be tested end to end against a fake. Rules:
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+import re
 import socket
 import subprocess
 import time
@@ -27,6 +29,7 @@ GIT_TIMEOUT = 600
 BUILD_TIMEOUT = 45 * 60
 DOCKER_TIMEOUT = 120
 LineFn = Callable[[str], None]
+_SHA = re.compile(r"[0-9a-f]{7,40}")
 
 _docker: DockerCli | None = None
 
@@ -122,6 +125,8 @@ class DockerCli:
         )
 
     def git_checkout(self, dest: str, sha: str, *, token: str | None, on_line: LineFn | None = None) -> None:
+        if not _SHA.fullmatch(sha):  # never an option (`--upload-pack=...`) or a range in git's argv
+            raise DockerError(f"Invalid commit sha {sha[:50]!r}")
         env = _git_env(token)
         self._run(
             ["git", "fetch", "--depth", "1", "origin", sha], cwd=dest, env=env, timeout=GIT_TIMEOUT, on_line=on_line
@@ -251,3 +256,94 @@ class DockerCli:
         if name is None:
             raise DockerError("The caddy container is not running")
         self._run(["docker", "exec", name, "caddy", "reload", "--config", "/etc/caddy/Caddyfile"])
+
+    # --- monitoring (docs/MONITORING.md) -------------------------------------------------------
+
+    def stats(self, compose_project: str) -> list[dict]:
+        """Status + resource use of the compose project's containers and deployed app containers:
+        `[{name, service, app_id, status, health, restarts, started_at, cpu_percent, memory_bytes,
+        memory_limit_bytes}]` (resource fields None for containers that aren't running)."""
+        out = self._run(
+            [
+                "docker",
+                "ps",
+                "-a",
+                "--format",
+                '{{.Names}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.service"}}'
+                '	{{.Label "deployer.app"}}',
+            ],
+            timeout=30,
+        )
+        rows: dict[str, dict] = {}
+        for line in out.splitlines():
+            name, project, service, app_id = ([*line.split("	"), "", "", ""])[:4]
+            if name and (project == compose_project or app_id):
+                rows[name] = {"name": name, "service": service or None, "app_id": app_id or None}
+        if not rows:
+            return []
+        fmt = (
+            "{{.Name}}	{{.State.Status}}	{{if .State.Health}}{{.State.Health.Status}}{{end}}"
+            "	{{.RestartCount}}	{{.State.StartedAt}}"
+        )
+        for line in self._run(["docker", "inspect", "--format", fmt, *rows], timeout=30, check=False).splitlines():
+            name, status, health, restarts, started = ([*line.split("	"), "", "", "", ""])[:5]
+            row = rows.get(name.lstrip("/"))
+            if row is not None:
+                row.update(
+                    status=status or None,
+                    health=health or None,
+                    restarts=int(restarts) if restarts.isdigit() else None,
+                    started_at=started or None,
+                )
+        running = [n for n, r in rows.items() if r.get("status") == "running"]
+        if running:
+            out = self._run(
+                ["docker", "stats", "--no-stream", "--format", "{{json .}}", *running], timeout=30, check=False
+            )
+            for line in out.splitlines():
+                try:
+                    item = json.loads(line)
+                except ValueError:
+                    continue
+                row = rows.get(item.get("Name", "")) if isinstance(item, dict) else None
+                if row is None:
+                    continue
+                used, _, limit = str(item.get("MemUsage", "")).partition("/")
+                row.update(
+                    cpu_percent=_percent(item.get("CPUPerc")),
+                    memory_bytes=parse_size(used),
+                    memory_limit_bytes=parse_size(limit),
+                )
+        for row in rows.values():
+            for key in (
+                "status",
+                "health",
+                "restarts",
+                "started_at",
+                "cpu_percent",
+                "memory_bytes",
+                "memory_limit_bytes",
+            ):
+                row.setdefault(key, None)
+        return sorted(rows.values(), key=lambda r: r["name"])
+
+
+_SIZE_UNITS = {"b": 1, "kb": 1000, "mb": 1000**2, "gb": 1000**3, "tb": 1000**4}
+_SIZE_UNITS.update({"kib": 1024, "mib": 1024**2, "gib": 1024**3, "tib": 1024**4})
+
+
+def parse_size(text: str) -> int | None:
+    """`docker stats` sizes ("12.5MiB", "1.94GiB", "0B") to bytes."""
+    match = re.fullmatch(r"\s*([\d.]+)\s*([a-zA-Z]+)\s*", text or "")
+    factor = _SIZE_UNITS.get(match.group(2).lower()) if match else None
+    try:
+        return int(float(match.group(1)) * factor) if factor else None
+    except ValueError:
+        return None
+
+
+def _percent(text) -> float | None:
+    try:
+        return round(float(str(text).strip().rstrip("%")), 1)
+    except ValueError:
+        return None

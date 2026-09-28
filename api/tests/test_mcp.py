@@ -17,11 +17,9 @@ READ_TOOLS = {
     "run_query",
     "list_rows",
     "list_documents",
-    "list_apps",
-    "get_app",
-    "deployment_status",
-    "app_logs",
 }
+# App tools need a service key (or a developer+ session): anon keys are meant for public clients.
+APP_TOOLS = {"list_apps", "get_app", "deployment_status", "app_logs", "deploy_app"}
 WRITE_TOOLS = {"insert_row", "update_row", "delete_row", "insert_document", "update_document", "delete_document"}
 
 
@@ -87,7 +85,7 @@ def test_tools_list_depends_on_role(env):
         return {t["name"] for t in tools}
 
     assert names(env["anon"]) == READ_TOOLS
-    assert names(env["service"]) == READ_TOOLS | WRITE_TOOLS | {"deploy_app"}
+    assert names(env["service"]) == READ_TOOLS | WRITE_TOOLS | APP_TOOLS
     assert names(env["viewer"]) == READ_TOOLS  # JWT sessions work too, with the member's role
 
 
@@ -173,11 +171,14 @@ def test_mongo_query_through_fake_shell(env, db, fake_mongosh):  # noqa: F811
 def test_app_tools(env, db, fake_redis):
     app = make_app(db, env["project"])
     call = env["call"]
-    _, apps = call(env["anon"], "list_apps")
+    for tool in APP_TOOLS:  # build/runtime logs and app settings never reach an anon (public) key
+        out = env["rpc"](env["anon"], "tools/call", {"name": tool, "arguments": {"app_id": app.id}})
+        assert out["error"]["code"] == mcp.INVALID_PARAMS and "Unknown tool" in out["error"]["message"]
+    _, apps = call(env["service"], "list_apps")
     assert [a["id"] for a in apps] == [app.id]
-    _, one = call(env["anon"], "get_app", app_id=app.id)
+    _, one = call(env["service"], "get_app", app_id=app.id)
     assert one["name"] == "Shop"
-    is_error, missing = call(env["anon"], "get_app", app_id="nope")
+    is_error, missing = call(env["service"], "get_app", app_id="nope")
     assert is_error and missing["error"]["code"] == "not_found"
 
     _, dep = call(env["service"], "deploy_app", app_id=app.id)
@@ -185,13 +186,13 @@ def test_app_tools(env, db, fake_redis):
     row = db.get(Deployment, dep["id"])
     row.log = "\n".join(f"line {i}" for i in range(150))
     db.commit()
-    _, status = call(env["anon"], "deployment_status", app_id=app.id, deployment_id=dep["id"])
+    _, status = call(env["service"], "deployment_status", app_id=app.id, deployment_id=dep["id"])
     lines = status["log_tail"].splitlines()
     assert status["status"] == "queued" and "log" not in status
     assert len(lines) == mcp.LOG_TAIL_LINES and lines[-1] == "line 149"
 
     fake_redis.rpush(deployments.logs_key(app.id), "a", "b", "c")
-    assert call(env["anon"], "app_logs", app_id=app.id, tail=2)[1] == {"lines": ["b", "c"], "container": None}
+    assert call(env["service"], "app_logs", app_id=app.id, tail=2)[1] == {"lines": ["b", "c"], "container": None}
 
 
 def test_truncation(env, sqlite_engine, monkeypatch):  # noqa: F811

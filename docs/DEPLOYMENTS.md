@@ -150,7 +150,9 @@ The New app dialog starts with **Choose a repository**; everything it fills in s
    connection was removed the deployment fails with "The GitHub connection of <email> was removed;
    reconnect GitHub or add a token in the app's settings". The token is only ever used for github.com
    URLs, and when someone other than the creator changes the app's repository the connection is
-   detached (they must supply a token). An explicit `repo_token` wins over the connection.
+   detached (they must supply a token). An explicit `repo_token` wins over the connection. A stored
+   `repo_token` is dropped when the repository URL moves to another host without a new token in the
+   same request (git would otherwise hand it to that host).
 5. **Webhook**: right after create (and on `POST /apps/{id}/webhook/rotate`) Deployer creates or
    updates the repository's `push` webhook (`POST`/`PATCH /repos/{o}/{r}/hooks`, JSON, the app's
    secret) and stores its id in `apps.github_hook_id`; deleting the app (or changing its repository)
@@ -246,7 +248,8 @@ otherwise), `X-GitHub-Event: ping` → 200 `{ok}`; `push` for `refs/heads/<branc
 `{deployment_id}` (`trigger=webhook`, `commit_sha`, first line of the head commit message); other
 branches/events → 200 `{ignored: true}`. Coalescing: a push while a deployment is still `queued`
 for the same app replaces its commit instead of adding another. Rate limit 6/min per app (every
-delivery counts, including rejected signatures; 429 `rate_limited`). Unknown app → 404.
+delivery counts, including rejected signatures; 429 `rate_limited`). Unknown app → 404. Bodies over
+5 MB → 413 `payload_too_large`; an `after` that is not a 40-hex sha deploys the branch head instead.
 
 Runtime logs: the API has no Docker access. `GET /apps/{id}/logs` enqueues nothing; instead the
 worker keeps the last 500 lines of each live container in Redis (`apps:logs:<app_id>`, a capped

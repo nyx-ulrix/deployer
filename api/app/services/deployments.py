@@ -371,7 +371,8 @@ def handle_push(db: Session, app: App, payload: dict) -> tuple[Deployment | None
     while a deployment is still queued replaces its commit instead of adding another."""
     if payload.get("ref") != f"refs/heads/{app.branch}" or payload.get("deleted"):
         return None, None
-    sha = str(payload.get("after") or "")[:40] or None
+    sha = str(payload.get("after") or "").lower()
+    sha = sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None  # it reaches `git fetch` argv: hex only
     head = payload.get("head_commit") or {}
     message = str(head.get("message") or "").splitlines()[0][:200] if head.get("message") else None
     waiting = db.scalar(
@@ -588,8 +589,15 @@ def build_image(
 ) -> None:
     """`docker build` of `root_dir` inside a checkout with a generated recipe (None: the repository's own
     Dockerfile). Shared by the deploy job and co-host devices (services/device_apps.py)."""
-    context = os.path.normpath(os.path.join(checkout, root_dir or "."))
-    if not (context == checkout or context.startswith(checkout + os.sep)):
+    # realpath: a symlink in the repository must not point the build context or the Dockerfile at
+    # the worker's own filesystem.
+    checkout = os.path.realpath(checkout)
+    context = os.path.realpath(os.path.join(checkout, root_dir or "."))
+
+    def inside(path: str) -> bool:
+        return path == checkout or path.startswith(checkout + os.sep)
+
+    if not inside(context):
         raise jobs.JobError("root_dir must stay inside the repository")
     if not os.path.isdir(context):
         raise jobs.JobError(f"root_dir '{root_dir}' does not exist in the repository")
@@ -597,6 +605,8 @@ def build_image(
         dockerfile = os.path.join(context, "Dockerfile")
         if not os.path.isfile(dockerfile):
             raise jobs.JobError(f"No Dockerfile in '{root_dir}'")
+        if not inside(os.path.realpath(dockerfile)):
+            raise jobs.JobError("The Dockerfile must stay inside the repository")
     else:
         dockerfile = os.path.join(workdir, "Dockerfile.deployer")
         with open(dockerfile, "w", encoding="utf-8", newline="\n") as fh:

@@ -146,3 +146,22 @@ def test_last_used_is_throttled(client, db, setup):
     assert client.get(setup["rows"], headers=h).status_code == 200
     db.expire_all()
     assert db.get(ApiKey, key["id"]).last_used_at > recent
+
+
+def test_per_key_rate_limit(client, setup, set_setting):
+    """docs/MONITORING.md: `api_key_rate_limit` requests per minute per key; 429 with Retry-After."""
+    set_setting("api_key_rate_limit", 2)
+    _, h = setup["make_key"]("anon")
+    _, other = setup["make_key"]("anon")
+    url = f"/v1/projects/{setup['project'].id}/schema/links"
+    assert [client.get(url, headers=h).status_code for _ in range(2)] == [200, 200]
+    limited = client.get(url, headers=h)
+    assert limited.status_code == 429
+    assert limited.json()["error"]["code"] == "rate_limited"
+    retry_after = limited.json()["error"]["details"]["retry_after"]
+    assert 1 <= int(limited.headers["Retry-After"]) <= 60 and retry_after <= 60
+    assert client.get(url, headers=other).status_code == 200  # counted per key
+    assert client.get(url, headers=setup["owner"]).status_code == 200  # users are unaffected
+
+    set_setting("api_key_rate_limit", 0)  # 0 = unlimited
+    assert client.get(url, headers=h).status_code == 200

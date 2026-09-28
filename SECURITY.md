@@ -71,3 +71,14 @@ Security fixes are made for the latest release. Update with `deployer update`.
   user who started the flow. Disconnecting (Account settings) deletes the token; revoke the grant at
   github.com/settings/applications as well. Prefer a fine-grained, read-only per-repository token
   (the manual path) when that broad scope is not acceptable.
+- **Rate limits:** sign-in 10 attempts / 15 min per IP+email; project API keys 600 requests / min per
+  key (instance setting `api_key_rate_limit`); MCP 60 tool calls / min per key; GitHub webhooks per
+  app. Over a limit: `429 rate_limited` with a `Retry-After` header.
+- **Alert webhook** ([docs/MONITORING.md](docs/MONITORING.md)): https only, stored encrypted, no
+  redirects followed, never logged; payloads carry alert names, severities and counts only.
+- **Deploy input rules** (review of 2026-09-28, [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md)):
+  `root_dir` and a repository `Dockerfile` must resolve (symlinks followed) inside the checkout; only
+  hex commit shas ever reach git; a stored repository token is dropped when the app's repository moves
+  to another host without a new token; webhook bodies are capped at 5 MB and MCP bodies at 1 MB before
+  anything is buffered; MCP app tools (settings, build and runtime logs) need a `service` key, never an
+  `anon` key.

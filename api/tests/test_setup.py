@@ -116,6 +116,8 @@ def test_instance_settings_roundtrip(client, owner_headers, db):
             "configured": False,
             "callback_url": "http://localhost:8080/v1/auth/oauth/github/callback",
         },
+        "alert_webhook_url": None,
+        "api_key_rate_limit": 600,
     }
 
     resp = client.put(

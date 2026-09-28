@@ -347,3 +347,29 @@ def test_export_import_roundtrip(client, env, db, make_user, auth_headers):
     assert restored is not None and deployments.repo_token(restored) == token and restored.port == 8100
     assert (restored.github_connection_user_id, restored.github_hook_id) == (connected_by, None)
     assert db.scalar(select(Domain).where(Domain.app_id == app.id)).hostname == "shop.example.com"
+
+
+# --- security review 2026-09-28 (docs/SECURITY_REVIEW.md) ----------------------------------------
+
+
+def test_repo_token_is_dropped_when_the_repository_host_changes(client, env):
+    app = create(client, env, repo_token="test-token")
+    url = f"{env['base']}/{app['id']}"
+
+    def patch(**body):
+        resp = client.patch(url, json=body, headers=env["dev"])
+        assert resp.status_code == 200, resp.text
+        return resp.json()["has_repo_token"]
+
+    assert patch(repo_url="https://github.com/acme/other") is True  # same host: the token stays
+    assert patch(repo_url="https://evil.example/acme/shop") is False  # git would send it to the new host
+    assert patch(repo_url="https://github.com/acme/shop", repo_token="test-token") is True  # sent again: kept
+
+
+def test_webhook_body_is_capped(client, env, fake_redis, monkeypatch):
+    from app.routers import apps as apps_router
+
+    app = create(client, env)
+    monkeypatch.setattr(apps_router, "WEBHOOK_MAX_BODY", 64)
+    resp = client.post(f"/v1/hooks/github/{app['id']}", content=b"x" * 65, headers={"X-GitHub-Event": "push"})
+    assert (resp.status_code, resp.json()["error"]["code"]) == (413, "payload_too_large")

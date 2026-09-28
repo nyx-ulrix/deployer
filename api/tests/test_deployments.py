@@ -1,5 +1,7 @@
 """Deploy job, rollback, queueing, Caddy files, orphan cleanup and runtime logs against FakeDockerCli."""
 
+import os
+
 import pytest
 
 from app.config import get_settings
@@ -392,3 +394,38 @@ def test_database_env_and_network(db, docker, project):
 def test_env_prefix():
     assert deployments.env_prefix("shop-db") == "DEPLOYER_DB_SHOP_DB_"
     assert deployments.env_prefix("Main Store.v2") == "DEPLOYER_DB_MAIN_STORE_V2_"
+
+
+# --- security review 2026-09-28 (docs/SECURITY_REVIEW.md) ----------------------------------------
+
+
+def _symlink(target, link) -> None:
+    try:
+        os.symlink(target, link, target_is_directory=os.path.isdir(target))
+    except (OSError, NotImplementedError):
+        pytest.skip("symlinks are not available here")
+
+
+def test_build_image_refuses_symlinks_out_of_the_checkout(tmp_path):
+    outside = tmp_path / "worker-root"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("MASTER_KEY=x")
+    checkout = tmp_path / "work" / "src"
+    checkout.mkdir(parents=True)
+    _symlink(str(outside), str(checkout / "escape"))
+    _symlink(str(outside / "secret.txt"), str(checkout / "Dockerfile"))
+    cli = FakeDockerCli()
+    build = deployments.build_image
+    with pytest.raises(jobs.JobError, match="root_dir must stay inside"):
+        build(cli, str(tmp_path / "work"), str(checkout), "escape", "FROM x\n", "t", lambda _: None)
+    with pytest.raises(jobs.JobError, match="Dockerfile must stay inside"):
+        build(cli, str(tmp_path / "work"), str(checkout), ".", None, "t", lambda _: None)
+    assert cli.calls == []
+
+
+def test_commit_sha_never_reaches_git_as_an_option(db, project):
+    app = make_app(db, project)
+    dep, _ = deployments.handle_push(db, app, {"ref": "refs/heads/main", "after": "--upload-pack=touch /tmp/x"})
+    assert dep.commit_sha is None  # deploys the branch head instead
+    with pytest.raises(app_runner.DockerError, match="Invalid commit sha"):
+        app_runner.DockerCli().git_checkout(".", "--upload-pack=touch /tmp/x", token=None)

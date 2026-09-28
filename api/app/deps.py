@@ -14,6 +14,8 @@ from app.crypto import sha256_hex
 from app.db import get_db
 from app.errors import ApiError, forbidden, not_found, unauthorized
 from app.models import ApiKey, Project, ProjectMember, User, role_rank, utcnow
+from app.services import rate_limit
+from app.services.instance_settings import api_key_rate_limit
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -90,6 +92,7 @@ def load_api_key_access(db: Session, token: str, project_id: str) -> ProjectAcce
         raise not_found("Project")  # don't reveal that the project exists
     if key.revoked_at is not None:
         raise ApiError(401, "api_key_revoked", "This API key has been revoked")
+    check_api_key_rate(db, key.id)
     project = db.get(Project, project_id)
     user = db.get(User, key.created_by_id) if key.created_by_id else None
     if user is None or not user.is_active:
@@ -99,6 +102,22 @@ def load_api_key_access(db: Session, token: str, project_id: str) -> ProjectAcce
         key.last_used_at = now
         db.commit()
     return ProjectAccess(project=project, user=user, role=API_KEY_ROLES[key.role], api_key=key)
+
+
+def check_api_key_rate(db: Session, key_id: str) -> None:
+    """Per-key request limit (instance setting `api_key_rate_limit`, default 600/min, 0 = off);
+    separate from the MCP tool-call limit in routers/mcp.py."""
+    limit = api_key_rate_limit(db)
+    if limit <= 0:
+        return
+    allowed, retry_after = rate_limit.hit(f"rl:apikey:{key_id}", limit, 60)
+    if not allowed:
+        raise ApiError(
+            429,
+            "rate_limited",
+            f"Too many requests for this API key (limit {limit} per minute); try again later",
+            {"retry_after": retry_after},
+        )
 
 
 def load_project_access(db: Session, user: User, project_id: str) -> ProjectAccess:

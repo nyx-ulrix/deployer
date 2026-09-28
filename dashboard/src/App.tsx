@@ -27,6 +27,7 @@ import { ProjectSettingsTab } from "./features/projects/ProjectSettingsTab";
 import { ProjectsPage } from "./features/projects/ProjectsPage";
 import { AccountSettingsPage } from "./features/settings/AccountSettingsPage";
 import { InstanceSettingsPage } from "./features/settings/InstanceSettingsPage";
+import { MonitoringPage } from "./features/monitoring/MonitoringPage";
 import { RemoteAccessPage } from "./features/remote-access/RemoteAccessPage";
 import { TransferPage } from "./features/settings/TransferPage";
 import { SetupWizard } from "./features/setup/SetupWizard";
@@ -151,6 +152,14 @@ const router = createBrowserRouter([
                 element: (
                   <RequireInstanceOwner>
                     <RemoteAccessPage />
+                  </RequireInstanceOwner>
+                ),
+              },
+              {
+                path: "/settings/monitoring",
+                element: (
+                  <RequireInstanceOwner>
+                    <MonitoringPage />
                   </RequireInstanceOwner>
                 ),
               },

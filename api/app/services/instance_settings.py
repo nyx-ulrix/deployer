@@ -25,6 +25,8 @@ SECRET_KEYS = {
     "device_link",
     # On a host device: {database_name: {kind, username, password}} for databases it hosts.
     "device_hosted_credentials",
+    # docs/MONITORING.md: alert webhook (Slack/Discord-style URLs carry a token in the path).
+    "alert_webhook_url",
 }
 KNOWN_KEYS = {
     "public_url",
@@ -42,6 +44,8 @@ KNOWN_KEYS = {
     "device_cohost_apps",
     # Random per-installation id (docs/REMOTE_ACCESS.md: tunnel name `deployer-<first 8>`).
     "instance_id",
+    # docs/MONITORING.md: requests per minute per project API key (0 = unlimited).
+    "api_key_rate_limit",
     *SECRET_KEYS,
 }
 
@@ -138,3 +142,11 @@ def oauth_callback_url(db: Session, provider: str) -> str:
 
 def allow_signup(db: Session) -> bool:
     return bool(get_value(db, "allow_signup"))
+
+
+API_KEY_RATE_LIMIT_DEFAULT = 600
+
+
+def api_key_rate_limit(db: Session) -> int:
+    value = get_value(db, "api_key_rate_limit")
+    return API_KEY_RATE_LIMIT_DEFAULT if value is None else int(value)

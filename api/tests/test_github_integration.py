@@ -395,3 +395,11 @@ def test_migration_0009(tmp_path):
     conn = sqlite3.connect(db_file)
     assert "github_hook_id" not in [row[1] for row in conn.execute("PRAGMA table_info(apps)")]
     conn.close()
+
+
+def test_parse_repo_refuses_dot_segments():
+    """Security review 2026-09-28: owner/repo end up in GitHub API paths (`/repos/{o}/{r}/hooks`)."""
+    assert github.parse_repo("https://github.com/acme/shop.git") == ("acme", "shop")
+    assert github.parse_repo("https://github.com/acme/.github") == ("acme", ".github")
+    for url in ("https://github.com/../user", "https://github.com/acme/..", "https://github.com/acme/..git"):
+        assert github.parse_repo(url) is None, url

@@ -1,6 +1,20 @@
 import type { ReactNode } from "react";
 import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
-import { ArrowLeftRight, ChevronDown, FolderKanban, Globe, HardDrive, History, LogOut, Server, UserRound } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Activity,
+  ArrowLeftRight,
+  Bell,
+  ChevronDown,
+  FolderKanban,
+  Globe,
+  HardDrive,
+  History,
+  LogOut,
+  Server,
+  UserRound,
+} from "lucide-react";
+import { api, qk } from "../../api/endpoints";
 import { useAuth } from "../../auth/auth-context";
 import { cn } from "../../lib/cn";
 import { Menu, MenuItem } from "../ui/Menu";
@@ -12,8 +26,8 @@ export function AppLayout() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const name = user?.display_name || user?.email || "";
-  const instanceSection = ["/settings/instance", "/settings/backups", "/settings/remote-access"].some((p) =>
-    pathname.startsWith(p),
+  const instanceSection = ["/settings/instance", "/settings/backups", "/settings/remote-access", "/settings/monitoring"].some(
+    (p) => pathname.startsWith(p),
   );
   const go = (close: () => void, to: string) => {
     close();
@@ -77,6 +91,7 @@ export function AppLayout() {
             )}
           </nav>
           <div className="ml-auto flex items-center gap-1">
+            {user?.is_instance_owner && <AlertBadge />}
             <ThemeToggle />
             <Menu
               trigger={({ toggle, open }) => (
@@ -150,6 +165,9 @@ export function AppLayout() {
                         <MenuItem icon={<Globe />} onClick={() => go(close, "/settings/remote-access")}>
                           Domains &amp; remote access
                         </MenuItem>
+                        <MenuItem icon={<Activity />} onClick={() => go(close, "/settings/monitoring")}>
+                          Monitoring
+                        </MenuItem>
                       </>
                     )}
                   </div>
@@ -175,6 +193,28 @@ export function AppLayout() {
         <Outlet />
       </main>
     </div>
+  );
+}
+
+/** Instance owner only: open, non-muted alerts (docs/MONITORING.md); links to Settings → Monitoring. */
+function AlertBadge() {
+  const summary = useQuery({ queryKey: qk.metricsSummary, queryFn: api.monitoring.summary, refetchInterval: 60_000 });
+  const alerts = summary.data?.alerts;
+  if (!alerts?.visible) return null;
+  const label = `${alerts.visible} active alert${alerts.visible === 1 ? "" : "s"}: ${alerts.top?.message ?? ""}`;
+  return (
+    <Link
+      to="/settings/monitoring"
+      title={label}
+      aria-label={label}
+      className={cn(
+        "flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-semibold",
+        alerts.critical ? "bg-danger-soft text-danger" : "bg-warning-soft text-warning",
+      )}
+    >
+      <Bell className="size-4" />
+      <span className="tabular-nums">{alerts.visible}</span>
+    </Link>
   );
 }
 

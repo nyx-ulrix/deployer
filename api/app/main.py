@@ -18,6 +18,7 @@ from app.routers import (
     jobs,
     mcp,
     members,
+    monitoring,
     projects,
     query,
     remote_access,
@@ -26,11 +27,13 @@ from app.routers import (
     setup,
     transfer,
 )
+from app.services.metrics import RequestMetricsMiddleware
 
 
 def create_app() -> FastAPI:
     app = FastAPI(title="Deployer API", version=__version__, docs_url="/v1/docs", openapi_url="/v1/openapi.json")
     install_error_handlers(app)
+    app.add_middleware(RequestMetricsMiddleware)  # docs/MONITORING.md
     for module in (
         health,
         setup,
@@ -54,6 +57,7 @@ def create_app() -> FastAPI:
         cohosting,
         integrations,
         mcp,
+        monitoring,
     ):
         app.include_router(module.router, prefix="/v1")
     return app

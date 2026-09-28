@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     app_db_network: str = "deployer_backend"  # joined only by apps with database access
     app_mem_limit: str = "512m"
     app_build_dir: str = ""
+    # docs/MONITORING.md: containers of this compose project (plus deployed apps) are sampled.
+    compose_project: str = "deployer"
 
     # Test hook: use an explicit SQLAlchemy URL instead of MariaDB (e.g. sqlite in unit tests).
     database_url_override: str = ""

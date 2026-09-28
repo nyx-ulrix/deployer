@@ -44,6 +44,10 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
   (static site, Node, Python or your own Dockerfile) and adds the webhook; every push builds it on this PC and swaps it in behind Caddy with zero downtime,
   rollbacks, build and runtime logs, and `https://shop.example.com` through the same Cloudflare
   tunnel ([docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md)).
+- **Monitoring and alerts** - CPU, memory, disk, every container and app, API traffic and error
+  rate on *Settings → Monitoring*; alerts for low disk, crash-looping containers, failed backups, a
+  down tunnel and more, sent to your own webhook (Slack, Discord, ntfy)
+  ([docs/MONITORING.md](docs/MONITORING.md)).
 - **Runs anywhere Windows does** - Docker Engine in WSL2 by default, sized for 4 GB RAM machines.
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/API.md](docs/API.md) for details.
@@ -354,7 +358,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 4. GitHub push-to-deploy - webhooks, build worker, per-app Caddy routing, rollbacks. *(done: [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md))*
 5. Google Cloud automation - per-install service account.
 6. MCP server for AI agents. *(done: [docs/MCP.md](docs/MCP.md))*
-7. Monitoring and hardening.
+7. Monitoring and hardening. *(done: [docs/MONITORING.md](docs/MONITORING.md), [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md))*
 
 ## Security
 

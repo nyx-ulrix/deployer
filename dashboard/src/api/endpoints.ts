@@ -35,7 +35,11 @@ import type {
   GitHubRepo,
   GitHubStatus,
   EnrollStatus,
+  InstanceAlert,
   InstanceBackups,
+  InstanceMetrics,
+  MetricsSummary,
+  MetricsWindow,
   Job,
   JobResponse,
   LocalDeviceStatus,
@@ -282,6 +286,16 @@ export const api = {
     platformNow: () => client.post<JobResponse>("/instance/backups/platform"),
   },
 
+  monitoring: {
+    metrics: (window: MetricsWindow) => client.get<InstanceMetrics>(`/instance/metrics?window=${window}`),
+    summary: () => client.get<MetricsSummary>("/instance/metrics/summary"),
+    alerts: () => client.get<InstanceAlert[]>("/instance/alerts"),
+    dismiss: (id: string) => client.post<InstanceAlert>(`/instance/alerts/${e(id)}/dismiss`),
+    snooze: (id: string, minutes: number) => client.post<InstanceAlert>(`/instance/alerts/${e(id)}/snooze`, { minutes }),
+    testWebhook: (url?: string) =>
+      client.post<{ ok: boolean; detail: string }>("/instance/alerts/webhook-test", url ? { url } : {}),
+  },
+
   remoteAccess: {
     get: () => client.get<RemoteAccess>("/instance/remote-access"),
     verify: (apiToken: string) =>
@@ -513,6 +527,9 @@ export const qk = {
   job: (id: string, jobId: string) => ["projects", id, "jobs", jobId] as const,
   instanceBackups: ["instance", "backups"] as const,
   remoteAccess: ["instance", "remote-access"] as const,
+  metrics: (window: string) => ["instance", "metrics", window] as const,
+  metricsSummary: ["instance", "metrics-summary"] as const,
+  alerts: ["instance", "alerts"] as const,
   apps: (id: string) => ["projects", id, "apps"] as const,
   app: (id: string, appId: string) => ["projects", id, "apps", appId] as const,
   deployments: (id: string, appId: string) => ["projects", id, "apps", appId, "deployments"] as const,

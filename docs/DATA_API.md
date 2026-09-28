@@ -202,6 +202,7 @@ Every error is `{"error": {"code": "...", "message": "...", "details": {}}}`:
 | 403 | `read_only_role` | an `anon` key ran a query that writes |
 | 404 | `not_found` | wrong project id for this key, unknown data source, table or collection |
 | 422 | `validation_error` | malformed body or query parameters (`details.errors` says which) |
+| 429 | `rate_limited` | more than 600 requests in a minute with this key (instance setting `api_key_rate_limit`, [MONITORING.md](MONITORING.md)); wait `details.retry_after` seconds (also the `Retry-After` header) |
 
 Other codes (`unknown_column`, `invalid_primary_key`, `row_not_found`, `query_failed`, `database_unavailable`, ...)
 are listed per endpoint in [API.md](API.md) and [QUERY_CONSOLE.md](QUERY_CONSOLE.md).

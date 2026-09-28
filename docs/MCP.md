@@ -64,11 +64,11 @@ Results are text content holding compact JSON. API errors come back as tool resu
 | `insert_document` | `source_id`, `collection`, `document` | service | inserts a document, returns it with `_id` |
 | `update_document` | `source_id`, `collection`, `document_id`, `set?`, `unset?` | service | `$set` / `$unset` on one document |
 | `delete_document` | `source_id`, `collection`, `document_id` | service | deletes one document |
-| `list_apps` | – | anon | the project's apps (push-to-deploy, [DEPLOYMENTS.md](DEPLOYMENTS.md)) |
-| `get_app` | `app_id` | anon | one app: settings, URLs, hostnames, live deployment |
+| `list_apps` | – | service | the project's apps (push-to-deploy, [DEPLOYMENTS.md](DEPLOYMENTS.md)) |
+| `get_app` | `app_id` | service | one app: settings, URLs, hostnames, live deployment |
 | `deploy_app` | `app_id` | service | starts a deployment from the app's branch |
-| `deployment_status` | `app_id`, `deployment_id` | anon | status, error and the last 100 build log lines |
-| `app_logs` | `app_id`, `tail?` | anon | runtime log lines of the live container (1..500, default 100) |
+| `deployment_status` | `app_id`, `deployment_id` | service | status, error and the last 100 build log lines |
+| `app_logs` | `app_id`, `tail?` | service | runtime log lines of the live container (1..500, default 100) |
 
 Tools a key's role can't use are **not listed** by `tools/list` and calling them is a JSON-RPC error
 (`-32602 Unknown tool`). Signing in with a dashboard session token (JWT) also works; the member's
@@ -76,16 +76,17 @@ project role decides the tools (viewer = anon's tools, developer and up = all).
 
 ## Roles and security
 
-- `anon` key → the agent can **only read**: schema, rows, documents, read-only queries, apps and logs.
+- `anon` key → the agent can **only read**: schema, rows, documents and read-only queries. App tools
+  (settings, build and runtime logs) need a `service` key: anon keys are meant for public clients.
 - `service` key → the agent can also **write data** (rows, documents, any query, including `DROP`)
-  and **deploy apps**. Give an agent a service key only if you would let it change production data;
+  and **read and deploy apps**. Give an agent a service key only if you would let it change production data;
   use an `anon` key for read-only agents.
 - Keys are project-scoped: a key for another project gets `404`, a missing or unknown key `401`,
   a revoked one `401 api_key_revoked`. Revoke a key to cut an agent off immediately.
 - Every `tools/call` is audited as `mcp.call` with the tool name, key id and outcome - never the
   arguments. Queries also land in the project's query log with `layout = "api"`, like any key-driven
   run ([QUERY_EDITOR.md](QUERY_EDITOR.md)).
-- Keys never reach app settings, members, env values, backups or any other endpoint.
+- Keys never change app settings and never reach members, env values, backups or any other endpoint.
 
 ## Limits
 

@@ -71,7 +71,9 @@ def _message(status: int, body: Any) -> str:
 def parse_repo(url: str | None) -> tuple[str, str] | None:
     """(owner, repo) of a https://github.com/<owner>/<repo> URL, else None."""
     m = _REPO_URL.match((url or "").strip())
-    return (m.group(1), m.group(2)) if m else None
+    if not m or {m.group(1), m.group(2)} & {".", ".."}:  # dot segments would re-route the API path
+        return None
+    return m.group(1), m.group(2)
 
 
 # --- connections ---------------------------------------------------------------------------------
