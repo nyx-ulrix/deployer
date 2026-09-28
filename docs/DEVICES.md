@@ -81,11 +81,22 @@ the primary) only authorizes the device endpoints below.
 | `sync.sql_apply` | `{database_name, changes}` | `{outcomes: [{result: "applied"\|"skipped"\|"conflict", current, reason?}]}` — applied as root with `sql_log_bin = 0`, each checked against the row's current version |
 | `sync.mongo_changes` | `{database_name, since: {token}\|{ts}, limit ≤ 1000}` | same shape as `sync.sql_changes` (change stream) |
 | `sync.mongo_apply` | `{database_name, changes}` | same shape as `sync.sql_apply` |
+| `apps.deploy` | `{job_id, app_id, slug, deployment_id, image_tag, commit_sha, repo_url, branch, root_dir, dockerfile, container_port, env, databases: [{name, kind, database_name}], hostnames, repo_token, repo_access_withheld}` | `{status: "live", image_tag, container, port}` — clones, builds and runs a co-hosted app with this device's worker and routes it in its Caddy ([COHOSTING.md](COHOSTING.md) "Websites on both PCs"); streams `progress` with `job_id`; the same deployment again only rewrites the routes. Errors: `app_deploy_failed`, `repo_access_withheld` (422) |
+| `apps.remove` | `{app_id}` | `{removed}` — container, images and `cohost-<app_id>.caddy` |
+| `apps.status` | `{}` | `{apps: [{app_id, deployment_id, image_tag, container, port}], tunnel}` — `tunnel` is a SHA-256 prefix of the apps tunnel token it holds (never the token) |
+| `apps.logs` | `{app_id, tail ≤ 500}` | `{lines, container}` |
+| `apps.tunnel` | `{token: string \| null}` | `{tunnel}` — the apps tunnel's connector token (the only tunnel secret a device receives), handed to this PC's tunnel sidecar as `apps_token`; `null` stops that connector |
 
 Devices only execute these methods against **their own managed databases** — never arbitrary hosts:
 `datasource.*`, `sync.*` and `executor.snapshot|archive_logs|restore` only accept databases listed in the
 device's `device_hosted_credentials` (`datasource.provision` only creates databases that don't exist
-yet), and `local_ref`s must stay inside the device's backup store. Errors come back as
+yet), and `local_ref`s must stay inside the device's backup store. `apps.deploy` validates every field
+(UUIDs, https URL without credentials, branch, relative `root_dir`, image tag of that app), refuses
+environments carrying `DEPLOYER_API_KEY` or `DEPLOYER_DB_*`, and injects `DEPLOYER_DB_*` only for
+databases in `device_hosted_credentials` (with the device's own credentials; others → `not_hosted`).
+Its containers are labelled `deployer.cohost_app` and its state lives in the device's
+`device_cohost_apps` setting (never exported); the main server decides which apps a device runs
+(project grant + co-host flag + database copies). Errors come back as
 `{status, code, message, details}` and are re-raised on the primary with the same status and code.
 
 Implementation: `app/services/device_rpc.py` (primary), `device_agent.py` + `device_host.py`

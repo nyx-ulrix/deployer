@@ -295,3 +295,9 @@ export function unfilledKeys(keys: string[], rows: EnvRow[]): string[] {
   const filled = new Set(rows.filter((r) => r.value.trim()).map((r) => r.key.trim()));
   return keys.filter((k) => !filled.has(k));
 }
+
+/** "Also running on 2 co-host PCs" (docs/COHOSTING.md); null when no copy is live. */
+export function cohostSummary(app: Pick<App, "cohost" | "replicas">): string | null {
+  const live = app.cohost ? (app.replicas ?? []).filter((r) => r.status === "live").length : 0;
+  return live ? `Also running on ${live} co-host PC${live === 1 ? "" : "s"}` : null;
+}

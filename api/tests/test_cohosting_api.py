@@ -396,3 +396,26 @@ def test_history_and_restore(client, db, conflicted, auth_headers):
     assert db.scalar(select(AuditLog).where(AuditLog.action == "sync.history_restore")) is not None
     bad = {"table": "orders", "key": t["key"], "version_id": v1.id}
     assert client.post(_url(t, "/sync-history/restore"), json=bad, headers=auth_headers(u["admin"])).status_code == 404
+
+
+def test_resolve_reads_unread_changes_first(client, db, conflicted, auth_headers):
+    """A change the sync hasn't read yet when someone resolves: the resolution is refused until they've
+    seen it, and afterwards nothing stale reopens the conflict."""
+    t, u = conflicted, conflicted["users"]
+    url = _url(t, f"/sync-conflicts/{t['conflict'].id}/resolve")
+    newer = {"id": 1, "name": "ana", "email": "c@x"}
+    t["replica"].write("users", t["key"], newer)  # on the device, after the conflict was recorded
+    resp = client.post(url, json={"choice": "primary"}, headers=auth_headers(u["cohost"]))
+    assert resp.status_code == 409 and resp.json()["error"]["code"] == "conflict_changed"
+    db.expire_all()
+    conflict = db.get(SyncConflict, t["conflict"].id)
+    assert conflict.status == "open" and conflict.replica_json == newer
+    assert t["primary"].row("users", t["key"])["name"] == "ANA" and t["replica"].row("users", t["key"]) == newer
+
+    resp = client.post(url, json={"choice": "primary"}, headers=auth_headers(u["cohost"]))
+    assert resp.status_code == 200, resp.text
+    chosen = {"id": 1, "name": "ANA", "email": "a@x"}
+    assert t["primary"].row("users", t["key"]) == chosen and t["replica"].row("users", t["key"]) == chosen
+    assert source_sync.sync_round(t["rep"].id) == {"applied": 0, "conflicts": 0}
+    db.expire_all()
+    assert db.scalar(select(SyncConflict).where(SyncConflict.status == "open")) is None

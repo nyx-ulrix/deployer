@@ -45,6 +45,21 @@ Security fixes are made for the latest release. Update with `deployer update`.
   always bound). Treat enabling co-hosting as handing that member a full copy of the data, and its
   writes as trusted like any developer's; switching the flag off, demoting or removing the member
   pauses their copies. Sync errors are redacted before they are stored or logged.
+- **Co-hosted apps** ([docs/COHOSTING.md](docs/COHOSTING.md) "Websites on both PCs"): when a project
+  admin ticks *Co-host this app*, each co-host device builds and runs the app's live commit with its
+  own worker (which is root on that PC's Docker engine, like the main server's). The device receives
+  the generated Dockerfile, the app's own environment variables (never `DEPLOYER_API_KEY`, never
+  `DEPLOYER_DB_*`, and no variable whose value contains a password or URI of the project's databases on
+  the main server; the device injects `DEPLOYER_DB_*` for its own local copies with its own
+  credentials), the app's hostnames, and the connector token of the separate *apps* tunnel (which
+  routes only co-hosted app hostnames; the dashboard tunnel token and the Cloudflare API token never
+  leave the main server). Anything else a user typed into the app's variables is readable by whoever
+  controls that PC. The repository token (or the creator's GitHub connection token) is sent only when an
+  admin ticks *Let co-hosts clone this private repository*; a token sent to a device is readable by
+  that PC's owner, so prefer a read-only fine-grained per-repository token for co-hosted apps. The
+  device refuses app environments carrying `DEPLOYER_API_KEY`/`DEPLOYER_DB_*` and injects only
+  databases in its hosted-credentials list. A co-host PC serves the app's visitors: its owner can see
+  and alter that traffic.
 - **GitHub repository access** ([docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md) "Connect a Git repository"):
   connecting GitHub grants the instance's GitHub OAuth app the `repo` and `admin:repo_hook` scopes,
   which GitHub does not narrow further: read/write access to every repository the user can reach, and

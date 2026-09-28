@@ -366,9 +366,15 @@ def write_both(
     *,
     origin: str,
     user_id: str | None,
+    expect: SyncConflict | None = None,
 ) -> None:
     """Writes one row/document to the device copy and the main server (unconditionally), without
-    echo, and records the version. Device first: when it is offline nothing changes (503)."""
+    echo, and records the version. Device first: when it is offline nothing changes (503).
+
+    First drains the changes neither side has read yet (one sync round under the lock), so nothing
+    made before this write can arrive later and reopen the key with a stale version. With `expect`
+    (a conflict being resolved) the write is refused (409 `conflict_changed`) when that drain brought
+    newer versions of the key: the user chose without seeing them."""
     if not device_rpc.is_online(rep.device_id):
         raise device_rpc.offline_error("The co-host device is offline; try again when it is connected")
     change = {
@@ -384,18 +390,46 @@ def write_both(
     if not lock.acquire(wait=30):
         raise ApiError(409, "sync_busy", "The sync is busy; try again in a moment")
     try:
+        seen = (
+            (source_sync.row_hash(expect.primary_json), source_sync.row_hash(expect.replica_json)) if expect else None
+        )
+        _drain(rep.id)
+        db.rollback()  # nothing pending here; a fresh transaction sees what the drain wrote
+        if expect is not None and seen != (
+            source_sync.row_hash(expect.primary_json),
+            source_sync.row_hash(expect.replica_json),
+        ):
+            raise ApiError(
+                409,
+                "conflict_changed",
+                "Newer changes to this row arrived while you were resolving; review them and resolve again",
+            )
         primary, device = source_sync.sides_for(rep, ds)
         for side in (device, primary):
             outcome = side.apply([change])[0]
             if outcome.get("result") != "applied":
                 raise ApiError(409, "write_rejected", outcome.get("reason") or "The value could not be written")
-        source_sync.add_version(db, rep.id, table, key, value, origin, user_id)
+        echo = "both" if ds.kind == "nosql" else None  # MongoDB: both change streams will show this write
+        source_sync.add_version(db, rep.id, table, key, value, origin, user_id, echo=echo)
         db.commit()  # before the lock is released: the next round must see this version
     finally:
         try:
             lock.release()
         except Exception:  # noqa: BLE001
             pass
+
+
+def _drain(replica_id: str) -> None:
+    """One sync round before a forced write. Connection trouble aborts the write (503/504, nothing
+    changed); other sync errors (e.g. a schema mismatch in another table) don't block it."""
+    try:
+        source_sync.sync_round(replica_id)
+    except ApiError as exc:
+        if exc.code in ("device_offline", "device_timeout", "device_busy"):
+            raise
+        log.warning("sync before a conflict write failed for replica %s: %s", replica_id, exc.message)
+    except Exception:  # noqa: BLE001
+        log.warning("sync before a conflict write failed for replica %s", replica_id, exc_info=True)
 
 
 def resolve(db: Session, conflict: SyncConflict, choice: str, value: Any, user_id: str) -> SyncConflict:
@@ -409,7 +443,17 @@ def resolve(db: Session, conflict: SyncConflict, choice: str, value: Any, user_i
         chosen = conflict.replica_json
     else:
         chosen = _check_value(ds.kind, conflict.key_json, value)
-    write_both(db, rep, ds, conflict.table_name, conflict.key_json, chosen, origin="resolution", user_id=user_id)
+    write_both(
+        db,
+        rep,
+        ds,
+        conflict.table_name,
+        conflict.key_json,
+        chosen,
+        origin="resolution",
+        user_id=user_id,
+        expect=conflict,
+    )
     conflict.status = "resolved"
     conflict.resolution = choice
     conflict.resolved_json = chosen
@@ -468,19 +512,20 @@ def restore_version(db: Session, version: SyncVersion, user_id: str) -> SyncConf
     """Applies a kept version to both copies; an open conflict on that key is resolved by it."""
     rep = db.get(SourceReplica, version.replica_id)
     ds = db.get(DataSource, rep.data_source_id)
-    conflict = db.scalar(
+    table, key, value = version.table_name, version.key_json, version.json
+    write_both(db, rep, ds, table, key, value, origin="restore", user_id=user_id)
+    conflict = db.scalar(  # after the write: its drain may have opened one on this key
         select(SyncConflict).where(
             SyncConflict.replica_id == rep.id,
-            SyncConflict.table_name == version.table_name,
-            SyncConflict.key_hash == version.key_hash,
+            SyncConflict.table_name == table,
+            SyncConflict.key_hash == source_sync.key_hash(key),
             SyncConflict.status == "open",
         )
     )
-    write_both(db, rep, ds, version.table_name, version.key_json, version.json, origin="restore", user_id=user_id)
     if conflict is not None:
         conflict.status = "resolved"
         conflict.resolution = "manual"
-        conflict.resolved_json = version.json
+        conflict.resolved_json = value
         conflict.resolved_by_id = user_id
         conflict.resolved_at = utcnow()
     return conflict

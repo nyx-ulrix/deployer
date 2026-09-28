@@ -51,7 +51,8 @@ def test_create_list_get_and_roles(client, env, db):
     assert set(app) == {
         "id", "project_id", "name", "slug", "repo_url", "branch", "root_dir", "preset", "install_command",
         "build_command", "start_command", "output_dir", "container_port", "env_keys", "has_repo_token",
-        "api_key_id", "database_access", "github", "port", "local_url", "urls", "live_deployment", "domains",
+        "api_key_id", "database_access", "cohost", "cohost_share_repo_access", "replicas", "github", "port",
+        "local_url", "urls", "live_deployment", "domains",
         "created_at", "updated_at", "warnings",
     }  # fmt: skip
     assert app["github"] is None and app["warnings"] == []

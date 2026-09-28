@@ -110,7 +110,9 @@ BATCH = 1000
 DEVICE_TIMEOUT = 6 * 3600
 # A host device's own link/credentials never travel in exports: a restored copy must not
 # impersonate the device (it would kick the real one off the main Deployer).
-DEVICE_LOCAL_SETTINGS = frozenset({"device_link", "device_hosted_credentials"})
+DEVICE_LOCAL_SETTINGS = frozenset(
+    {"device_link", "device_hosted_credentials", "device_cohost_apps", "cohost_apps_tunnel_token"}
+)
 _CANONICAL = json_util.CANONICAL_JSON_OPTIONS
 
 

@@ -419,8 +419,8 @@ export const api = {
       client.post<Deployment>(`/projects/${e(pid)}/apps/${e(id)}/deployments/${e(dep)}/cancel`),
     rollback: (pid: string, id: string, dep: string) =>
       client.post<Deployment>(`/projects/${e(pid)}/apps/${e(id)}/deployments/${e(dep)}/rollback`),
-    logs: (pid: string, id: string, tail = 200) =>
-      client.get<AppLogs>(`/projects/${e(pid)}/apps/${e(id)}/logs`, { query: { tail } }),
+    logs: (pid: string, id: string, tail = 200, deviceId?: string) =>
+      client.get<AppLogs>(`/projects/${e(pid)}/apps/${e(id)}/logs`, { query: { tail, device_id: deviceId } }),
     addDomain: (pid: string, id: string, hostname: string) =>
       client.post<Domain>(`/projects/${e(pid)}/apps/${e(id)}/domains`, { hostname }),
     removeDomain: (pid: string, id: string, domainId: string) =>

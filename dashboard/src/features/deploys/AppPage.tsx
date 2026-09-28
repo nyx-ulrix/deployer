@@ -17,7 +17,7 @@ import { AppSettings } from "./AppSettings";
 import { BuildLog } from "./BuildLog";
 import { DeploymentsTable } from "./DeploymentsTable";
 import { AppStatusDot } from "./DeploysTab";
-import { isActive, PRESETS } from "./deploys";
+import { cohostSummary, isActive, PRESETS } from "./deploys";
 import { RuntimeLogs } from "./RuntimeLogs";
 
 type Section = "deployments" | "logs" | "settings";
@@ -77,6 +77,7 @@ export function AppPage() {
         <h2 className="min-w-0 truncate text-lg font-semibold">{a.name}</h2>
         <Badge>{PRESETS[a.preset].label}</Badge>
         <Badge tone={a.live_deployment?.status === "live" ? "success" : "neutral"}>{a.live_deployment?.status === "live" ? "Live" : "Not live"}</Badge>
+        {cohostSummary(a) && <Badge tone="info">{cohostSummary(a)}</Badge>}
         {can("developer") && (
           <div className="ml-auto flex gap-2">
             {active && (

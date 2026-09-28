@@ -90,6 +90,16 @@ Off by default. An app normally reaches its project's data only through the data
   with host `mariadb` / port `3306` and `mongodb:27017`, plus the source's credentials from
   `GET /data-sources/{sid}/connection`.
 
+## Co-hosted apps (docs/COHOSTING.md "Websites on both PCs")
+
+`apps.cohost` (admin-only, default false): every deployment that goes live also runs on the project's
+co-host devices (job `app.replicate` per device, RPC `apps.deploy` on the device's own worker), and the
+app's hostnames move to the separate **apps tunnel** so Cloudflare fails over between PCs.
+`apps.cohost_share_repo_access` (admin-only, default false) sends the clone token to those devices;
+without it a private repository can't be built there. Devices never receive `DEPLOYER_API_KEY` or the
+main server's database credentials; with database access they inject `DEPLOYER_DB_*` for their own
+local copies. Migration `0010_cohost_apps` adds both columns and `app_replicas` (one row per device).
+
 ## Connect a Git repository
 
 The New app dialog starts with **Choose a repository**; everything it fills in stays editable.
@@ -197,11 +207,16 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
   like `DELETE /instance/remote-access/cloudflare/hostnames/{id}`), cancels active deployments and
   deletes the row (deployments and domains cascade).
 - `app.route` (`{app_id}`): rewrite the app's Caddy file for its live deployment (or remove it) and
-  reload — enqueued when an app hostname is added or removed.
+  reload — enqueued when an app hostname is added or removed (co-hosted apps also re-send their routes
+  to the co-host devices).
+- `app.replicate` (`{app_id, device_id}`, co-hosted apps): builds and runs the live deployment on one
+  co-host device (docs/COHOSTING.md); enqueued when a deployment goes live and by the scheduler sweep.
 - Scheduler: every tick, containers labelled `deployer.app` whose app or deployment no longer exists
   (or is not `deploying`/`live`) are removed, Caddy files of deleted apps are deleted, `queued`
   deployments without a job get one when no deploy of their app is active, and `queued` deployments
-  whose job ended without running them are closed as `failed`/`cancelled`.
+  whose job ended without running them are closed as `failed`/`cancelled`. Containers
+  labelled `deployer.cohost_app` and `cohost-*.caddy` files (copies a co-host device runs for its main
+  Deployer) are left alone.
 
 ## API (`/v1/projects/{pid}`)
 
@@ -209,9 +224,9 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
 |---|---|---|---|---|
 | GET | `/apps` | viewer+ | – | `App[]` |
 | POST | `/apps/detect` | developer+ | `{repo_url, branch?}` | draft `{name, repo_url, branch, root_dir, preset, install_command, build_command, start_command, output_dir, container_port, env_keys, database_access_suggested, detected: [{what, from}], warnings, private}`, never stored ("Connect a Git repository") |
-| POST | `/apps` | developer+ | `{name, repo_url, branch?, root_dir?, preset, install_command?, build_command?, start_command?, output_dir?, container_port?, env?: {k:v}, repo_token?, use_github_connection?, api_key_id?, database_access?}` | `App & {warnings: string[]}` (201); allocates `port`, generates `webhook_secret`; `database_access: true` needs admin+; `use_github_connection` clones with the creator's GitHub connection and adds the webhook |
+| POST | `/apps` | developer+ | `{name, repo_url, branch?, root_dir?, preset, install_command?, build_command?, start_command?, output_dir?, container_port?, env?: {k:v}, repo_token?, use_github_connection?, api_key_id?, database_access?, cohost?, cohost_share_repo_access?}` | `App & {warnings: string[]}` (201); allocates `port`, generates `webhook_secret`; `database_access: true` needs admin+; `use_github_connection` clones with the creator's GitHub connection and adds the webhook |
 | GET | `/apps/{id}` | viewer+ | – | `App` |
-| PATCH | `/apps/{id}` | developer+ | partial of the above (`repo_token: null` clears; turning `database_access` on needs admin+, 403 `forbidden`) | `App` (changes apply on the next deploy) |
+| PATCH | `/apps/{id}` | developer+ | partial of the above (`repo_token: null` clears; turning `database_access` on needs admin+, 403 `forbidden`; changing `cohost` / `cohost_share_repo_access` needs admin+) | `App` (changes apply on the next deploy; `cohost` moves the hostnames between tunnels at once and starts the co-host copies of the live deployment) |
 | DELETE | `/apps/{id}` | admin+ | – | `{job_id}` (`app.remove`) |
 | GET | `/apps/{id}/env` | admin+ | – | `{env: {k:v}}` plain values (audit `app.env.reveal`) |
 | GET | `/apps/{id}/webhook` | developer+ | – | `{url, secret}` — url `<public_url>/v1/hooks/github/{app_id}`; audit `app.webhook.reveal` |
@@ -221,7 +236,7 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
 | GET | `/apps/{id}/deployments/{dep}` | viewer+ | `?log=1` includes the log | `Deployment` |
 | POST | `/apps/{id}/deployments/{dep}/cancel` | developer+ | – | `Deployment` |
 | POST | `/apps/{id}/deployments/{dep}/rollback` | developer+ | – | `Deployment` (202, new one) |
-| GET | `/apps/{id}/logs?tail=200` | viewer+ | – | `{lines: string[], container}` — the last `tail` (≤ 500) lines the worker copied from `docker logs` of the live container into Redis (see below); `container` is the live container name or null |
+| GET | `/apps/{id}/logs?tail=200&device_id=` | viewer+ | – | `{lines: string[], container}` — the last `tail` (≤ 500) lines the worker copied from `docker logs` of the live container into Redis (see below); `container` is the live container name or null. With `device_id`: the co-host copy's logs, read from that device (`apps.logs`; 503 `device_offline`) |
 | POST | `/apps/{id}/domains` | admin+ (uses the instance owner's Cloudflare link; 409 `not_linked`) | `{hostname, overwrite?}` | `Domain` (same rules as REMOTE_ACCESS.md, `target_type: app`, `app_id`; zone resolved from the hostname) |
 | DELETE | `/apps/{id}/domains/{domain_id}` | admin+ | – | `{ok}` |
 
@@ -241,6 +256,9 @@ list refreshed by a `docker logs --since` poll every 10 s in the scheduler) and 
 type App = { id; project_id; name; slug; repo_url; branch; root_dir; preset; install_command; build_command;
   start_command; output_dir; container_port: number|null; env_keys: string[]; has_repo_token: boolean;
   api_key_id: string|null; database_access: boolean;
+  cohost: boolean; cohost_share_repo_access: boolean;                  // docs/COHOSTING.md
+  replicas: {device_id; device_name; online: boolean; status: "pending"|"building"|"live"|"failed"|"stopped";
+             deployment_id; error; last_seen_at}[];
   github: {connected_by_email: string; hook_active: boolean} | null;  // "Connect a Git repository"
   port: number; local_url: string; urls: string[]; live_deployment: Deployment|null;
   domains: Domain[]; created_at; updated_at };

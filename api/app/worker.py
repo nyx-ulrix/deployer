@@ -14,7 +14,8 @@ Threads started by `start_background_tasks()`:
 - `source-sync`: while this worker leads the scheduler, a co-hosting sync round every 2 s for each
   syncing database copy (docs/COHOSTING.md, `source_sync.sync_loop`).
 - `app-logs`: every 10 s copies new `docker logs` lines of live app containers into Redis
-  (docs/DEPLOYMENTS.md); the scheduler tick also removes orphan app containers.
+  (docs/DEPLOYMENTS.md); the scheduler tick also removes orphan app containers and reconciles the
+  co-hosted app copies on devices (docs/COHOSTING.md, `cohost_apps.sweep`).
 - any task added with `register_background_task(name, fn)`.
 
 Extension point (host devices): call `register_background_task("device-agent", fn)` before
@@ -134,12 +135,13 @@ _last_query_log_prune = float("-inf")  # module-level: the leader is one process
 
 def scheduler_tick() -> None:
     global _last_query_log_prune
-    from app.services import backups, deployments, query_log
+    from app.services import backups, cohost_apps, deployments, query_log
 
     jobs.recover_stale()
     jobs.redispatch_queued()
     backups.scheduler_tick(jobs.get_sessionmaker())
     deployments.scheduler_tick(jobs.get_sessionmaker())
+    cohost_apps.sweep(jobs.get_sessionmaker())  # docs/COHOSTING.md: co-hosted apps on devices
     if time.monotonic() - _last_query_log_prune >= PRUNE_QUERY_LOG_EVERY_S:
         _last_query_log_prune = time.monotonic()
         with jobs.get_sessionmaker()() as session:

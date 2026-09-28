@@ -21,7 +21,9 @@ and position update is harmless.
 No echo loops: on the device, applied changes are written with `sql_log_bin = 0`; on the main server
 they are written with the device's origin `server_id` (`SET SESSION server_id`), and the main server's
 reader for that device skips transactions from it (other copies of the same source still receive them).
-MongoDB writes are recognised when they come back by their version hash in `sync_versions`.
+MongoDB writes are recognised when they come back by their version hash in `sync_versions`: the
+newest version of the key, or an older one whose echo that side still owes (`sync_versions.echo`) -
+an echo that arrives after the key already moved on must not undo the newer version.
 
 Everything that talks to a database takes the database name explicitly and touches nothing else;
 the device only runs these functions for databases it hosts (device_host `m_sync_*`).
@@ -36,6 +38,7 @@ import logging
 import secrets
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as dtime
 from decimal import Decimal
@@ -62,6 +65,7 @@ MIN_BINLOG_EXPIRE_SECONDS = 7 * 86400
 BATCH_LIMIT = 1000
 MAX_BATCH_BYTES = 4 * 1024 * 1024  # stays well under device_rpc.MAX_MESSAGE_BYTES
 ROUND_EVERY_S = 2.0
+ROUND_WORKERS = 4  # copies synced side by side, so one slow device doesn't hold up the others
 MAX_BACKOFF_S = 300.0
 VERSION_KEEP_DAYS = 7
 ABSENT = "-"  # hash of "no row"
@@ -790,6 +794,26 @@ def latest_versions(session: Session, replica_id: str, keys: set[tuple[str, str]
     return out
 
 
+def owed_echoes(session: Session, replica_id: str, keys: set[tuple[str, str]]) -> dict:
+    """MongoDB: versions whose write has not come back through a change stream yet, per key, oldest first."""
+    out: dict[tuple[str, str], list[SyncVersion]] = {}
+    hashes = sorted({h for _, h in keys})
+    for i in range(0, len(hashes), 500):
+        rows = session.scalars(
+            select(SyncVersion)
+            .where(
+                SyncVersion.replica_id == replica_id,
+                SyncVersion.key_hash.in_(hashes[i : i + 500]),
+                SyncVersion.echo.is_not(None),
+            )
+            .order_by(SyncVersion.id)
+        )
+        for row in rows:
+            if (row.table_name, row.key_hash) in keys:
+                out.setdefault((row.table_name, row.key_hash), []).append(row)
+    return out
+
+
 def add_version(
     session: Session,
     replica_id: str,
@@ -798,6 +822,8 @@ def add_version(
     value: dict | None,
     origin: str,
     user_id: str | None = None,
+    *,
+    echo: str | None = None,
 ) -> SyncVersion:
     row = SyncVersion(
         replica_id=replica_id,
@@ -807,6 +833,7 @@ def add_version(
         version_hash=row_hash(value),
         json=value,
         origin=origin,
+        echo=echo,
         user_id=user_id,
         synced_at=utcnow(),
     )
@@ -825,7 +852,18 @@ class _Round:
         }
         keys = {(c["table"], key_hash(c["key"])) for batch in batches.values() for c in batch}
         self.latest = latest_versions(session, replica.id, keys) if keys else {}
+        self.owed = owed_echoes(session, replica.id, keys) if keys and kind == "nosql" else {}
         self.stats = {"applied": 0, "conflicts": 0}
+
+    def _echo(self, k: tuple[str, str], side: str, change: dict) -> bool:
+        """MongoDB: `change` is the echo of a write the sync made on `side` (consumed once)."""
+        h = row_hash(change.get("after"))
+        for version in reversed(self.owed.get(k, [])):
+            if version.version_hash == h and version.echo in (side, "both"):
+                other = "replica" if side == "primary" else "primary"
+                version.echo = other if version.echo == "both" else None
+                return True
+        return False
 
     def _last_change(self, side: str, k: tuple[str, str]) -> dict | None:
         found = None
@@ -873,9 +911,11 @@ class _Round:
                 self._merge(self.open[k], side, change)
                 continue
             if self.kind == "nosql":
+                if self._echo(k, side, change):
+                    continue  # our own write coming back (even when the key has moved on since)
                 latest = self.latest.get(k)
                 if latest is not None and latest.version_hash == row_hash(change.get("after")):
-                    continue  # our own write coming back, or already synced
+                    continue  # already synced
                 change = {
                     **change,
                     "base_hash": latest.version_hash if latest is not None else None,
@@ -889,9 +929,19 @@ class _Round:
             k = (change["table"], key_hash(change["key"]))
             result = outcome.get("result") if isinstance(outcome, dict) else None
             if result == "applied" or (result == "skipped" and self.kind == "nosql"):
+                # MongoDB can't write without an oplog entry: the target's stream owes this write's echo.
+                echo = ("replica" if side == "primary" else "primary") if result == "applied" else None
                 self.latest[k] = add_version(
-                    self.session, self.replica.id, change["table"], change["key"], change.get("after"), side
+                    self.session,
+                    self.replica.id,
+                    change["table"],
+                    change["key"],
+                    change.get("after"),
+                    side,
+                    echo=echo if self.kind == "nosql" else None,
                 )
+                if self.latest[k].echo:
+                    self.owed.setdefault(k, []).append(self.latest[k])
                 self.stats["applied"] += result == "applied"
             elif result == "conflict":
                 if k in self.open:
@@ -1028,7 +1078,7 @@ _backoff: dict[str, tuple[float, float]] = {}  # replica id -> (next attempt, de
 
 
 def run_due(*, session_factory=None, now: float | None = None) -> int:
-    """One pass over the replicas due for a round. Returns how many rounds ran."""
+    """One pass over the replicas due for a round, up to ROUND_WORKERS at a time. Returns how many ran."""
     factory = session_factory or get_sessionmaker()
     now = time.monotonic() if now is None else now
     session = factory()
@@ -1036,33 +1086,35 @@ def run_due(*, session_factory=None, now: float | None = None) -> int:
         ids = list(session.scalars(select(SourceReplica.id).where(SourceReplica.status.in_(("syncing", "error")))))
     finally:
         session.close()
-    ran = 0
-    # ponytail: one replica after another in this thread; a pool when many co-hosts make rounds slow.
-    for replica_id in ids:
-        next_at, delay = _backoff.get(replica_id, (0.0, 0.0))
-        if now < next_at:
-            continue
-        lock = replica_lock(replica_id)
-        if not lock.acquire():
-            continue
+    due = [replica_id for replica_id in ids if now >= _backoff.get(replica_id, (0.0, 0.0))[0]]
+    if not due:
+        return 0
+    with ThreadPoolExecutor(max_workers=min(ROUND_WORKERS, len(due)), thread_name_prefix="sync-round") as pool:
+        return sum(pool.map(lambda replica_id: _run_one(replica_id, factory, now), due))
+
+
+def _run_one(replica_id: str, factory, now: float) -> int:
+    delay = _backoff.get(replica_id, (0.0, 0.0))[1]
+    lock = replica_lock(replica_id)
+    if not lock.acquire():
+        return 0
+    try:
+        sync_round(replica_id, session_factory=factory)
+        _backoff.pop(replica_id, None)
+    except ApiError as exc:
+        if exc.code in ("device_offline", "device_timeout", "device_busy"):
+            _backoff[replica_id] = (now + 10.0, 10.0)  # connection trouble: keep status, retry soon
+        else:
+            _failed(replica_id, exc.message, now, delay, factory)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("sync of replica %s failed", replica_id, exc_info=True)
+        _failed(replica_id, _redact(getattr(exc, "orig", None) or exc), now, delay, factory)
+    finally:
         try:
-            sync_round(replica_id, session_factory=factory)
-            _backoff.pop(replica_id, None)
-        except ApiError as exc:
-            if exc.code in ("device_offline", "device_timeout", "device_busy"):
-                _backoff[replica_id] = (now + 10.0, 10.0)  # connection trouble: keep status, retry soon
-            else:
-                _failed(replica_id, exc.message, now, delay, factory)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("sync of replica %s failed", replica_id, exc_info=True)
-            _failed(replica_id, _redact(getattr(exc, "orig", None) or exc), now, delay, factory)
-        finally:
-            try:
-                lock.release()
-            except Exception:  # noqa: BLE001
-                pass
-        ran += 1
-    return ran
+            lock.release()
+        except Exception:  # noqa: BLE001
+            pass
+    return 1
 
 
 def _failed(replica_id: str, message: str, now: float, delay: float, factory) -> None:

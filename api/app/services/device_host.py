@@ -6,7 +6,8 @@ Stored in this installation's own `instance_settings` (both encrypted with MASTE
 - `device_link`: JSON `{primary_url, device_id, device_token, device_name}`.
 - `device_hosted_credentials`: JSON `{database_name: {kind, username, password, created_at}}`.
 
-RPC `datasource.*` and `sync.*` methods only ever touch databases listed in `device_hosted_credentials`
+RPC `datasource.*`, `sync.*` and `apps.*` (co-hosted apps, device_apps.py) methods only ever touch
+databases listed in `device_hosted_credentials`
 (`datasource.provision` additionally requires that the database does not exist yet), so the main
 Deployer can never reach this device's own platform database or anything else on it.
 """
@@ -769,6 +770,22 @@ METHODS: dict[str, Callable[[dict, CallContext], Any]] = {
     "sync.mongo_changes": m_sync_mongo_changes,
     "sync.mongo_apply": m_sync_mongo_apply,
 }
+
+
+def _apps_method(name: str) -> Callable[[dict, CallContext], Any]:
+    """Co-hosted apps (docs/COHOSTING.md "Websites on both PCs"), implemented in device_apps.py."""
+
+    def run(params: dict, ctx: CallContext) -> Any:
+        from app.services import device_apps
+
+        return device_apps.METHODS[name](params, ctx)
+
+    return run
+
+
+METHODS.update(
+    {name: _apps_method(name) for name in ("apps.deploy", "apps.remove", "apps.status", "apps.logs", "apps.tunnel")}
+)
 
 
 def dispatch(method: str, params: Any, ctx: CallContext) -> Any:

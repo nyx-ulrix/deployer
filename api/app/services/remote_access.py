@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.errors import ApiError, conflict, not_found
-from app.models import Domain
+from app.models import App, Domain
 from app.redis_client import get_redis
 from app.services import audit
 from app.services import cloudflare as cf
@@ -69,6 +69,11 @@ def instance_id(db: Session) -> str:
 
 def tunnel_name(db: Session) -> str:
     return f"deployer-{instance_id(db).replace('-', '')[:8]}"
+
+
+def apps_tunnel_name(db: Session) -> str:
+    """docs/COHOSTING.md "Websites on both PCs": the tunnel that carries only co-hosted app hostnames."""
+    return f"deployer-apps-{instance_id(db).replace('-', '')[:8]}"
 
 
 def is_linked(db: Session) -> bool:
@@ -116,15 +121,21 @@ def state_dir() -> Path:
 
 
 def desired_state(db: Session) -> dict:
+    """The sidecar's desired.json: the dashboard connector (`mode`, `token`) plus, when this installation
+    runs co-hosted apps, a second connector for the apps tunnel (`apps_token`; main server: the apps
+    tunnel's token, co-host device: the one it received through RPC `apps.tunnel`)."""
     current = mode(db)
+    desired: dict = {"mode": "off"}
     if current == "cloudflare":
         token = get_value(db, "cloudflare_tunnel_token")
         if token:
-            return {"mode": "cloudflare", "token": str(token)}
-        return {"mode": "off"}
-    if current == "quick":
-        return {"mode": "quick"}
-    return {"mode": "off"}
+            desired = {"mode": "cloudflare", "token": str(token)}
+    elif current == "quick":
+        desired = {"mode": "quick"}
+    apps_token = get_value(db, "cloudflare_apps_tunnel_token") or get_value(db, "cohost_apps_tunnel_token")
+    if apps_token:
+        desired["apps_token"] = str(apps_token)
+    return desired
 
 
 def write_desired(desired: dict) -> bool:
@@ -139,6 +150,9 @@ def write_desired(desired: dict) -> bool:
         fd, tmp_path = tempfile.mkstemp(prefix=".desired-", suffix=".tmp", dir=directory)
         try:
             os.chmod(tmp_path, 0o600)
+            if hasattr(os, "geteuid") and os.geteuid() == 0:
+                # The worker (root) writes it on a co-host device (RPC `apps.tunnel`); the sidecar is uid 10001.
+                os.chown(tmp_path, 10001, 10001)
             os.write(fd, data)
             os.fsync(fd)
         finally:
@@ -390,13 +404,76 @@ def _put_ingress(client: cf.CloudflareClient, account_id: str, tunnel_id: str, h
         raise cf.to_api_error(exc, cf.PERM_TUNNEL) from None
 
 
-def _active_hostnames(db: Session, *, exclude: str | None = None) -> list[str]:
-    """Dashboard and app hostnames: both are served by caddy:8081 (apps by their own host block)."""
+def on_apps_tunnel(db: Session, domain: Domain) -> bool:
+    """Hostnames of co-hosted apps live on the apps tunnel (docs/COHOSTING.md), all others on the
+    dashboard tunnel."""
+    app = db.get(App, domain.app_id) if domain.target_type == "app" and domain.app_id else None
+    return bool(app and app.cohost)
+
+
+def _active_hostnames(db: Session, *, exclude: str | None = None, apps: bool = False) -> list[str]:
+    """Active hostnames of one tunnel (the dashboard tunnel, or with `apps` the apps tunnel). Both route
+    to caddy:8081; apps are served there by their own host blocks."""
     return [
         d.hostname
         for d in _domains(db)
-        if d.target_type in ("dashboard", "app") and d.status == "active" and d.hostname != exclude
+        if d.target_type in ("dashboard", "app")
+        and d.status == "active"
+        and d.hostname != exclude
+        and on_apps_tunnel(db, d) == apps
     ]
+
+
+def ensure_apps_tunnel(db: Session, client: cf.CloudflareClient, account_id: str) -> str:
+    """The apps tunnel's id, created (and its connector token stored) on first need. Caller commits."""
+    stored = get_value(db, "cloudflare_apps_tunnel_id")
+    if stored and get_value(db, "cloudflare_apps_tunnel_token"):
+        return str(stored)
+    name = apps_tunnel_name(db)
+    try:
+        found = [t for t in client.list_tunnels(account_id, name) if t.get("name") == name and not t.get("deleted_at")]
+        tunnel = found[0] if found else client.create_tunnel(account_id, name)
+        token = client.get_tunnel_token(account_id, tunnel["id"])
+    except cf.CloudflareError as exc:
+        raise cf.to_api_error(exc, cf.PERM_TUNNEL) from None
+    set_value(db, "cloudflare_apps_tunnel_id", tunnel["id"])
+    set_value(db, "cloudflare_apps_tunnel_name", tunnel.get("name") or name)
+    set_value(db, "cloudflare_apps_tunnel_token", token)
+    return str(tunnel["id"])
+
+
+def move_app_hostnames(db: Session, app: App) -> None:
+    """After `app.cohost` changed (not committed yet), its active hostnames move to the tunnel that now
+    serves them: ingress of the new tunnel, then the CNAMEs, then the old tunnel's ingress. Raises (the
+    caller then commits nothing) when Cloudflare fails."""
+    domains = [d for d in _domains(db) if d.app_id == app.id and d.status == "active"]
+    if not domains:
+        return
+    token, account_id, dashboard_id = _linked_state(db)
+    db.flush()
+    with _client(token) as client:
+        apps_id = get_value(db, "cloudflare_apps_tunnel_id")
+        if app.cohost:
+            apps_id = ensure_apps_tunnel(db, client, account_id)
+        new_id, old_id = (apps_id, dashboard_id) if app.cohost else (dashboard_id, apps_id)
+        _put_ingress(client, account_id, new_id, _active_hostnames(db, apps=app.cohost))
+        target = cf.tunnel_cname_target(new_id)
+        for domain in domains:
+            try:
+                record = None
+                if domain.dns_record_id:
+                    try:
+                        record = client.update_cname(domain.zone_id, domain.dns_record_id, domain.hostname, target)
+                    except cf.CloudflareError as exc:
+                        if not exc.is_not_found:
+                            raise
+                if record is None:
+                    record = client.create_cname(domain.zone_id, domain.hostname, target)
+            except cf.CloudflareError as exc:
+                raise cf.to_api_error(exc, cf.PERM_DNS) from None
+            domain.dns_record_id = (record or {}).get("id") or domain.dns_record_id
+        if old_id:
+            _put_ingress(client, account_id, old_id, _active_hostnames(db, apps=not app.cohost))
 
 
 def zone_for_hostname(db: Session, hostname: str) -> dict:
@@ -489,6 +566,9 @@ def link(db: Session, api_token: str, account_id: str, *, request: Request | Non
     set_value(db, "cloudflare_tunnel_id", tunnel["id"])
     set_value(db, "cloudflare_tunnel_name", tunnel.get("name") or name)
     set_value(db, "cloudflare_tunnel_token", connector_token)
+    if previous_account != account_id:  # an apps tunnel of another account is of no use here
+        for key in ("cloudflare_apps_tunnel_id", "cloudflare_apps_tunnel_name", "cloudflare_apps_tunnel_token"):
+            set_value(db, key, None)
     set_value(db, "remote_access_mode", "cloudflare")
     if previous_mode == "quick":
         _revert_public_url(db, request, quick=True)
@@ -523,9 +603,13 @@ def add_hostname(
     host = normalize_hostname(hostname)
     if db.scalar(select(Domain).where(Domain.hostname == host)) is not None:
         raise conflict("domain_exists", f"{host} is already configured")
-    target = cf.tunnel_cname_target(tunnel_id)
+    app = db.get(App, app_id) if app_id else None
+    on_apps = bool(app and app.cohost)
 
     with _client(token) as client:
+        if on_apps:
+            tunnel_id = ensure_apps_tunnel(db, client, account_id)
+        target = cf.tunnel_cname_target(tunnel_id)
         try:
             zone = client.get_zone(zone_id.strip())
         except cf.CloudflareError as exc:
@@ -568,7 +652,7 @@ def add_hostname(
             app_id=app_id,
             status="pending",
         )
-        hostnames = [*_active_hostnames(db), host]
+        hostnames = [*_active_hostnames(db, apps=on_apps), host]
         _put_ingress(client, account_id, tunnel_id, hostnames)
 
         try:
@@ -605,6 +689,8 @@ def add_hostname(
         app_id=app_id,
     )
     db.commit()
+    if on_apps:
+        sync_desired(db)  # the apps tunnel may be new: start its connector on this PC
     return domain_out(domain)
 
 
@@ -614,7 +700,8 @@ def remove_hostname(db: Session, domain_id: str, *, request: Request | None, use
         raise not_found("Domain")
     token = get_value(db, "cloudflare_api_token")
     account_id = get_value(db, "cloudflare_account_id")
-    tunnel_id = get_value(db, "cloudflare_tunnel_id")
+    on_apps = on_apps_tunnel(db, domain)
+    tunnel_id = get_value(db, "cloudflare_apps_tunnel_id" if on_apps else "cloudflare_tunnel_id")
     if token and account_id and tunnel_id:
         with _client(token) as client:
             if domain.dns_record_id and domain.zone_id:
@@ -623,7 +710,8 @@ def remove_hostname(db: Session, domain_id: str, *, request: Request | None, use
                 except cf.CloudflareError as exc:
                     if not exc.is_not_found:
                         raise cf.to_api_error(exc, cf.PERM_DNS) from None
-            _put_ingress(client, account_id, tunnel_id, _active_hostnames(db, exclude=domain.hostname))
+            remaining = _active_hostnames(db, exclude=domain.hostname, apps=on_apps)
+            _put_ingress(client, account_id, tunnel_id, remaining)
     hostname = domain.hostname
     db.delete(domain)
     reverted = _revert_public_url(db, request, hostnames=[hostname])
@@ -639,6 +727,7 @@ def unlink(db: Session, delete_dns: bool, delete_tunnel: bool, *, request: Reque
     token = get_value(db, "cloudflare_api_token")
     account_id = get_value(db, "cloudflare_account_id")
     tunnel_id = get_value(db, "cloudflare_tunnel_id")
+    apps_tunnel_id = get_value(db, "cloudflare_apps_tunnel_id")
     domains = _domains(db)
     current_mode = mode(db)
 
@@ -655,19 +744,20 @@ def unlink(db: Session, delete_dns: bool, delete_tunnel: bool, *, request: Reque
                     except cf.CloudflareError as exc:
                         if not exc.is_not_found:
                             raise cf.to_api_error(exc, cf.PERM_DNS) from None
-            if delete_tunnel and tunnel_id:
-                if current_mode == "cloudflare":
-                    write_desired({"mode": "off"})  # stop the connector before deleting the tunnel
+            tunnels = [t for t in (tunnel_id, apps_tunnel_id) if t] if delete_tunnel else []
+            if tunnels:
+                write_desired({"mode": "off"})  # stop the connectors before deleting the tunnels
+            for tid in tunnels:
                 try:
                     try:
-                        client.cleanup_tunnel_connections(account_id, tunnel_id)
+                        client.cleanup_tunnel_connections(account_id, tid)
                     except cf.CloudflareError as exc:
                         if not exc.is_not_found:
                             log.info("Tunnel connection cleanup failed: %s", exc.message)
-                    client.delete_tunnel(account_id, tunnel_id)
+                    client.delete_tunnel(account_id, tid)
                 except cf.CloudflareError as exc:
                     if not exc.is_not_found:
-                        write_desired(desired_state(db))  # still linked: restore the connector
+                        write_desired(desired_state(db))  # still linked: restore the connectors
                         raise cf.to_api_error(exc, cf.PERM_TUNNEL) from None
 
     hostnames = [d.hostname for d in domains]
@@ -681,6 +771,9 @@ def unlink(db: Session, delete_dns: bool, delete_tunnel: bool, *, request: Reque
         "cloudflare_tunnel_id",
         "cloudflare_tunnel_name",
         "cloudflare_tunnel_token",
+        "cloudflare_apps_tunnel_id",
+        "cloudflare_apps_tunnel_name",
+        "cloudflare_apps_tunnel_token",
     ):
         set_value(db, key, None)
     if current_mode == "cloudflare":

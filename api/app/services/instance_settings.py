@@ -17,6 +17,10 @@ SECRET_KEYS = {
     # docs/REMOTE_ACCESS.md
     "cloudflare_api_token",
     "cloudflare_tunnel_token",
+    # docs/COHOSTING.md "Websites on both PCs": connector token of the apps tunnel (main server) and, on
+    # a co-host device, the one it received through RPC `apps.tunnel`.
+    "cloudflare_apps_tunnel_token",
+    "cohost_apps_tunnel_token",
     # docs/DEVICES.md — set on a host device: {"primary_url", "device_id", "device_token", "device_name"}
     "device_link",
     # On a host device: {database_name: {kind, username, password}} for databases it hosts.
@@ -32,6 +36,10 @@ KNOWN_KEYS = {
     "cloudflare_account_name",
     "cloudflare_tunnel_id",
     "cloudflare_tunnel_name",
+    "cloudflare_apps_tunnel_id",
+    "cloudflare_apps_tunnel_name",
+    # On a co-host device: {app_id: {...}} of the co-hosted apps it runs (services/device_apps.py).
+    "device_cohost_apps",
     # Random per-installation id (docs/REMOTE_ACCESS.md: tunnel name `deployer-<first 8>`).
     "instance_id",
     *SECRET_KEYS,

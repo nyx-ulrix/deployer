@@ -97,7 +97,7 @@ Deployer changes quickly. Before telling the user a feature exists, confirm it o
 | Step-by-step GitHub token help for private repos | Available | New app → *Private repository* |
 | **Connect a Git repository** (connect GitHub once, pick a repo, everything detected and pre-filled, token + webhook automatic) | Available when `GET /v1/integrations/github` exists (older instances: manual form) | Deploys → New app |
 | **Co-hosting, phase 1**: live two-way sync of a project's databases to a member's own PC, Git-style conflict resolution, per-row history | Available when `GET /v1/projects/{id}/cohosting/eligibility` exists (not yet exercised with a real second PC) | Members → *Co-host*; Databases → *Copy to my device*, copies, conflicts (`/projects/{id}/databases/{sid}/sync`) |
-| **Co-hosting, phase 2**: apps also running on co-host PCs behind one address with automatic failover | **Planned, not built** | - |
+| **Co-hosting, phase 2**: apps also running on co-host PCs behind one address with automatic failover | Available when `GET /v1/projects/{id}/apps/{app_id}` returns `cohost` (not yet exercised with two real PCs) | App → Settings → *Co-host this app* (admin); per-PC status there; header "Also running on N co-host PCs" |
 | Apps running on host devices | **Not built** (apps run on the main Deployer PC only) | - |
 
 Never describe a "being built" or "planned" feature as available; say what the user can do today
@@ -172,7 +172,7 @@ Only after the user answered the platform question:
 | Netlify | `netlify deploy --prod`, or Git integration | same, in *Site settings → Environment* |
 | Cloudflare Pages | `wrangler pages deploy <dir>` or Git integration | same; the Deployer tunnel can share the zone |
 | GitHub Pages | workflow that builds and publishes `dist/` | only the `anon` key (static site, public) |
-| Deployer host device / co-host PC | not available yet (apps run on the main Deployer PC only; co-host failover is planned). Offer "this Deployer instance". | - |
+| Deployer host device / co-host PC | Deploy on "this Deployer instance" first, then a project admin ticks *Co-host this app*: every co-host PC of the project (a member with the Co-host flag whose PC is shared with the project and, for apps with database access, holds live copies of its databases) builds and runs the same commit, and the app's hostnames fail over between PCs. Private repositories also need *Let co-hosts clone this private repository* (the token becomes readable on those PCs). | `cohost`, `cohost_share_repo_access` on the app (admin) |
 
 After deploying: open the site, run one real request against the data API from it, and check the
 project's query log / audit (Deployer dashboard) shows the call. Then tell the user the URL, the
@@ -196,6 +196,8 @@ platform used, and where the key lives.
   their PC. Offer it only when the eligibility endpoint says `offer: true`. Conflicts are never
   resolved automatically: both versions are kept and a person picks or combines them in
   *Databases → Sync*. Co-hosts never see the owner's API keys, OAuth settings or Cloudflare token.
+  An app with *Co-host this app* also runs on those PCs (against their database copies; writes sync
+  back) and its hostnames stay up while any one PC is on.
 
 ## Do / don't
 

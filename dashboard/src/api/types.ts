@@ -842,6 +842,11 @@ export type App = {
   api_key_id: string | null;
   /** docs/DEPLOYMENTS.md "Database access": joins the databases network + DEPLOYER_DB_* env. Admin-only to enable. */
   database_access: boolean;
+  /** docs/COHOSTING.md "Websites on both PCs": also runs on the project's co-host PCs (admin-only). */
+  cohost: boolean;
+  /** Send the repository token to co-host PCs (readable by their owners); admin-only. */
+  cohost_share_repo_access: boolean;
+  replicas: AppReplica[];
   /** Set when the app clones (and got its webhook) through someone's GitHub connection. */
   github: { connected_by_email: string; hook_active: boolean } | null;
   port: number;
@@ -868,6 +873,8 @@ export type AppInput = {
   repo_token?: string;
   api_key_id?: string | null;
   database_access?: boolean;
+  cohost?: boolean;
+  cohost_share_repo_access?: boolean;
   /** Clone + add the push webhook with the caller's GitHub connection (instead of `repo_token`). */
   use_github_connection?: boolean;
 };
@@ -915,7 +922,18 @@ export type DeploymentPage = { deployments: Deployment[]; has_more: boolean };
 
 export type AppWebhook = { url: string; secret: string; hook_active?: boolean; warnings?: string[] };
 
-export type AppLogs = { lines: string[]; container: string | null };
+export type AppLogs = { lines: string[]; container: string | null; device_id?: string };
+
+/** A co-hosted app's copy on a co-host PC (docs/COHOSTING.md "Websites on both PCs"). */
+export type AppReplica = {
+  device_id: string;
+  device_name: string | null;
+  online: boolean;
+  status: "pending" | "building" | "live" | "failed" | "stopped";
+  deployment_id: string | null;
+  error: string | null;
+  last_seen_at: string | null;
+};
 
 // ---- Co-hosting (docs/COHOSTING.md) ----
 

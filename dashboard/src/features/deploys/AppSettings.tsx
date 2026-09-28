@@ -4,14 +4,15 @@ import { Link, useNavigate } from "react-router-dom";
 import { Eye, Globe, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import type { App, AppWebhook, Domain } from "../../api/types";
+import type { App, AppPatch, AppReplica, AppWebhook, Domain } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { CopyField } from "../../components/ui/CopyField";
-import { Input } from "../../components/ui/Input";
+import { Checkbox, Input } from "../../components/ui/Input";
 import { Alert, Card, ErrorAlert } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
+import { relativeTime } from "../../lib/format";
 import { JobProgressPanel } from "../jobs/JobProgress";
 import { AppFormFields } from "./AppForm";
 import { draftErrors, draftToPatch, emptyDraft, envToRows, rowsToEnv, type EnvRow } from "./deploys";
@@ -26,6 +27,7 @@ export function AppSettings(props: Props) {
       <EnvCard {...props} />
       <WebhookCard {...props} />
       <DomainsCard {...props} />
+      {(props.isAdmin || props.app.cohost) && <CohostCard {...props} />}
       {props.isAdmin && <DeleteCard {...props} />}
     </div>
   );
@@ -310,6 +312,71 @@ function DomainsCard({ projectId, app, isAdmin }: Props) {
           confirmLabel="Remove"
         />
       )}
+    </Card>
+  );
+}
+
+const REPLICA_TONE: Record<AppReplica["status"], "success" | "danger" | "warning" | "neutral"> = {
+  live: "success",
+  failed: "danger",
+  pending: "warning",
+  building: "warning",
+  stopped: "neutral",
+};
+
+/** docs/COHOSTING.md "Websites on both PCs". */
+function CohostCard({ projectId, app, isAdmin }: Props) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: (patch: AppPatch) => api.apps.update(projectId, app.id, patch),
+    onSuccess: (updated) => queryClient.setQueryData(qk.app(projectId, app.id), updated),
+    onError: (e) => toast.error(errorMessage(e), "Couldn't change co-hosting"),
+  });
+  const privateRepo = app.has_repo_token || Boolean(app.github);
+  return (
+    <Card
+      title="Co-host this app"
+      description="Also run the app on the project's co-host PCs. Visitors keep one address; Cloudflare sends them to whichever PC is up."
+    >
+      <div className="space-y-3">
+        <Checkbox
+          label="Co-host this app"
+          description={
+            isAdmin
+              ? "Each co-host PC builds the live commit and serves it with its own copy of the databases; writes there sync back like any other change."
+              : "Only project admins can change this."
+          }
+          checked={app.cohost}
+          disabled={!isAdmin || save.isPending}
+          onChange={(e) => save.mutate({ cohost: e.target.checked })}
+        />
+        {privateRepo && (
+          <Checkbox
+            label="Let co-hosts clone this private repository"
+            description="Sends the repository token to each co-host PC. Whoever controls that PC can read it; without it their copies can't be built."
+            checked={app.cohost_share_repo_access}
+            disabled={!isAdmin || save.isPending}
+            onChange={(e) => save.mutate({ cohost_share_repo_access: e.target.checked })}
+          />
+        )}
+        {app.cohost &&
+          (app.replicas.length === 0 ? (
+            <p className="text-sm text-muted">No co-host PC yet: a member with co-hosting on shares their PC with this project (and copies its databases when the app uses them).</p>
+          ) : (
+            <ul className="divide-y divide-border">
+              {app.replicas.map((r) => (
+                <li key={r.device_id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
+                  <span className="min-w-0 flex-1 truncate">{r.device_name ?? r.device_id}</span>
+                  {!r.online && <Badge>offline</Badge>}
+                  <Badge tone={REPLICA_TONE[r.status]}>{r.status}</Badge>
+                  {r.last_seen_at && <span className="text-xs text-muted">seen {relativeTime(r.last_seen_at)}</span>}
+                  {r.error && <p className="w-full text-xs text-danger">{r.error}</p>}
+                </li>
+              ))}
+            </ul>
+          ))}
+      </div>
     </Card>
   );
 }

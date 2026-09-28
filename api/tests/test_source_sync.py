@@ -421,3 +421,75 @@ def test_device_sync_methods_reject_databases_it_does_not_host(set_setting):
     assert {"sync.position", "sync.sql_changes", "sync.sql_apply", "sync.mongo_changes", "sync.mongo_apply"} <= set(
         device_host.capabilities()["methods"]
     )
+
+
+def test_mongo_late_echo_does_not_undo_a_newer_version(db, world):
+    """The echo of a write the sync made can arrive after the key moved on (the other side changed it
+    again in the meantime); it must be recognised as an echo, not applied as a change."""
+    w = world("nosql")
+    key = {"_id": {"$oid": "65f000000000000000000002"}}
+    w["primary"].write("orders", key, {**key, "total": 1})
+    source_sync.sync_round(w["rep"].id)  # the device's stream now owes the echo of total=1
+    w["primary"].write("orders", key, {**key, "total": 2})
+    source_sync.sync_round(w["rep"].id)
+    assert w["primary"].row("orders", key)["total"] == 2 and w["replica"].row("orders", key)["total"] == 2
+    source_sync.sync_round(w["rep"].id)  # consumes the echo of total=2
+
+    # A real edit back to an earlier value still syncs: its echo was already consumed.
+    w["replica"].write("orders", key, {**key, "total": 1})
+    source_sync.sync_round(w["rep"].id)
+    assert w["primary"].row("orders", key)["total"] == 1
+    assert not _conflicts(db, w)
+    db.expire_all()
+    assert all(v.echo is None for v in db.scalars(select(SyncVersion)) if v.json["total"] != 1)
+
+
+def test_rounds_of_different_copies_run_side_by_side(db, owner, make_project, make_device, monkeypatch):
+    """Each round waits at a barrier for the other: this only passes when they run concurrently."""
+    import threading
+
+    project = make_project(owner, "Shop")
+    barrier = threading.Barrier(2, timeout=5)
+
+    class Waiting(FakeSide):
+        def changes(self, since, limit):
+            barrier.wait()
+            return super().changes(since, limit)
+
+    sides, reps = {}, []
+    for n in range(2):
+        device, _ = make_device(owner, f"PC {n}")
+        ds = DataSource(
+            project_id=project.id,
+            name=f"db{n}",
+            kind="sql",
+            engine="mariadb",
+            mode="managed",
+            database_name=f"p_shop{n}_abc123",
+            config_encrypted=encrypt_json({}),
+            status="ok",
+        )
+        db.add(ds)
+        db.flush()
+        rep = SourceReplica(
+            data_source_id=ds.id,
+            device_id=device.id,
+            status="syncing",
+            position_primary={"i": 0},
+            position_replica={"i": 0},
+            id_offset=2 + n,
+        )
+        db.add(rep)
+        db.commit()
+        device_rpc.mark_online(device.id, "conn")
+        sides[rep.id] = (Waiting(), FakeSide())
+        sides[rep.id][0].write("t", {"id": n}, {"id": n})
+        reps.append(rep.id)
+    monkeypatch.setattr(source_sync, "sides_for", lambda r, d: sides[r.id])
+    source_sync._backoff.clear()
+    assert source_sync.run_due(now=7000.0) == 2
+    db.expire_all()
+    for n, rep_id in enumerate(reps):
+        rep = db.get(SourceReplica, rep_id)
+        assert rep.status == "syncing" and rep.error is None
+        assert sides[rep_id][1].row("t", {"id": n}) == {"id": n}

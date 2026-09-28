@@ -204,6 +204,9 @@ services:
       - backups:/backups
       - caddy_apps:/etc/caddy/apps
       - /var/run/docker.sock:/var/run/docker.sock
+      # Co-host devices (docs/COHOSTING.md "Websites on both PCs"): RPC `apps.tunnel` runs in the
+      # worker and hands the apps tunnel's connector token to the tunnel sidecar (desired.json).
+      - tunnel_state:/tunnel
     depends_on:
       api:
         condition: service_healthy

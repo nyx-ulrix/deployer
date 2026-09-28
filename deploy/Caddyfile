@@ -78,5 +78,7 @@
 # Deployed apps (docs/DEPLOYMENTS.md): the worker writes one `<app_id>.caddy` per app into the
 # shared `caddy_apps` volume - a `:81xx` listener for LAN/localhost and, per Cloudflare hostname, an
 # `http://<host>:8081` block in front of the catch-all above. A glob that matches nothing only logs a
-# warning, and the worker keeps a placeholder file there anyway.
+# warning, and the worker keeps a placeholder file there anyway. On a co-host device the worker also
+# writes `cohost-<app_id>.caddy` for the apps it runs for its main Deployer (docs/COHOSTING.md); the
+# apps tunnel connector reaches their host blocks on :8081 the same way.
 import /etc/caddy/apps/*.caddy

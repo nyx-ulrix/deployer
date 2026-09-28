@@ -61,6 +61,9 @@ LOGS_KEEP = 500
 LOGS_POLL_S = 10
 WEBHOOK_LIMIT, WEBHOOK_WINDOW_S = 6, 60
 PLACEHOLDER_FILE = "_empty.caddy"
+# Caddy files of apps a co-host device runs for its main Deployer (services/device_apps.py): this
+# installation's own cleanup leaves them alone.
+COHOST_FILE_PREFIX = "cohost-"
 
 _SLUG_MAX = 40  # container name = deployer-app-<slug>-<8 chars> stays well under Docker's limits
 
@@ -200,6 +203,8 @@ def deployment_out(dep: Deployment, *, with_log: bool = False) -> dict:
 
 
 def app_out(db: Session, app: App) -> dict:
+    from app.services import cohost_apps
+
     domains = app_domains(db, app.id)
     live = db.get(Deployment, app.live_deployment_id) if app.live_deployment_id else None
     connected_by = db.get(User, app.github_connection_user_id) if app.github_connection_user_id else None
@@ -221,6 +226,9 @@ def app_out(db: Session, app: App) -> dict:
         "has_repo_token": app.repo_token_encrypted is not None,
         "api_key_id": app.api_key_id,
         "database_access": bool(app.database_access),
+        "cohost": bool(app.cohost),
+        "cohost_share_repo_access": bool(app.cohost_share_repo_access),
+        "replicas": cohost_apps.replicas_out(db, app.id),
         "github": (
             {"connected_by_email": connected_by.email, "hook_active": app.github_hook_id is not None}
             if connected_by
@@ -575,39 +583,47 @@ def _checkout(ctx: jobs.JobContext, cli: DockerCli, app: App, dep: Deployment, w
     return checkout
 
 
-def _build(
-    ctx: jobs.JobContext, cli: DockerCli, app: App, dep: Deployment, workdir: str, checkout: str, log_: _DeployLog
-) -> str:
-    context = os.path.normpath(os.path.join(checkout, app.root_dir or "."))
+def build_image(
+    cli: DockerCli, workdir: str, checkout: str, root_dir: str | None, generated: str | None, tag: str, on_line
+) -> None:
+    """`docker build` of `root_dir` inside a checkout with a generated recipe (None: the repository's own
+    Dockerfile). Shared by the deploy job and co-host devices (services/device_apps.py)."""
+    context = os.path.normpath(os.path.join(checkout, root_dir or "."))
     if not (context == checkout or context.startswith(checkout + os.sep)):
         raise jobs.JobError("root_dir must stay inside the repository")
     if not os.path.isdir(context):
-        raise jobs.JobError(f"root_dir '{app.root_dir}' does not exist in the repository")
-    generated = generate_dockerfile(app)
+        raise jobs.JobError(f"root_dir '{root_dir}' does not exist in the repository")
     if generated is None:
         dockerfile = os.path.join(context, "Dockerfile")
         if not os.path.isfile(dockerfile):
-            raise jobs.JobError(f"No Dockerfile in '{app.root_dir}'")
+            raise jobs.JobError(f"No Dockerfile in '{root_dir}'")
     else:
         dockerfile = os.path.join(workdir, "Dockerfile.deployer")
         with open(dockerfile, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(generated)
-        log_.write("Generated Dockerfile:")
+        on_line("Generated Dockerfile:")
         for line in generated.rstrip().splitlines():
-            log_.write(f"    {line}")
+            on_line(f"    {line}")
+    cli.build(context, dockerfile, tag, on_line=on_line)
+
+
+def _build(
+    ctx: jobs.JobContext, cli: DockerCli, app: App, dep: Deployment, workdir: str, checkout: str, log_: _DeployLog
+) -> str:
     tag = image_tag(app.id, dep.id)
     log_.step("Building")
-    cli.build(context, dockerfile, tag, on_line=log_.write)
+    build_image(cli, workdir, checkout, app.root_dir, generate_dockerfile(app), tag, log_.write)
     _update(ctx.session_factory, dep.id, image_tag=tag)
     return tag
 
 
-def _runtime_env(db: Session, app: App) -> dict[str, str]:
+def runtime_env(db: Session, app: App, *, api_key: bool = True) -> dict[str, str]:
+    """The app's own variables + PORT, DEPLOYER_URL, DEPLOYER_PROJECT_ID (+ DEPLOYER_API_KEY)."""
     env = env_of(app)
     env["PORT"] = str(internal_port(app))
     env["DEPLOYER_URL"] = f"{public_url(db)}/v1"
     env["DEPLOYER_PROJECT_ID"] = app.project_id
-    if app.api_key_id:
+    if api_key and app.api_key_id:
         key = db.get(ApiKey, app.api_key_id)
         if key is not None and key.secret_encrypted and key.revoked_at is None:
             env["DEPLOYER_API_KEY"] = decrypt_secret(key.secret_encrypted)
@@ -636,26 +652,33 @@ def database_env(db: Session, app: App) -> tuple[dict[str, str], list[str]]:
         if ds.device_id:
             notes.append(f"Data source '{ds.name}' is on a host device and is not reachable from apps")
             continue
-        config = load_config(ds)
-        prefix = env_prefix(ds.name)
-        database = str(config.get("database") or ds.database_name)
-        if ds.kind == "sql":
-            env[prefix + "HOST"] = str(config.get("host") or "")
-            env[prefix + "PORT"] = str(config.get("port") or 3306)
-            env[prefix + "USER"] = str(config.get("username") or "")
-            env[prefix + "PASSWORD"] = str(config.get("password") or "")
-            env[prefix + "URL"] = sql_app_uri(ds.engine, config)
-        else:
-            parsed = parse_mongo_uri(config.get("uri", ""))
-            user = quote(str(config.get("username") or parsed["username"] or ""), safe="")
-            pw = quote(str(config.get("password") or ""), safe="")
-            name = quote(database, safe="")
-            env[prefix + "URL"] = (
-                f"mongodb://{user}:{pw}@{parsed['host']}:{parsed['port']}/{name}"
-                f"?authSource={name}&directConnection=true"
-            )
-        env[prefix + "DATABASE"] = database
+        env.update(source_env(ds.name, ds.kind, ds.engine, load_config(ds), ds.database_name))
     return env, notes
+
+
+def source_env(name: str, kind: str, engine: str, config: dict, database_name: str) -> dict[str, str]:
+    """`DEPLOYER_DB_<NAME>_*` of one source from its connection config (also used on co-host devices
+    with the device's own copy, services/device_apps.py)."""
+    env: dict[str, str] = {}
+    prefix = env_prefix(name)
+    database = str(config.get("database") or database_name)
+    if kind == "sql":
+        env[prefix + "HOST"] = str(config.get("host") or "")
+        env[prefix + "PORT"] = str(config.get("port") or 3306)
+        env[prefix + "USER"] = str(config.get("username") or "")
+        env[prefix + "PASSWORD"] = str(config.get("password") or "")
+        env[prefix + "URL"] = sql_app_uri(engine, config)
+    else:
+        parsed = parse_mongo_uri(config.get("uri", ""))
+        user = quote(str(config.get("username") or parsed["username"] or ""), safe="")
+        pw = quote(str(config.get("password") or ""), safe="")
+        name_q = quote(database, safe="")
+        env[prefix + "URL"] = (
+            f"mongodb://{user}:{pw}@{parsed['host']}:{parsed['port']}/{name_q}"
+            f"?authSource={name_q}&directConnection=true"
+        )
+    env[prefix + "DATABASE"] = database
+    return env
 
 
 def _prune_images(db: Session, cli: DockerCli, app: App, log_: _DeployLog) -> None:
@@ -709,7 +732,7 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
             name = container_name(app, dep.id)
             with factory() as db:
                 db_env, notes = database_env(db, app) if app.database_access else ({}, [])
-                env = {**db_env, **_runtime_env(db, app)}  # the app's own variables win
+                env = {**db_env, **runtime_env(db, app)}  # the app's own variables win
                 dep_row = db.get(Deployment, dep.id)
                 dep_row.status, dep_row.container_name = "deploying", name
                 db.commit()
@@ -756,6 +779,12 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
                 _prune_images(db, cli, db.get(App, app.id), log_)
                 db.commit()
             log_.write("Done")
+            try:
+                from app.services import cohost_apps
+
+                cohost_apps.replicate(factory, app.id)  # docs/COHOSTING.md: the co-host devices follow
+            except Exception:  # noqa: BLE001 - the scheduler sweep retries
+                log.exception("could not start the co-host copies of app %s", app.id)
         except DockerError as exc:
             raise jobs.JobError(_docker_failure(exc, secrets)) from exc
     except jobs.JobCancelled:
@@ -848,7 +877,15 @@ def _remove_orphans(factory: jobs.SessionFactory, cli: DockerCli) -> int:
     files of deleted apps."""
     containers = cli.list_containers()
     directory = apps_dir()
-    files = [p for p in directory.glob("*.caddy") if p.name != PLACEHOLDER_FILE] if directory.is_dir() else []
+    files = (
+        [
+            p
+            for p in directory.glob("*.caddy")
+            if p.name != PLACEHOLDER_FILE and not p.name.startswith(COHOST_FILE_PREFIX)
+        ]
+        if directory.is_dir()
+        else []
+    )
     removed = 0
     with factory() as db:
         for row in containers:

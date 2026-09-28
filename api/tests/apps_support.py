@@ -79,6 +79,7 @@ class FakeDockerCli(DockerCli):
                 "deployment": c["labels"].get("deployer.deployment", ""),
             }
             for n, c in self.containers.items()
+            if "deployer.app" in c["labels"]  # like `docker ps --filter label=deployer.app`
         ]
 
     def remove_image(self, tag):

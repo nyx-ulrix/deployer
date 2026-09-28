@@ -97,6 +97,21 @@ linked account's `zones` (`GET /zones?account.id=`, cached in Redis for 5 minute
 Cloudflare can't be reached and nothing is cached, `zones` is `[]`. It also rewrites `desired.json` if
 it is missing or out of date (and so does API startup).
 
+## Apps tunnel (co-hosting failover)
+
+Hostnames of **co-hosted apps** ([COHOSTING.md](COHOSTING.md) "Websites on both PCs") live on a second
+remotely-managed tunnel, `deployer-apps-<first 8 chars of instance_id>`, created with the same
+Cloudflare calls on first need (a hostname added to a co-hosted app, or co-hosting switched on for an
+app with hostnames) and reused afterwards (`cloudflare_apps_tunnel_id` / `_name` / `_token`). Its
+ingress lists only co-hosted app hostnames (→ `http://caddy:8081`) and their CNAMEs point at
+`<apps tunnel id>.cfargotunnel.com`; the dashboard tunnel's ingress lists the dashboard hostnames and
+apps that are not co-hosted. Switching an app's co-hosting on or off moves its hostnames: ingress of
+the new tunnel, then the CNAME (updated in place, or recreated when it was deleted), then the old
+tunnel's ingress. Connectors: the main server's sidecar (below, `apps_token`) and every co-host device
+that runs a copy (it receives only this tunnel's token through RPC `apps.tunnel`; the dashboard tunnel
+token and the API token never leave the main server). Cloudflare balances between healthy connectors.
+`unlink` with `delete_tunnel` deletes both tunnels.
+
 ## Tunnel sidecar
 
 Compose service `tunnel` (image `deployer-tunnel`, built from `deploy/tunnel/`): Alpine + `jq` + a
@@ -108,12 +123,14 @@ API (both images own `/tunnel` as uid 10001, so either can initialise a fresh vo
 
 | File (written by) | Content |
 |---|---|
-| `/tunnel/desired.json` (API) | `{"mode":"off"}` \| `{"mode":"cloudflare","token":"..."}` \| `{"mode":"quick"}` (mode 0600) |
-| `/tunnel/status.json` (sidecar) | `{"mode", "running", "pid", "started_at", "quick_url", "last_error", "updated_at"}` |
+| `/tunnel/desired.json` (API; on a co-host device also its worker, chowned to uid 10001) | `{"mode":"off"}` \| `{"mode":"cloudflare","token":"..."}` \| `{"mode":"quick"}`, each optionally with `"apps_token":"..."` (the apps tunnel connector) (mode 0600) |
+| `/tunnel/status.json` (sidecar) | `{"mode", "running", "pid", "started_at", "quick_url", "last_error", "apps", "updated_at"}`; `apps` is `{"running", "started_at", "last_error"}` while an `apps_token` is set, else `null` |
 
 The supervisor (`deploy/tunnel/supervisor.sh`, POSIX sh) polls `desired.json` every 3 s and (re)starts
 `cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:20241 run` (token in `TUNNEL_TOKEN`) or
-`cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:20241 --url http://caddy:8081`. A change of
+`cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:20241 --url http://caddy:8081`, and, while
+`apps_token` is set, a second `cloudflared tunnel --no-autoupdate --metrics 127.0.0.1:20242 run` for the
+apps tunnel (own log file, own backoff; both inherit `TUNNEL_TRANSPORT_PROTOCOL`). A change of
 mode or token stops the old process (SIGTERM, SIGKILL after 10 s). If cloudflared exits it is restarted
 after 1, 2, 4 … 60 s (reset after 60 s of stable running); `last_error` holds the exit code and the last
 `ERR` log line. The quick-tunnel URL is parsed from cloudflared's output, which is also forwarded to
@@ -127,7 +144,9 @@ socket access.
 
 - `instance_settings` keys: `cloudflare_api_token` (secret), `cloudflare_account_id`,
   `cloudflare_account_name`, `cloudflare_tunnel_id`, `cloudflare_tunnel_name`,
-  `cloudflare_tunnel_token` (secret), `remote_access_mode` (`off`/`cloudflare`/`quick`), `instance_id`.
+  `cloudflare_tunnel_token` (secret), `cloudflare_apps_tunnel_id`, `cloudflare_apps_tunnel_name`,
+  `cloudflare_apps_tunnel_token` (secret), `remote_access_mode` (`off`/`cloudflare`/`quick`),
+  `instance_id`; on a co-host device `cohost_apps_tunnel_token` (secret, from RPC `apps.tunnel`).
 - API process settings: `TUNNEL_STATE_DIR` (default `/tunnel`), `DEPLOYER_HTTP_PORT`.
 - `domains`: `id, hostname (unique), provider ("cloudflare"), zone_id, zone_name, dns_record_id,
   target_type ("dashboard" now; "project" reserved for push-to-deploy), project_id (nullable), status

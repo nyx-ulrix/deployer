@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { App, AppDetectDraft, GitHubRepo } from "../../api/types";
 import {
   canRollback,
+  cohostSummary,
   databaseEnvNames,
   deploymentDuration,
   DEPLOYMENT_STATUS,
@@ -247,5 +248,15 @@ describe("connect a Git repository", () => {
   it("summarises what was detected", () => {
     expect(detectedSummary(hawkerhub)).toBe("Flask app (requirements.txt, app/__init__.py)");
     expect(detectedSummary({ detected: [] })).toBeNull();
+  });
+});
+
+describe("cohostSummary", () => {
+  it("counts live copies of co-hosted apps only", () => {
+    const r = (status: string) => ({ status }) as App["replicas"][number];
+    expect(cohostSummary({ cohost: true, replicas: [r("live"), r("failed"), r("live")] })).toBe("Also running on 2 co-host PCs");
+    expect(cohostSummary({ cohost: true, replicas: [r("live")] })).toBe("Also running on 1 co-host PC");
+    expect(cohostSummary({ cohost: true, replicas: [r("pending")] })).toBeNull();
+    expect(cohostSummary({ cohost: false, replicas: [r("live")] })).toBeNull();
   });
 });

@@ -498,6 +498,12 @@ class App(Base):
     # docs/DEPLOYMENTS.md "Connect a Git repository": clone + webhook with this user's GitHub connection.
     github_connection_user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     github_hook_id: Mapped[str | None] = mapped_column(String(40))  # the repo webhook Deployer created
+    # docs/COHOSTING.md "Websites on both PCs": also runs on the project's co-host devices (admin-only).
+    cohost: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+    # Send the clone token / GitHub connection token to co-host devices (readable there); admin-only.
+    cohost_share_repo_access: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
     port: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)  # Caddy listener, 8100-8199, for life
     live_deployment_id: Mapped[str | None] = mapped_column(String(36))  # no FK: circular with deployments
     created_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
@@ -526,6 +532,27 @@ class Deployment(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
     rollback_of: Mapped[str | None] = mapped_column(String(36))
+
+
+class AppReplica(Base):
+    """A copy of a co-hosted app running on a co-host device (docs/COHOSTING.md "Websites on both PCs")."""
+
+    __tablename__ = "app_replicas"
+    __table_args__ = (UniqueConstraint("app_id", "device_id", name="uq_app_replica_device"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    app_id: Mapped[str] = mapped_column(ForeignKey("apps.id", ondelete="CASCADE"), index=True, nullable=False)
+    device_id: Mapped[str] = mapped_column(ForeignKey("devices.id", ondelete="CASCADE"), index=True, nullable=False)
+    # pending | building | live | failed | stopped (device no longer eligible; the sweep removes the copy)
+    status: Mapped[str] = mapped_column(String(10), default="pending", nullable=False)
+    deployment_id: Mapped[str | None] = mapped_column(String(36))  # the main deployment it mirrors
+    image_tag: Mapped[str | None] = mapped_column(String(200))
+    container_name: Mapped[str | None] = mapped_column(String(100))
+    port: Mapped[int | None] = mapped_column(Integer)  # the device's own Caddy listener
+    error: Mapped[str | None] = mapped_column(Text)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 
 
 # --- Co-hosting: live database copies on members' host devices (docs/COHOSTING.md) ----------------
@@ -602,6 +629,9 @@ class SyncVersion(Base):
     version_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     json: Mapped[dict | None] = mapped_column(JSON)  # null = deleted
     origin: Mapped[str] = mapped_column(String(10), nullable=False)  # primary | replica | resolution | restore
+    # MongoDB: the side(s) whose change stream still owes the echo of this write (primary | replica | both);
+    # an incoming change equal to a superseded version is ignored only while its echo is owed.
+    echo: Mapped[str | None] = mapped_column(String(10))
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     synced_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True, nullable=False)
 

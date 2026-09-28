@@ -13,10 +13,11 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from app.crypto import encrypt_secret
+from app.db import get_sessionmaker
 from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import ApiError, forbidden, not_found
-from app.models import App, Deployment, Domain
-from app.services import audit, deployments, github, jobs, rate_limit
+from app.models import App, AppReplica, Deployment, Domain
+from app.services import audit, cohost_apps, deployments, device_rpc, github, jobs, rate_limit
 from app.services import remote_access as ra
 
 router = APIRouter(tags=["apps"])
@@ -54,6 +55,9 @@ class AppFields(BaseModel):
     repo_token: str | None = Field(default=None, max_length=500)
     api_key_id: str | None = Field(default=None, max_length=36)
     database_access: bool | None = None
+    # docs/COHOSTING.md "Websites on both PCs" (admin-only)
+    cohost: bool | None = None
+    cohost_share_repo_access: bool | None = None
 
     @field_validator("install_command", "build_command", "start_command", "output_dir", "repo_token", "branch")
     @classmethod
@@ -157,6 +161,30 @@ def _audit_database_access(db, request: Request, access: ProjectAccess, app: App
     )
 
 
+def _check_cohost(access: ProjectAccess, app: App, body: AppFields) -> bool:
+    """True when the request changes a co-hosting flag; only project admins may."""
+    changed = any(
+        field in body.model_fields_set and bool(getattr(body, field)) != bool(getattr(app, field))
+        for field in ("cohost", "cohost_share_repo_access")
+    )
+    if changed and not access.at_least("admin"):
+        raise forbidden("Only project admins can change co-hosting")
+    return changed
+
+
+def _audit_cohost(db, request: Request, access: ProjectAccess, app: App) -> None:
+    audit.record(
+        db,
+        "app.cohost",
+        request=request,
+        user_id=access.user.id,
+        project_id=app.project_id,
+        app_id=app.id,
+        enabled=app.cohost,
+        share_repo_access=app.cohost_share_repo_access,
+    )
+
+
 def _dispatch(job) -> None:
     if job is not None:
         jobs.dispatch(job.id)
@@ -175,6 +203,8 @@ def list_apps(access: Viewer, db: DbSession) -> list[dict]:
 def create_app(body: AppCreate, request: Request, access: Developer, db: DbSession) -> dict:
     project = access.project
     _check_database_access(access, body.database_access)
+    if (body.cohost or body.cohost_share_repo_access) and not access.at_least("admin"):
+        raise forbidden("Only project admins can change co-hosting")
     deployments.check_api_key(db, project.id, body.api_key_id)
     if body.use_github_connection:
         if body.repo_token:
@@ -199,6 +229,8 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
         container_port=body.container_port,
         api_key_id=body.api_key_id,
         database_access=bool(body.database_access),
+        cohost=bool(body.cohost),
+        cohost_share_repo_access=bool(body.cohost_share_repo_access),
         port=deployments.allocate_port(db),
         created_by_id=access.user.id,
         github_connection_user_id=access.user.id if body.use_github_connection else None,
@@ -222,6 +254,8 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
     )
     if app.database_access:
         _audit_database_access(db, request, access, app)
+    if app.cohost or app.cohost_share_repo_access:
+        _audit_cohost(db, request, access, app)
     db.commit()
     return {**deployments.app_out(db, app), "warnings": warnings}
 
@@ -244,6 +278,8 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
     if "database_access" in changed:
         _check_database_access(access, body.database_access and not app.database_access)
     access_before = app.database_access
+    cohost_before = app.cohost
+    cohost_changed = _check_cohost(access, app, body)
     if "repo_url" in changed and body.repo_url and body.repo_url != app.repo_url and app.github_connection_user_id:
         # The webhook belongs to the old repository; only the connection's owner may point it elsewhere.
         github.delete_hook(db, app)
@@ -264,8 +300,8 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
             app.branch = value or "main"
         elif field == "root_dir":
             app.root_dir = value or "."
-        elif field == "database_access":
-            app.database_access = bool(value)
+        elif field in ("database_access", "cohost", "cohost_share_repo_access"):
+            setattr(app, field, bool(value))
         elif value is not None or field in (
             "install_command",
             "build_command",
@@ -286,7 +322,15 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
     )
     if app.database_access != access_before:
         _audit_database_access(db, request, access, app)
+    if app.cohost != cohost_before:
+        ra.move_app_hostnames(db, app)  # to the apps tunnel or back; nothing is saved if Cloudflare fails
+    if cohost_changed:
+        _audit_cohost(db, request, access, app)
     db.commit()
+    if cohost_changed:
+        cohost_apps.replicate(get_sessionmaker(), app.id, user_id=access.user.id, retry=True)
+        ra.sync_desired(db)  # the apps tunnel may be new: start its connector on this PC
+    db.refresh(app)
     return deployments.app_out(db, app)
 
 
@@ -456,8 +500,23 @@ def rollback_deployment(app_id: str, deployment_id: str, request: Request, acces
 
 
 @router.get(BASE + "/{app_id}/logs")
-def runtime_logs(app_id: str, access: Viewer, db: DbSession, tail: Annotated[int, Query(ge=1, le=500)] = 200) -> dict:
+def runtime_logs(
+    app_id: str,
+    access: Viewer,
+    db: DbSession,
+    tail: Annotated[int, Query(ge=1, le=500)] = 200,
+    device_id: Annotated[str | None, Query(max_length=36)] = None,
+) -> dict:
     app = deployments.get_app(db, access.project.id, app_id)
+    if device_id:
+        # docs/COHOSTING.md: the copy on a co-host device (503 device_offline while it is off).
+        replica = db.scalar(select(AppReplica).where(AppReplica.app_id == app.id, AppReplica.device_id == device_id))
+        if replica is None:
+            raise not_found("Co-host copy")
+        out = device_rpc.call(device_id, "apps.logs", {"app_id": app.id, "tail": tail}, timeout=20)
+        out = out if isinstance(out, dict) else {}
+        lines = [str(line) for line in out.get("lines") or []][-tail:]
+        return {"lines": lines, "container": out.get("container"), "device_id": device_id}
     live = db.get(Deployment, app.live_deployment_id) if app.live_deployment_id else None
     lines, _ = deployments.runtime_logs(app, tail)
     return {"lines": lines, "container": live.container_name if live else None}
@@ -472,6 +531,8 @@ class HostnameBody(BaseModel):
 
 
 def _reroute(db: DbSession, app: App, user_id: str) -> None:
+    if app.cohost:
+        cohost_apps.replicate(get_sessionmaker(), app.id, user_id=user_id, retry=True)  # device host blocks
     if app.live_deployment_id:
         job = jobs.enqueue(
             db, type="app.route", params={"app_id": app.id}, project_id=app.project_id, created_by_id=user_id

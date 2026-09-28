@@ -2,7 +2,7 @@
 
 A project owner can let a member **co-host** the project: the member's own PC keeps a live copy of
 the project's databases (phase 1, built) and runs the project's apps, and visitors reach the apps
-through the same address whichever PC is up (phase 2, not built yet). Decisions taken with the owner
+through the same address whichever PC is up (phase 2, built; not yet exercised with two real PCs). Decisions taken with the owner
 (2026-09-23):
 
 - **Co-hosting is optional.** Members who never install Deployer keep working exactly as before:
@@ -13,7 +13,7 @@ through the same address whichever PC is up (phase 2, not built yet). Decisions 
   PCs, nothing is overwritten. Both versions are kept, someone picks one or combines them, and the
   choice is applied to both PCs.
 - **One address, automatic failover** for websites (phase 2): every hosting PC runs a connector of the
-  same Cloudflare tunnel; Cloudflare sends visitors to a healthy one.
+  same Cloudflare tunnel (the *apps* tunnel); Cloudflare sends visitors to a healthy one.
 - **Secrets stay on the master.** Co-hosts never see the master's API keys, OAuth settings or other
   secrets in any dashboard; only accounts signed in to the master (with the right role) can reveal them.
 
@@ -31,7 +31,7 @@ through the same address whichever PC is up (phase 2, not built yet). Decisions 
    on every copy right away (a copy that can't take it gets a warning). DDL typed into the query
    console runs only where it ran: the sync then stops with an error naming the table
    (`schema_mismatch`) until the copy matches again (apply the same change there, or re-copy).
-4. The **dashboard** (`deployer.<domain>`) stays on the master; only apps fail over (phase 2).
+4. The **dashboard** (`deployer.<domain>`) stays on the master; only co-hosted apps fail over (phase 2).
 5. Tables **without a primary key** are not synced (a warning on the copy lists them).
 6. Moving a database that has copies to another host is refused (`409 has_replicas`); remove the
    copies first. Sources placed on a host device can't be copied (`409 replica_unsupported`, v1).
@@ -79,7 +79,7 @@ error, warnings, created_by_id, created_at, updated_at`, unique `(data_source_id
   the dump already contained is a no-op). A failed copy drops the partial database. `recopy` drops
   and copies again; open conflicts then end with the main server's version.
 - **Engine** (`services/source_sync.py`): the worker's scheduler leader runs a round every 2 s per
-  copy: read changes on each side since its position (up to 1000 changes / 4 MB, whole transactions),
+  copy (up to 4 copies at a time in a small thread pool, so one slow device doesn't delay the others): read changes on each side since its position (up to 1000 changes / 4 MB, whole transactions),
   apply the main server's changes to the device, then the device's to the main server, row by row,
   and advance each position only after its changes were applied. Errors → `status=error` with the
   message, retried with backoff (4 s doubling to 5 min); a device that is offline (or drops mid-round)
@@ -96,7 +96,10 @@ error, warnings, created_by_id, created_at, updated_at`, unique `(data_source_id
     (device: `sync.mongo_changes` / `sync.mongo_apply`, writes with `replace_one(upsert)` / `delete_one`).
     MongoDB has no way to write without an oplog entry, so a write the sync made is recognised when it
     comes back because its content hash equals the last version the sync recorded for that document
-    (`sync_versions`); no marker field is added to documents (the draft's `_dsync` field was dropped).
+    (`sync_versions`), or an older version whose echo that side still owes (`sync_versions.echo`,
+    consumed once) - an echo that arrives after the document already moved on must not undo the newer
+    version, while a real edit back to an old value still syncs. No marker field is added to documents
+    (the draft's `_dsync` field was dropped).
   - **Ids (MariaDB):** MariaDB has no per-table auto-increment step, and per-table id ranges don't work
     (applying a row with a high id moves the other copy's counter into that range). So the sync sets
     the server-wide `auto_increment_increment = 10` with `auto_increment_offset = 1` on the main server
@@ -131,8 +134,11 @@ a conflict). Otherwise:
 
 **Resolving** (`POST .../sync-conflicts/{cid}/resolve {choice, value?}`): `primary`, `replica`
 (either may be "deleted") or `manual` with the whole row / document (`null` deletes; key fields can't
-change). The chosen value is written to **both** copies (device first; `503` while it is offline,
-nothing changed) without echo, recorded as a version (`origin = resolution`) and the conflict is
+change). First one sync round runs (under the copy's lock) so changes neither side had read yet come
+in: if they touched this row, the conflict now shows them and the resolution is refused with `409
+conflict_changed` (review and resolve again) - nothing made before a resolution can arrive later and
+reopen it with a stale version. The chosen value is then written to **both** copies (device first;
+`503` while it is offline, nothing changed) without echo, recorded as a version (`origin = resolution`) and the conflict is
 marked resolved (`resolution, resolved_json, resolved_by_id, resolved_at`; audit
 `sync.conflict_resolve`). The field diff's `suggested` value merges fields that changed on only one
 side (none when a field changed differently on both, a side deleted the row, or the base is unknown).
@@ -151,18 +157,93 @@ row changes a day with 1 KB rows keeps about 90 MB.
 size permitting); on reconnect the loop catches up. If a position fell out of retention the copy goes
 `error` with `resync_required` ("re-copy needed") and a re-copy fixes it.
 
-## Websites on both PCs (phase 2 - not built)
+## Websites on both PCs (phase 2 - built)
 
-- Devices gain the **app-hosting role**: an app with `cohost: true` is also deployed on each co-host
-  device of its project (device RPC `apps.deploy` running the same build steps with the device's own
-  worker, image built from the same commit).
-- A second tunnel, `deployer-apps-<instance>`, carries **only app hostnames**; the master and every
-  co-host device run a connector for it (the device receives its connector token over the control
-  channel - the only tunnel secret it gets; the dashboard tunnel and API token never leave the master).
-  Each connector's Caddy routes app hostnames to its local container. Cloudflare balances between
-  healthy connectors, so when one PC is off the other serves.
-- On a device, app env vars that reference master secrets (`DEPLOYER_API_KEY`) are **not** injected;
-  apps there reach their database directly (database access, DEPLOYMENTS.md) against the local copy.
+A project admin ticks **Co-host this app** (App → Settings; `PATCH /apps/{id} {cohost: true}`, admin
+only, audit `app.cohost`). From then on every deployment that goes live (deploy, push, rollback) also
+runs on each **co-host device** of the project, and the app's hostnames are served by whichever PCs
+are up.
+
+**Which devices.** A device qualifies when its owner is a member with `can_cohost` (developer+), it is
+active and shared with the project (the placement rule of DEVICES.md), and - only for apps with
+**database access** - it holds a live (`syncing`) copy of every managed database of the project on the
+main server. Apps without database access run on any co-host device. `app_replicas` (migration
+`0010_cohost_apps`: `id, app_id, device_id, status, deployment_id, image_tag, container_name, port,
+error, last_seen_at, created_at, updated_at`, unique `(app_id, device_id)`) keeps one row per device:
+`pending` (waiting, e.g. offline) → `building` → `live`, or `failed` (error shown), or `stopped` (the
+device no longer qualifies; its copy is removed). Turning co-hosting off deletes the rows.
+
+**How a copy is built** (`services/cohost_apps.py` on the main server, `services/device_apps.py` on the
+device):
+
+1. When a deployment goes live, `replicate()` creates/refreshes the rows and enqueues job
+   `app.replicate {app_id, device_id}` for each online device whose copy is not at that deployment.
+2. The job sends `apps.tunnel {token}` (the apps tunnel's connector token, see below) and then
+   `apps.deploy` with the commit, repository URL/branch/root directory, the Dockerfile the main server
+   generates for the preset, the container port, the hostnames, the names of the databases to inject
+   and the environment (below). Progress streams into the job.
+3. The device's worker clones that commit, builds (the same `build_image` code as the main server's
+   deploy job, BuildKit), starts `deployer-app-<slug>-<8>` (labelled `deployer.cohost_app`), joins it to
+   its databases network when databases are injected, waits for the port, writes
+   `cohost-<app_id>.caddy` (a local `:81xx` listener plus `http://<host>:8081` per hostname) and
+   reloads its Caddy, then removes the previous container and older images of that app. A second
+   `apps.deploy` for the same deployment only rewrites the routes (used when hostnames change).
+   Rollbacks rebuild the old commit when the device no longer has that image.
+4. **Catch-up** (scheduler sweep, every tick on the main server): pending copies of devices that came
+   back online get their job; each online device reports what it runs (`apps.status`) and copies the
+   main server no longer wants (app deleted, co-hosting off, device no longer eligible) are removed
+   (`apps.remove`); its tunnel token is corrected. A copy that failed to build is retried on the next
+   deployment or when an admin changes a co-hosting setting or a hostname (not every tick).
+
+**Environment on a device.** The app's own variables plus `PORT`, `DEPLOYER_URL`, `DEPLOYER_PROJECT_ID`
+- minus `DEPLOYER_API_KEY`, minus any `DEPLOYER_DB_*` the app set itself, minus any variable whose
+value contains a password or URI of the project's databases on the main server. The device then adds
+`DEPLOYER_DB_<NAME>_*` pointing at **its own local copies** with its own credentials (only databases in
+its hosted-credentials list; others are refused with `not_hosted`). An app that uses the data API
+through `DEPLOYER_API_KEY` therefore has no key on a co-host PC: co-hosted apps that need their data
+should use database access.
+
+**Private repositories.** A repository token (or the creator's GitHub connection) is sent to devices
+only when an admin also ticks **Let co-hosts clone this private repository**
+(`cohost_share_repo_access`). Without it the device clones anonymously; for a private repository that
+fails with "The app's owner hasn't allowed co-hosts to clone this private repository" (`failed`).
+Trade-off: a token sent to a device is readable by whoever controls that PC (it lives only in the
+worker's memory during the clone, but that PC's owner is root there). Prefer a read-only fine-grained
+per-repository token for co-hosted apps.
+
+**One address with failover: the apps tunnel.** Co-hosted app hostnames move to a second Cloudflare
+tunnel, `deployer-apps-<first 8 of instance_id>`, created on first need (a hostname added to a
+co-hosted app, or co-hosting switched on for an app with hostnames). Its ingress routes each co-hosted
+hostname to `http://caddy:8081`; their CNAMEs point at `<apps tunnel id>.cfargotunnel.com`. The
+dashboard tunnel keeps the dashboard and every app that is not co-hosted; switching co-hosting off moves
+the hostnames back. The main server runs a connector for it (the tunnel sidecar's second process,
+REMOTE_ACCESS.md), and so does each co-host device that runs (or is about to run) a copy: the device
+receives the apps tunnel's connector token through `apps.tunnel` - the only tunnel secret a device
+ever gets; the dashboard tunnel token and the Cloudflare API token never leave the main server. Every
+connector's Caddy has the host blocks of the apps it runs, and Cloudflare balances visitors between
+healthy connectors: when one PC is off, the others serve.
+
+**Status.** `GET /apps/{id}` returns `cohost`, `cohost_share_repo_access` and
+`replicas: [{device_id, device_name, online, status, deployment_id, error, last_seen_at}]`; the app
+header says "Also running on N co-host PCs". `GET /apps/{id}/logs?device_id=` reads a copy's runtime
+logs through `apps.logs` (503 while that PC is offline).
+
+### Honest limits (phase 2)
+
+- **Each copy talks to its own PC's database copy.** Writes made by the app on a co-host PC land in that
+  PC's copy and reach the main server through the phase-1 sync (seconds, or once the PCs can reach each
+  other again) - with the same conflict rules. Two visitors served by different PCs can briefly see
+  different data.
+- **Cloudflare picks the PC**, not Deployer: a visitor may be sent to any healthy connector, and a PC
+  whose app is broken but whose connector is up still receives traffic (there is no HTTP health check).
+  Sessions kept in an app's memory don't follow a visitor to another PC.
+- **Secrets on co-host PCs:** see "Environment on a device" and "Private repositories". The co-host PC's
+  owner can read the app's variables (minus the withheld ones), its code, the apps tunnel token and the
+  traffic their PC serves.
+- On rollback a device that no longer has the image rebuilds the old commit with the *current* preset
+  settings; one build at a time per device; devices keep no older images.
+- The dashboard (`deployer.<domain>`) and apps that are not co-hosted stay on the main server only.
+- Not exercised with two real PCs yet (tests use fake devices, a fake Docker CLI and a fake Cloudflare).
 
 ## API (`/v1/projects/{pid}`)
 
@@ -176,9 +257,11 @@ size permitting); on reconnect the loop catches up. If a position fell out of re
 | DELETE | `/data-sources/{sid}/replicas/{rid}?drop=false` | co-host owner or admin+ | stops sync; `drop=true` also drops the device copy (503 while offline) |
 | GET | `/data-sources/{sid}/sync-conflicts?status=open\|resolved` | developer+ | `SyncConflict[]` (newest first, max 500) |
 | GET | `/data-sources/{sid}/sync-conflicts/{cid}` | developer+ | `SyncConflict` |
-| POST | `/data-sources/{sid}/sync-conflicts/{cid}/resolve` | co-host owner or admin+ (developer+) | `{choice: "primary"\|"replica"\|"manual", value?: object\|null}` → `SyncConflict`; 409 `conflict_resolved` / `write_rejected` / `sync_busy`; 503 `device_offline` |
+| POST | `/data-sources/{sid}/sync-conflicts/{cid}/resolve` | co-host owner or admin+ (developer+) | `{choice: "primary"\|"replica"\|"manual", value?: object\|null}` → `SyncConflict`; 409 `conflict_resolved` / `conflict_changed` / `write_rejected` / `sync_busy`; 503 `device_offline` |
 | GET | `/data-sources/{sid}/sync-history?table=&key=<JSON>` | developer+ | `HistoryItem[]` newest first (max 200) |
 | POST | `/data-sources/{sid}/sync-history/restore` | co-host owner or admin+ (developer+) | `{table, key, version_id}` → `{ok, resolved_conflict_id}` |
+| PATCH | `/apps/{id}` | admin+ for these fields | `{cohost?, cohost_share_repo_access?}` → `App` (+ `cohost`, `cohost_share_repo_access`, `replicas[]`); moves the app's hostnames between the dashboard and apps tunnels (Cloudflare errors: nothing saved); developers get 403 `forbidden`; audit `app.cohost` |
+| GET | `/apps/{id}/logs?device_id=&tail=` | viewer+ | a co-host copy's runtime logs `{lines, container, device_id}`; 404 when that PC runs no copy; 503 `device_offline` |
 
 ```ts
 type Replica = {
