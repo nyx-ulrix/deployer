@@ -102,6 +102,13 @@ def test_mariadb_viewer_read_only(mariadb):
     assert run(mariadb, "SELECT COUNT(*) FROM big WHERE n = 999", read_only=True)["results"][0]["rows"] == [[0]]
 
 
+def test_mariadb_read_only_session(mariadb, monkeypatch):
+    # Past the text classifier the server's READ ONLY session still refuses the write (error 1792).
+    monkeypatch.setattr(query_console, "sql_is_read_only", lambda statements: True)
+    out = run(mariadb, "INSERT INTO big VALUES (999)", read_only=True)
+    assert out["results"][0]["type"] == "error" and "(error 1792)" in out["results"][0]["error"]["message"]
+
+
 def test_mariadb_timeout(mariadb):
     started = time.monotonic()
     out = run(mariadb, "SELECT 1; SELECT SLEEP(5); SELECT 2", timeout_seconds=1)

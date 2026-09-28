@@ -15,8 +15,9 @@ code against NoSQL data sources.
   output is size-capped and at most `MAX_SHELLS` shells run per API process.
 - Every role: MongoDB code may not name Node.js escape hatches (`MONGO_ESCAPE_NAMES`).
 - Read-only role (viewers): statements / code must pass the textual classifiers below. They are
-  best effort by design (`db.items["insert" + "One"]` slips through); the database user of the
-  source is the real boundary.
+  best effort by design (`db.items["insert" + "One"]` slips through). SQL runs are also put in the
+  database's own read-only mode (`READ_ONLY_SESSION`) and refused (503) when that cannot be set;
+  MongoDB has no such mode, so there the database user of the source is the real boundary.
 - Query text and results never go to logs or audit entries (routers/query.py records counts only).
 """
 
@@ -146,6 +147,32 @@ WRITE_KEYWORDS = frozenset(
         "REPAIR",
     }
 )
+# Functions with side effects that a read-only statement may not call (matched as names outside
+# strings and comments, schema-qualified or quoted too). Sequence writes also fail in the read-only
+# session below; the others (killing the app's connections, `set_config`, dblink's second
+# connection) are not stopped by a read-only transaction.
+WRITE_FUNCTIONS = frozenset(
+    {
+        "setval",
+        "nextval",
+        "set_config",
+        "pg_terminate_backend",
+        "pg_cancel_backend",
+        "pg_reload_conf",
+        "pg_rotate_logfile",
+        "pg_notify",
+        "dblink",
+        "dblink_exec",
+    }
+)
+# The database-level read-only mode for read-only runs, by SQLAlchemy dialect. PostgreSQL also runs
+# the whole script in one READ ONLY transaction: its session default alone could be switched back
+# mid-script (`set_config('default_transaction_read_only', ...)` from a function we do not know).
+READ_ONLY_SESSION = {
+    "mysql": ("SET SESSION TRANSACTION READ ONLY",),
+    "postgresql": ("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY", "START TRANSACTION READ ONLY"),
+    "sqlite": ("PRAGMA query_only = ON",),
+}
 # Statements whose `rowcount` is meaningful even when it is 0 (result type "count" instead of "empty").
 COUNT_STATEMENTS = frozenset({"INSERT", "UPDATE", "DELETE", "REPLACE", "MERGE", "UPSERT", "LOAD", "COPY", "IMPORT"})
 _TIMEOUT_ERRNOS = frozenset({1969, 3024})  # MariaDB max_statement_time, MySQL max_execution_time
@@ -194,7 +221,7 @@ def split_sql(query: str) -> list[str]:
 
 def sql_is_read_only(statements: Iterable[str]) -> bool:
     """True when every statement starts with a read-only keyword and (except `SHOW ...`) contains no
-    writing keyword outside strings and comments."""
+    writing keyword or side-effecting function name outside strings and comments."""
     for text in statements:
         parsed = sqlparse.parse(text)
         if not parsed:
@@ -206,6 +233,8 @@ def sql_is_read_only(statements: Iterable[str]) -> bool:
             continue
         for tok in parsed[0].flatten():
             if tok.ttype in T.Keyword and tok.normalized.upper() in WRITE_KEYWORDS:
+                return False
+            if tok.ttype in (T.Name, T.String.Symbol) and tok.value.strip('"`').lower() in WRITE_FUNCTIONS:
                 return False
     return True
 
@@ -274,6 +303,23 @@ def _run_statement(conn: Any, statement: str, *, max_rows: int, streaming: bool,
     return entry
 
 
+def _enter_read_only(conn: Any, dialect: str, secret_values: list[str | None]) -> None:
+    """Puts the console connection in the database's read-only mode; fails closed (503) when the
+    dialect has none or the server refuses it, so a viewer's script never runs with write access."""
+    statements = READ_ONLY_SESSION.get(dialect)
+    if not statements:
+        raise ApiError(503, "read_only_unavailable", f"Read-only mode is not supported for {dialect} sources")
+    try:
+        for statement in statements:
+            conn.exec_driver_sql(statement)
+    except Exception as exc:  # noqa: BLE001 - driver errors vary widely
+        orig = getattr(exc, "orig", None) or exc
+        message = connections.redact(_error_text(orig), secret_values)
+        raise ApiError(
+            503, "read_only_unavailable", f"Cannot switch the database to read-only mode: {message}"
+        ) from exc
+
+
 def run_sql(
     engine_name: str, engine: Engine, query: str, *, max_rows: int, timeout_seconds: int, read_only: bool
 ) -> dict:
@@ -305,6 +351,8 @@ def run_sql(
                 conn.exec_driver_sql(timeout_sql)
             except Exception:  # noqa: BLE001 - best effort (privileges, older servers)
                 pass
+        if read_only:
+            _enter_read_only(conn, engine.dialect.name, secret_values)
         for index, statement in enumerate(statements):
             entry = _run_statement(
                 conn,

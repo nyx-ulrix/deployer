@@ -47,7 +47,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [ ] A-004 **[HIGH][security]** anon API keys read every row of every table and collection yet are advertised as the safe public-client key - `api/app/routers/data.py:16, 61-73, 96-107` (also `ApiKeysTab.tsx:24-27`, `docs/DATA_API.md:9`, `SKILL.md:72-94, 235`) - fix the wording everywhere now; then add a per-key table allowlist (empty by default for anon).
 
 **Query console**
-- [ ] A-005 **[HIGH][security]** Read-only (viewer/anon) SQL is only a text filter; side-effecting functions pass and the managed DB user has ALL PRIVILEGES - `api/app/services/query_console.py:194-209, 283-284, 299-306` - enforce with `SET SESSION TRANSACTION READ ONLY` and fail closed if it errors.
+- [x] A-005 **[HIGH][security]** Read-only (viewer/anon) SQL is only a text filter; side-effecting functions pass and the managed DB user has ALL PRIVILEGES - `api/app/services/query_console.py:194-209, 283-284, 299-306` - enforce with `SET SESSION TRANSACTION READ ONLY` and fail closed if it errors.
 - [ ] A-006 **[HIGH][security]** Mongo read-only blocklist misses user/role admin and server helpers; the managed user is dbOwner - `api/app/services/query_console.py:335-386` - add the missing names now; later provision a `read`-role user for read-only runs.
 
 **Backups**

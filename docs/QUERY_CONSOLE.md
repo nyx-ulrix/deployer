@@ -22,15 +22,23 @@ Every role: MongoDB shell code may not name a Node.js escape hatch - `require`, 
 speed bump, not a sandbox (see [SECURITY.md](../SECURITY.md) "Query console").
 
 Roles: **developer+** can run anything else. **viewer** may run only read-only queries, otherwise
-`403 read_only_role`. The classification is textual and best effort (the source's database user is
-the real boundary; use an external source with a read-only user for strict enforcement):
+`403 read_only_role`. The classification below is textual and best effort, an early refusal. SQL runs
+are also enforced by the database: the console connection is switched to read-only mode first
+(`SET SESSION TRANSACTION READ ONLY` on MariaDB/MySQL; on PostgreSQL `SET SESSION CHARACTERISTICS AS
+TRANSACTION READ ONLY` plus one `START TRANSACTION READ ONLY` around the whole script), so a write that
+slips past the text check fails as a statement error. If that mode cannot be set the run is refused
+with `503 read_only_unavailable`. MongoDB has no such mode: there the source's database user is the
+real boundary (use an external source with a read-only user for strict enforcement):
 - SQL: every statement must start with `SELECT`, `WITH`, `SHOW`, `EXPLAIN`, `DESCRIBE`, `DESC`,
   `TABLE`, `VALUES` (after stripping comments, leading parentheses entered; checked with `sqlparse`)
   and, except for `SHOW ...`, must not contain a writing keyword anywhere outside strings and
   comments (`INSERT`, `UPDATE`, `DELETE`, `REPLACE`, `MERGE`, `INTO`, `CREATE`, `ALTER`, `DROP`,
   `TRUNCATE`, `GRANT`, `LOCK`, `SET`, `CALL`, `LOAD`, `COPY`, `OUTFILE`, transaction control, ...).
   This also stops PostgreSQL data-modifying CTEs (`WITH d AS (DELETE ...) SELECT`),
-  `SELECT ... FOR UPDATE` and `SELECT ... INTO OUTFILE`.
+  `SELECT ... FOR UPDATE` and `SELECT ... INTO OUTFILE`. Side-effecting functions are refused by
+  name too (`setval`, `nextval`, `set_config`, `pg_terminate_backend`, `pg_cancel_backend`,
+  `pg_reload_conf`, `pg_rotate_logfile`, `pg_notify`, `dblink`, `dblink_exec`), since a read-only
+  transaction does not stop all of them.
 - MongoDB: the code must not contain any of these names as a whole identifier, anywhere (strings and
   comments included - over-matching is the safe direction): `insert`, `insertOne`, `insertMany`,
   `update`, `updateOne`, `updateMany`, `replaceOne`, `delete`, `deleteOne`, `deleteMany`, `remove`,
@@ -44,7 +52,7 @@ the real boundary; use an external source with a read-only user for strict enfor
 
 Errors: `404 not_found`, `403 forbidden` / `read_only_role` / `shell_code_refused`, `422 validation_error` (also for a SQL
 script without any statement), `503 device_offline`, `503 database_unavailable` (cannot connect /
-authenticate), `504 query_timeout` (MongoDB script killed), `501 mongosh_unavailable`,
+authenticate), `503 read_only_unavailable` (viewer SQL run, read-only mode could not be set), `504 query_timeout` (MongoDB script killed), `501 mongosh_unavailable`,
 `429 too_many_queries` (MongoDB, more than 4 shells at once). Query errors are **not** HTTP errors:
 a SQL syntax/runtime error is reported per statement (`type: "error"`, HTTP 200) and a MongoDB error
 in the `error` field (HTTP 200), so earlier results and printed output are kept.

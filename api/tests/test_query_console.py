@@ -227,6 +227,12 @@ def test_sql_read_only_accepts(statement):
         "EXPLAIN ANALYZE DELETE FROM t",
         "SELECT 1; INSERT INTO t VALUES (1)",
         "PRAGMA table_info(t)",
+        "SELECT setval('items_id_seq', 1)",
+        "SELECT NEXTVAL(seq)",
+        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity",
+        "SELECT pg_catalog.set_config('default_transaction_read_only', 'off', false)",
+        'SELECT "set_config"(1)',
+        "SELECT dblink_exec('dbname=x', 'DELETE FROM t')",
     ],
 )
 def test_sql_read_only_refuses(statement):
@@ -348,6 +354,27 @@ def test_run_sql_validation_and_read_only(sqlite_engine):
         "mariadb", sqlite_engine, "SELECT COUNT(*) AS n FROM items", max_rows=5, timeout_seconds=5, read_only=True
     )
     assert ok["results"][0]["rows"] == [[7]]
+
+
+def test_run_sql_read_only_is_enforced_by_the_database(sqlite_engine, monkeypatch):
+    # A write that slips past the text classifier still fails: the session itself is read-only.
+    monkeypatch.setattr(query_console, "sql_is_read_only", lambda statements: True)
+    out = query_console.run_sql(
+        "mariadb", sqlite_engine, "DELETE FROM items", max_rows=5, timeout_seconds=5, read_only=True
+    )
+    assert out["results"][0]["type"] == "error" and "readonly" in out["results"][0]["error"]["message"]
+    with sqlite_engine.connect() as conn:
+        assert conn.exec_driver_sql("SELECT COUNT(*) FROM items").scalar() == 7
+    # Fails closed when read-only mode cannot be set (unknown dialect or the server refuses it).
+    for mode in ({}, {"sqlite": ("PRAGMA nope nope",)}):
+        monkeypatch.setattr(query_console, "READ_ONLY_SESSION", mode)
+        with pytest.raises(ApiError) as err:
+            query_console.run_sql("mariadb", sqlite_engine, "SELECT 1", max_rows=5, timeout_seconds=5, read_only=True)
+        assert err.value.status_code == 503 and err.value.code == "read_only_unavailable"
+    # Writers are unaffected.
+    assert query_console.run_sql("mariadb", sqlite_engine, "SELECT 1", max_rows=5, timeout_seconds=5, read_only=False)[
+        "results"
+    ][0]["rows"] == [[1]]
 
 
 def test_run_sql_session_state_does_not_leak(sqlite_engine):
