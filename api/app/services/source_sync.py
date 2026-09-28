@@ -633,10 +633,13 @@ def read_sql_changes(
                     taken += 1
                     if taken <= drop:
                         continue
-                    if full():  # this transaction has more changes than fit: stop inside it
+                    n = len(json.dumps(change, default=str))
+                    # stop inside this transaction when the change doesn't fit; a batch's first change
+                    # always goes, so one big row (up to the RPC cap) travels alone instead of overflowing
+                    if len(changes) >= limit or (changes and size + n > MAX_BATCH_BYTES):
                         cut = taken - 1
                         break
-                    size += len(json.dumps(change, default=str))
+                    size += n
                     changes.append(change)
                 if cut is not None:
                     break
