@@ -15,8 +15,10 @@ import json
 import logging
 import os
 import re
+import signal
 import socket
 import subprocess
+import threading
 import time
 import uuid
 from collections.abc import Callable
@@ -90,31 +92,48 @@ class DockerCli:
             env=env,
             text=True,
             errors="replace",
+            start_new_session=os.name == "posix",  # own process group: the watchdog kills git's helpers too
         )
-        if stdin_text is not None:  # secrets (registry passwords) travel on stdin, never in argv
-            assert proc.stdin is not None
-            proc.stdin.write(stdin_text)
-            proc.stdin.close()
+        # A watchdog, not a check between lines: a silent process (a stalled clone, a build that
+        # runs a server) never yields a line, so the deadline must fire on its own.
+        fired = threading.Event()
+
+        def _kill() -> None:
+            fired.set()
+            try:
+                if os.name == "posix":
+                    os.killpg(proc.pid, signal.SIGKILL)
+                else:
+                    proc.kill()
+            except OSError:
+                pass
+
+        watchdog = threading.Timer(timeout, _kill)
+        watchdog.daemon = True
+        watchdog.start()
         chunks: list[str] = []
         size = 0
-        deadline = time.monotonic() + timeout
         assert proc.stdout is not None
         try:
+            if stdin_text is not None:  # secrets (registry passwords) travel on stdin, never in argv
+                assert proc.stdin is not None
+                proc.stdin.write(stdin_text)
+                proc.stdin.close()
             for line in proc.stdout:
                 if on_line is not None:
                     on_line(line.rstrip("\n"))
                 if size < MAX_OUTPUT:
                     chunks.append(line)
                     size += len(line)
-                if time.monotonic() > deadline:
-                    proc.kill()
-                    raise DockerError(f"{args[0]} {args[1]} timed out after {int(timeout)} s", "".join(chunks))
-            code = proc.wait(timeout=max(1.0, deadline - time.monotonic()))
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            raise DockerError(f"{args[0]} {args[1]} timed out after {int(timeout)} s", "".join(chunks)) from None
+            code = proc.wait()
+        except BaseException:
+            _kill()
+            raise
         finally:
+            watchdog.cancel()
             proc.stdout.close()
+        if fired.is_set():
+            raise DockerError(f"{args[0]} {args[1]} timed out after {int(timeout)} s", "".join(chunks))
         output = "".join(chunks)
         if check and code != 0:
             raise DockerError(f"{args[0]} {args[1]} failed (exit {code})", output)

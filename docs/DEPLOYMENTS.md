@@ -198,6 +198,10 @@ github_login, github_user_id, token_encrypted, scopes, created_at, updated_at)`,
 The worker writes a generated Dockerfile for the first three presets next to the checkout and
 builds with `docker build --progress=plain --pull` (BuildKit), so the build itself is sandboxed in
 BuildKit; the user's build commands run inside the build image, never on the host.
+Every git/docker command has a hard deadline (clone/fetch 10 min, build/push 45 min, most others
+2 min) enforced by a watchdog that kills the process group even when it prints nothing, so a
+stalled clone or a build command that never exits (e.g. `npm start`) fails the deploy instead of
+holding a worker runner.
 
 Environment: `apps.env_encrypted` (JSON object, `encrypt_json`), values shown masked in the
 dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (public URL + `/v1`),

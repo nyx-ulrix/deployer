@@ -429,3 +429,14 @@ def test_commit_sha_never_reaches_git_as_an_option(db, project):
     assert dep.commit_sha is None  # deploys the branch head instead
     with pytest.raises(app_runner.DockerError, match="Invalid commit sha"):
         app_runner.DockerCli().git_checkout(".", "--upload-pack=touch /tmp/x", token=None)
+
+
+def test_run_times_out_a_silent_process():
+    # A-012: the deadline used to be checked only between output lines, so a silent process ran forever.
+    import sys
+    import time
+
+    start = time.monotonic()
+    with pytest.raises(app_runner.DockerError, match="timed out after 1 s"):
+        app_runner.DockerCli()._run([sys.executable, "-c", "import time; time.sleep(30)"], timeout=1)
+    assert time.monotonic() - start < 10

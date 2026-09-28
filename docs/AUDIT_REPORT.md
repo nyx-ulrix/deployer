@@ -60,7 +60,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [ ] A-011 **[HIGH][bug]** A single large transaction stops a co-host copy's sync for good - `api/app/services/source_sync.py:590-615` - allow splitting a transaction across batches (`{gtid, skip_rows}`) and show plain "Re-copy" guidance.
 
 **Deploys / monitoring / remote access**
-- [ ] A-012 **[HIGH][bug]** `DockerCli._run` never enforces its timeout on a silent process (git/docker) - `api/app/services/app_runner.py:98-121` - watchdog `threading.Timer(timeout, proc.kill)` that also polls cancel; add a silent-sleep test.
+- [x] A-012 **[HIGH][bug]** `DockerCli._run` never enforces its timeout on a silent process (git/docker) - `api/app/services/app_runner.py:98-121` - watchdog `threading.Timer(timeout, proc.kill)` that also polls cancel; add a silent-sleep test.
 - [ ] A-013 **[HIGH][bug]** The disk-low alert watches the sparse WSL vhdx, not the Windows drive that actually fills up - `api/app/services/device_host.py:294-297` - measure the host drive (bind-mount it read-only, or have keep-alive write the free space) and alert on the smaller figure.
 - [ ] A-014 **[HIGH][usability]** GitHub webhook is never re-synced when the public URL or repository changes; push-to-deploy stops silently - `api/app/routers/apps.py:319, 359-363, 495` (also `remote_access.py:828-862`) - sync_hook after a repo change and on switch_public_url; delete_hook only after validation.
 
