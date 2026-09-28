@@ -102,7 +102,7 @@ export function SetupWizard() {
       {active === "owner" && <OwnerStep onBack={() => setStep("choose")} onDone={() => setStep("url")} />}
       {active === "url" && <PublicUrlStep onDone={() => setStep("providers")} />}
       {active === "providers" && <ProvidersStep onBack={() => setStep("url")} onDone={() => setStep("done")} />}
-      {active === "done" && <DoneStep />}
+      {active === "done" && <DoneStep mongodb={status.data?.managed_mongodb !== false} />}
     </AuthShell>
   );
 }
@@ -466,12 +466,14 @@ function ProvidersStep({ onBack, onDone }: { onBack: () => void; onDone: () => v
   );
 }
 
-function DoneStep() {
+function DoneStep({ mongodb }: { mongodb: boolean }) {
   const navigate = useNavigate();
   return (
     <>
       <StepHeader icon={<PartyPopper className="size-5" />} title="You're all set">
-        <p>Deployer is ready. Create your first project to get a managed MariaDB and MongoDB database.</p>
+        <p>
+          Deployer is ready. Create your first project to get a managed MariaDB{mongodb ? " and MongoDB" : ""} database.
+        </p>
       </StepHeader>
       <ul className="mb-5 space-y-2 text-sm">
         <li className="flex gap-2">
