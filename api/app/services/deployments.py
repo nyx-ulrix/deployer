@@ -645,7 +645,9 @@ def listen_hint(app: App, port: int) -> str:
 
 def _docker_failure(exc: DockerError, secrets: list[str | None]) -> str:
     tail = "\n".join(exc.output.strip().splitlines()[-5:])
-    hint = _failure_hint(exc.output)
+    # Only git's own failures: a build's output (a private npm/pip git dependency) can hold the same
+    # words, and "check the app's repository" would send the user the wrong way.
+    hint = _failure_hint(exc.output) if str(exc).startswith("git ") else ""
     # The hint comes before git's/docker's own lines so the 2000-character cap never cuts it off.
     text = f"{exc}" + (f"\n{hint}" if hint else "") + (f"\n{tail}" if tail else "")
     return redact(text, secrets, limit=2000)

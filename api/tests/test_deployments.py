@@ -151,6 +151,20 @@ def test_clone_failure_hints(db, docker, project, output, hint):
         assert "branch" not in error and "private" not in error
 
 
+def test_build_failure_gets_no_clone_hint(db, docker, project):
+    """A private git dependency failing inside the build is not the app's repository being unreadable."""
+
+    def fail():
+        raise app_runner.DockerError("docker build failed (exit 1)", "npm ERR! remote: Repository not found.")
+
+    docker.hooks["build"] = fail
+    dep, _ = deploy(db, make_app(db, project))
+    jobs.run_queued()
+    db.expire_all()
+    error = db.get(Deployment, dep.id).error
+    assert error.startswith("docker build failed") and "access token" not in error
+
+
 def test_static_health_failure_has_no_listen_hint(db, docker, project):
     """The static preset's nginx is Deployer's own: telling the user to fix their listen address is wrong."""
     docker.fail_at = "health"
