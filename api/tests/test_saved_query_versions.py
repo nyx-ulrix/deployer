@@ -131,7 +131,7 @@ def test_restore_and_permissions(client, db, project_setup):  # noqa: F811
     assert client.get(f"{url}/{sq['id']}/versions", headers=viewer).status_code == 404
 
 
-def test_export_and_import_carry_versions(client, db, project_setup, make_user, auth_headers):  # noqa: F811
+def test_export_and_import_carry_versions(client, db, project_setup, make_user, auth_headers, set_setting):  # noqa: F811
     project = project_setup["project"]
     url, sq = _create(client, project_setup, text="one")
     client.patch(f"{url}/{sq['id']}", json={"query_text": "two", "version": 1}, headers=project_setup["dev"])
@@ -139,6 +139,7 @@ def test_export_and_import_carry_versions(client, db, project_setup, make_user, 
     resp = client.post(
         "/v1/projects/export", json={"project_ids": [project.id], "passphrase": PASS}, headers=project_setup["owner"]
     )
+    set_setting("owner_only_projects", False)  # a member imports (A-023)
     importer = make_user()
     ok = client.post(
         "/v1/projects/import",

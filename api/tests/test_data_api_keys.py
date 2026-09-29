@@ -134,6 +134,16 @@ def test_acting_user_falls_back_to_owner(client, db, setup, make_user, auth_head
     assert db.get(User, run.user_id).is_active
 
 
+def test_keys_stop_when_project_owner_is_disabled(client, db, setup):
+    # A-023: disabling an account must also cut off the API keys of the projects it owns.
+    key, h = setup["make_key"]("anon")
+    db.get(User, setup["project"].owner_id).is_active = False
+    db.commit()
+    resp = client.post(setup["query"], json={"query": "SELECT 1"}, headers=h)
+    assert resp.status_code == 401
+    assert resp.json()["error"]["code"] == "account_disabled"
+
+
 def test_last_used_is_throttled(client, db, setup):
     key, h = setup["make_key"]("anon")
     row = db.get(ApiKey, key["id"])

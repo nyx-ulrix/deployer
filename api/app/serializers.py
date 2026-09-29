@@ -29,13 +29,14 @@ def user_out(user: User) -> dict:
         "display_name": user.display_name,
         "avatar_url": user.avatar_url,
         "is_instance_owner": user.is_instance_owner,
+        "is_active": user.is_active,
         "has_password": user.password_hash is not None,
         "created_at": iso(user.created_at),
         "identities": [identity_out(i) for i in user.identities],
     }
 
 
-def project_out(db: Session, project: Project, role: str) -> dict:
+def project_out(db: Session, project: Project, role: str | None) -> dict:
     counts = dict(
         db.execute(
             select(DataSource.kind, func.count())

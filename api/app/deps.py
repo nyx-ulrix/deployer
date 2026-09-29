@@ -15,7 +15,7 @@ from app.db import get_db
 from app.errors import ApiError, forbidden, not_found, unauthorized
 from app.models import ApiKey, Project, ProjectMember, User, role_rank, utcnow
 from app.services import rate_limit
-from app.services.instance_settings import api_key_rate_limit
+from app.services.instance_settings import api_key_rate_limit, owner_only_projects
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -64,6 +64,19 @@ def require_instance_owner(user: CurrentUser) -> User:
 InstanceOwner = Annotated[User, Depends(require_instance_owner)]
 
 
+def require_project_creator(user: CurrentUser, db: DbSession) -> User:
+    """Creating (or importing) a project provisions databases on this PC, so by default only the
+    instance owner may (instance setting `owner_only_projects`, A-023)."""
+    if not user.is_instance_owner and owner_only_projects(db):
+        raise forbidden(
+            "Only the instance owner can create projects on this Deployer. Ask them to create one and invite you to it."
+        )
+    return user
+
+
+ProjectCreator = Annotated[User, Depends(require_project_creator)]
+
+
 @dataclass
 class ProjectAccess:
     project: Project
@@ -97,6 +110,9 @@ def load_api_key_access(db: Session, token: str, project_id: str) -> ProjectAcce
     user = db.get(User, key.created_by_id) if key.created_by_id else None
     if user is None or not user.is_active:
         user = db.get(User, project.owner_id)
+    if user is None or not user.is_active:
+        # The project's owner was disabled by the instance owner (A-023): their keys stop too.
+        raise ApiError(401, "account_disabled", "The account that owns this project has been disabled")
     now = utcnow()
     if key.last_used_at is None or now - key.last_used_at >= LAST_USED_INTERVAL:
         key.last_used_at = now

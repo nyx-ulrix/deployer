@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from app.deps import CurrentUser, DbSession, InstanceOwner
+from app.deps import CurrentUser, DbSession, InstanceOwner, ProjectCreator
 from app.errors import ApiError, conflict, forbidden, not_found
 from app.models import Project, ProjectMember, User
 from app.serializers import project_out
@@ -97,7 +97,7 @@ def projects_export(body: ProjectsExportInput, user: CurrentUser, db: DbSession,
 
 @router.post("/projects/import")
 def projects_import(
-    user: CurrentUser,
+    user: ProjectCreator,
     db: DbSession,
     request: Request,
     file: Annotated[UploadFile, File()],

@@ -2,13 +2,13 @@ from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.deps import DbSession, InstanceOwner
-from app.errors import ApiError
-from app.models import User
-from app.serializers import user_out
-from app.services import audit, deployments
+from app.errors import ApiError, not_found
+from app.models import Project, ProjectMember, User
+from app.serializers import project_out, user_out
+from app.services import audit, deployments, tokens
 from app.services.alerts import validate_webhook_url
 from app.services.instance_settings import (
     OAUTH_KEYS,
@@ -17,6 +17,7 @@ from app.services.instance_settings import (
     get_value,
     oauth_app,
     oauth_callback_url,
+    owner_only_projects,
     public_url,
     set_value,
     validate_oauth_value,
@@ -38,6 +39,7 @@ def settings_out(db) -> dict:
     return {
         "public_url": public_url(db),
         "allow_signup": allow_signup(db),
+        "owner_only_projects": owner_only_projects(db),
         "google": provider("google"),
         "github": provider("github"),
         # docs/MONITORING.md
@@ -79,6 +81,7 @@ def get_settings_(owner: InstanceOwner, db: DbSession) -> dict:
 class SettingsUpdate(BaseModel):
     public_url: str | None = Field(default=None, max_length=500)
     allow_signup: bool | None = None
+    owner_only_projects: bool | None = None
     google_client_id: str | None = Field(default=None, max_length=500)
     google_client_secret: str | None = Field(default=None, max_length=500)
     github_client_id: str | None = Field(default=None, max_length=500)
@@ -94,6 +97,7 @@ def update_settings(body: SettingsUpdate, request: Request, owner: InstanceOwner
     for key in (
         "public_url",
         "allow_signup",
+        "owner_only_projects",
         "google_client_id",
         "google_client_secret",
         "github_client_id",
@@ -126,3 +130,50 @@ def update_settings(body: SettingsUpdate, request: Request, owner: InstanceOwner
 def list_users(owner: InstanceOwner, db: DbSession) -> list[dict]:
     users = db.scalars(select(User).order_by(User.created_at, User.email)).all()
     return [user_out(u) for u in users]
+
+
+class UserUpdate(BaseModel):
+    is_active: bool
+
+
+@router.patch("/instance/users/{user_id}")
+def update_user(user_id: str, body: UserUpdate, request: Request, owner: InstanceOwner, db: DbSession) -> dict:
+    """Disable or re-enable an account (A-023). Disabling signs it out everywhere; its access tokens
+    already stop at the next request (deps.get_current_user checks is_active)."""
+    user = db.get(User, user_id)
+    if user is None:
+        raise not_found("User")
+    if user.is_instance_owner and not body.is_active:
+        raise ApiError(400, "cannot_disable_owner", "The instance owner can't be disabled")
+    if user.is_active != body.is_active:
+        user.is_active = body.is_active
+        if not body.is_active:
+            tokens.revoke_user_tokens(db, user.id)
+        audit.record(
+            db,
+            "instance.user_update",
+            request=request,
+            user_id=owner.id,
+            target_user_id=user.id,
+            is_active=body.is_active,
+        )
+        db.commit()
+    return user_out(user)
+
+
+@router.get("/instance/projects")
+def list_all_projects(owner: InstanceOwner, db: DbSession) -> list[dict]:
+    """Every project on this instance, including ones the owner isn't a member of (A-023)."""
+    members = dict(db.execute(select(ProjectMember.project_id, func.count()).group_by(ProjectMember.project_id)).all())
+    mine = dict(
+        db.execute(select(ProjectMember.project_id, ProjectMember.role).where(ProjectMember.user_id == owner.id)).all()
+    )
+    rows = db.execute(
+        select(Project, User.email)
+        .outerjoin(User, User.id == Project.owner_id)
+        .order_by(Project.created_at, Project.name)
+    ).all()
+    return [
+        {**project_out(db, p, mine.get(p.id)), "owner_email": email, "member_count": members.get(p.id, 0)}
+        for p, email in rows
+    ]

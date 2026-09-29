@@ -239,7 +239,7 @@ def test_instance_roundtrip(db, populated):
     assert db.scalar(select(func.count()).select_from(UserIdentity)) == 1
 
 
-def test_projects_roundtrip_via_api(client, db, populated, make_user, auth_headers):
+def test_projects_roundtrip_via_api(client, db, populated, make_user, auth_headers, set_setting):
     owner_h = auth_headers(populated["owner"])
     pid = populated["project"].id
 
@@ -255,6 +255,7 @@ def test_projects_roundtrip_via_api(client, db, populated, make_user, auth_heade
     assert disposition.startswith('attachment; filename="deployer-projects-') and disposition.endswith('.json"')
     exported = resp.content
 
+    set_setting("owner_only_projects", False)  # a member imports (A-023)
     importer = make_user("importer@example.com")
     imp_h = auth_headers(importer)
     bad = client.post(

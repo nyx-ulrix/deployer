@@ -1,4 +1,6 @@
-from app.models import AuditLog, User
+from sqlalchemy import select
+
+from app.models import AuditLog, RefreshToken, User
 from tests.conftest import DEFAULT_PASSWORD
 
 # Fake OAuth values built at runtime (the secret scan flags credential-shaped literals).
@@ -115,6 +117,7 @@ def test_instance_settings_roundtrip(client, owner_headers, db):
     assert resp.json() == {
         "public_url": "http://localhost:8080",
         "allow_signup": False,
+        "owner_only_projects": True,
         "google": {
             "client_id": None,
             "secret_set": False,
@@ -275,3 +278,60 @@ def test_oauth_cli(db, owner, capsys, monkeypatch):
     assert not instance_settings.oauth_app(db, "google").client_id
     db.rollback()
     assert db.query(AuditLog).filter_by(action="instance.settings_update").count() == 3
+
+
+# --- A-023: the owner can see every project and disable other accounts ---------------------------
+
+
+def test_owner_disables_user_and_sees_their_projects(
+    client, owner, owner_headers, make_user, make_project, auth_headers, login, db
+):
+    stranger = make_user("stranger@example.com")
+    make_project(stranger, "Stranger Shop")
+    session = login("stranger@example.com")
+    headers = {"Authorization": f"Bearer {session['access_token']}"}
+
+    resp = client.get("/v1/instance/projects", headers=owner_headers)
+    assert resp.status_code == 200
+    [project] = resp.json()
+    assert (project["name"], project["owner_email"], project["member_count"], project["my_role"]) == (
+        "Stranger Shop",
+        "stranger@example.com",
+        1,
+        None,
+    )
+    assert client.get("/v1/instance/projects", headers=headers).status_code == 403
+    assert client.patch(f"/v1/instance/users/{owner.id}", json={"is_active": False}, headers=headers).status_code == 403
+
+    resp = client.patch(f"/v1/instance/users/{stranger.id}", json={"is_active": False}, headers=owner_headers)
+    assert resp.status_code == 200 and resp.json()["is_active"] is False
+    # The live access token stops working, every session is revoked, and the password is refused.
+    assert client.get("/v1/auth/me", headers=headers).status_code == 401
+    db.expire_all()
+    sessions = db.scalars(select(RefreshToken).where(RefreshToken.user_id == stranger.id)).all()
+    assert sessions and all(t.revoked_at is not None for t in sessions)
+    assert (
+        client.post("/v1/auth/login", json={"email": stranger.email, "password": DEFAULT_PASSWORD}).status_code == 401
+    )
+    assert db.scalar(select(AuditLog).where(AuditLog.action == "instance.user_update")) is not None
+
+    resp = client.patch(f"/v1/instance/users/{owner.id}", json={"is_active": False}, headers=owner_headers)
+    assert resp.status_code == 400
+    assert client.patch("/v1/instance/users/nope", json={"is_active": False}, headers=owner_headers).status_code == 404
+
+    assert client.patch(f"/v1/instance/users/{stranger.id}", json={"is_active": True}, headers=owner_headers).json()[
+        "is_active"
+    ]
+    login("stranger@example.com")
+
+
+def test_only_owner_creates_projects_by_default(client, owner, owner_headers, make_user, auth_headers):
+    member = auth_headers(make_user())
+    resp = client.post("/v1/projects", json={"name": "Mine"}, headers=member)
+    assert resp.status_code == 403
+    assert "instance owner" in resp.json()["error"]["message"]
+    assert client.post("/v1/projects", json={"name": "Owner's"}, headers=owner_headers).status_code == 200
+
+    resp = client.put("/v1/instance/settings", json={"owner_only_projects": False}, headers=owner_headers)
+    assert resp.json()["owner_only_projects"] is False
+    assert client.post("/v1/projects", json={"name": "Mine"}, headers=member).status_code == 200

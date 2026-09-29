@@ -8,6 +8,8 @@ export type User = {
   display_name: string | null;
   avatar_url: string | null;
   is_instance_owner: boolean;
+  /** False once the instance owner disabled the account (A-023). */
+  is_active: boolean;
   has_password: boolean;
   created_at: string;
   identities: Identity[];
@@ -171,6 +173,8 @@ export type ProviderSettings = {
 export type InstanceSettings = {
   public_url: string;
   allow_signup: boolean;
+  /** On by default: only the instance owner can create or import projects. */
+  owner_only_projects: boolean;
   google: ProviderSettings;
   github: ProviderSettings;
   /** docs/MONITORING.md */
@@ -182,12 +186,20 @@ export type InstanceSettings = {
 export type InstanceSettingsUpdate = {
   public_url?: string;
   allow_signup?: boolean;
+  owner_only_projects?: boolean;
   google_client_id?: string;
   google_client_secret?: string;
   github_client_id?: string;
   github_client_secret?: string;
   alert_webhook_url?: string;
   api_key_rate_limit?: number;
+};
+
+/** GET /instance/projects: every project, with `my_role` null where the owner isn't a member. */
+export type InstanceProject = Omit<Project, "my_role"> & {
+  my_role: Role | null;
+  owner_email: string | null;
+  member_count: number;
 };
 
 // ---- Projects ----

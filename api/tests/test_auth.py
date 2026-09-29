@@ -244,6 +244,7 @@ def test_me_requires_bearer(client, owner, auth_headers):
         "display_name",
         "avatar_url",
         "is_instance_owner",
+        "is_active",
         "has_password",
         "created_at",
         "identities",

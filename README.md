@@ -144,6 +144,8 @@ installation keeps the runtime it was installed with unless you run setup again 
 4. Create projects, add SQL/NoSQL data sources and invite collaborators. Invite links use the public
    URL, so while it is `http://localhost:8080` they only open on this PC: set up remote access
    (*Settings -> Domains & remote access*) before inviting someone on another device.
+5. By default only you can create projects; invited people work in the projects you share. Change
+   that, disable an account, or see every project under *Settings -> Instance*.
 
 ## Google and GitHub sign-in (your own OAuth apps)
 

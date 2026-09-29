@@ -7,7 +7,7 @@ from pydantic import AfterValidator, BaseModel, Field
 from pydantic_core import PydanticCustomError
 from sqlalchemy import delete, select
 
-from app.deps import CurrentUser, DbSession, ProjectAccess, require_role
+from app.deps import CurrentUser, DbSession, ProjectAccess, ProjectCreator, require_role
 from app.errors import ApiError
 from app.models import ApiKey, DataSource, Project, ProjectInvite, ProjectMember, SchemaLink, utcnow
 from app.serializers import project_out
@@ -65,7 +65,7 @@ def list_projects(user: CurrentUser, db: DbSession) -> list[dict]:
 
 
 @router.post("/projects")
-def create_project(body: ProjectCreate, request: Request, user: CurrentUser, db: DbSession) -> dict:
+def create_project(body: ProjectCreate, request: Request, user: ProjectCreator, db: DbSession) -> dict:
     project = Project(
         slug=unique_slug(db, body.name),
         name=body.name,

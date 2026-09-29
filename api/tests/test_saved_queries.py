@@ -139,7 +139,7 @@ def test_permissions(client, db, project_setup, make_user, make_project, auth_he
     assert client.delete(f"{url}/{mine['id']}", headers=project_setup["owner"]).status_code == 200
 
 
-def test_export_and_imports_carry_saved_queries(client, db, project_setup, make_user, auth_headers):  # noqa: F811
+def test_export_and_imports_carry_saved_queries(client, db, project_setup, make_user, auth_headers, set_setting):  # noqa: F811
     project = project_setup["project"]
     ds = add_source(db, project)
     dev = db.scalar(
@@ -164,6 +164,7 @@ def test_export_and_imports_carry_saved_queries(client, db, project_setup, make_
         "/v1/projects/export", json={"project_ids": [project.id], "passphrase": PASS}, headers=project_setup["owner"]
     )
     assert resp.status_code == 200, resp.text
+    set_setting("owner_only_projects", False)  # a member imports (A-023)
     importer = make_user()
     ok = client.post(
         "/v1/projects/import",

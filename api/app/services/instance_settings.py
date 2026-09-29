@@ -32,6 +32,8 @@ SECRET_KEYS = {
 KNOWN_KEYS = {
     "public_url",
     "allow_signup",
+    # A-023: when on (the default), only the instance owner can create or import projects.
+    "owner_only_projects",
     "google_client_id",
     "github_client_id",
     "remote_access_mode",
@@ -149,6 +151,11 @@ def oauth_callback_url(db: Session, provider: str) -> str:
 
 def allow_signup(db: Session) -> bool:
     return bool(get_value(db, "allow_signup"))
+
+
+def owner_only_projects(db: Session) -> bool:
+    value = get_value(db, "owner_only_projects")
+    return True if value is None else bool(value)
 
 
 API_KEY_RATE_LIMIT_DEFAULT = 600

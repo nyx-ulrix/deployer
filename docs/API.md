@@ -39,7 +39,7 @@ Roles are ordered `viewer < developer < admin < owner`. "admin+" means admin or 
 ```ts
 type User = {
   id: string; email: string; display_name: string | null; avatar_url: string | null;
-  is_instance_owner: boolean; has_password: boolean; created_at: string;
+  is_instance_owner: boolean; is_active: boolean; has_password: boolean; created_at: string;
   identities: Identity[];
 };
 type Identity = {
@@ -118,8 +118,10 @@ Provider callback URLs (shown in the setup wizard):
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/instance/settings` | – | `InstanceSettings` |
-| PUT | `/instance/settings` | `{public_url?, allow_signup?, google_client_id?, google_client_secret?, github_client_id?, github_client_secret?, alert_webhook_url?, api_key_rate_limit?}` (empty string clears) | `InstanceSettings & {warnings}` (a changed `public_url` re-points the apps' GitHub webhooks; `warnings` lists the ones that could not follow) |
+| PUT | `/instance/settings` | `{public_url?, allow_signup?, owner_only_projects?, google_client_id?, google_client_secret?, github_client_id?, github_client_secret?, alert_webhook_url?, api_key_rate_limit?}` (empty string clears) | `InstanceSettings & {warnings}` (a changed `public_url` re-points the apps' GitHub webhooks; `warnings` lists the ones that could not follow) |
 | GET | `/instance/users` | – | `User[]` |
+| PATCH | `/instance/users/{id}` | `{is_active:boolean}` | `User`. Disabling signs the account out everywhere (refresh tokens revoked; access tokens are refused at the next request) and stops the API keys of projects it owns (401 `account_disabled`). 400 `cannot_disable_owner` for the instance owner |
+| GET | `/instance/projects` | – | `(Project & {owner_email, member_count})[]`: every project, `my_role` null where the owner isn't a member |
 | POST | `/instance/export` | `{passphrase}` | file download `deployer-instance-YYYYMMDD-HHMM.json` |
 
 OAuth values are trimmed and checked before they are stored (the same check backs
@@ -133,6 +135,7 @@ key and a message saying what to paste, e.g. "Paste only the Google Client ID, e
 ```ts
 type InstanceSettings = {
   public_url: string; allow_signup: boolean;
+  owner_only_projects: boolean;      // default true: only the instance owner can create/import projects
   google: { client_id: string | null; secret_set: boolean; configured: boolean; callback_url: string };
   github: { client_id: string | null; secret_set: boolean; configured: boolean; callback_url: string };
   alert_webhook_url: string | null;  // https only, no user:password@ (MONITORING.md)
@@ -185,12 +188,12 @@ type Alert = { id: string; alert: string; severity: "warning" | "critical"; mess
 | Method | Path | Role | Body | Response |
 |---|---|---|---|---|
 | GET | `/projects` | member | – | `Project[]` |
-| POST | `/projects` | any user | `{name, description?, provision?:{sql:boolean, nosql:boolean}}` | `Project` (creates managed MariaDB and/or MongoDB sources when requested) |
+| POST | `/projects` | any user (only the instance owner while `owner_only_projects` is on, the default; 403 otherwise) | `{name, description?, provision?:{sql:boolean, nosql:boolean}}` | `Project` (creates managed MariaDB and/or MongoDB sources when requested) |
 | GET | `/projects/{project_id}` | viewer+ | – | `Project` |
 | PATCH | `/projects/{project_id}` | admin+ | `{name?, description?}` | `Project` |
 | DELETE | `/projects/{project_id}?confirm=<slug>` | owner | – | `{ok:true}` (managed databases get a final snapshot, kept 30 days, then are dropped by a job — [BACKUPS.md](BACKUPS.md)) |
 | POST | `/projects/export` | owner of each | `{project_ids:string[], passphrase}` | file download `deployer-projects-YYYYMMDD-HHMM.json` |
-| POST | `/projects/import` | any user | multipart: `file`, `passphrase` | `{ok:true, projects:Project[], summary}` (`scope` must be `projects`) |
+| POST | `/projects/import` | as `POST /projects` | multipart: `file`, `passphrase` | `{ok:true, projects:Project[], summary}` (`scope` must be `projects`) |
 
 ## Members & invites
 

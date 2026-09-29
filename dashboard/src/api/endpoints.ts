@@ -61,6 +61,7 @@ import type {
   DocumentsResponse,
   Entity,
   Health,
+  InstanceProject,
   InstanceSettings,
   InstanceSettingsUpdate,
   Invite,
@@ -162,6 +163,9 @@ export const api = {
     settings: () => client.get<InstanceSettings>("/instance/settings"),
     updateSettings: (body: InstanceSettingsUpdate) => client.put<InstanceSettings & { warnings?: string[] }>("/instance/settings", body),
     users: () => client.get<User[]>("/instance/users"),
+    setUserActive: (userId: string, isActive: boolean) =>
+      client.patch<User>(`/instance/users/${e(userId)}`, { is_active: isActive }),
+    projects: () => client.get<InstanceProject[]>("/instance/projects"),
     export: (passphrase: string) =>
       client.download("POST", "/instance/export", "deployer-instance.json", { body: { passphrase } }),
   },
@@ -509,6 +513,7 @@ export const qk = {
   me: ["me"] as const,
   instanceSettings: ["instance", "settings"] as const,
   instanceUsers: ["instance", "users"] as const,
+  instanceProjects: ["instance", "projects"] as const,
   projects: ["projects"] as const,
   project: (id: string) => ["projects", id] as const,
   members: (id: string) => ["projects", id, "members"] as const,
