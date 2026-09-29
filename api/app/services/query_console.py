@@ -429,7 +429,8 @@ def run_sql(
                     last=index == len(statements) - 1,
                     secret_values=secret_values,
                 )
-            if watchdog.fired:
+            # A statement that finished as the timer fired keeps its result: it did run (and commit).
+            if watchdog.fired and entry["type"] == "error":
                 message = f"The statement was stopped after {timeout_seconds} s"
                 error = {"code": "query_timeout", "message": message}
                 entry = {"statement": statement, "type": "error", "error": error, "duration_ms": entry["duration_ms"]}

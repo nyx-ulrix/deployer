@@ -458,6 +458,20 @@ def test_run_sql_watchdog_stops_a_statement_the_server_does_not(sqlite_engine):
     assert fast["results"][0]["type"] == "rows"
 
 
+def test_run_sql_watchdog_keeps_a_result_that_finished_as_it_fired(sqlite_engine, monkeypatch):
+    # The timer fires, but the statement completed anyway: report what it did, not a timeout.
+    def slow(conn, statement, **kwargs):
+        time.sleep(1.3)
+        return {"statement": statement, "type": "count", "affected_rows": 1, "duration_ms": 1300}
+
+    monkeypatch.setattr(query_console, "_canceller", lambda engine, conn: lambda: None)
+    monkeypatch.setattr(query_console, "_run_statement", slow)
+    out = query_console.run_sql(
+        "sqlite", sqlite_engine, "DELETE FROM items WHERE id = 1", max_rows=5, timeout_seconds=1, read_only=False
+    )
+    assert out["results"][0]["type"] == "count"
+
+
 def test_mysql_canceller_kills_the_query_from_a_private_pool():
     executed, events = [], []
 

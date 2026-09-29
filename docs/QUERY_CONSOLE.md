@@ -99,7 +99,8 @@ in the `error` field (HTTP 200), so earlier results and printed output are kept.
   writes and when that `SET` failed: at `timeout_seconds` it sends PostgreSQL a cancel request,
   MariaDB/MySQL a `KILL QUERY <thread id>` from a separate connection, SQLite an interrupt. Either
   way the statement is reported as a per-statement error with `code: "query_timeout"` and the
-  following statements do not run.
+  following statements do not run. A statement that completes just as the timer fires keeps its
+  result, because it did run.
 - Never interpolate anything into the user's SQL; it runs as given with `exec_driver_sql` and the
   `no_parameters` execution option (so PyMySQL/psycopg treat `%` literally, e.g. `LIKE 'x%'`).
 - The connection is **invalidated after every run** (dropped from the pool), so `SET`, `USE`,
