@@ -45,6 +45,13 @@ def test_lazy_entry_matches_json_load():
         assert materialize(lazy) == {k: v for k, v in entry.items() if k != "skipped"}
 
 
+def test_bare_numbers_cut_by_the_buffer():
+    entry = {"kind": "sql", "a": 1.25, "b": 1e5, "c": -12.5e-3, "tables": []}
+    for pad in range(8):  # shift every cut point across the numbers
+        lazy = transfer.read_data_entry(Trickle(" " * pad + json.dumps(entry)))
+        assert {**lazy, "tables": list(lazy["tables"])} == entry
+
+
 def test_unread_rows_are_skipped_in_order():
     entry = {"kind": "nosql", "collections": [{"name": "a", "documents": [{"x": 1}]}, {"name": "b", "documents": []}]}
     names = [c["name"] for c in transfer.read_data_entry(Trickle(json.dumps(entry)))["collections"]]

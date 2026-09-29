@@ -935,7 +935,8 @@ class _JsonReader:
         while True:
             try:
                 value, end = self._decoder.raw_decode(self.buf, self.pos)
-                if end < len(self.buf) or self.eof:  # a number at the end of the buffer may go on
+                # A number cut by the buffer ("1." / "1e") decodes short; valid JSON never has . e E after a value.
+                if self.eof or (end < len(self.buf) and self.buf[end] not in ".eE"):
                     self.pos = end
                     return value
             except ValueError:
