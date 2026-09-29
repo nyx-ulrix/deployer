@@ -191,7 +191,8 @@ never ask for a token in chat:
    adds them in GitHub (repo → Settings → Webhooks, content type `application/json`, just the
    push event). From then on every push to the branch deploys. (With a connected repository this
    step is automatic.) GitHub can only reach the webhook when the instance has a public URL
-   (Cloudflare domain); on `http://localhost` the user deploys with *Deploy now* instead.
+   (Cloudflare domain); on `http://localhost` the user deploys with *Deploy now* instead. A connected
+   repository's webhook follows the public URL automatically once remote access is set up.
 5. URLs: `local_url` (`http://localhost:81xx`, LAN when enabled) always works. For the internet,
    the user links Cloudflare (Settings → Domains & remote access), then
    `POST .../apps/{app_id}/domains {hostname}` (admin) creates the DNS record, tunnel ingress and

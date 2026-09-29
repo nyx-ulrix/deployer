@@ -115,7 +115,7 @@ Provider callback URLs (shown in the setup wizard):
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/instance/settings` | – | `InstanceSettings` |
-| PUT | `/instance/settings` | `{public_url?, allow_signup?, google_client_id?, google_client_secret?, github_client_id?, github_client_secret?, alert_webhook_url?, api_key_rate_limit?}` (empty string clears) | `InstanceSettings` |
+| PUT | `/instance/settings` | `{public_url?, allow_signup?, google_client_id?, google_client_secret?, github_client_id?, github_client_secret?, alert_webhook_url?, api_key_rate_limit?}` (empty string clears) | `InstanceSettings & {warnings}` (a changed `public_url` re-points the apps' GitHub webhooks; `warnings` lists the ones that could not follow) |
 | GET | `/instance/users` | – | `User[]` |
 | POST | `/instance/export` | `{passphrase}` | file download `deployer-instance-YYYYMMDD-HHMM.json` |
 

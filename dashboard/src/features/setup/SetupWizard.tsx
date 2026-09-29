@@ -368,6 +368,7 @@ function PublicUrlForm({ current, onDone }: { current: string; onDone: () => voi
       queryClient.setQueryData(qk.instanceSettings, data);
       void queryClient.invalidateQueries({ queryKey: qk.setupStatus });
       toast.success("Public URL saved.");
+      for (const w of data.warnings ?? []) toast.info(w, "GitHub webhooks");
       onDone();
     },
   });

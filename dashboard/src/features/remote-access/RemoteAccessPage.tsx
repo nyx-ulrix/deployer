@@ -72,6 +72,7 @@ function RemoteAccessContent({
       void queryClient.invalidateQueries({ queryKey: qk.remoteAccess });
       void queryClient.invalidateQueries({ queryKey: qk.setupStatus });
       setResult(res);
+      for (const w of res.warnings ?? []) toast.info(w, "GitHub webhooks");
     },
     onError: (e) => toast.error(remoteAccessError(e), "Couldn't change the public URL"),
   });

@@ -807,6 +807,8 @@ export type PublicUrlResponse = {
   settings: InstanceSettings;
   oauth_callbacks: { google: string; github: string };
   previous_public_url: string;
+  /** Automatic GitHub webhooks that could not follow the new URL. */
+  warnings?: string[];
 };
 
 // ---- Deployments / push-to-deploy (docs/DEPLOYMENTS.md) ----

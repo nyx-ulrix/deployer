@@ -163,7 +163,7 @@ socket access.
 | DELETE | `/v1/instance/remote-access/cloudflare/hostnames/{domain_id}` | – | `{ok:true}` |
 | POST | `/v1/instance/remote-access/cloudflare/unlink` | `{delete_dns:boolean, delete_tunnel:boolean}` | `RemoteAccess` |
 | POST | `/v1/instance/remote-access/quick` | `{enabled:boolean}` | `RemoteAccess` |
-| POST | `/v1/instance/remote-access/public-url` | `{domain_id}` \| `{quick:true}` \| `{local:true}` | `{settings: InstanceSettings, oauth_callbacks:{google:string, github:string}, previous_public_url}` |
+| POST | `/v1/instance/remote-access/public-url` | `{domain_id}` \| `{quick:true}` \| `{local:true}` | `{settings: InstanceSettings, oauth_callbacks:{google:string, github:string}, previous_public_url, warnings}` (re-points the apps' GitHub webhooks; `warnings` for any that could not follow) |
 
 ```ts
 type Domain = {

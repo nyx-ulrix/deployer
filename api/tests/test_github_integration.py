@@ -349,6 +349,7 @@ def test_other_user_changing_the_repo_detaches_the_connection(client, env, gh, s
         f"{env['base']}/{app_id}", json={"repo_url": "https://github.com/evil/fork"}, headers=env["admin"]
     )
     assert resp.status_code == 200 and resp.json()["github"] is None
+    assert "add one by hand" in resp.json()["warnings"][0]
     assert gh.calls[-1][0:2] == ("DELETE", "/repos/acme/shop/hooks/7")
     db.expire_all()
     assert db.get(App, app_id).github_connection_user_id is None
@@ -403,3 +404,53 @@ def test_parse_repo_refuses_dot_segments():
     assert github.parse_repo("https://github.com/acme/.github") == ("acme", ".github")
     for url in ("https://github.com/../user", "https://github.com/acme/..", "https://github.com/acme/..git"):
         assert github.parse_repo(url) is None, url
+
+
+def test_hook_follows_public_url_and_repo_changes(client, env, gh, db, owner_headers):
+    """A-014: remote access set up after the app, and repository changes, keep push-to-deploy working."""
+    token = connect(db, env["dev_user"])
+    app_id = client.post(env["base"], json=BODY, headers=env["dev"]).json()["id"]  # localhost: no hook yet
+    assert gh.calls == []
+
+    gh.routes[("POST", "/repos/acme/shop/hooks")] = (201, {"id": 5})
+    resp = client.put("/v1/instance/settings", json={"public_url": "https://deploy.example.com"}, headers=owner_headers)
+    assert resp.status_code == 200 and resp.json()["warnings"] == []
+    assert gh.calls[-1][0:3] == ("POST", "/repos/acme/shop/hooks", token)
+    assert gh.calls[-1][3]["config"]["url"] == f"https://deploy.example.com/v1/hooks/github/{app_id}"
+    db.expire_all()
+    assert db.get(App, app_id).github_hook_id == "5"
+
+    # Saving the same URL again does not call GitHub; a new one updates the existing hook.
+    calls = len(gh.calls)
+    client.put("/v1/instance/settings", json={"public_url": "https://deploy.example.com"}, headers=owner_headers)
+    assert len(gh.calls) == calls
+    gh.routes[("PATCH", "/repos/acme/shop/hooks/5")] = (200, {"id": 5})
+    client.put("/v1/instance/settings", json={"public_url": "https://new.example.com"}, headers=owner_headers)
+    assert gh.calls[-1][0:2] == ("PATCH", "/repos/acme/shop/hooks/5")
+    assert gh.calls[-1][3]["config"]["url"] == f"https://new.example.com/v1/hooks/github/{app_id}"
+
+    # Back to a local URL: one warning, GitHub untouched.
+    calls = len(gh.calls)
+    local = client.post("/v1/instance/remote-access/public-url", json={"local": True}, headers=owner_headers).json()
+    assert len(local["warnings"]) == 1 and "GitHub can't reach" in local["warnings"][0] and len(gh.calls) == calls
+    client.put("/v1/instance/settings", json={"public_url": "https://new.example.com"}, headers=owner_headers)
+
+    # A repo change that fails validation leaves the hook alone.
+    url = f"{env['base']}/{app_id}"
+    calls = len(gh.calls)
+    bad = client.patch(
+        url, json={"repo_url": "https://github.com/acme/store", "api_key_id": "nope"}, headers=env["dev"]
+    )
+    assert bad.status_code == 422 and len(gh.calls) == calls
+    db.expire_all()
+    assert db.get(App, app_id).github_hook_id == "5"
+
+    # A valid one moves the hook: deleted on the old repository, added on the new one.
+    gh.routes[("POST", "/repos/acme/store/hooks")] = (201, {"id": 9})
+    moved = client.patch(url, json={"repo_url": "https://github.com/acme/store"}, headers=env["dev"])
+    assert moved.status_code == 200 and moved.json()["warnings"] == []
+    assert [c[0:2] for c in gh.calls[-2:]] == [
+        ("DELETE", "/repos/acme/shop/hooks/5"),
+        ("POST", "/repos/acme/store/hooks"),
+    ]
+    assert moved.json()["github"]["hook_active"] is True

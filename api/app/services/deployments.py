@@ -154,6 +154,20 @@ def webhook_url(db: Session, app: App) -> str:
     return f"{public_url(db)}/v1/hooks/github/{app.id}"
 
 
+def resync_webhooks(db: Session) -> list[str]:
+    """Points every automatic GitHub webhook at the current public URL (call after it changes).
+    Returns warnings; the caller commits (`github_hook_id` may change)."""
+    # ponytail: inline, one or two GitHub calls per connected app; move to a job if installs grow many.
+    apps = db.scalars(select(App).where(App.github_connection_user_id.is_not(None))).all()
+    if not apps:
+        return []
+    if problem := github.unreachable_reason(public_url(db)):
+        return [problem]  # the hooks keep their old URL until a public one is set
+    return [
+        f"{app.name}: {w}" for app in apps for w in github.sync_hook(db, app, webhook_url(db, app), webhook_secret(app))
+    ]
+
+
 def check_api_key(db: Session, project_id: str, api_key_id: str | None) -> None:
     if api_key_id is None:
         return

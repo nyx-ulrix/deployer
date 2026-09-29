@@ -8,7 +8,7 @@ from app.deps import DbSession, InstanceOwner
 from app.errors import ApiError
 from app.models import User
 from app.serializers import user_out
-from app.services import audit
+from app.services import audit, deployments
 from app.services.alerts import validate_webhook_url
 from app.services.instance_settings import (
     OAUTH_KEYS,
@@ -90,6 +90,7 @@ class SettingsUpdate(BaseModel):
 @router.put("/instance/settings")
 def update_settings(body: SettingsUpdate, request: Request, owner: InstanceOwner, db: DbSession) -> dict:
     changed: list[str] = []
+    previous_url = public_url(db)
     for key in (
         "public_url",
         "allow_signup",
@@ -116,7 +117,9 @@ def update_settings(body: SettingsUpdate, request: Request, owner: InstanceOwner
     if changed:
         audit.record(db, "instance.settings_update", request=request, user_id=owner.id, keys=changed)
     db.commit()
-    return settings_out(db)
+    warnings = deployments.resync_webhooks(db) if public_url(db) != previous_url else []
+    db.commit()
+    return {**settings_out(db), "warnings": warnings}
 
 
 @router.get("/instance/users")

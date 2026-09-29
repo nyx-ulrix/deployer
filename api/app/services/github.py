@@ -274,9 +274,10 @@ def sync_hook(db: Session, app: App, url: str, secret: str) -> list[str]:
     return [f"Couldn't add the webhook on GitHub ({_message(status, body)}); add it by hand (app Settings → Webhook)."]
 
 
-def delete_hook(db: Session, app: App) -> None:
-    """Best effort: removes the webhook Deployer created (app deleted or repository changed)."""
-    repo = parse_repo(app.repo_url)
+def delete_hook(db: Session, app: App, *, repo_url: str | None = None) -> None:
+    """Best effort: removes the webhook Deployer created (app deleted or repository changed: pass the
+    old `repo_url`, the hook lives there)."""
+    repo = parse_repo(repo_url or app.repo_url)
     conn = get_connection(db, app.github_connection_user_id)
     if app.github_hook_id and repo and conn:
         try:

@@ -160,7 +160,7 @@ export const api = {
 
   instance: {
     settings: () => client.get<InstanceSettings>("/instance/settings"),
-    updateSettings: (body: InstanceSettingsUpdate) => client.put<InstanceSettings>("/instance/settings", body),
+    updateSettings: (body: InstanceSettingsUpdate) => client.put<InstanceSettings & { warnings?: string[] }>("/instance/settings", body),
     users: () => client.get<User[]>("/instance/users"),
     export: (passphrase: string) =>
       client.download("POST", "/instance/export", "deployer-instance.json", { body: { passphrase } }),
@@ -422,9 +422,10 @@ export const api = {
     detect: (pid: string, repo_url: string, branch?: string) =>
       client.post<AppDetectDraft>(`/projects/${e(pid)}/apps/detect`, branch ? { repo_url, branch } : { repo_url }),
     get: (pid: string, id: string) => client.get<App>(`/projects/${e(pid)}/apps/${e(id)}`),
-    /** `teardown_job_id`: the target changed and the old cloud resources are being removed (docs/CLOUD.md). */
+    /** `teardown_job_id`: the target changed and the old cloud resources are being removed (docs/CLOUD.md).
+     *  `warnings`: the repository changed and its GitHub webhook could not be moved. */
     update: (pid: string, id: string, body: AppPatch) =>
-      client.patch<App & { teardown_job_id?: string | null }>(`/projects/${e(pid)}/apps/${e(id)}`, body),
+      client.patch<App & { teardown_job_id?: string | null; warnings?: string[] }>(`/projects/${e(pid)}/apps/${e(id)}`, body),
     remove: (pid: string, id: string) =>
       client.del<{ job_id: string; teardown_job_id: string | null }>(`/projects/${e(pid)}/apps/${e(id)}`),
     env: (pid: string, id: string) => client.get<{ env: Record<string, string> }>(`/projects/${e(pid)}/apps/${e(id)}/env`),

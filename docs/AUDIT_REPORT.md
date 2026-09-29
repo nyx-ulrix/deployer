@@ -62,7 +62,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 **Deploys / monitoring / remote access**
 - [x] A-012 **[HIGH][bug]** `DockerCli._run` never enforces its timeout on a silent process (git/docker) - `api/app/services/app_runner.py:98-121` - watchdog `threading.Timer(timeout, proc.kill)` that also polls cancel; add a silent-sleep test.
 - [x] A-013 **[HIGH][bug]** The disk-low alert watches the sparse WSL vhdx, not the Windows drive that actually fills up - `api/app/services/device_host.py:294-297` - measure the host drive (bind-mount it read-only, or have keep-alive write the free space) and alert on the smaller figure.
-- [ ] A-014 **[HIGH][usability]** GitHub webhook is never re-synced when the public URL or repository changes; push-to-deploy stops silently - `api/app/routers/apps.py:319, 359-363, 495` (also `remote_access.py:828-862`) - sync_hook after a repo change and on switch_public_url; delete_hook only after validation.
+- [x] A-014 **[HIGH][usability]** GitHub webhook is never re-synced when the public URL or repository changes; push-to-deploy stops silently - `api/app/routers/apps.py:319, 359-363, 495` (also `remote_access.py:828-862`) - sync_hook after a repo change and on switch_public_url; delete_hook only after validation.
 
 **Infrastructure / installer**
 - [x] A-015 **[HIGH][bug]** `deployer stop` / Control Stop is undone about 15 s later by the autostart keep-alive loop (WSL engine) - `installer/deployer.ps1:198-207, 218-232` (also `ControlForm.cs:328, 1004`) - `Stop-ScheduledTask` in Invoke-Stop, and wait on an existing keep-alive instead of spinning.

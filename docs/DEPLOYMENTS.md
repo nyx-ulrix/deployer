@@ -177,11 +177,16 @@ The New app dialog starts with **Choose a repository**; everything it fills in s
    same request (git would otherwise hand it to that host).
 5. **Webhook**: right after create (and on `POST /apps/{id}/webhook/rotate`) Deployer creates or
    updates the repository's `push` webhook (`POST`/`PATCH /repos/{o}/{r}/hooks`, JSON, the app's
-   secret) and stores its id in `apps.github_hook_id`; deleting the app (or changing its repository)
-   removes it, best effort. When the public URL is `localhost` or a private address the hook is
-   skipped and the create response carries the warning "GitHub can't reach http://localhost:8080 — set
-   up a public URL (Settings → Domains) to deploy on push"; a GitHub error becomes a warning too. The
-   app is created either way and the manual webhook instructions in Settings still apply.
+   secret) and stores its id in `apps.github_hook_id`; deleting the app removes it, best effort.
+   Changing the repository (once the PATCH has passed validation) removes the old repository's hook
+   and adds one on the new repository when the connection's owner made the change; anyone else gets
+   the warning to add it by hand. Every change of the public URL (`PUT /instance/settings`,
+   `POST /instance/remote-access/public-url`) re-points the hooks of all connected apps, so an app
+   created before remote access was set up starts deploying on push once it is. When the public URL
+   is `localhost` or a private address the hook is skipped and the response carries the warning
+   "GitHub can't reach http://localhost:8080 — set up a public URL (Settings → Domains) to deploy on
+   push"; a GitHub error becomes a warning too. The app is created either way and the manual webhook
+   instructions in Settings still apply.
 
 Migration `0009_github_connections`: `github_connections (id, user_id unique FK CASCADE,
 github_login, github_user_id, token_encrypted, scopes, created_at, updated_at)`, plus
@@ -255,7 +260,7 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
 | POST | `/apps/detect` | developer+ | `{repo_url, branch?}` | draft `{name, repo_url, branch, root_dir, preset, install_command, build_command, start_command, output_dir, container_port, env_keys, database_access_suggested, detected: [{what, from}], warnings, private}`, never stored ("Connect a Git repository") |
 | POST | `/apps` | developer+ | `{name, repo_url, branch?, root_dir?, preset, install_command?, build_command?, start_command?, output_dir?, container_port?, env?: {k:v}, repo_token?, use_github_connection?, api_key_id?, database_access?, cohost?, cohost_share_repo_access?, target?, cloud_connection_id?}` (a cloud `target` needs admin+, CLOUD.md) | `App & {warnings: string[]}` (201); allocates `port`, generates `webhook_secret`; `database_access: true` needs admin+; `use_github_connection` clones with the creator's GitHub connection and adds the webhook |
 | GET | `/apps/{id}` | viewer+ | – | `App` |
-| PATCH | `/apps/{id}` | developer+ | partial of the above (`repo_token: null` clears; turning `database_access` on needs admin+, 403 `forbidden`; changing `cohost` / `cohost_share_repo_access` needs admin+) | `App` (changes apply on the next deploy; `cohost` moves the hostnames between tunnels at once and starts the co-host copies of the live deployment) |
+| PATCH | `/apps/{id}` | developer+ | partial of the above (`repo_token: null` clears; turning `database_access` on needs admin+, 403 `forbidden`; changing `cohost` / `cohost_share_repo_access` needs admin+) | `App & {teardown_job_id, warnings}` (changes apply on the next deploy; `warnings`: a repository change whose GitHub webhook could not be moved; `cohost` moves the hostnames between tunnels at once and starts the co-host copies of the live deployment) |
 | DELETE | `/apps/{id}` | admin+ | – | `{job_id, teardown_job_id}` (`app.remove`; `app.cloud_teardown` for cloud targets, else null) |
 | GET | `/apps/{id}/env` | admin+ | – | `{env: {k:v}}` plain values (audit `app.env.reveal`) |
 | GET | `/apps/{id}/webhook` | developer+ | – | `{url, secret}` — url `<public_url>/v1/hooks/github/{app_id}`; audit `app.webhook.reveal` |

@@ -45,13 +45,14 @@ function GeneralCard({ projectId, app, canEdit, isAdmin }: Props) {
     draft.target !== app.target || (draft.target !== "local" && draft.cloud_connection_id !== (app.cloud_connection_id ?? ""));
   const save = useMutation({
     mutationFn: () => api.apps.update(projectId, app.id, draftToPatch(draft, app)),
-    onSuccess: ({ teardown_job_id, ...updated }) => {
+    onSuccess: ({ teardown_job_id, warnings, ...updated }) => {
       queryClient.setQueryData(qk.app(projectId, app.id), updated);
       setDraft(emptyDraft(updated));
       setSubmitted(false);
       setConfirmMove(false);
       if (teardown_job_id) setTeardownJob(teardown_job_id);
       toast.success(moving ? "Target changed. Deploy to publish the app there." : "Settings saved. They apply on the next deploy.");
+      for (const w of warnings ?? []) toast.info(w, "GitHub webhook");
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't save"),
   });

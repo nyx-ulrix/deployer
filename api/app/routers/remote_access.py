@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from app.deps import DbSession, InstanceOwner
 from app.routers.instance import settings_out
+from app.services import deployments
 from app.services import remote_access as ra
 
 router = APIRouter(tags=["remote-access"])
@@ -84,7 +85,14 @@ class PublicUrlBody(BaseModel):
 
 @router.post(f"{PREFIX}/public-url")
 def switch_public_url(body: PublicUrlBody, request: Request, owner: InstanceOwner, db: DbSession) -> dict:
-    previous, _new = ra.switch_public_url(
+    previous, new = ra.switch_public_url(
         db, domain_id=body.domain_id, quick=body.quick, local=body.local, request=request, user_id=owner.id
     )
-    return {"settings": settings_out(db), "oauth_callbacks": ra.oauth_callbacks(db), "previous_public_url": previous}
+    warnings = deployments.resync_webhooks(db) if new != previous else []
+    db.commit()
+    return {
+        "settings": settings_out(db),
+        "oauth_callbacks": ra.oauth_callbacks(db),
+        "previous_public_url": previous,
+        "warnings": warnings,
+    }

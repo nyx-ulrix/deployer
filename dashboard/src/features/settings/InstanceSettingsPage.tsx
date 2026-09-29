@@ -78,6 +78,7 @@ function GeneralCard({ settings }: { settings: InstanceSettings }) {
           ? "Saved. Update the callback URLs in your OAuth apps to match the new public URL."
           : "Instance settings saved.",
       );
+      for (const w of data.warnings ?? []) toast.info(w, "GitHub webhooks");
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't save settings"),
   });

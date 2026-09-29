@@ -360,11 +360,8 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
     cohost_changed = _check_cohost(access, app, body)
     if "cohost" in changed and body.cohost and not app.cohost:
         cohost_apps.check_single_cohost(db, app.id)
-    if "repo_url" in changed and body.repo_url and body.repo_url != app.repo_url and app.github_connection_user_id:
-        # The webhook belongs to the old repository; only the connection's owner may point it elsewhere.
-        github.delete_hook(db, app)
-        if app.github_connection_user_id != access.user.id:
-            app.github_connection_user_id = None
+    old_repo_url = app.repo_url
+    repo_moved = bool("repo_url" in changed and body.repo_url and body.repo_url != app.repo_url)
     if (
         "repo_url" in changed
         and body.repo_url
@@ -410,6 +407,18 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
             raise forbidden("Only project admins can change where an app runs")
         teardown_job = _switch_target(db, request, access, app, target_before)
     _check_target(db, app)
+    warnings: list[str] = []
+    if repo_moved and app.github_connection_user_id:
+        # Only now, after validation: the webhook belongs to the old repository, and only the
+        # connection's owner may point the app (and a new webhook) at another one.
+        github.delete_hook(db, app, repo_url=old_repo_url)
+        if app.github_connection_user_id == access.user.id:
+            warnings = github.sync_hook(db, app, deployments.webhook_url(db, app), deployments.webhook_secret(app))
+        else:
+            app.github_connection_user_id = None
+            warnings = [
+                "The GitHub webhook was removed with the old repository; add one by hand (app Settings → Webhook)."
+            ]
     audit.record(
         db,
         "app.update",
@@ -432,7 +441,7 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
         cohost_apps.replicate(get_sessionmaker(), app.id, user_id=access.user.id, retry=True)
         ra.sync_desired(db)  # the apps tunnel may be new: start its connector on this PC
     db.refresh(app)
-    return {**deployments.app_out(db, app), "teardown_job_id": teardown_job}
+    return {**deployments.app_out(db, app), "teardown_job_id": teardown_job, "warnings": warnings}
 
 
 @router.delete(BASE + "/{app_id}")
