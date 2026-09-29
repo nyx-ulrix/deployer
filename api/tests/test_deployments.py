@@ -464,12 +464,18 @@ def test_worker_moves_old_app_containers_off_the_api_network(monkeypatch):
 
     def run(args, **kw):
         calls.append(args)
-        return "old-app\n" if args[:2] == ["docker", "ps"] and "label=deployer.app" in args else ""
+        if args[:2] == ["docker", "ps"] and "network=deployer_public" in args and "label=deployer.app" in args:
+            return "old-app\nstuck-app\n"
+        if args[:3] == ["docker", "network", "connect"] and args[-1] == "stuck-app":
+            raise app_runner.DockerError("docker network failed (exit 1)")
+        return ""
 
     monkeypatch.setattr(cli, "_run", run)
     deployments.move_legacy_app_containers(cli)
     assert ["docker", "network", "connect", "deployer_apps", "old-app"] in calls
     assert ["docker", "network", "disconnect", "deployer_public", "old-app"] in calls
+    # A container that couldn't join the new network keeps the old one, so it stays reachable.
+    assert ["docker", "network", "disconnect", "deployer_public", "stuck-app"] not in calls
     assert any("label=deployer.cohost_app" in c for c in calls)
 
     def no_apps_network(args, **kw):

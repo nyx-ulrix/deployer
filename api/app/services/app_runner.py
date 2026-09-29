@@ -269,13 +269,23 @@ class DockerCli:
             self._run(["docker", "network", "inspect", new])
         except DockerError:
             return []
-        names = self._run(
-            ["docker", "ps", "-a", "--filter", f"network={old}", "--filter", f"label={label}", "--format", "{{.Names}}"]
-        ).split()
-        for name in names:
-            self._run(["docker", "network", "connect", new, name], check=False)  # may already be on it
+
+        def on(network: str) -> list[str]:
+            args = ["docker", "ps", "-a", "--filter", f"network={network}", "--filter", f"label={label}"]
+            return self._run([*args, "--format", "{{.Names}}"]).split()
+
+        already = set(on(new))
+        moved = []
+        for name in on(old):
+            if name not in already:
+                try:
+                    self._run(["docker", "network", "connect", new, name])
+                except DockerError:  # leave it where Caddy can still reach it rather than cut it off
+                    log.warning("could not connect %s to %s", name, new)
+                    continue
             self._run(["docker", "network", "disconnect", old, name], check=False)
-        return names
+            moved.append(name)
+        return moved
 
     def remove_container(self, name: str) -> None:
         self._run(["docker", "rm", "-f", name], check=False)
