@@ -14,7 +14,7 @@ responsibility; the dashboard says so.
 | **Safety snapshots** | Taken automatically before: restore in place, dropping a table/collection from the dashboard, deleting a data source or project, moving a database to another device. | On |
 | **Deleted databases** | Deleting a data source/project keeps its final snapshot + logs for 30 days ("Recently deleted"). | 30 days |
 | **Platform metadata** | The main server's `deployer` database (users, projects, settings) is snapshotted daily with the same mechanism. The instance owner can download the latest one (*Settings → Backups → Download latest*); restore it with the CLI (see [Restoring platform data](#restoring-platform-data)). | Daily, keep 30 |
-| **Verification** | Weekly: restore the latest snapshot into a temporary database, compare table/collection row counts and checksums with the snapshot manifest, drop it, record `verified_at`. | Weekly |
+| **Verification** | Weekly: restore the latest snapshot into a temporary database, compare table/collection row counts and checksums with the snapshot manifest, drop it, record `verified_at`. A failed check raises the `backup_verify_failed` alert, shows as "Restore test failed" in instance backup health, and is retried the next day. | Weekly (daily after a failure) |
 
 MongoDB PITR needs an oplog, so the managed MongoDB runs as a **single-node replica set** (`rs0`,
 keyfile auth). MariaDB runs with `log_bin`, `binlog_format=ROW`, `server_id=1`, binlog expiry 8 days.
@@ -140,7 +140,7 @@ All under `/v1/projects/{project_id}/data-sources/{sid}` unless noted.
 | POST | `/v1/projects/{project_id}/jobs/{job_id}/cancel` | admin+ | – | `Job` |
 | GET | `/v1/projects/{project_id}/deleted-sources` | admin+ | – | `(DataSource & {deleted_at, purge_at})[]` |
 | POST | `/v1/projects/{project_id}/deleted-sources/{sid}/restore` | admin+ | `{name?}` | `{job: Job}` |
-| GET | `/v1/instance/backups` | instance owner | – | `{sources:[{data_source_id, project_id, project_name, name, engine, device_id, last_success_at, last_failure_at, last_error, pitr_latest, local_bytes, copy_bytes}], platform:{last_success_at, last_error, latest_backup_id}, storage:[{location, device_id, used_bytes, free_bytes}]}` |
+| GET | `/v1/instance/backups` | instance owner | – | `{sources:[{data_source_id, project_id, project_name, name, engine, device_id, last_success_at, last_failure_at, last_error, pitr_latest, last_verified_at, last_verify_status, local_bytes, copy_bytes}], platform:{last_success_at, last_error, latest_backup_id}, storage:[{location, device_id, used_bytes, free_bytes}]}` |
 | POST | `/v1/instance/backups/platform` | instance owner | – | `{job: Job}` (platform snapshot now) |
 | GET | `/v1/instance/backups/platform/{backup_id}/download` | instance owner | – | file (decrypted `.sql.gz` of the platform database) |
 

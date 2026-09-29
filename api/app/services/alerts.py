@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
-from app.models import AppReplica, DataSource, Device, Job, SourceReplica, utcnow
+from app.models import AppReplica, Backup, DataSource, Device, Job, SourceReplica, utcnow
 from app.redis_client import get_redis
 from app.services import metrics
 from app.services.instance_settings import get_value, public_url
@@ -134,6 +134,18 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
         out[f"backup:{job.type}:{job.data_source_id or 'platform'}"] = Condition(
             "backup_failed", "critical", f"Backup job {job.type} failed for {target}; see Settings > Backups"
         )
+    # A failed verification is a job result, not a failed job: alert until a later verification passes.
+    from app.services.backups import last_verification
+
+    for ds_id in db.scalars(select(Backup.data_source_id).where(Backup.verify_status == "failed").distinct()):
+        ds = db.get(DataSource, ds_id) if ds_id else None
+        checked = last_verification(db, ds_id) if ds is not None and ds.deleted_at is None else None
+        if checked is not None and checked.verify_status == "failed":
+            out[f"backup_verify:{ds_id}"] = Condition(
+                "backup_verify_failed",
+                "critical",
+                f"The latest restore test of a backup of database {ds.name} failed; see Settings > Backups",
+            )
 
 
 def _tunnel_rule(db: Session, out: dict[str, Condition]) -> None:

@@ -540,6 +540,38 @@ def test_verify_job(client, env, db):
     assert listed["verify_status"] == "failed"
 
 
+def test_failed_verify_alerts_shows_in_health_and_retries_next_day(client, env, db, owner_headers, fake_redis):
+    """A-038: a failed verification is not a failed job, so it needs its own alert, health field and retry."""
+    from app.services import alerts
+
+    backup_id = _snapshot(client, env)
+    env["fake"].row_counts = {"users": 3}
+    assert backups.perform_verify(jobs.get_sessionmaker(), backup_id)["ok"] is False
+    db.expire_all()
+    out: dict = {}
+    alerts._backup_rules(db, out)
+    assert [c.alert for c in out.values()] == ["backup_verify_failed"]
+    [src] = client.get("/v1/instance/backups", headers=owner_headers).json()["sources"]
+    assert src["last_verify_status"] == "failed" and src["last_verified_at"]
+
+    factory = jobs.get_sessionmaker()
+
+    def verify_jobs(at):
+        return [j for j in backups.scheduler_tick(factory, at) if db.get(Job, j).type == "backup.verify"]
+
+    assert verify_jobs(utcnow() + timedelta(hours=12)) == []
+    assert len(verify_jobs(utcnow() + timedelta(days=1, minutes=1))) == 1
+
+    env["fake"].row_counts = {"users": 2}
+    assert backups.perform_verify(factory, backup_id)["ok"] is True
+    db.expire_all()
+    out = {}
+    alerts._backup_rules(db, out)
+    assert out == {}
+    [src] = client.get("/v1/instance/backups", headers=owner_headers).json()["sources"]
+    assert src["last_verify_status"] == "ok"
+
+
 def test_soft_delete_and_restore_deleted_source(client, env, db):
     ds = env["ds"]
     base = env["pbase"]

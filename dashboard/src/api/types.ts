@@ -627,6 +627,9 @@ export type InstanceBackupSource = {
   last_failure_at: string | null;
   last_error: string | null;
   pitr_latest: string | null;
+  /** The latest restore test (weekly; retried the next day after a failure). */
+  last_verified_at: string | null;
+  last_verify_status: "ok" | "failed" | null;
   local_bytes: number | null;
   copy_bytes: number | null;
 };

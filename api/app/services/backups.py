@@ -61,6 +61,7 @@ DELETED_KEEP = timedelta(days=30)
 PLATFORM_KEEP = 30
 FAILED_KEEP = timedelta(days=1)
 VERIFY_EVERY = timedelta(days=7)
+VERIFY_RETRY = timedelta(days=1)  # after a failed verification
 PRUNE_EVERY = timedelta(hours=1)
 PLATFORM_EVERY = timedelta(days=1)
 LOG_INTERVALS = {"mariadb": timedelta(minutes=5), "mongodb": timedelta(minutes=1)}
@@ -1218,6 +1219,15 @@ def perform_verify(factory: jobs.SessionFactory, backup_id: str) -> dict:
         session.close()
 
 
+def last_verification(db: Session, data_source_id: str) -> Backup | None:
+    """The source's most recently verified backup: its verify_status is the source's verify status."""
+    return db.scalar(
+        select(Backup)
+        .where(Backup.data_source_id == data_source_id, Backup.verified_at.is_not(None))
+        .order_by(Backup.verified_at.desc())
+    )
+
+
 @jobs.job_handler("backup.verify")
 def _job_verify(ctx: jobs.JobContext) -> dict:
     return perform_verify(ctx.session_factory, ctx.params["backup_id"])
@@ -2004,6 +2014,7 @@ def instance_health(db: Session) -> dict:
                 else:
                     copy_bytes += copy.size_bytes or 0
         window = recovery_window(db, ds)
+        checked = last_verification(db, ds.id)
         out_sources.append(
             {
                 "data_source_id": ds.id,
@@ -2016,6 +2027,8 @@ def instance_health(db: Session) -> dict:
                 "last_failure_at": iso(last_failure_at),
                 "last_error": last_error,
                 "pitr_latest": window["latest"],
+                "last_verified_at": iso(checked.verified_at) if checked else None,
+                "last_verify_status": checked.verify_status if checked else None,
                 "local_bytes": local_bytes,
                 "copy_bytes": copy_bytes,
             }
@@ -2164,12 +2177,11 @@ def scheduler_tick(factory: jobs.SessionFactory, now: datetime | None = None) ->
                 .order_by(Backup.started_at.desc())
             )
             if latest is not None and not jobs.active_job(session, "backup.verify", data_source_id=ds.id):
-                last_verified = session.scalar(
-                    select(func.max(Backup.verified_at)).where(Backup.data_source_id == ds.id)
-                )
-                if (
-                    last_verified is None or now - last_verified >= VERIFY_EVERY
-                ) and now - latest.started_at > timedelta(minutes=5):
+                checked = last_verification(session, ds.id)
+                every = VERIFY_RETRY if checked is not None and checked.verify_status == "failed" else VERIFY_EVERY
+                if (checked is None or now - checked.verified_at >= every) and now - latest.started_at > timedelta(
+                    minutes=5
+                ):
                     job = jobs.enqueue(
                         session,
                         type="backup.verify",

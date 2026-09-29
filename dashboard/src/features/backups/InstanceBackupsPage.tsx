@@ -19,11 +19,12 @@ import { InstanceNav } from "../settings/InstanceNav";
 
 const STALE_MS = 26 * 3_600_000;
 
-/** A source is unhealthy if its last attempt failed or it hasn't succeeded for over a day. */
-function health(s: InstanceBackupSource, now = Date.now()): "ok" | "failing" | "stale" | "never" {
+/** A source is unhealthy if its last attempt or restore test failed, or it hasn't succeeded for over a day. */
+function health(s: InstanceBackupSource, now = Date.now()): "ok" | "failing" | "unverified" | "stale" | "never" {
   const success = s.last_success_at ? Date.parse(s.last_success_at) : null;
   const failure = s.last_failure_at ? Date.parse(s.last_failure_at) : null;
   if (failure !== null && (success === null || failure > success)) return "failing";
+  if (s.last_verify_status === "failed") return "unverified";
   if (success === null) return "never";
   if (now - success > STALE_MS) return "stale";
   return "ok";
@@ -32,6 +33,7 @@ function health(s: InstanceBackupSource, now = Date.now()): "ok" | "failing" | "
 const HEALTH_BADGE = {
   ok: { tone: "success", label: "Healthy" },
   failing: { tone: "danger", label: "Failing" },
+  unverified: { tone: "danger", label: "Restore test failed" },
   stale: { tone: "warning", label: "Overdue" },
   never: { tone: "warning", label: "No backup yet" },
 } as const;
@@ -63,7 +65,7 @@ export function InstanceBackupsPage() {
 
   const sources = data.data?.sources ?? [];
   const sorted = [...sources].sort((a, b) => {
-    const order = { failing: 0, never: 1, stale: 2, ok: 3 };
+    const order = { failing: 0, unverified: 1, never: 2, stale: 3, ok: 4 };
     return order[health(a)] - order[health(b)] || a.project_name.localeCompare(b.project_name);
   });
   const unhealthy = sources.filter((s) => health(s) !== "ok").length;
@@ -166,6 +168,11 @@ export function InstanceBackupsPage() {
                         <Td className="whitespace-nowrap">{deviceName(s.device_id)}</Td>
                         <Td>
                           <Badge tone={HEALTH_BADGE[h].tone}>{HEALTH_BADGE[h].label}</Badge>
+                          {s.last_verified_at && (
+                            <p className="text-xs whitespace-nowrap text-muted" title={formatDateTime(s.last_verified_at)}>
+                              Restore test {s.last_verify_status === "ok" ? "passed" : "failed"} {relativeTime(s.last_verified_at)}
+                            </p>
+                          )}
                         </Td>
                         <Td className="whitespace-nowrap" title={formatDateTime(s.last_success_at)}>
                           {relativeTime(s.last_success_at)}
