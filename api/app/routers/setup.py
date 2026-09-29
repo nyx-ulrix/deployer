@@ -8,7 +8,7 @@ from app.deps import DbSession
 from app.errors import conflict
 from app.models import User
 from app.services import audit, tokens
-from app.services.instance_settings import allow_signup, oauth_app, public_url
+from app.services.instance_settings import allow_signup, oauth_app, public_url, reachable_elsewhere
 from app.services.passwords import Email, hash_password, validate_password
 
 router = APIRouter(tags=["setup"])
@@ -24,6 +24,7 @@ def setup_status(db: DbSession) -> dict:
         "initialized": is_initialized(db),
         "version": __version__,
         "public_url": public_url(db),
+        "reachable_elsewhere": reachable_elsewhere(db),
         "providers": {p: oauth_app(db, p).configured for p in ("google", "github")},
         "allow_signup": allow_signup(db),
         "device_mode": _device_mode(db),

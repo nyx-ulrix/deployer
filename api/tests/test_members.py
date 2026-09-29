@@ -128,6 +128,28 @@ def test_invite_lifecycle(client, team, auth_headers, make_user, db):
     assert db.query(AuditLog).filter_by(action="invite.accept").count() == 1
 
 
+@pytest.mark.parametrize(
+    ("url", "reachable"),
+    [
+        (None, False),
+        ("http://127.0.0.1:8080", False),
+        ("http://deployer.localhost", False),
+        ("http://192.168.1.20:8080", True),
+        ("https://deployer.example.com", True),
+    ],
+)
+def test_invite_says_whether_the_link_opens_elsewhere(client, team, auth_headers, set_setting, url, reachable):
+    """A-020: a localhost public URL makes invite links (and API snippets) that only open on this PC."""
+    project, users = team
+    if url:
+        set_setting("public_url", url)
+    resp = client.post(
+        f"/v1/projects/{project.id}/invites", json={"role": "viewer"}, headers=auth_headers(users["owner"])
+    )
+    assert resp.json()["reachable_elsewhere"] is reachable
+    assert client.get("/v1/setup/status").json()["reachable_elsewhere"] is reachable
+
+
 def test_invite_email_lock(client, team, auth_headers, make_user):
     project, users = team
     resp = client.post(

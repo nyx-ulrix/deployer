@@ -126,6 +126,8 @@ export type SetupStatus = {
   initialized: boolean;
   version: string;
   public_url: string;
+  /** False while public_url is localhost: links built from it only open on this PC. */
+  reachable_elsewhere?: boolean;
   providers: { google: boolean; github: boolean };
   allow_signup: boolean;
   /** docs/DEVICES.md: "host" when this installation is attached to another Deployer. */
@@ -203,7 +205,8 @@ export type ProjectsImportResponse = { ok: true; projects: Project[]; summary: I
 
 export type InviteRole = Exclude<Role, "owner">;
 export type InviteCreate = { email?: string; role: InviteRole; expires_in_days?: number };
-export type InviteCreateResponse = { invite: Invite; invite_url: string };
+/** reachable_elsewhere is false while the public URL is localhost: the link only opens on this PC. */
+export type InviteCreateResponse = { invite: Invite; invite_url: string; reachable_elsewhere?: boolean };
 export type InvitePreview = {
   project_name: string;
   role: Role;

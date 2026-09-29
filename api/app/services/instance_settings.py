@@ -3,6 +3,7 @@
 import json
 import re
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
 
@@ -77,6 +78,12 @@ def set_value(db: Session, key: str, value) -> None:
 
 def public_url(db: Session) -> str:
     return str(get_value(db, "public_url") or get_settings().public_url).rstrip("/")
+
+
+def reachable_elsewhere(db: Session) -> bool:
+    """False while public_url is localhost: links built from it (invites, API snippets) only open on this PC."""
+    host = (urlsplit(public_url(db)).hostname or "localhost").lower()
+    return host not in ("localhost", "127.0.0.1", "::1") and not host.endswith(".localhost")
 
 
 @dataclass

@@ -19,6 +19,7 @@ import { useToast } from "../../components/ui/toast-context";
 import { formatDate, relativeTime } from "../../lib/format";
 import { downloadText } from "../query/csv";
 import { buildMcpSnippets, buildSnippets, SNIPPET_LANGS, type SnippetLang } from "./apiSnippets";
+import { LocalOnlyAlert } from "../remote-access/LocalOnlyAlert";
 import { useProjectContext } from "./project-context";
 
 const ROLE_HELP: Record<ApiKeyRole, string> = {
@@ -284,6 +285,11 @@ function UsageDialog({
           )}
         </div>
         {!secret && !apiKey.revealable && <p className="text-xs text-muted">{NOT_REVEALABLE}</p>}
+        {setup.data?.reachable_elsewhere === false && (
+          <LocalOnlyAlert>
+            These URLs (and downloaded config files) only work on this PC, not from other devices or your app's users.
+          </LocalOnlyAlert>
+        )}
 
         <Tabs<UsageTab> items={USAGE_TABS} value={lang} onChange={setLang} />
 

@@ -78,7 +78,7 @@ type ApiKey = { id: string; name: string; prefix: string; role: "anon" | "servic
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/health` | – | `{status:"ok", version, services:{mariadb:bool, mongodb:bool, redis:bool}}` |
-| GET | `/setup/status` | – | `{initialized:boolean, version, public_url, providers:{google:boolean, github:boolean}, allow_signup:boolean, device_mode:"standalone"\|"host", managed_mongodb:boolean}` (`device_mode`: [DEVICES.md](DEVICES.md); `managed_mongodb` is false on CPUs without AVX, and the dashboard then unticks MongoDB in "New project") |
+| GET | `/setup/status` | – | `{initialized:boolean, version, public_url, reachable_elsewhere:boolean, providers:{google:boolean, github:boolean}, allow_signup:boolean, device_mode:"standalone"\|"host", managed_mongodb:boolean}` (`device_mode`: [DEVICES.md](DEVICES.md); `managed_mongodb` is false on CPUs without AVX, and the dashboard then unticks MongoDB in "New project") |
 | POST | `/setup/owner` | `{email, password, display_name?}` | `AuthResponse` (+ refresh cookie). 409 `already_initialized` if any user exists |
 | POST | `/setup/import` | multipart: `file`, `passphrase` | `{ok:true, summary:{users, projects, data_sources, rows, documents}}`. Only while not initialized; `scope` must be `instance`. 400 `bad_passphrase` / `invalid_export` |
 
@@ -197,12 +197,14 @@ type Alert = { id: string; alert: string; severity: "warning" | "critical"; mess
 | PATCH | `/projects/{id}/members/{user_id}` | admin+ | `{role?, can_cohost?}` (role not `owner`; can't change the owner's role; only the owner changes the owner's `can_cohost`; `can_cohost` needs developer+, 422 otherwise, and is cleared on demotion — [COHOSTING.md](COHOSTING.md)) | `Member` |
 | DELETE | `/projects/{id}/members/{user_id}` | admin+ or self | – | `{ok:true}` (owner can't be removed) |
 | GET | `/projects/{id}/invites` | admin+ | – | `Invite[]` (pending only) |
-| POST | `/projects/{id}/invites` | admin+ | `{email?, role, expires_in_days?:1..30 (default 7)}` | `{invite:Invite, invite_url}` — token only returned here |
+| POST | `/projects/{id}/invites` | admin+ | `{email?, role, expires_in_days?:1..30 (default 7)}` | `{invite:Invite, invite_url, reachable_elsewhere:boolean}` — token only returned here |
 | DELETE | `/projects/{id}/invites/{invite_id}` | admin+ | – | `{ok:true}` |
 | GET | `/invites/{token}` | – | – | `{project_name, role, invited_by_name, email, expires_at}`; 404 if invalid/expired/used |
 | POST | `/invites/{token}/accept` | bearer | – | `{project_id}`; 403 `invite_email_mismatch` |
 
-`invite_url` = `{public_url}/invite/{token}`.
+`invite_url` = `{public_url}/invite/{token}`. `reachable_elsewhere` is false while `public_url` is
+localhost (`localhost`, `127.0.0.1`, `::1`, `*.localhost`): the link then only opens on the Deployer PC, and the
+dashboard says to turn on remote access first (the API-key snippets warn the same way).
 
 ## API keys
 

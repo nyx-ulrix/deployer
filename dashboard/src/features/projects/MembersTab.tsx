@@ -18,6 +18,7 @@ import { Alert, Card, EmptyState, ErrorState } from "../../components/ui/States"
 import { useToast } from "../../components/ui/toast-context";
 import { formatDate, formatDateTime } from "../../lib/format";
 import { hasRole, ROLE_DESCRIPTIONS, ROLE_LABELS } from "../../lib/roles";
+import { LocalOnlyAlert } from "../remote-access/LocalOnlyAlert";
 import { useProjectContext } from "./project-context";
 
 const ASSIGNABLE: InviteRole[] = ["admin", "developer", "viewer"];
@@ -283,12 +284,14 @@ function CreateInviteDialog({ projectId, onClose }: { projectId: string; onClose
   const [role, setRole] = useState<InviteRole>("developer");
   const [days, setDays] = useState(7);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
+  const [localOnly, setLocalOnly] = useState(false);
 
   const create = useMutation({
     mutationFn: () =>
       api.invites.create(projectId, { email: email.trim() || undefined, role, expires_in_days: days }),
     onSuccess: (res) => {
       setInviteUrl(res.invite_url);
+      setLocalOnly(res.reachable_elsewhere === false);
       queryClient.setQueryData<Invite[]>(qk.invites(projectId), (list) => (list ? [res.invite, ...list] : [res.invite]));
     },
   });
@@ -312,6 +315,7 @@ function CreateInviteDialog({ projectId, onClose }: { projectId: string; onClose
       >
         <div className="space-y-3">
           <Alert tone="warning">Copy this link now — it won't be shown again. Send it to the person you're inviting.</Alert>
+          {localOnly && <LocalOnlyAlert>This link only works on this PC.</LocalOnlyAlert>}
           <CopyField label="Invite link" value={inviteUrl} />
           <p className="text-xs text-muted">
             {email.trim() ? `Only ${email.trim()} can accept it. ` : "Anyone with this link can join. "}

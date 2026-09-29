@@ -9,6 +9,7 @@ from app.errors import ApiError, forbidden, not_found, validation_error
 from app.models import Project, ProjectInvite, ProjectMember, User, role_rank, utcnow
 from app.serializers import iso
 from app.services import audit, cohosting, invites
+from app.services.instance_settings import reachable_elsewhere
 from app.services.passwords import Email
 
 router = APIRouter(tags=["members"])
@@ -186,7 +187,11 @@ def create_invite(body: InviteCreate, request: Request, access: Admin, db: DbSes
         email=invite.email,
     )
     db.commit()
-    return {"invite": invites.invite_out(invite), "invite_url": invites.invite_url(db, token)}
+    return {
+        "invite": invites.invite_out(invite),
+        "invite_url": invites.invite_url(db, token),
+        "reachable_elsewhere": reachable_elsewhere(db),
+    }
 
 
 @router.delete("/projects/{project_id}/invites/{invite_id}")
