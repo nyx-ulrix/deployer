@@ -293,7 +293,8 @@ Files live in `%ProgramData%\Deployer`: `docker-compose.yml`, `Caddyfile`, `mong
 (sidecar files), `.env` (secrets, readable only by Administrators, SYSTEM and you), `runtime.json`,
 `installer\`, `src\` (image sources when built locally), `backups\`, `logs\` and, for the WSL
 runtime, the distro disk in `wsl\`. **Keep a copy of `.env`** - its `MASTER_KEY` decrypts secrets
-stored in the database and the encrypted backup versions.
+stored in the database and the encrypted backup versions. To restore the daily platform snapshot
+(users, projects, settings), see [docs/BACKUPS.md](docs/BACKUPS.md#restoring-platform-data).
 
 ## Troubleshooting
 

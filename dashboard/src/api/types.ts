@@ -633,7 +633,7 @@ export type InstanceBackupSource = {
 
 export type InstanceBackups = {
   sources: InstanceBackupSource[];
-  platform: { last_success_at: string | null; last_error: string | null };
+  platform: { last_success_at: string | null; last_error: string | null; latest_backup_id: string | null };
   storage: { location: string; device_id: string | null; used_bytes: number | null; free_bytes: number | null }[];
 };
 

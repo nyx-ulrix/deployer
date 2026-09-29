@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, DatabaseBackup, HardDrive, Server } from "lucide-react";
-import { errorMessage } from "../../api/client";
+import { AlertTriangle, CheckCircle2, DatabaseBackup, Download, HardDrive, Server } from "lucide-react";
+import { errorMessage, saveBlob } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import { useDevices } from "../../api/hooks";
 import type { InstanceBackupSource } from "../../api/types";
@@ -52,6 +52,14 @@ export function InstanceBackupsPage() {
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't start platform backup"),
   });
+  const platformDownload = useMutation({
+    mutationFn: api.instanceBackups.platformDownload,
+    onSuccess: (file) => {
+      saveBlob(file);
+      toast.success(`Downloaded ${file.filename}.`);
+    },
+    onError: (e) => toast.error(errorMessage(e), "Couldn't download platform backup"),
+  });
 
   const sources = data.data?.sources ?? [];
   const sorted = [...sources].sort((a, b) => {
@@ -59,6 +67,7 @@ export function InstanceBackupsPage() {
     return order[health(a)] - order[health(b)] || a.project_name.localeCompare(b.project_name);
   });
   const unhealthy = sources.filter((s) => health(s) !== "ok").length;
+  const latestPlatform = data.data?.platform.latest_backup_id;
 
   return (
     <div className="mx-auto w-full max-w-6xl">
@@ -97,6 +106,21 @@ export function InstanceBackupsPage() {
               label="Platform data (users, projects, settings)"
               value={data.data.platform.last_success_at ? `Backed up ${relativeTime(data.data.platform.last_success_at)}` : "Never backed up"}
               detail={data.data.platform.last_error ?? undefined}
+              action={
+                latestPlatform && (
+                  <>
+                    <p className="mb-2 text-xs text-muted">Kept on this PC only. Download a copy to keep somewhere else.</p>
+                    <Button
+                      size="sm"
+                      icon={<Download className="size-4" />}
+                      loading={platformDownload.isPending}
+                      onClick={() => platformDownload.mutate(latestPlatform)}
+                    >
+                      Download latest
+                    </Button>
+                  </>
+                )
+              }
             />
             <SummaryTile
               icon={<HardDrive className="size-4" />}
@@ -208,12 +232,14 @@ function SummaryTile({
   label,
   value,
   detail,
+  action,
   tone,
 }: {
   icon: ReactNode;
   label: string;
   value: string;
   detail?: string;
+  action?: ReactNode;
   tone: "success" | "danger" | "neutral";
 }) {
   return (
@@ -231,6 +257,7 @@ function SummaryTile({
       <p className="text-xs text-muted">{label}</p>
       <p className="font-semibold">{value}</p>
       {detail && <p className="mt-1 text-xs break-words text-danger">{detail}</p>}
+      {action && <div className="mt-2">{action}</div>}
     </div>
   );
 }

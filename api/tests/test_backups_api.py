@@ -731,13 +731,55 @@ def test_instance_health_and_platform_snapshot(client, env, db, owner_headers):
     [src] = health["sources"]
     assert src["data_source_id"] == env["ds"].id and src["project_name"] == "Shop" and src["last_success_at"]
     assert src["local_bytes"] > 0 and src["copy_bytes"] == 0 and src["last_error"] is None
-    assert health["platform"] == {"last_success_at": None, "last_error": None}
+    assert health["platform"] == {"last_success_at": None, "last_error": None, "latest_backup_id": None}
     assert health["storage"][0]["location"] == "primary" and health["storage"][0]["used_bytes"] > 0
     resp = client.post("/v1/instance/backups/platform", headers=owner_headers)
     assert resp.status_code == 200 and resp.json()["job"]["type"] == "backup.platform_snapshot"
     jobs.run_queued()
     health = client.get("/v1/instance/backups", headers=owner_headers).json()
     assert health["platform"]["last_success_at"]
+
+
+def test_platform_snapshot_download_and_restore(client, env, db, owner_headers, monkeypatch, capsys):
+    """A-037: platform snapshots can be downloaded by the instance owner and restored from the CLI."""
+    from app import cli
+
+    assert cli.main(["platform", "restore", "--yes"]) == 2 and "no platform snapshot" in capsys.readouterr().out
+    client.post("/v1/instance/backups/platform", headers=owner_headers)
+    jobs.run_queued()
+    snap_id = client.get("/v1/instance/backups", headers=owner_headers).json()["platform"]["latest_backup_id"]
+    assert snap_id
+
+    url = f"/v1/instance/backups/platform/{snap_id}/download"
+    assert client.get(url, headers=env["owner"]).status_code == 403  # project owner, not instance owner
+    resp = client.get(url, headers=owner_headers)
+    assert resp.status_code == 200 and 'filename="deployer-platform-' in resp.headers["content-disposition"]
+    assert gzip.GzipFile(fileobj=io.BytesIO(resp.content)).read().startswith(b"-- dump of deployer")
+    source_backup = _snapshot(client, env)
+    assert client.get(f"/v1/instance/backups/platform/{source_backup}/download", headers=owner_headers).status_code == (
+        404
+    )
+
+    fed = []
+
+    def fake_client(database, feed):
+        fed.append(database)
+        feed(lambda chunk: fed.append(chunk))
+
+    monkeypatch.setattr(backup_engine, "_run_mariadb_client", fake_client)
+    assert cli.main(["platform", "restore"]) == 2 and not fed  # needs --yes
+    capsys.readouterr()
+    assert cli.main(["platform", "restore", "--yes"]) == 0
+    out = capsys.readouterr().out
+    assert fed[0] == "deployer" and b"".join(fed[2:]).startswith(b"-- dump of deployer")
+    db.expire_all()
+    safety = db.query(Backup).filter_by(scope="platform", trigger="pre_restore").one()
+    assert safety.id in out and safety.status == "succeeded" and safety.label.startswith("Before restoring")
+    assert backups.local_copy(db, "backup", safety.id, None) is not None
+    assert env["fake"].artifact_exists(backups.snapshot_ref(safety))
+    assert cli.main(["platform", "restore", "--yes", "--backup-id", source_backup]) == 2
+    assert "not found" in capsys.readouterr().out
+    assert cli.main(["platform", "list"]) == 0 and safety.id in capsys.readouterr().out
 
 
 def test_copy_hook(client, env, db, monkeypatch):

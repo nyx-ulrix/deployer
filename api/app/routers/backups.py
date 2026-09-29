@@ -227,14 +227,7 @@ def download_backup(source_id: str, backup_id: str, access: Viewer, db: DbSessio
     backup = backups.get_backup(db, ds, backup_id)
     if backup.status != "succeeded":
         raise ApiError(409, "backup_not_ready", "This backup did not succeed")
-    copy = backups.local_copy(db, "backup", backup.id, None) or backups.any_copy(db, "backup", backup.id, None)
-    if copy is None:
-        raise ApiError(409, "artifact_missing", "No stored copy of this backup is available")
-    try:
-        stream = executors.executor_for(copy.device_id).open_artifact(copy.ref)
-    except (OSError, NotImplementedError, executors.DeviceExecutorUnavailable) as exc:
-        raise ApiError(409, "artifact_unavailable", f"The backup file can't be read right now: {exc}") from exc
-    filename = _download_name(ds.deleted_name or ds.name, backup)
+    stream = _open_backup(db, backup)
     audit.record(
         db,
         "backup.download",
@@ -245,7 +238,20 @@ def download_backup(source_id: str, backup_id: str, access: Viewer, db: DbSessio
         backup_id=backup.id,
     )
     db.commit()
+    return _decrypted_download(stream, _download_name(ds.deleted_name or ds.name, backup))
 
+
+def _open_backup(db: DbSession, backup: Backup):
+    copy = backups.local_copy(db, "backup", backup.id, None) or backups.any_copy(db, "backup", backup.id, None)
+    if copy is None:
+        raise ApiError(409, "artifact_missing", "No stored copy of this backup is available")
+    try:
+        return executors.executor_for(copy.device_id).open_artifact(copy.ref)
+    except (OSError, NotImplementedError, executors.DeviceExecutorUnavailable) as exc:
+        raise ApiError(409, "artifact_unavailable", f"The backup file can't be read right now: {exc}") from exc
+
+
+def _decrypted_download(stream, filename: str) -> StreamingResponse:
     def body() -> Iterator[bytes]:
         try:
             yield from iter_decrypt(stream)
@@ -375,3 +381,13 @@ def platform_snapshot(user: InstanceOwner, db: DbSession, request: Request) -> d
     db.commit()
     jobs.dispatch(job.id)
     return {"job": jobs.job_out(job)}
+
+
+@router.get("/instance/backups/platform/{backup_id}/download")
+def download_platform_snapshot(backup_id: str, user: InstanceOwner, db: DbSession, request: Request):
+    """Decrypted `.sql.gz` of the platform database, to keep a copy off this PC (restore: docs/BACKUPS.md)."""
+    backup = backups.get_platform_backup(db, backup_id)
+    stream = _open_backup(db, backup)
+    audit.record(db, "instance.platform_download", request=request, user_id=user.id, backup_id=backup.id)
+    db.commit()
+    return _decrypted_download(stream, _download_name("deployer-platform", backup))

@@ -23,6 +23,7 @@ import importlib
 import logging
 import re
 from collections.abc import Callable, Iterable
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -1493,6 +1494,96 @@ def _job_platform_snapshot(ctx: jobs.JobContext) -> dict:
         session.close()
 
 
+def platform_backups(db: Session) -> list[Backup]:
+    return list(
+        db.scalars(
+            select(Backup)
+            .where(Backup.scope == "platform", Backup.status == "succeeded")
+            .order_by(Backup.started_at.desc())
+        )
+    )
+
+
+def get_platform_backup(db: Session, backup_id: str) -> Backup:
+    backup = db.get(Backup, backup_id)
+    if backup is None or backup.scope != "platform":
+        raise not_found("Platform snapshot")
+    if backup.status != "succeeded":
+        raise ApiError(409, "backup_not_ready", "This snapshot did not succeed")
+    return backup
+
+
+def restore_platform(session_factory: Callable[[], Session], backup_id: str | None = None) -> dict:
+    """Loads a platform snapshot back into the platform database (`python -m app.cli platform restore`).
+
+    The current platform data is snapshotted first and that version is recorded in the restored
+    database, so the restore can be undone the same way. Anything the platform recorded after the chosen
+    snapshot (users, projects, versions) is forgotten; the managed databases themselves are not touched.
+    """
+    from app.config import get_settings
+    from app.services import backup_engine
+
+    session = session_factory()
+    try:
+        if backup_id:
+            backup = get_platform_backup(session, backup_id)
+        else:
+            backup = next(iter(platform_backups(session)), None)
+            if backup is None:
+                raise ApiError(409, "no_backup", "There is no platform snapshot to restore")
+        path = executors.local_executor().artifact_path(snapshot_ref(backup))
+        restored = {"backup_id": backup.id, "started_at": iso(backup.started_at)}
+    finally:
+        session.close()
+    if not path.is_file():
+        raise ApiError(409, "artifact_missing", "The snapshot file is missing from the backup store")
+
+    safety = Backup(
+        id=new_id(),
+        scope="platform",
+        engine="mariadb",
+        trigger="pre_restore",
+        status="succeeded",
+        started_at=utcnow(),
+        label=f"Before restoring the {restored['started_at']} snapshot",
+    )
+    result = executors.local_executor().platform_snapshot(artifact_ref=snapshot_ref(safety))
+    safety.finished_at = utcnow()
+    safety.size_bytes, safety.sha256 = int(result.get("size_bytes") or 0), result.get("sha256")
+    safety.consistent_point, safety.row_counts = result.get("consistent_point"), result.get("row_counts")
+
+    def record_safety() -> None:
+        # The load replaced the backups table, so the safety version is added to the restored data.
+        s = session_factory()
+        try:
+            s.add(safety)
+            s.add(
+                BackupCopy(
+                    artifact_type="backup",
+                    artifact_id=safety.id,
+                    location="local",
+                    device_id=None,
+                    ref=snapshot_ref(safety),
+                    size_bytes=safety.size_bytes,
+                    sha256=safety.sha256,
+                    status="ok",
+                    verified_at=utcnow(),
+                )
+            )
+            s.commit()
+        finally:
+            s.close()
+
+    try:
+        backup_engine._load_dump(path, get_settings().mariadb_database, source=None, definer_user=None)
+    except BaseException:
+        with suppress(Exception):
+            record_safety()
+        raise
+    record_safety()
+    return {"restored": restored, "safety_backup_id": safety.id}
+
+
 # =============================================================================================
 # soft delete / recently deleted
 # =============================================================================================
@@ -1904,9 +1995,12 @@ def instance_health(db: Session) -> dict:
                 "copy_bytes": copy_bytes,
             }
         )
-    platform_ok = db.scalar(
-        select(func.max(Backup.finished_at)).where(Backup.scope == "platform", Backup.status == "succeeded")
+    platform_last = db.scalar(
+        select(Backup)
+        .where(Backup.scope == "platform", Backup.status == "succeeded")
+        .order_by(Backup.finished_at.desc())
     )
+    platform_ok = platform_last.finished_at if platform_last else None
     platform_fail = db.scalar(
         select(Backup).where(Backup.scope == "platform", Backup.status == "failed").order_by(Backup.started_at.desc())
     )
@@ -1940,7 +2034,11 @@ def instance_health(db: Session) -> dict:
         )
     return {
         "sources": out_sources,
-        "platform": {"last_success_at": iso(platform_ok), "last_error": platform_error},
+        "platform": {
+            "last_success_at": iso(platform_ok),
+            "last_error": platform_error,
+            "latest_backup_id": platform_last.id if platform_last else None,
+        },
         "storage": storage,
     }
 

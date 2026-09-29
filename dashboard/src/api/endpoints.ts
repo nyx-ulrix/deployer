@@ -297,6 +297,8 @@ export const api = {
   instanceBackups: {
     get: () => client.get<InstanceBackups>("/instance/backups"),
     platformNow: () => client.post<JobResponse>("/instance/backups/platform"),
+    platformDownload: (backupId: string) =>
+      client.download("GET", `/instance/backups/platform/${e(backupId)}/download`, "deployer-platform.sql.gz"),
   },
 
   monitoring: {

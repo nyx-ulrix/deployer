@@ -6,6 +6,8 @@
     python -m app.cli oauth set --provider google|github   # JSON {"client_id", "client_secret"} on stdin
     python -m app.cli oauth clear --provider google|github
     python -m app.cli user reset-password [--email E]  # JSON {"password"} on stdin; no --email = the owner
+    python -m app.cli platform list                # platform snapshots, newest first (JSON)
+    python -m app.cli platform restore --yes [--backup-id ID]  # default: the newest snapshot
 
 `device detach` refuses while this device still hosts databases unless `--force` is given. Forced
 detach keeps the hosted databases and their credentials on this machine (nothing is dropped); the
@@ -14,6 +16,9 @@ main Deployer will show the device as offline until its owner removes it there.
 `user reset-password` is the forgotten-password recovery: only someone with access to this PC can run
 it. It signs that account out everywhere and clears the sign-in rate limits (a locked-out user can sign
 in at once).
+
+`platform restore` loads a daily platform snapshot (users, projects, settings) back into the platform
+database after snapshotting the current data first (docs/BACKUPS.md "Restoring platform data").
 """
 
 from __future__ import annotations
@@ -27,7 +32,8 @@ from sqlalchemy import func, select
 from app.db import get_sessionmaker
 from app.errors import ApiError
 from app.models import User
-from app.services import audit, device_agent, device_host, instance_settings, rate_limit, tokens
+from app.serializers import iso
+from app.services import audit, backups, device_agent, device_host, instance_settings, rate_limit, tokens
 from app.services.instance_settings import validate_oauth_value
 from app.services.passwords import hash_password, normalize_email, validate_password
 
@@ -199,6 +205,38 @@ def _stored_secret(provider: str) -> bool:
         session.close()
 
 
+def _platform_list() -> int:
+    session = get_sessionmaker()()
+    try:
+        rows = [
+            {"id": b.id, "started_at": iso(b.started_at), "trigger": b.trigger, "size_bytes": b.size_bytes}
+            for b in backups.platform_backups(session)
+        ]
+    finally:
+        session.close()
+    print(json.dumps(rows, indent=2))
+    return 0
+
+
+def _platform_restore(backup_id: str | None, yes: bool) -> int:
+    if not yes:
+        print(
+            "This replaces all platform data (users, projects, settings) with a snapshot; anything changed since "
+            "is forgotten. The current data is snapshotted first. Run again with --yes to go ahead."
+        )
+        return 2
+    try:
+        out = backups.restore_platform(get_sessionmaker(), backup_id)
+    except ApiError as exc:
+        print(exc.message)
+        return 2
+    print(
+        f"Restored the platform snapshot from {out['restored']['started_at']}. The data from before is kept as "
+        f"snapshot {out['safety_backup_id']}. Restart Deployer now."
+    )
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m app.cli")
     sub = parser.add_subparsers(dest="group", required=True)
@@ -217,7 +255,17 @@ def main(argv: list[str] | None = None) -> int:
     user_sub = user.add_subparsers(dest="command", required=True)
     reset = user_sub.add_parser("reset-password", help='set a new password, read as JSON {"password"} from stdin')
     reset.add_argument("--email", help="the account to reset (default: the instance owner)")
+    platform = sub.add_parser("platform", help="platform data snapshots")
+    platform_sub = platform.add_subparsers(dest="command", required=True)
+    platform_sub.add_parser("list", help="list platform snapshots, newest first")
+    restore = platform_sub.add_parser(
+        "restore", help="load a platform snapshot back (snapshots the current data first)"
+    )
+    restore.add_argument("--backup-id", help="the snapshot to restore (default: the newest)")
+    restore.add_argument("--yes", action="store_true", help="confirm replacing the platform data")
     args = parser.parse_args(argv)
+    if args.group == "platform":
+        return _platform_list() if args.command == "list" else _platform_restore(args.backup_id, args.yes)
     if args.group == "user" and args.command == "reset-password":
         return _reset_password(args.email)
     if args.group == "device" and args.command == "status":

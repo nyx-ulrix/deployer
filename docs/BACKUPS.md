@@ -13,7 +13,7 @@ responsibility; the dashboard says so.
 | **Point-in-time recovery (PITR)** | MariaDB binary log (ROW format) archived every 5 min via `mariadb-binlog --read-from-remote-server --raw`; MongoDB oplog entries for `<db>.*` tailed every minute into segments. Restore = nearest snapshot before T + replay logs up to T. | On, 7-day window |
 | **Safety snapshots** | Taken automatically before: restore in place, dropping a table/collection from the dashboard, deleting a data source or project, moving a database to another device. | On |
 | **Deleted databases** | Deleting a data source/project keeps its final snapshot + logs for 30 days ("Recently deleted"). | 30 days |
-| **Platform metadata** | The main server's `deployer` database (users, projects, settings) is snapshotted daily with the same mechanism. | Daily, keep 30 |
+| **Platform metadata** | The main server's `deployer` database (users, projects, settings) is snapshotted daily with the same mechanism. The instance owner can download the latest one (*Settings → Backups → Download latest*); restore it with the CLI (see [Restoring platform data](#restoring-platform-data)). | Daily, keep 30 |
 | **Verification** | Weekly: restore the latest snapshot into a temporary database, compare table/collection row counts and checksums with the snapshot manifest, drop it, record `verified_at`. | Weekly |
 
 MongoDB PITR needs an oplog, so the managed MongoDB runs as a **single-node replica set** (`rs0`,
@@ -63,6 +63,28 @@ kept for the PITR window plus the age of the oldest snapshot needed to replay in
 
 Target can be a version (`backup_id`) or a timestamp (`point_in_time`, must be inside the recovery
 window returned by the API). Restores run as jobs with progress.
+
+## Restoring platform data
+
+Platform snapshots are for a damaged or wrongly changed platform database on **this** PC: they sit
+in the same `backups` volume and are encrypted with a key derived from `.env`'s `MASTER_KEY`. To move
+to another PC or survive a broken disk, use the whole-instance export instead (*Settings → Export &
+import → Whole instance*, ARCHITECTURE.md), and
+keep a downloaded platform snapshot (a plain `.sql.gz` of the `deployer` database) somewhere else.
+
+Restore one from a terminal on the Deployer PC:
+
+```powershell
+deployer compose -- exec -T api python -m app.cli platform list        # snapshots, newest first
+deployer compose -- stop worker
+deployer compose -- exec -T api python -m app.cli platform restore --yes   # add --backup-id <id> for an older one
+deployer restart
+```
+
+The restore snapshots the current platform data first and keeps it as a version (trigger
+`pre_restore`), so it can be undone with `platform restore --yes --backup-id <that id>`. Everything the
+platform recorded after the chosen snapshot is forgotten: users, projects, settings and database
+versions made since. The managed databases themselves are not changed.
 
 ## Jobs
 
@@ -116,8 +138,9 @@ All under `/v1/projects/{project_id}/data-sources/{sid}` unless noted.
 | POST | `/v1/projects/{project_id}/jobs/{job_id}/cancel` | admin+ | – | `Job` |
 | GET | `/v1/projects/{project_id}/deleted-sources` | admin+ | – | `(DataSource & {deleted_at, purge_at})[]` |
 | POST | `/v1/projects/{project_id}/deleted-sources/{sid}/restore` | admin+ | `{name?}` | `{job: Job}` |
-| GET | `/v1/instance/backups` | instance owner | – | `{sources:[{data_source_id, project_id, project_name, name, engine, device_id, last_success_at, last_failure_at, last_error, pitr_latest, local_bytes, copy_bytes}], platform:{last_success_at, last_error}, storage:[{location, device_id, used_bytes, free_bytes}]}` |
+| GET | `/v1/instance/backups` | instance owner | – | `{sources:[{data_source_id, project_id, project_name, name, engine, device_id, last_success_at, last_failure_at, last_error, pitr_latest, local_bytes, copy_bytes}], platform:{last_success_at, last_error, latest_backup_id}, storage:[{location, device_id, used_bytes, free_bytes}]}` |
 | POST | `/v1/instance/backups/platform` | instance owner | – | `{job: Job}` (platform snapshot now) |
+| GET | `/v1/instance/backups/platform/{backup_id}/download` | instance owner | – | file (decrypted `.sql.gz` of the platform database) |
 
 ```ts
 type BackupPolicy = {
