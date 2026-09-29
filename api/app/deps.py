@@ -91,6 +91,10 @@ class ProjectAccess:
     def api_key_id(self) -> str | None:
         return self.api_key.id if self.api_key else None
 
+    @property
+    def is_anon_key(self) -> bool:
+        return self.api_key is not None and self.api_key.role == "anon"
+
 
 API_KEY_PREFIX = "dpl_"
 API_KEY_ROLES = {"anon": "viewer", "service": "developer"}

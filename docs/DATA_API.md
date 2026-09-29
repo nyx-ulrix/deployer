@@ -6,8 +6,8 @@ Deployer's REST API without a user login. Keys are created by project admins in 
 
 | Role | Acts as | Use it for |
 |---|---|---|
-| `anon` | viewer: read rows/documents/schema of **every** table and collection, **read-only** queries | read-only scripts, dashboards and agents you trust; public clients only if all the project's data is public |
-| `service` | developer: everything `anon` can plus insert/update/delete and write queries | servers, cron jobs, backends |
+| `anon` | viewer: read rows/documents/schema of **every** table and collection (no query endpoint) | read-only scripts, dashboards and agents you trust; public clients only if all the project's data is public |
+| `service` | developer: everything `anon` can plus insert/update/delete and queries (read and write) | servers, cron jobs, backends |
 
 **Never ship a `service` key to a browser or a mobile app.** Anyone who can open the app can extract it.
 
@@ -166,8 +166,10 @@ s.delete(f"{docs}/{doc_id}")
 
 `POST /projects/{pid}/data-sources/{sid}/query` with `{"query": "...", "max_rows": 500, "timeout_seconds": 30}`
 (`max_rows` 1..5000, `timeout_seconds` 1..120). SQL sources take an SQL script (several statements
-allowed); MongoDB sources take `mongosh` code with `db` bound to the database. `anon` keys may only run
-read-only statements (`403 read_only_role` otherwise). Full response formats: [QUERY_CONSOLE.md](QUERY_CONSOLE.md).
+allowed); MongoDB sources take `mongosh` code with `db` bound to the database. Queries need a `service` key:
+an `anon` key gets `403 forbidden` here, because it may sit in a public client and each run can hold one of a
+few query slots for up to 120 s; anon keys read through the rows/documents endpoints above.
+Full response formats: [QUERY_CONSOLE.md](QUERY_CONSOLE.md).
 
 SQL: `{"kind": "sql", "results": [{"statement": "...", "type": "rows", "columns": [...], "rows": [[...]], "row_count": n, "truncated": false}, ...]}`
 — `rows` are arrays aligned with `columns`; `type` is `count` (with `affected_rows`), `empty` or `error` for other statements.
@@ -192,7 +194,7 @@ print(res["results"][0]["rows"])   # [[42]]
 ```
 
 Every key-driven run is kept in the project's query log (visible to admins in the dashboard) with
-`layout = "api"`.
+`layout = "api"`; the log keeps the first 20 000 characters of each query.
 
 ## Schema
 
@@ -214,8 +216,7 @@ Every error is `{"error": {"code": "...", "message": "...", "details": {}}}`:
 | 401 | `unauthorized` | missing header, or the key does not exist |
 | 401 | `api_key_revoked` | the key was revoked; switch to a new key |
 | 401 | `api_key_not_allowed` | a key was used outside the data, query, schema and MCP endpoints |
-| 403 | `forbidden` | an `anon` key on a write endpoint |
-| 403 | `read_only_role` | an `anon` key ran a query that writes |
+| 403 | `forbidden` | an `anon` key on a write endpoint or the query endpoint |
 | 403 | `shell_code_refused` | MongoDB shell code named a Node.js escape hatch (`require`, `process`, ...; any key) |
 | 404 | `not_found` | wrong project id for this key, unknown data source, table or collection |
 | 422 | `validation_error` | malformed body or query parameters (`details.errors` says which) |

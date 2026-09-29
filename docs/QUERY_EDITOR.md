@@ -8,12 +8,13 @@ Supabase-style SQL editor that works for both SQL and NoSQL data sources, with *
 
 | Table | Columns |
 |---|---|
-| `query_runs` | `id`, `project_id` (FK cascade), `data_source_id` (String(36), no FK: keep after source deletion), `source_name`, `kind` (`sql`/`nosql`), `engine`, `user_id` (String(36)), `user_email` (snapshot), `query_text` (Text, full text as sent, max 200 000 chars), `status` (`ok`/`error`/`timeout`/`refused`), `statements` (int), `rows` (int, rows returned or documents), `affected_rows` (int, nullable), `duration_ms` (int), `error_message` (Text, nullable, redacted), `read_only` (bool), `layout` (`terminal`/`editor`/`api`), `created_at` (indexed) |
+| `query_runs` | `id`, `project_id` (FK cascade), `data_source_id` (String(36), no FK: keep after source deletion), `source_name`, `kind` (`sql`/`nosql`), `engine`, `user_id` (String(36)), `user_email` (snapshot), `query_text` (Text, the first 20 000 chars as sent; requests allow 200 000), `status` (`ok`/`error`/`timeout`/`refused`), `statements` (int), `rows` (int, rows returned or documents), `affected_rows` (int, nullable), `duration_ms` (int), `error_message` (Text, nullable, redacted), `read_only` (bool), `layout` (`terminal`/`editor`/`api`), `created_at` (indexed) |
 | `saved_queries` | `id`, `project_id` (FK cascade), `data_source_id` (nullable, SET NULL), `owner_id` (FK users), `name` (120), `folder` (120, nullable), `query_text` (Text), `kind` (`sql`/`nosql`/`any`), `version` (int, current version number; migration `0004`), `created_at`, `updated_at` (indexed by project) |
 | `saved_query_versions` (migration `0004_saved_query_versions`) | `id`, `saved_query_id` (FK cascade), `version` (int, unique per saved query, indexed), `query_text` (Text), `author_id` (String(36), snapshot), `author_email` (snapshot), `message` (200, nullable), `created_at`. Append-only; `0004` backfills one version-1 row per existing saved query (author = owner, message "Imported from before version history"). |
 
 Retention: the worker prunes `query_runs` older than **90 days** and keeps at most **10 000 rows per
-project** (oldest first) — daily scheduler task `query_log.prune`.
+project** (oldest first) — daily scheduler task `query_log.prune`. Logging a run also trims its project
+back to 10 000 once it is 500 over, so a busy key can't grow the log for a day.
 
 ## API
 
@@ -21,7 +22,7 @@ All under `/v1/projects/{project_id}`.
 
 | Method | Path | Role | Body / Query | Response |
 |---|---|---|---|---|
-| POST | `/data-sources/{sid}/query` | viewer+ | as before, plus optional `layout: "terminal" \| "editor"` | as before, plus `run_id` (the log row id). **Every** call is logged — success, error, timeout and viewer refusals (`status: refused`, HTTP 403 still returned). |
+| POST | `/data-sources/{sid}/query` | viewer+ (API keys: service only) | as before, plus optional `layout: "terminal" \| "editor"` | as before, plus `run_id` (the log row id). **Every** call is logged — success, error, timeout and viewer refusals (`status: refused`, HTTP 403 still returned). |
 | GET | `/query-log?source_id=&user=me\|all&limit=50&before=<created_at>` | viewer+ (`user=all` needs admin+) | – | `{runs: QueryRun[], has_more}` newest first; `query_text` truncated to 2 000 chars in list responses |
 | GET | `/query-log/{run_id}` | own run: viewer+; others: admin+ | – | `QueryRun` (full text) |
 | DELETE | `/query-log?before=<iso>` | owner | – | `{deleted: n}` |

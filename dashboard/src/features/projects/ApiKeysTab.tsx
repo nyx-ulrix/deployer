@@ -305,8 +305,8 @@ function UsageDialog({
 
         {mcp ? (
           <p className="text-xs text-muted">
-            With an <span className="font-medium text-fg">anon</span> key the agent can only read; a{" "}
-            <span className="font-medium text-fg">service</span> key also lets it change data and deploy apps. Use
+            With an <span className="font-medium text-fg">anon</span> key the agent can only read rows and documents; a{" "}
+            <span className="font-medium text-fg">service</span> key also lets it run queries, change data and deploy apps. Use
             anon for read-only agents.{" "}
             <a href={MCP_DOCS_URL} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-accent hover:underline">
               <BookOpen className="size-3.5" /> Tools and limits → docs/MCP.md

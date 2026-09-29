@@ -397,7 +397,12 @@ def _check_args(schema: dict, args: Any) -> dict:
 
 
 def _visible(access: ProjectAccess) -> list[str]:
-    return [name for name, (role, *_) in TOOLS.items() if access.at_least(role)]
+    # run_query refuses anon keys (A-031), so they don't see it.
+    return [
+        name
+        for name, (role, *_) in TOOLS.items()
+        if access.at_least(role) and not (name == "run_query" and access.is_anon_key)
+    ]
 
 
 def _text_result(value: Any, *, is_error: bool = False) -> dict:

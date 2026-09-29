@@ -18,7 +18,9 @@ from app.services.sources import get_source
 router = APIRouter(tags=["query"])
 
 Viewer = Annotated[ProjectAccess, Depends(require_role("viewer"))]
-QueryRunner = Annotated[ProjectAccess, Depends(require_role("viewer", api_keys=True))]  # docs/DATA_API.md
+QueryRunner = Annotated[
+    ProjectAccess, Depends(require_role("viewer", api_keys=True))
+]  # service keys only, see run_query
 Owner = Annotated[ProjectAccess, Depends(require_role("owner"))]
 
 
@@ -38,6 +40,10 @@ def _naive_utc(value: datetime | None) -> datetime | None:
 
 @router.post("/projects/{project_id}/data-sources/{source_id}/query")
 def run_query(source_id: str, body: QueryRequest, access: QueryRunner, db: DbSession, request: Request) -> dict:
+    if access.is_anon_key:
+        # A-031: anon keys may sit in public clients; each run can hold a mongosh slot or pool
+        # connection for up to 120 s and log 200 000 chars, so the console is service-key only.
+        raise forbidden("Queries need a service key; anon keys can read through the rows/documents endpoints")
     ds = get_source(db, access.project.id, source_id)
     # Viewers may only run read-only queries; the service refuses anything else with 403 read_only_role.
     read_only = not access.at_least("developer")

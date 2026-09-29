@@ -1,7 +1,8 @@
 """Server-side query log (docs/QUERY_EDITOR.md): every console/editor run as a `query_runs` row.
 
-This is the only table that stores query text; audit logs keep counts only. Rows are insert-only
-and pruned by the worker (`prune`: older than RETENTION_DAYS, or beyond MAX_RUNS_PER_PROJECT).
+This is the only table that stores query text; audit logs keep counts only. Rows are insert-only,
+keep at most STORED_TEXT_LIMIT chars of text, and are pruned by the worker (`prune`: older than
+RETENTION_DAYS, or beyond MAX_RUNS_PER_PROJECT) and per project on insert (A-031).
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from app.serializers import iso
 RETENTION_DAYS = 90
 MAX_RUNS_PER_PROJECT = 10_000
 LIST_TEXT_LIMIT = 2_000
+STORED_TEXT_LIMIT = 20_000  # A-031: requests may carry 200 000 chars; the log keeps the head
+PRUNE_SLACK = 500  # record_run trims a project once it is this far over MAX_RUNS_PER_PROJECT
 
 
 def _outcome(result: dict | None, error: ApiError | None) -> tuple[str, int, int, int | None, str | None]:
@@ -64,6 +67,10 @@ def record_run(
 ) -> QueryRun:
     """Adds the log row for one run to the session. Caller commits."""
     status, statements, rows, affected, message = _outcome(result, error)
+    # The daily prune alone lets a busy project grow for a day; trim it here too (A-031).
+    count = db.scalar(select(func.count()).select_from(QueryRun).where(QueryRun.project_id == project_id))
+    if count > MAX_RUNS_PER_PROJECT + PRUNE_SLACK:
+        _trim_project(db, project_id)
     run = QueryRun(
         project_id=project_id,
         data_source_id=ds.id,
@@ -72,7 +79,7 @@ def record_run(
         engine=ds.engine,
         user_id=user.id,
         user_email=user.email,
-        query_text=query_text,
+        query_text=query_text[:STORED_TEXT_LIMIT],
         status=status,
         statements=statements,
         rows=rows,
@@ -152,15 +159,22 @@ def prune(db: Session, now: datetime | None = None) -> int:
         select(QueryRun.project_id).group_by(QueryRun.project_id).having(func.count() > MAX_RUNS_PER_PROJECT)
     ).scalars()
     for project_id in list(crowded):
-        # Ids are fetched first: MariaDB does not allow LIMIT/OFFSET inside an IN subquery.
-        stale = list(
-            db.scalars(
-                select(QueryRun.id)
-                .where(QueryRun.project_id == project_id)
-                .order_by(QueryRun.created_at.desc(), QueryRun.id.desc())
-                .offset(MAX_RUNS_PER_PROJECT)
-            )
+        deleted += _trim_project(db, project_id)
+    return deleted
+
+
+def _trim_project(db: Session, project_id: str) -> int:
+    """Deletes the project's runs beyond the newest MAX_RUNS_PER_PROJECT."""
+    # Ids are fetched first: MariaDB does not allow LIMIT/OFFSET inside an IN subquery.
+    stale = list(
+        db.scalars(
+            select(QueryRun.id)
+            .where(QueryRun.project_id == project_id)
+            .order_by(QueryRun.created_at.desc(), QueryRun.id.desc())
+            .offset(MAX_RUNS_PER_PROJECT)
         )
-        for i in range(0, len(stale), 1000):
-            deleted += db.execute(delete(QueryRun).where(QueryRun.id.in_(stale[i : i + 1000]))).rowcount
+    )
+    deleted = 0
+    for i in range(0, len(stale), 1000):
+        deleted += db.execute(delete(QueryRun).where(QueryRun.id.in_(stale[i : i + 1000]))).rowcount
     return deleted

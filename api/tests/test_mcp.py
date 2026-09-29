@@ -92,7 +92,7 @@ def test_tools_list_depends_on_role(env):
             assert tool["description"] and tool["inputSchema"]["type"] == "object"
         return {t["name"] for t in tools}
 
-    assert names(env["anon"]) == READ_TOOLS
+    assert names(env["anon"]) == READ_TOOLS - {"run_query"}  # A-031: queries need a service key
     assert names(env["service"]) == READ_TOOLS | WRITE_TOOLS | APP_TOOLS
     assert names(env["viewer"]) == READ_TOOLS  # JWT sessions work too, with the member's role
 
@@ -100,7 +100,9 @@ def test_tools_list_depends_on_role(env):
 def test_anon_cannot_write(env):
     out = env["rpc"](env["anon"], "tools/call", {"name": "insert_row", "arguments": {}})
     assert out["error"]["code"] == mcp.INVALID_PARAMS and "Unknown tool" in out["error"]["message"]
-    is_error, body = env["call"](env["anon"], "run_query", source_id=env["ds"].id, query="DELETE FROM items")
+    out = env["rpc"](env["anon"], "tools/call", {"name": "run_query", "arguments": {}})
+    assert out["error"]["code"] == mcp.INVALID_PARAMS and "Unknown tool" in out["error"]["message"]
+    is_error, body = env["call"](env["viewer"], "run_query", source_id=env["ds"].id, query="DELETE FROM items")
     assert is_error and body["error"]["code"] == "read_only_role"
 
 
@@ -128,7 +130,7 @@ def test_data_tools(env, db):
     is_error, missing = call(service, "delete_row", source_id=sid, table="items", pk={"id": 8})
     assert is_error and missing["error"]["code"] == "row_not_found"
 
-    _, result = call(env["anon"], "run_query", source_id=sid, query="SELECT COUNT(*) AS n FROM items")
+    _, result = call(service, "run_query", source_id=sid, query="SELECT COUNT(*) AS n FROM items")
     assert result["results"][0]["rows"] == [[7]] and result["run_id"]
     db.expire_all()
     runs = list(db.scalars(select(QueryRun)))
@@ -172,7 +174,7 @@ def test_document_tools(env, db, monkeypatch):
 
 def test_mongo_query_through_fake_shell(env, db, fake_mongosh):  # noqa: F811
     ds = add_source(db, env["project"], kind="nosql")
-    is_error, out = env["call"](env["anon"], "run_query", source_id=ds.id, query="db.items.find()", max_rows=2)
+    is_error, out = env["call"](env["service"], "run_query", source_id=ds.id, query="db.items.find()", max_rows=2)
     assert not is_error and out["kind"] == "nosql" and len(out["result_docs"]) == 2 and out["truncated"] is True
 
 
@@ -209,7 +211,7 @@ def test_truncation(env, sqlite_engine, monkeypatch):  # noqa: F811
             conn.exec_driver_sql("INSERT INTO items (id, name) VALUES (?, ?)", (i, f"item {i}"))
     _, page = env["call"](env["anon"], "list_rows", source_id=env["ds"].id, table="items", limit=500)
     assert len(page["rows"]) == mcp.MAX_ROWS and page["total"] == 299
-    _, result = env["call"](env["anon"], "run_query", source_id=env["ds"].id, query="SELECT * FROM items")
+    _, result = env["call"](env["service"], "run_query", source_id=env["ds"].id, query="SELECT * FROM items")
     assert len(result["results"][0]["rows"]) == mcp.MAX_ROWS and result["results"][0]["truncated"] is True
 
     monkeypatch.setattr(mcp, "MAX_TEXT", 300)
@@ -254,7 +256,7 @@ def test_malformed_requests(client, env):
     assert post(b"x" * (mcp.MAX_BODY + 1), 413) == mcp.INVALID_REQUEST
     assert env["rpc"](h, "resources/list")["error"]["code"] == mcp.METHOD_NOT_FOUND
     for args in ({}, {"source_id": 1, "query": "x"}, {"source_id": "s", "query": "x", "extra": 1}):
-        out = env["rpc"](h, "tools/call", {"name": "run_query", "arguments": args})
+        out = env["rpc"](env["service"], "tools/call", {"name": "run_query", "arguments": args})
         assert out["error"]["code"] == mcp.INVALID_PARAMS
     resp = client.post(
         url, json={"jsonrpc": "2.0", "id": 1, "method": "ping"}, headers={**h, "MCP-Protocol-Version": "1999-01-01"}

@@ -97,13 +97,20 @@ def test_keys_only_reach_data_routes(client, setup):
     assert schema.status_code == 200 and schema.json()["sources"][0]["source_id"] == setup["ds"].id
 
 
-def test_query_route_logs_api_layout_and_viewer_rule(client, db, setup):
-    key, anon = setup["make_key"]("anon")
-    ok = client.post(setup["query"], json={"query": "SELECT id FROM items", "layout": "editor"}, headers=anon)
+def test_query_route_refuses_anon_keys(client, db, setup):
+    """A-031: an anon key may be public, and each run can hold a query slot for up to 120 s and log
+    200 000 chars, so the query console is service-key only (humans keep the viewer rule)."""
+    _, anon = setup["make_key"]("anon")
+    refused = client.post(setup["query"], json={"query": "SELECT id FROM items"}, headers=anon)
+    assert refused.status_code == 403 and "service key" in refused.json()["error"]["message"]
+    db.expire_all()
+    assert db.scalar(select(QueryRun)) is None  # refused before anything runs or is logged
+
+
+def test_query_route_logs_api_layout(client, db, setup):
+    key, service = setup["make_key"]("service")
+    ok = client.post(setup["query"], json={"query": "SELECT id FROM items", "layout": "editor"}, headers=service)
     assert ok.status_code == 200, ok.text
-    refused = client.post(setup["query"], json={"query": "DELETE FROM items"}, headers=anon)
-    assert refused.status_code == 403 and refused.json()["error"]["code"] == "read_only_role"
-    _, service = setup["make_key"]("service")
     assert (
         client.post(setup["query"], json={"query": "DELETE FROM items WHERE id = 1"}, headers=service).status_code
         == 200
@@ -111,8 +118,8 @@ def test_query_route_logs_api_layout_and_viewer_rule(client, db, setup):
 
     db.expire_all()
     runs = list(db.scalars(select(QueryRun).order_by(QueryRun.created_at, QueryRun.id)))
-    assert [r.layout for r in runs] == ["api", "api", "api"]
-    assert [r.status for r in runs] == ["ok", "refused", "ok"]
+    assert [r.layout for r in runs] == ["api", "api"]
+    assert [r.status for r in runs] == ["ok", "ok"]
     assert runs[0].user_id == db.get(ApiKey, key["id"]).created_by_id
     audits = list(db.scalars(select(AuditLog).where(AuditLog.action == "query.run")))
     assert audits[0].details["api_key_id"] == key["id"]
@@ -124,7 +131,7 @@ def test_acting_user_falls_back_to_owner(client, db, setup, make_user, auth_head
 
     db.add(ProjectMember(project_id=setup["project"].id, user_id=admin.id, role="admin"))
     db.commit()
-    key, h = setup["make_key"]("anon", auth_headers(admin))
+    key, h = setup["make_key"]("service", auth_headers(admin))
     admin.is_active = False
     db.commit()
     assert client.post(setup["query"], json={"query": "SELECT 1"}, headers=h).status_code == 200

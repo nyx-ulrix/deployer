@@ -55,7 +55,7 @@ Results are text content holding compact JSON. API errors come back as tool resu
 |---|---|---|---|
 | `list_data_sources` | – | anon | databases: `id`, `name`, `kind`, `engine`, `status` |
 | `get_schema` | `source_id?` | anon | tables/collections, columns/fields, keys, relationships (`GET /schema`) |
-| `run_query` | `source_id`, `query`, `max_rows?` | anon | SQL script or `mongosh` code (the query console); anon keys may only read |
+| `run_query` | `source_id`, `query`, `max_rows?` | service | SQL script or `mongosh` code (the query console); a viewer session may only read |
 | `list_rows` | `source_id`, `table`, `limit?`, `offset?`, `filters?`, `sort?` | anon | rows + `total`; `filters` = `{column: value}` equality, ANDed; `sort` = `"column"` or `"-column"` |
 | `insert_row` | `source_id`, `table`, `values` | service | inserts a row, returns it |
 | `update_row` | `source_id`, `table`, `pk`, `values` | service | updates the row with that primary key |
@@ -74,11 +74,11 @@ Results are text content holding compact JSON. API errors come back as tool resu
 
 Tools a key's role can't use are **not listed** by `tools/list` and calling them is a JSON-RPC error
 (`-32602 Unknown tool`). Signing in with a dashboard session token (JWT) also works; the member's
-project role decides the tools (viewer = anon's tools, developer and up = all).
+project role decides the tools (viewer = anon's tools plus read-only `run_query`, developer and up = all).
 
 ## Roles and security
 
-- `anon` key → the agent can **only read**: schema, rows, documents and read-only queries. App tools
+- `anon` key → the agent can **only read**: schema, rows and documents (no `run_query`: queries need a service key). App tools
   (settings, build and runtime logs) need a `service` key. An anon key still reads every table and collection in the project, so
   treat it as a secret unless all the project's data is public ([DATA_API.md](DATA_API.md)).
 - `service` key → the agent can also **write data** (rows, documents, any query, including `DROP`)

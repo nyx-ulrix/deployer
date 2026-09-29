@@ -48,8 +48,8 @@ function requests(input: SnippetInput): Req[] {
   const bodies = snippetBodies(kind);
   return [
     { title: `List ${noun}s`, method: "GET", path: `${items}?limit=50` },
-    { title: `Insert a ${noun}`, method: "POST", path: items, body: bodies.insert },
-    { title: "Run a query", method: "POST", path: `${source}/query`, body: bodies.query },
+    { title: `Insert a ${noun} (service key)`, method: "POST", path: items, body: bodies.insert },
+    { title: "Run a query (service key)", method: "POST", path: `${source}/query`, body: bodies.query },
   ];
 }
 

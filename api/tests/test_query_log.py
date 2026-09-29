@@ -186,3 +186,32 @@ def test_worker_prunes_once_a_day(monkeypatch):
     worker.scheduler_tick()
     worker.scheduler_tick()
     assert len(calls) == 1
+
+
+def test_record_run_caps_text_and_trims_the_project(db, console, make_user, monkeypatch):
+    """A-031: a run keeps at most STORED_TEXT_LIMIT chars, and a crowded project is trimmed on
+    insert instead of waiting for the daily prune."""
+    monkeypatch.setattr(query_log, "MAX_RUNS_PER_PROJECT", 3)
+    monkeypatch.setattr(query_log, "PRUNE_SLACK", 1)
+    user = make_user()
+
+    def add(text="SELECT 1"):
+        run = query_log.record_run(
+            db,
+            project_id=console["project"].id,
+            ds=console["ds"],
+            user=user,
+            query_text=text,
+            read_only=False,
+            layout="terminal",
+            duration_ms=1,
+        )
+        db.commit()
+        return run
+
+    assert len(add("x" * 200_000).query_text) == query_log.STORED_TEXT_LIMIT
+    for _ in range(4):
+        add()
+    assert len(runs(db)) == 5  # 3 kept + 1 slack, then this insert
+    add()
+    assert len(runs(db)) == 4  # trimmed to 3 before the new row
