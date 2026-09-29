@@ -146,7 +146,7 @@ conflict_changed` (review and resolve again) - nothing made before a resolution 
 reopen it with a stale version. The chosen value is then written to **both** copies (`503` while the
 device is offline, nothing changed; main server first - if it refuses, `409 write_rejected` and the
 device is untouched; if the device then refuses or fails, the main server's previous value is put
-back, and when the copies may still differ - the device's outcome is unknown, or the undo failed - the
+back (only while main still holds the written value - an app write made meanwhile is kept), and when the copies may still differ - the device's outcome is unknown, or the undo failed - the
 row is recorded as an open conflict) without echo, recorded as a version (`origin = resolution`) and the conflict is
 marked resolved (`resolution, resolved_json, resolved_by_id, resolved_at`; audit
 `sync.conflict_resolve`). The field diff's `suggested` value merges fields that changed on only one

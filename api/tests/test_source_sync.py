@@ -642,3 +642,26 @@ def test_undone_forced_write_is_not_copied_later_mongo(db, world):
     assert source_sync.sync_round(w["rep"].id) == {"applied": 0, "conflicts": 0}
     assert w["replica"].row("users", key) == doc and len(w["replica"].applied_batches) == 1
     assert _conflicts(db, w) == []
+
+
+@pytest.mark.parametrize("kind", ["sql", "nosql"])
+def test_undo_of_forced_write_never_overwrites_a_newer_app_write(db, world, kind):
+    """A-051 follow-up: while the device call runs the app may change the row on the main server; the
+    undo only puts the previous value back while main still holds the forced one."""
+    from app.services import cohosting
+
+    w = world(kind)
+    idf = "id" if kind == "sql" else "_id"
+    key, doc, app_doc = {idf: 1}, {idf: 1, "name": "ana"}, {idf: 1, "name": "app"}
+    _seed(w, "users", key, doc)
+
+    def device_apply(changes):
+        w["primary"].write("users", key, app_doc)  # the app writes on main meanwhile
+        raise ApiError(504, "device_timeout", "The device did not answer")
+
+    w["replica"].apply = device_apply
+    with pytest.raises(ApiError):
+        cohosting.write_both(db, w["rep"], w["ds"], "users", key, {idf: 1, "name": "x"}, origin="restore", user_id=None)
+    assert w["primary"].row("users", key) == app_doc
+    (conflict,) = _conflicts(db, w)
+    assert conflict.primary_json == app_doc and conflict.replica_json["name"] == "x"

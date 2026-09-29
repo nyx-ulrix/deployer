@@ -442,19 +442,23 @@ def _undo_primary(
     sure: bool = True,
 ) -> None:
     """The device refused (or may have missed) a forced write the main server took: puts the main
-    server's previous value back. When the copies may still differ (the device's outcome is unknown,
-    or the undo failed), records an open conflict so they don't differ silently."""
+    server's previous value back - only while main still holds the forced value, so an app write made
+    in the meantime is never overwritten. When the copies may still differ (the device's outcome is
+    unknown, or the undo did not happen), records an open conflict so they don't differ silently."""
     table, key, value = change["table"], change["key"], change["after"]
+    undo = {**change, "op": "delete" if previous is None else "update", "after": previous, "force": False}
+    if ds.kind == "sql":
+        undo["before"] = value
+    else:
+        undo["base_hash"] = source_sync.row_hash(value)
+    result, main_now = None, value
     try:
-        undone = primary.apply([{**change, "op": "delete" if previous is None else "update", "after": previous}])
-        reverted = undone[0].get("result") == "applied"
+        (undone,) = primary.apply([undo])
+        result = undone.get("result")
+        main_now = previous if result in ("applied", "skipped") else undone.get("current")
     except Exception:  # noqa: BLE001
         log.warning("could not undo a conflict write on the main server for replica %s", rep.id, exc_info=True)
-        reverted = False
-    if ds.kind == "nosql":  # the main change stream shows both writes: owed echoes, not changes to copy
-        source_sync.add_version(db, rep.id, table, key, value, "primary", echo="primary")
-        if reverted:
-            source_sync.add_version(db, rep.id, table, key, previous, "primary", echo="primary")
+    reverted = result in ("applied", "skipped")
     kh = source_sync.key_hash(key)
     already_open = db.scalar(
         select(SyncConflict.id).where(
@@ -464,8 +468,7 @@ def _undo_primary(
             SyncConflict.status == "open",
         )
     )
-    if (not sure or not reverted) and already_open is None:
-        main_value = previous if reverted else value
+    if already_open is None and (not sure or not reverted):
         db.add(
             SyncConflict(
                 replica_id=rep.id,
@@ -474,14 +477,20 @@ def _undo_primary(
                 key_hash=kh,
                 status="open",
                 base_json=previous,
-                primary_json=main_value,
+                primary_json=main_now,
                 replica_json=device_value,
-                op_primary="delete" if main_value is None else "update",
+                op_primary="delete" if main_now is None else "update",
                 op_replica="delete" if device_value is None else "update",
                 primary_changed_at=utcnow(),
                 replica_changed_at=utcnow(),
             )
         )
+    elif already_open is None and ds.kind == "nosql":
+        # No conflict: the main change stream shows both writes - owed echoes, not changes to copy.
+        # (With an open conflict the round merges them into it instead; echoes would never be consumed.)
+        source_sync.add_version(db, rep.id, table, key, value, "primary", echo="primary")
+        if result == "applied":
+            source_sync.add_version(db, rep.id, table, key, previous, "primary", echo="primary")
     db.commit()
 
 
