@@ -621,3 +621,24 @@ def test_auto_increment_is_persisted_for_restarts_and_repaired_with_a_log(monkey
     with pytest.raises(ApiError):
         source_sync.ensure_mariadb_settings(offset=11)
     assert "auto_increment_offset = 3" in (tmp_path / source_sync.AUTO_INCREMENT_CNF).read_text()
+
+
+def test_undone_forced_write_is_not_copied_later_mongo(db, world):
+    """A-051: a forced write the device refused is undone on the main server; the change stream then
+    shows both writes, and neither reaches the device."""
+    from app.services import cohosting
+
+    w = world("nosql")
+    key, doc = {"_id": 1}, {"_id": 1, "name": "ana"}
+    _seed(w, "users", key, doc)
+    w["replica"].reject = "E11000 duplicate key"
+    with pytest.raises(ApiError) as err:
+        cohosting.write_both(
+            db, w["rep"], w["ds"], "users", key, {"_id": 1, "name": "x"}, origin="restore", user_id=None
+        )
+    assert err.value.code == "write_rejected"
+    w["replica"].reject = None
+    assert len(w["primary"].log) == 2 and w["primary"].row("users", key) == doc
+    assert source_sync.sync_round(w["rep"].id) == {"applied": 0, "conflicts": 0}
+    assert w["replica"].row("users", key) == doc and len(w["replica"].applied_batches) == 1
+    assert _conflicts(db, w) == []

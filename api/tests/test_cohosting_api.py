@@ -419,3 +419,39 @@ def test_resolve_reads_unread_changes_first(client, db, conflicted, auth_headers
     assert source_sync.sync_round(t["rep"].id) == {"applied": 0, "conflicts": 0}
     db.expire_all()
     assert db.scalar(select(SyncConflict).where(SyncConflict.status == "open")) is None
+
+
+def test_failed_conflict_write_never_leaves_copies_silently_different(client, db, conflicted, auth_headers):
+    """A-051: the main server is written first; a device failure puts its previous value back, and when
+    the device's state is unknown the key is recorded as a conflict."""
+    t, h = conflicted, auth_headers(conflicted["users"]["cohost"])
+    url = _url(t, f"/sync-conflicts/{t['conflict'].id}/resolve")
+    main, device = dict(t["primary"].row("users", t["key"])), dict(t["replica"].row("users", t["key"]))
+
+    t["primary"].reject = "Duplicate entry"  # main refuses: the device is not touched
+    resp = client.post(url, json={"choice": "replica"}, headers=h)
+    assert resp.status_code == 409 and resp.json()["error"]["code"] == "write_rejected"
+    assert t["primary"].row("users", t["key"]) == main and t["replica"].row("users", t["key"]) == device
+    t["primary"].reject = None
+
+    t["replica"].reject = "Duplicate entry"  # device refuses: main gets its previous value back
+    resp = client.post(url, json={"choice": "replica"}, headers=h)
+    assert resp.status_code == 409 and resp.json()["error"]["code"] == "write_rejected"
+    assert t["primary"].row("users", t["key"]) == main and t["replica"].row("users", t["key"]) == device
+    t["replica"].reject = None
+    db.expire_all()
+    assert db.get(SyncConflict, t["conflict"].id).status == "open" and db.scalars(select(SyncVersion)).all() == []
+
+    # The device times out on a restore (no conflict open): main is undone, the key becomes a conflict.
+    db.delete(db.get(SyncConflict, t["conflict"].id))
+    db.commit()
+    v = source_sync.add_version(db, t["rep"].id, "users", t["key"], {"id": 1, "name": "old", "email": "o@x"}, "primary")
+    db.commit()
+    t["replica"].fail = ApiError(504, "device_timeout", "The device did not answer")
+    restore = {"table": "users", "key": t["key"], "version_id": v.id}
+    resp = client.post(_url(t, "/sync-history/restore"), json=restore, headers=h)
+    assert resp.status_code == 504
+    assert t["primary"].row("users", t["key"]) == main
+    db.expire_all()
+    (conflict,) = db.scalars(select(SyncConflict).where(SyncConflict.status == "open"))
+    assert conflict.primary_json == main and conflict.replica_json["name"] == "old"

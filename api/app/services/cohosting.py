@@ -369,7 +369,9 @@ def write_both(
     expect: SyncConflict | None = None,
 ) -> None:
     """Writes one row/document to the device copy and the main server (unconditionally), without
-    echo, and records the version. Device first: when it is offline nothing changes (503).
+    echo, and records the version. When the device is offline nothing changes (503). Main server
+    first; when the device then fails, the main server's previous value is put back, and a conflict
+    is recorded whenever the two copies may still differ (see `_undo_primary`).
 
     First drains the changes neither side has read yet (one sync round under the lock), so nothing
     made before this write can arrive later and reopen the key with a stale version. With `expect`
@@ -405,10 +407,19 @@ def write_both(
                 "Newer changes to this row arrived while you were resolving; review them and resolve again",
             )
         primary, device = source_sync.sides_for(rep, ds)
-        for side in (device, primary):
-            outcome = side.apply([change])[0]
-            if outcome.get("result") != "applied":
-                raise ApiError(409, "write_rejected", outcome.get("reason") or "The value could not be written")
+        # Main server first: when it refuses, nothing changed anywhere.
+        done = primary.apply([change])[0]
+        if done.get("result") != "applied":
+            raise ApiError(409, "write_rejected", done.get("reason") or "The value could not be written")
+        try:
+            outcome = device.apply([change])[0]
+        except Exception:
+            # The device may or may not hold the value (timeout, dropped connection).
+            _undo_primary(db, rep, ds, primary, change, done.get("current"), device_value=value, sure=False)
+            raise
+        if outcome.get("result") != "applied":
+            _undo_primary(db, rep, ds, primary, change, done.get("current"), device_value=outcome.get("current"))
+            raise ApiError(409, "write_rejected", outcome.get("reason") or "The value could not be written")
         echo = "both" if ds.kind == "nosql" else None  # MongoDB: both change streams will show this write
         source_sync.add_version(db, rep.id, table, key, value, origin, user_id, echo=echo)
         db.commit()  # before the lock is released: the next round must see this version
@@ -417,6 +428,61 @@ def write_both(
             lock.release()
         except Exception:  # noqa: BLE001
             pass
+
+
+def _undo_primary(
+    db: Session,
+    rep: SourceReplica,
+    ds: DataSource,
+    primary: source_sync.Side,
+    change: dict,
+    previous: dict | None,
+    *,
+    device_value: dict | None,
+    sure: bool = True,
+) -> None:
+    """The device refused (or may have missed) a forced write the main server took: puts the main
+    server's previous value back. When the copies may still differ (the device's outcome is unknown,
+    or the undo failed), records an open conflict so they don't differ silently."""
+    table, key, value = change["table"], change["key"], change["after"]
+    try:
+        undone = primary.apply([{**change, "op": "delete" if previous is None else "update", "after": previous}])
+        reverted = undone[0].get("result") == "applied"
+    except Exception:  # noqa: BLE001
+        log.warning("could not undo a conflict write on the main server for replica %s", rep.id, exc_info=True)
+        reverted = False
+    if ds.kind == "nosql":  # the main change stream shows both writes: owed echoes, not changes to copy
+        source_sync.add_version(db, rep.id, table, key, value, "primary", echo="primary")
+        if reverted:
+            source_sync.add_version(db, rep.id, table, key, previous, "primary", echo="primary")
+    kh = source_sync.key_hash(key)
+    already_open = db.scalar(
+        select(SyncConflict.id).where(
+            SyncConflict.replica_id == rep.id,
+            SyncConflict.table_name == table,
+            SyncConflict.key_hash == kh,
+            SyncConflict.status == "open",
+        )
+    )
+    if (not sure or not reverted) and already_open is None:
+        main_value = previous if reverted else value
+        db.add(
+            SyncConflict(
+                replica_id=rep.id,
+                table_name=table,
+                key_json=key,
+                key_hash=kh,
+                status="open",
+                base_json=previous,
+                primary_json=main_value,
+                replica_json=device_value,
+                op_primary="delete" if main_value is None else "update",
+                op_replica="delete" if device_value is None else "update",
+                primary_changed_at=utcnow(),
+                replica_changed_at=utcnow(),
+            )
+        )
+    db.commit()
 
 
 def _drain(replica_id: str) -> None:
