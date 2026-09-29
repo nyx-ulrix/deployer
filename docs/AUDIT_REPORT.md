@@ -95,7 +95,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 **Query console**
 - [x] A-031 **[MEDIUM][security]** Public anon keys can use the query console: mongosh/pool exhaustion and unbounded query-log growth - `api/app/routers/query.py:21, 74-85` - refuse anon keys here; cap stored query_text; prune more often.
 - [x] A-032 **[MEDIUM][bug]** Query-log pagination drops runs that share a timestamp with the page boundary - `api/app/services/query_log.py:131-133` - keyset cursor `(created_at, id)`; tighten the test to `== 6`.
-- [ ] A-033 **[MEDIUM][usability]** Viewers get baffling refusals for normal SELECTs, and the error never names the word - `api/app/services/query_console.py:69-74, 206-208, 387` - return the matched keyword with a quoting hint; the dashboard shows e.message.
+- [x] A-033 **[MEDIUM][usability]** Viewers get baffling refusals for normal SELECTs, and the error never names the word - `api/app/services/query_console.py:69-74, 206-208, 387` - return the matched keyword with a quoting hint; the dashboard shows e.message.
 - [ ] A-034 **[MEDIUM][bug]** Statement timeout is not enforced for MySQL writes, and is silently skipped when SET fails - `api/app/services/query_console.py:227-235, 301-306` - client watchdog that cancels or `KILL QUERY`s.
 
 **Backups**

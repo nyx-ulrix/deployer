@@ -68,14 +68,6 @@ def _clamp(value: Any, maximum: int, default: int) -> int:
         return default
 
 
-def _read_only_refused(kind: str) -> ApiError:
-    if kind == "sql":
-        message = "Viewers can only run read-only SQL (SELECT, WITH, SHOW, EXPLAIN, DESCRIBE, TABLE, VALUES)"
-    else:
-        message = "Viewers can only run read-only MongoDB shell code (no insert/update/delete/drop/command calls)"
-    return ApiError(403, "read_only_role", message)
-
-
 def _error_text(exc: BaseException) -> str:
     """Driver error text; PyMySQL's `(errno, message)` tuples become `message (error errno)`."""
     args = getattr(exc, "args", ())
@@ -219,24 +211,35 @@ def split_sql(query: str) -> list[str]:
     return statements
 
 
-def sql_is_read_only(statements: Iterable[str]) -> bool:
-    """True when every statement starts with a read-only keyword and (except `SHOW ...`) contains no
-    writing keyword or side-effecting function name outside strings and comments."""
+SQL_READ_ONLY_STARTS_TEXT = "SELECT, WITH, SHOW, EXPLAIN, DESCRIBE, TABLE, VALUES"
+
+
+def sql_read_only_refusal(statements: Iterable[str]) -> str | None:
+    """Why a viewer may not run this script, naming the word that tripped the check (None = allowed).
+    Every statement must start with a read-only keyword and (except `SHOW ...`) contain no writing
+    keyword or side-effecting function name outside strings and comments."""
     for text in statements:
         parsed = sqlparse.parse(text)
-        if not parsed:
-            return False
-        first = _leading_keyword(parsed[0])
+        first = _leading_keyword(parsed[0]) if parsed else None
         if first not in READ_ONLY_STARTS:
-            return False
+            start = f"starts with `{first}`" if first else "does not start with one of them"
+            return f"Viewers can only run read-only SQL ({SQL_READ_ONLY_STARTS_TEXT}); this statement {start}"
         if first == "SHOW":
             continue
         for tok in parsed[0].flatten():
             if tok.ttype in T.Keyword and tok.normalized.upper() in WRITE_KEYWORDS:
-                return False
-            if tok.ttype in (T.Name, T.String.Symbol) and tok.value.strip('"`').lower() in WRITE_FUNCTIONS:
-                return False
-    return True
+                return (
+                    f"`{tok.value}` looks like a write command, so viewers cannot run this statement. "
+                    'If it is a column or table name, quote it (`name` on MariaDB/MySQL, "name" on PostgreSQL)'
+                )
+            name = tok.value.strip('"`')
+            if tok.ttype in (T.Name, T.String.Symbol) and name.lower() in WRITE_FUNCTIONS:
+                return f"`{name}` changes data or the server, so viewers cannot call it"
+    return None
+
+
+def sql_is_read_only(statements: Iterable[str]) -> bool:
+    return sql_read_only_refusal(statements) is None
 
 
 def _is_timeout(exc: BaseException) -> bool:
@@ -327,8 +330,9 @@ def run_sql(
     statements = split_sql(query)
     if not statements:
         raise ApiError(422, "validation_error", "The query contains no SQL statement")
-    if read_only and not sql_is_read_only(statements):
-        raise _read_only_refused("sql")
+    refusal = sql_read_only_refusal(statements) if read_only else None
+    if refusal:
+        raise ApiError(403, "read_only_role", refusal)
     max_rows = _clamp(max_rows, MAX_ROWS, DEFAULT_MAX_ROWS)
     timeout_seconds = _clamp(timeout_seconds, MAX_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS)
     secret_values = [engine.url.password]
@@ -562,8 +566,19 @@ WRAPPER_JS = """(async () => {
 """
 
 
+def mongo_read_only_refusal(code: str) -> str | None:
+    """Why a viewer may not run this code, naming the matched write name (None = allowed)."""
+    match = _MONGO_WRITE_RE.search(code)
+    if match is None:
+        return None
+    return (
+        f"`{match.group()}` is a write or admin command, so viewers cannot run this code "
+        "(the check also matches inside strings and comments, e.g. a field value)"
+    )
+
+
 def mongo_is_read_only(code: str) -> bool:
-    return _MONGO_WRITE_RE.search(code) is None
+    return mongo_read_only_refusal(code) is None
 
 
 def mongosh_command() -> list[str] | None:
@@ -729,8 +744,9 @@ def run_mongosh(
             "also inside strings and comments)"
         )
         raise ApiError(403, "shell_code_refused", message)
-    if read_only and not mongo_is_read_only(query):
-        raise _read_only_refused("nosql")
+    refusal = mongo_read_only_refusal(query) if read_only else None
+    if refusal:
+        raise ApiError(403, "read_only_role", refusal)
     command = mongosh_command()
     if not command:
         message = "The MongoDB shell (mongosh) is not installed in this Deployer image"

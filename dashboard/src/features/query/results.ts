@@ -191,7 +191,7 @@ export function describeQueryError(e: unknown, ctx: { timeoutSeconds: number }):
         return failure(
           e.code,
           "Read-only access",
-          "Viewers can only run read-only queries (SELECT, SHOW, EXPLAIN…). Ask a developer or admin to run this one.",
+          e.message || "Viewers can only run read-only queries (SELECT, SHOW, EXPLAIN…). Ask a developer or admin to run this one.",
         );
       case "device_offline":
         return failure(

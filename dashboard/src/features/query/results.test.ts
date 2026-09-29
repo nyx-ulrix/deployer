@@ -186,6 +186,9 @@ describe("describeQueryError", () => {
 
   it("passes the API's own message through for query and validation errors", () => {
     expect(describeQueryError(api(400, "query_failed", "Unknown column 'x'"), ctx).message).toBe("Unknown column 'x'");
+    expect(describeQueryError(api(403, "read_only_role", "`start` looks like a write command"), ctx).message).toBe(
+      "`start` looks like a write command",
+    );
     expect(describeQueryError(api(422, "validation_error", "max_rows too big"), ctx).message).toBe("max_rows too big");
     expect(describeQueryError(api(500, "server_error", "boom"), ctx)).toMatchObject({ title: "Query failed", message: "boom" });
   });

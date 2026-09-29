@@ -239,6 +239,27 @@ def test_sql_read_only_refuses(statement):
     assert not query_console.sql_is_read_only(query_console.split_sql(statement))
 
 
+def test_read_only_refusals_name_the_word():
+    # A-033: a viewer's refused SELECT says which word tripped the check and how to quote it.
+    refusal = query_console.sql_read_only_refusal(["SELECT start, release FROM events"])
+    assert refusal.startswith("`start` looks like a write command") and "quote it" in refusal
+    assert query_console.sql_read_only_refusal(["SELECT `start` FROM events"]) is None
+    assert "`copy`" in query_console.sql_read_only_refusal(["SELECT * FROM t ORDER BY copy"])
+    assert "starts with `DELETE`" in query_console.sql_read_only_refusal(["DELETE FROM t"])
+    assert "does not start" in query_console.sql_read_only_refusal(["PRAGMA table_info(t)"])
+    assert query_console.sql_read_only_refusal(['SELECT "setval"(1)']).startswith("`setval` changes data")
+    assert "`delete`" in query_console.mongo_read_only_refusal('db.events.find({type: "delete"})')
+    assert query_console.mongo_read_only_refusal("db.events.find({})") is None
+
+
+def test_run_read_only_refusal_carries_the_word(sqlite_engine):
+    with pytest.raises(ApiError) as err:
+        query_console.run_sql(
+            "mariadb", sqlite_engine, "SELECT start FROM items", max_rows=5, timeout_seconds=5, read_only=True
+        )
+    assert err.value.code == "read_only_role" and "`start`" in err.value.message
+
+
 @pytest.mark.parametrize(
     "code",
     [
@@ -376,7 +397,7 @@ def test_run_sql_validation_and_read_only(sqlite_engine):
 
 def test_run_sql_read_only_is_enforced_by_the_database(sqlite_engine, monkeypatch):
     # A write that slips past the text classifier still fails: the session itself is read-only.
-    monkeypatch.setattr(query_console, "sql_is_read_only", lambda statements: True)
+    monkeypatch.setattr(query_console, "sql_read_only_refusal", lambda statements: None)
     out = query_console.run_sql(
         "mariadb", sqlite_engine, "DELETE FROM items", max_rows=5, timeout_seconds=5, read_only=True
     )
