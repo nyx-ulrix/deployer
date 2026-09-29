@@ -269,7 +269,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
                 </Select>
               )}
             </Field>
-            <Field label="Host" className="sm:col-span-3">
+            <Field label="Host" className="sm:col-span-3" hint="On this PC? Use its network IP or host.docker.internal, not localhost.">
               {(id) => (
                 <Input
                   id={id}

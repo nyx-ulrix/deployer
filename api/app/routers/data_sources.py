@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Request
@@ -32,6 +33,25 @@ class DataSourceInput(BaseModel):
     device_id: str | None = None
 
 
+# A-027: Deployer connects from inside its container, where localhost is the container itself.
+SAME_PC_HOST_MESSAGE = (
+    "'{host}' is the Deployer container itself, not this PC. For a database on this PC, use the PC's "
+    "network IP address (from ipconfig) or host.docker.internal as the host, and let the database accept "
+    "network connections (MySQL/MariaDB: bind-address=0.0.0.0; PostgreSQL: listen_addresses and pg_hba.conf)."
+)
+
+
+def _reject_loopback(host: str | None) -> None:
+    h = (host or "").strip().strip("[]").lower()
+    try:
+        ip = ipaddress.ip_address(h)
+        loopback = ip.is_loopback or ip.is_unspecified
+    except ValueError:
+        loopback = h == "localhost" or h.endswith(".localhost")
+    if loopback:
+        raise validation_error(SAME_PC_HOST_MESSAGE.format(host=h))
+
+
 def normalize_input(body: DataSourceInput) -> tuple[str, dict[str, Any] | None]:
     """Validates the kind/mode/engine combination and returns (name, external config)."""
     name = body.name.strip()
@@ -57,6 +77,7 @@ def normalize_input(body: DataSourceInput) -> tuple[str, dict[str, Any] | None]:
             raise validation_error("config.port must be a number") from exc
         if not 1 <= port <= 65535:
             raise validation_error("config.port must be between 1 and 65535")
+        _reject_loopback(str(cfg["host"]))
         return name, {
             "host": str(cfg["host"]).strip(),
             "port": port,
@@ -71,6 +92,7 @@ def normalize_input(body: DataSourceInput) -> tuple[str, dict[str, Any] | None]:
         raise validation_error("config.uri must start with mongodb:// or mongodb+srv://")
     if not database:
         raise validation_error("config.database is required")
+    _reject_loopback(connections.parse_mongo_uri(uri)["host"])
     return name, {"uri": uri, "database": database}
 
 

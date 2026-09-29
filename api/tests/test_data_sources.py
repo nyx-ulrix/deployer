@@ -140,6 +140,22 @@ def test_input_validation_and_roles(client, project_setup, fake_connect):
     assert client.post(f"{s['base']}/data-sources/test", json=EXTERNAL_SQL, headers=s["dev"]).status_code == 403
 
 
+def test_same_pc_host_is_explained(client, project_setup, fake_connect):
+    # A-027: localhost inside the API container is the container, not the PC running XAMPP/Postgres.
+    s = project_setup
+    for host in ("localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0", "LocalHost"):
+        body = {**EXTERNAL_SQL, "config": {**EXTERNAL_SQL["config"], "host": host}}
+        for path in ("data-sources", "data-sources/test"):
+            resp = client.post(f"{s['base']}/{path}", json=body, headers=s["admin"])
+            assert resp.status_code == 422, (host, resp.text)
+            assert "host.docker.internal" in resp.json()["error"]["message"]
+    mongo = {**EXTERNAL_MONGO, "config": {"uri": "mongodb://127.0.0.1:27017/?tls=false", "database": "app"}}
+    assert client.post(f"{s['base']}/data-sources", json=mongo, headers=s["admin"]).status_code == 422
+    assert fake_connect["calls"] == []
+    ok = {**EXTERNAL_SQL, "config": {**EXTERNAL_SQL["config"], "host": "host.docker.internal"}}
+    assert client.post(f"{s['base']}/data-sources", json=ok, headers=s["admin"]).status_code == 200
+
+
 def test_managed_mongo_unavailable(client, project_setup):
     s = project_setup
     body = {"kind": "nosql", "mode": "managed", "engine": "mongodb", "name": "docs"}

@@ -248,6 +248,11 @@ type DataSourceInput =
       config: { uri: string; database: string } };
 ```
 
+External hosts are reached from inside the Deployer container, so `localhost`, `127.x`, `::1` and
+`0.0.0.0` (also in a MongoDB URI) are rejected with 422 `validation_error`. For a database on the same
+PC use the PC's network IP address or `host.docker.internal`, and let the database accept network
+connections (MySQL/MariaDB `bind-address`, PostgreSQL `listen_addresses` + `pg_hba.conf`).
+
 A project may have any number of SQL and NoSQL sources at once (typically one of each).
 
 ### Co-hosting (live copies on members' devices)
