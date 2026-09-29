@@ -151,7 +151,8 @@ socket access.
   `instance_id`; on a co-host device `cohost_apps_tunnel_token` (secret, from RPC `apps.tunnel`).
 - API process settings: `TUNNEL_STATE_DIR` (default `/tunnel`), `DEPLOYER_HTTP_PORT`.
 - `domains`: `id, hostname (unique), provider ("cloudflare"), zone_id, zone_name, dns_record_id,
-  target_type ("dashboard" now; "project" reserved for push-to-deploy), project_id (nullable), status
+  target_type ("dashboard", "app" = an app's tunnel hostname, "cloud_app" = a cloud target's custom
+  domain; "project" reserved), project_id, app_id (nullable), status
   ("pending"/"active"/"error"), status_message, created_at, updated_at`.
 
 ## API (instance owner only)
@@ -170,7 +171,7 @@ socket access.
 ```ts
 type Domain = {
   id: string; hostname: string; zone_id: string; zone_name: string;
-  target_type: "dashboard" | "project"; project_id: string | null;
+  target_type: "dashboard" | "app" | "cloud_app"; project_id: string | null; app_id: string | null;
   status: "pending" | "active" | "error"; status_message: string | null; url: string;
 };
 type RemoteAccess = {
