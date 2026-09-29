@@ -118,7 +118,7 @@ tokens are rejected there, device tokens are rejected on every user endpoint).
 | GET | `/devices?scope=mine\|all` | user | `all` only for the instance owner (ignored otherwise) | `Device[]` |
 | GET | `/devices/{id}` | device owner or instance owner | – | `Device` |
 | PATCH | `/devices/{id}` | device owner or instance owner (`status`: instance owner only) | `{name?, roles?, sharing_mode?, project_ids?, status?:"active"\|"disabled"}` | `Device`; disabling closes its socket |
-| DELETE | `/devices/{id}?force=false` | device owner or instance owner (`force`: instance owner) | – | `{ok:true}`; 409 `device_in_use` `{details.data_sources}` while it hosts databases, 409 `device_has_copies` `{details.replicas}` while it holds co-host copies; `force=true` marks hosted sources `status=error, "device removed"` and drops the copies |
+| DELETE | `/devices/{id}?force=false` | device owner or instance owner (`force`: instance owner) | – | `{ok:true}`; 409 `device_in_use` `{details.data_sources}` while it hosts databases, 409 `device_has_copies` `{details.replicas}` while it holds co-host copies; `force=true` marks hosted sources `status=error` ("This database's PC was removed; its data is still on that PC.") and drops the copies |
 | GET | `/projects/{id}/placement-options` | admin+ | – | `PlacementOption[]` (main server first) |
 | POST | `/projects/{id}/data-sources/{sid}/move` | admin+ | `{device_id: string\|null}` | `{job: Job}` (`type:"device.move"`, BACKUPS.md `Job`); 400 `not_managed`; 409 `already_there` / `move_in_progress` / `has_replicas` / `apps_use_database` (`{details.apps}`: live apps with database access still hold the current copy's `DEPLOYER_DB_*`; turn their access off and redeploy, or delete them); 503 `device_offline`; 422 `device_not_eligible` |
 | POST | `/projects/{id}/data-sources` | admin+ | `DataSourceInput` + `device_id?` (managed only) | `DataSource` |
@@ -210,8 +210,11 @@ Errors raised **on the device** and re-raised on the primary with the same statu
   (`POST .../data-sources/{sid}/move`, which snapshots, restores on the target, switches over and
   keeps the old copy for 7 days), and no co-host copies (COHOSTING.md) — remove them with "Also delete
   the copy on the device" first (`409 device_has_copies`). `?force=true` (instance owner only) detaches
-  anyway, marks hosted sources `status=error, status_message="device removed"` and, while the device is
-  online, drops its co-host copies. Detaching also stops the device's co-hosted apps and apps tunnel.
+  anyway, marks hosted sources `status=error` ("This database's PC was removed; its data is still on
+  that PC.") and, while the device is online, drops its co-host copies. Such a source never falls back
+  to the main server's database of the same name: browsing, connection info, backups, moves, co-host
+  copies and `drop=true` return `409 device_removed`, deploys and exports skip it, and deleting it
+  (without drop) drops nothing. Detaching also stops the device's co-hosted apps and apps tunnel.
 - Moving a database never pauses writes, so nothing may write to the old copy after it is dumped: the
   move is refused (`409 apps_use_database`) while apps with database access are live, and a database
   on the main server is made read-only (its user keeps `SELECT` only, open connections are closed) from

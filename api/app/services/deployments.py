@@ -41,7 +41,7 @@ from app.redis_client import get_redis
 from app.serializers import iso
 from app.services import github, jobs
 from app.services.app_runner import DockerCli, DockerError, cancel_check, get_docker
-from app.services.connections import load_config, parse_mongo_uri, redact, sql_app_uri
+from app.services.connections import device_removed, load_config, parse_mongo_uri, redact, sql_app_uri
 from app.services.instance_settings import public_url
 from app.services.remote_access import domain_out
 
@@ -694,7 +694,7 @@ def database_env(db: Session, app: App) -> tuple[dict[str, str], list[str]]:
         .order_by(DataSource.name)
     )
     for ds in sources:
-        if ds.device_id:
+        if ds.device_id or device_removed(ds):
             notes.append(f"Data source '{ds.name}' is on a host device and is not reachable from apps")
             continue
         env.update(source_env(ds.name, ds.kind, ds.engine, load_config(ds), ds.database_name))

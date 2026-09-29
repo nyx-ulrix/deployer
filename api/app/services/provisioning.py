@@ -424,6 +424,8 @@ def drop_managed_source(db: Session, data_source: DataSource) -> None:
     _ = db
     if data_source.mode != "managed":
         return
+    if connections.device_removed(data_source):
+        return  # A-047: its data is on a removed PC; the main server's namesake is not it
     if data_source.device_id:
         drop_on_device(data_source.device_id, data_source.kind, data_source.database_name)
         return

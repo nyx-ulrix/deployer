@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
 
 from app.crypto import decrypt_json
+from app.errors import ApiError
 from app.models import DataSource, utcnow
 
 CONNECT_TIMEOUT_S = 5
@@ -42,8 +43,30 @@ _mongo_cache: dict[str, tuple[str, MongoClient]] = {}
 # ---------------------------------------------------------------------------------------------
 
 
+DEVICE_REMOVED = "This database's PC was removed; its data is still on that PC."
+
+
+def device_removed(ds: DataSource) -> bool:
+    """A-047: a device-hosted source whose device was removed. Its device_id is cleared but its data is
+    still on that PC; the main server's database of the same name (if any) is not it."""
+    if ds.device_id or ds.mode != "managed":
+        return False
+    try:
+        return bool(decrypt_json(ds.config_encrypted).get("on_device"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def require_host(ds: DataSource) -> None:
+    if device_removed(ds):
+        raise ApiError(409, "device_removed", DEVICE_REMOVED)
+
+
 def load_config(ds: DataSource) -> dict[str, Any]:
-    return decrypt_json(ds.config_encrypted)
+    config = decrypt_json(ds.config_encrypted)
+    if config.get("on_device") and not ds.device_id:
+        raise ApiError(409, "device_removed", DEVICE_REMOVED)  # A-047: never the main server's namesake
+    return config
 
 
 def _fingerprint(ds: DataSource) -> str:
@@ -205,6 +228,8 @@ def try_config(kind: str, engine_name: str, config: dict[str, Any]) -> tuple[boo
 def try_source(ds: DataSource) -> tuple[bool, str, str | None]:
     try:
         config = load_config(ds)
+    except ApiError as exc:
+        return False, exc.message, None
     except Exception as exc:  # noqa: BLE001
         return False, f"Cannot decrypt connection config: {exc}", None
     return try_config(ds.kind, ds.engine, config)

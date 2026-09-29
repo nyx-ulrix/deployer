@@ -49,7 +49,7 @@ from app.models import (
 )
 from app.redis_client import get_redis
 from app.serializers import iso
-from app.services import executors, jobs, schema_diff
+from app.services import connections, executors, jobs, schema_diff
 
 log = logging.getLogger(__name__)
 
@@ -114,6 +114,7 @@ def require_supported(ds: DataSource) -> None:
             "Backups are only taken for managed MariaDB and MongoDB databases. External databases are backed up "
             "by their provider.",
         )
+    connections.require_host(ds)
 
 
 def snapshot_ref(backup: Backup) -> str:
@@ -1201,8 +1202,6 @@ def perform_restore(ctx: jobs.JobContext) -> dict:
         )
         result["row_counts"] = restored.get("row_counts")
         target_ds = session.get(DataSource, target_ds.id)
-        from app.services import connections
-
         connections.invalidate(target_ds.id)
         target_ds.status = "ok"
         target_ds.status_message = f"Restored from backup {plan.backup.id[:8]}" + (
@@ -1444,8 +1443,6 @@ def _drop_before_purge(db: Session, ds: DataSource) -> None:
     Raises while the host is unreachable (or the delete job still runs), so the next prune retries."""
     if _was_dropped(db, ds):
         return
-    if ds.device_id is None and ds.status_message == "device removed":
-        return  # the database lived on a device that is gone; nothing here to drop
     try:
         _provisioning().drop_managed_source(db, ds)
     except ApiError as exc:
@@ -1756,16 +1753,14 @@ def restore_platform(session_factory: Callable[[], Session], backup_id: str | No
 def soft_delete_source(db: Session, ds: DataSource, *, user_id: str | None, drop: bool) -> Job | None:
     """Hides the source ("Recently deleted") and enqueues its final snapshot (+ drop). Caller commits
     and dispatches the returned job."""
-    from app.services import connections
-
     now = utcnow()
     connections.invalidate(ds.id)
     ds.deleted_name = ds.name
     ds.name = f"{DELETED_NAME_PREFIX}{ds.id}"[:63]
     ds.deleted_at = now
     db.flush()
-    if not supported(ds):
-        return None
+    if not supported(ds) or connections.device_removed(ds):
+        return None  # a removed PC's database: nothing here to snapshot or drop (A-047)
     return jobs.enqueue(
         db,
         type="source.finalize_delete",
@@ -1796,7 +1791,7 @@ def detached_source_params(ds: DataSource, *, drop: bool) -> dict:
 
 
 def enqueue_detached_finalize(db: Session, ds: DataSource, *, user_id: str | None) -> Job | None:
-    if not supported(ds):
+    if not supported(ds) or connections.device_removed(ds):
         return None
     return jobs.enqueue(
         db,
@@ -2272,7 +2267,7 @@ def scheduler_tick(factory: jobs.SessionFactory, now: datetime | None = None) ->
             for ds in session.scalars(
                 select(DataSource).where(DataSource.mode == "managed", DataSource.deleted_at.is_(None))
             )
-            if supported(ds)
+            if supported(ds) and not connections.device_removed(ds)
         ]
         for ds in sources:
             policy = ensure_policy(session, ds)

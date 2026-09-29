@@ -314,8 +314,8 @@ function RemoveDeviceDialog({ device, onClose }: { device: Device; onClose: () =
     >
       {check.force && (
         <Alert tone="danger" title="This device still hosts databases">
-          {check.reason} As instance owner you can force removal: the device is detached anyway and those databases are
-          marked as errored (“device removed”).
+          {check.reason} As instance owner you can force removal: the device is detached anyway and those databases stop
+          working here. Their data stays on that PC.
         </Alert>
       )}
     </ConfirmDialog>

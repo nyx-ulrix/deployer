@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import ApiError, forbidden, not_found, validation_error
 from app.models import DataSource, Device, ProjectMember, SourceReplica, SyncConflict, SyncVersion
-from app.services import audit, cohosting, device_rpc, devices, jobs, source_sync
+from app.services import audit, cohosting, connections, device_rpc, devices, jobs, source_sync
 from app.services.sources import get_source
 
 router = APIRouter(tags=["cohosting"])
@@ -64,6 +64,7 @@ def create_replica(source_id: str, body: ReplicaCreate, request: Request, access
         raise ApiError(
             409, "replica_unsupported", "Only managed databases on the main server can be copied to a device"
         )
+    connections.require_host(ds)
     device = db.get(Device, body.device_id)
     if device is None or device.owner_id != access.user.id:
         raise not_found("Device")

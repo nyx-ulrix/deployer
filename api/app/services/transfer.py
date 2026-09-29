@@ -566,6 +566,9 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
     for ds in sources:
         if ds.mode != "managed":
             continue
+        if connections.device_removed(ds):
+            warnings.append(f"{ds.name}: {connections.DEVICE_REMOVED} Its data is not in this export.")
+            continue
         w._sep()
         w.fh.write(json.dumps(ds.id) + ":")
         if ds.device_id:

@@ -29,7 +29,7 @@ from sqlalchemy.orm import Session
 from app.errors import ApiError
 from app.models import AppReplica, Backup, BackupPolicy, DataSource, Device, Job, SourceReplica, utcnow
 from app.redis_client import get_redis
-from app.services import metrics
+from app.services import connections, metrics
 from app.services.instance_settings import get_value, public_url
 
 log = logging.getLogger(__name__)
@@ -156,7 +156,7 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
         .where(BackupPolicy.enabled.is_(True), DataSource.mode == "managed", DataSource.deleted_at.is_(None))
     ).all():
         every = SCHEDULES.get(schedule, SCHEDULES["hourly"])
-        if supported(ds) and now - (last or ds.created_at) > 2 * every:
+        if supported(ds) and not connections.device_removed(ds) and now - (last or ds.created_at) > 2 * every:
             out[f"backup_stale:{ds.id}"] = Condition(
                 "backup_stale",
                 "critical",

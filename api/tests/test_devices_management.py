@@ -6,7 +6,7 @@ import zipfile
 from sqlalchemy import select
 
 from app.models import BackupPolicy, DataSource, Device, DeviceProjectGrant, Job, SourceReplica
-from app.services import device_moves, device_rpc, devices
+from app.services import backups, connections, device_moves, device_rpc, devices, jobs, provisioning
 from tests import devices_support
 from tests.devices_support import device_source
 
@@ -217,7 +217,9 @@ def test_routing_for_device_hosted_sources(client, db, owner, owner_headers, mak
     assert info["password"] == "pw" and "Data API" in info["external_hint"] and info["device_id"] == device.id
 
 
-def test_remove_device(client, db, owner, owner_headers, make_user, make_project, auth_headers, make_device):
+def test_remove_device(
+    client, db, owner, owner_headers, make_user, make_project, auth_headers, make_device, fake_redis, monkeypatch
+):
     alice = make_user()
     project = make_project(alice, "Shop")
     device, _ = make_device(alice)
@@ -231,7 +233,28 @@ def test_remove_device(client, db, owner, owner_headers, make_user, make_project
     db.expunge_all()
     assert db.get(Device, device_id) is None
     source = db.get(DataSource, ds_id)
-    assert source.status == "error" and source.status_message == "device removed"
+    assert source.status == "error" and source.status_message == connections.DEVICE_REMOVED
+
+    # A-047: the source must not fall back to the main server's database of the same name.
+    h = auth_headers(alice)
+    base = f"/v1/projects/{project.id}/data-sources/{ds_id}"
+    for resp in (
+        client.get(f"{base}/connection", headers=h),
+        client.get(f"{base}/tables/users/rows", headers=h),
+        client.post(f"{base}/backups", json={}, headers=h),
+        client.post(f"{base}/move", json={"device_id": None}, headers=h),
+        client.delete(f"{base}?drop=true", headers=h),
+    ):
+        assert resp.status_code == 409 and resp.json()["error"]["code"] == "device_removed", resp.text
+    resp = client.post(f"{base}/check", headers=h)
+    assert resp.json()["status_message"] == connections.DEVICE_REMOVED
+    assert all(db.get(Job, j).data_source_id != ds_id for j in backups.scheduler_tick(jobs.get_sessionmaker()))
+    dropped = []
+    monkeypatch.setattr(provisioning, "drop_mariadb_database", lambda *a: dropped.append(a))
+    resp = client.delete(base, headers=h)  # no final snapshot job: nothing on this server to back up
+    assert resp.status_code == 200 and "job" not in resp.json()
+    provisioning.drop_managed_source(db, db.get(DataSource, ds_id))
+    assert dropped == []
 
     empty, _ = make_device(alice, "Empty")
     assert client.delete(f"/v1/devices/{empty.id}", headers=auth_headers(make_user())).status_code == 404

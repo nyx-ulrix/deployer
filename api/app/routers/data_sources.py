@@ -272,6 +272,7 @@ def delete_data_source(source_id: str, access: Admin, db: DbSession, request: Re
             raise ApiError(
                 400, "cannot_drop_external", "External databases are never dropped; delete without drop=true"
             )
+        connections.require_host(ds)  # A-047: nothing on this server to drop
     # docs/BACKUPS.md: soft delete ("Recently deleted" for 30 days). Managed sources get a final
     # snapshot first; with drop=true the database is dropped by that job once the snapshot succeeded.
     from app.services import backups, jobs

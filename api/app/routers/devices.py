@@ -26,7 +26,17 @@ from app.db import get_sessionmaker
 from app.deps import CurrentUser, DbSession, ProjectAccess, client_ip, require_role
 from app.errors import ApiError, forbidden, not_found
 from app.models import App, DataSource, Device, DeviceEnrollment, Job, SourceReplica, User, utcnow
-from app.services import audit, cohosting, device_executor, device_moves, device_rpc, devices, jobs, rate_limit
+from app.services import (
+    audit,
+    cohosting,
+    connections,
+    device_executor,
+    device_moves,
+    device_rpc,
+    devices,
+    jobs,
+    rate_limit,
+)
 from app.services.instance_settings import public_url
 from app.services.sources import get_source
 
@@ -265,8 +275,8 @@ def remove_device(device_id: str, user: CurrentUser, db: DbSession, request: Req
         )
     for ds in hosted:
         ds.status = "error"
-        ds.status_message = "device removed"
-        ds.device_id = None
+        ds.status_message = connections.DEVICE_REMOVED
+        ds.device_id = None  # A-047: connections.device_removed() keeps it off the main server's namesake
     if device_rpc.is_online(device.id):
         try:
             for c in copies:  # force only: the main server keeps the data, these are just copies
@@ -314,6 +324,7 @@ def move_data_source(source_id: str, body: MoveInput, access: Admin, db: DbSessi
     ds = get_source(db, access.project.id, source_id)  # soft-deleted sources are already 404 here
     if ds.mode != "managed":
         raise ApiError(400, "not_managed", "Only managed databases can be moved between hosts")
+    connections.require_host(ds)
     target = body.device_id or None
     if (ds.device_id or None) == target:
         raise ApiError(409, "already_there", "The database is already hosted there")

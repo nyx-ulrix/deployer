@@ -34,7 +34,7 @@ from app.models import App, AppReplica, DataSource, Deployment, Device, Project,
 from app.serializers import iso
 from app.services import app_runner, deployments, device_rpc, devices, jobs
 from app.services.cohosting import member_can_cohost
-from app.services.connections import load_config
+from app.services.connections import device_removed, load_config
 from app.services.device_apps import fingerprint
 from app.services.instance_settings import get_value
 
@@ -70,16 +70,15 @@ def required_sources(db: Session, app: App) -> list[DataSource]:
     """The managed databases on the main server an app with database access uses."""
     if not app.database_access:
         return []
-    return list(
-        db.scalars(
-            select(DataSource).where(
-                DataSource.project_id == app.project_id,
-                DataSource.mode == "managed",
-                DataSource.deleted_at.is_(None),
-                DataSource.device_id.is_(None),
-            )
+    rows = db.scalars(
+        select(DataSource).where(
+            DataSource.project_id == app.project_id,
+            DataSource.mode == "managed",
+            DataSource.deleted_at.is_(None),
+            DataSource.device_id.is_(None),
         )
     )
+    return [ds for ds in rows if not device_removed(ds)]  # A-047: a removed PC's database is not here
 
 
 def copy_problem(db: Session, app: App, device_id: str) -> str | None:
