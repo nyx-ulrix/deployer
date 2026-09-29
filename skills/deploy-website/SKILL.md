@@ -251,7 +251,9 @@ platform used, and where the key lives.
 
 - **Adding people:** project → **Members → Invite** (single-use link, optionally locked to an
   email, with a role: viewer = read-only, developer = edit data/schema and deploy, admin =
-  members/keys/settings). Public signup should stay **off** on an internet-facing instance: any
+  members/keys/settings). The link is built from the public URL, so while that is
+  `http://localhost:8080` it only opens on the Deployer PC (the dialog warns): set up remote access
+  first to invite someone on another device. Public signup should stay **off** on an internet-facing instance: any
   signed-in user can create a project and deploy code that runs on the owner's PC.
 - **Sign-in methods:** email + password always works with an invite. Google/GitHub sign-in need the
   owner's own OAuth apps with the instance's public URL registered as callback
