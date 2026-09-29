@@ -140,7 +140,8 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
             "backup_failed", "critical", f"Backup job {job.type} failed for {target}; see Settings > Backups"
         )
     # A job that never ends (a hung tool) fails nothing: alert when a scheduled database has had no
-    # successful snapshot for twice its schedule.
+    # successful snapshot for twice its schedule. Held for an hour first, so a PC that just woke from
+    # sleep (or backups just re-enabled) gets its catch-up snapshot before anyone is paged.
     from app.services.backups import SCHEDULES, last_verification, supported
 
     now = utcnow()
@@ -161,9 +162,9 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
                 "critical",
                 f"Database {ds.name} has had no successful backup for over {_fmt_age(2 * every)}; "
                 "see Settings > Backups",
+                3600,
             )
     # A failed verification is a job result, not a failed job: alert until a later verification passes.
-
     for ds_id in db.scalars(select(Backup.data_source_id).where(Backup.verify_status == "failed").distinct()):
         ds = db.get(DataSource, ds_id) if ds_id else None
         checked = last_verification(db, ds_id) if ds is not None and ds.deleted_at is None else None

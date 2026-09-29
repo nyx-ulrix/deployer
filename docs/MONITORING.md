@@ -40,7 +40,7 @@ The worker that leads the scheduler evaluates these rules once a minute. A condi
 | `container_unhealthy` | a container `restarting`, `dead` or `unhealthy` for over 2 minutes | critical (Deployer service) / warning (app) |
 | `api_errors` | API 5xx rate > 5 % over the last 5 minutes (at least 20 requests) | warning |
 | `backup_failed` | a backup job (`backup.*`) failed in the last 24 h and has not succeeded since, per database / platform data | critical |
-| `backup_stale` | a managed database with backups on has had no successful snapshot for twice its schedule (e.g. over 2 hours when hourly), counted from its creation when it has none - catches a snapshot job that hangs instead of failing | critical |
+| `backup_stale` | a managed database with backups on has had no successful snapshot for twice its schedule (e.g. over 2 hours when hourly), counted from its creation when it has none, and still true an hour later (so a PC waking from sleep gets its catch-up snapshot first) - catches a snapshot job that hangs instead of failing | critical |
 | `backup_verify_failed` | the latest restore test (`backup.verify`) of a database's backups failed; resolves when a later one passes (retried daily) | critical |
 | `tunnel_down` | remote access is on but the Cloudflare connector has not been running for 5 minutes | critical |
 | `replica_error` / `replica_lag` | a co-host database copy in `error` (critical), or a syncing copy more than 10 minutes behind (warning); a co-hosted app copy that `failed` (warning) | as noted |

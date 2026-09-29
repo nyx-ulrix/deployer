@@ -585,9 +585,9 @@ def test_no_successful_backup_for_twice_the_schedule_alerts(client, env, db):
     ds.created_at = utcnow() - timedelta(hours=3)
     db.commit()
     alerts._backup_rules(db, out)
-    assert [c.alert for c in out.values()] == ["backup_stale"] and "over 2 hours" in out[
-        f"backup_stale:{ds.id}"
-    ].message
+    cond = out[f"backup_stale:{ds.id}"]
+    assert [c.alert for c in out.values()] == ["backup_stale"] and "over 2 hours" in cond.message
+    assert cond.for_s == 3600  # a PC waking from a long sleep gets its catch-up snapshot before the alert opens
 
     backup_id = _snapshot(client, env)
     db.expire_all()
