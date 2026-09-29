@@ -75,6 +75,12 @@ snapshots, log archiving, pruning and verification.
 
 Job states: `queued → running → succeeded | failed | cancelled`, with `progress` (0–1) and `message`.
 
+When a job ends without its handler finishing (the PC slept, rebooted or the worker crashed, so the
+job is failed as "worker stopped"; or it was cancelled while queued), the scheduler marks its `running`
+version as failed (so it can be deleted and pruned) and drops a half-made `new_source` restore target.
+At start the worker also removes `.partial` artifacts untouched for an hour and any leftover
+`rtmp_*` / `verify_*` / `rtrash_*` temporary databases.
+
 ## Data model (primary)
 
 | Table | Key columns |

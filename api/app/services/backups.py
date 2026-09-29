@@ -1059,6 +1059,8 @@ def perform_restore(ctx: jobs.JobContext) -> dict:
             session.add(new_ds)
             session.flush()
             ensure_policy(session, new_ds)
+            # If the worker dies before this job ends, reconcile_interrupted() finds the target here.
+            session.get(Job, ctx.job_id).result = {"pending_data_source_id": new_ds.id}
             session.commit()
             target_name = new_ds.database_name
             target_ds = new_ds
@@ -1098,6 +1100,8 @@ def perform_restore(ctx: jobs.JobContext) -> dict:
         if params["mode"] == "in_place":
             _gap_marker(session, target_ds, restored.get("resume_point"))
         follow_job, _ = start_snapshot(session, target_ds, trigger="scheduled", user_id=ctx.created_by_id)
+        if new_ds is not None:
+            session.get(Job, ctx.job_id).result = None  # the target is complete: keep it
         session.commit()
         jobs.dispatch(follow_job.id)
         new_ds = None  # success: keep it
@@ -1531,7 +1535,9 @@ def enqueue_detached_finalize(db: Session, ds: DataSource, *, user_id: str | Non
     )
 
 
-def _final_snapshot_detached(factory: jobs.SessionFactory, info: dict, ds_id: str, user_id: str | None, progress):
+def _final_snapshot_detached(
+    factory: jobs.SessionFactory, info: dict, ds_id: str, user_id: str | None, progress, job_id: str
+):
     """Final snapshot of a source whose DataSource row no longer exists."""
     session = factory()
     try:
@@ -1548,6 +1554,7 @@ def _final_snapshot_detached(factory: jobs.SessionFactory, info: dict, ds_id: st
             created_by_id=user_id,
             expires_at=now + DELETED_KEEP,
             label=f"Final snapshot of {info.get('name')}",
+            job_id=job_id,
         )
         session.add(backup)
         session.commit()
@@ -1596,7 +1603,9 @@ def _job_finalize_delete(ctx: jobs.JobContext) -> dict:
     detached = params.get("detached")
     ctx.progress(0.05, "Taking the final snapshot", force=True)
     if detached:
-        backup_id = _final_snapshot_detached(ctx.session_factory, detached, ds_id, ctx.created_by_id, ctx.progress)
+        backup_id = _final_snapshot_detached(
+            ctx.session_factory, detached, ds_id, ctx.created_by_id, ctx.progress, ctx.job_id
+        )
         transient = DataSource(
             id=ds_id,
             project_id=detached["project_id"],
@@ -1934,8 +1943,42 @@ def _redis_due(key: str, every: timedelta, now: datetime) -> bool:
         return False
 
 
+def reconcile_interrupted(factory: jobs.SessionFactory) -> int:
+    """Settles what a job left behind when it ended without its handler finishing - failed by
+    `jobs.recover_stale()` after a crash, reboot or sleep, or cancelled while queued: its `running`
+    Backup row becomes failed, and a half-made new-source restore target is dropped. Returns the count."""
+    session = factory()
+    try:
+        rows = session.execute(
+            select(Backup, Job)
+            .outerjoin(Job, Job.id == Backup.job_id)
+            .where(Backup.status == "running", Backup.job_id.is_not(None))
+        ).all()
+        done = 0
+        for backup, job in rows:
+            if job is not None and job.status not in jobs.FINAL_STATUSES:
+                continue
+            backup.status, backup.finished_at = "failed", utcnow()
+            backup.error = (job.error if job else None) or "The backup job ended before the backup finished"
+            done += 1
+        session.commit()
+        # ponytail: scans every failed restore job's result in Python; restores are rare.
+        restores = session.scalars(
+            select(Job).where(Job.type == "backup.restore", Job.status.in_(("failed", "cancelled")))
+        )
+        for job in [j for j in restores if (j.result or {}).get("pending_data_source_id")]:
+            _discard_new_source(factory, job.result["pending_data_source_id"])
+            job.result = None
+            session.commit()
+            done += 1
+        return done
+    finally:
+        session.close()
+
+
 def scheduler_tick(factory: jobs.SessionFactory, now: datetime | None = None) -> list[str]:
     """Enqueues whatever is due. Call from exactly one process (the scheduler leader)."""
+    reconcile_interrupted(factory)
     now = now or utcnow()
     session = factory()
     enqueued: list[str] = []

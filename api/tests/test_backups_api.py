@@ -399,6 +399,96 @@ def test_restore_version_in_place_takes_safety_snapshot(client, env, db):
     assert gap.start_point["gap"] is True and gap.end_point == {"binlog_file": "mysql-bin.000008"}
 
 
+class _WorkerKilled(BaseException):
+    """Stands in for the worker process dying mid-job: nothing after it runs."""
+
+
+def test_jobs_ended_by_a_dead_worker_or_cancel_leave_nothing_stuck(client, env, db, monkeypatch, fake_redis):
+    # A queued snapshot cancelled before it ran: its Backup row must not stay "running".
+    resp = client.post(f"{env['base']}/backups", json={}, headers=env["dev"])
+    backup_id, job_id = resp.json()["backup_id"], resp.json()["job"]["id"]
+    client.post(f"{env['pbase']}/jobs/{job_id}/cancel", headers=env["admin"])
+    # A new-source restore killed mid-restore: recover_stale fails the job; the half-made source stays.
+    source_backup = _snapshot(client, env)
+    resp = client.post(
+        f"{env['base']}/restore", json={"backup_id": source_backup, "new_name": "half"}, headers=env["admin"]
+    )
+    restore_job = resp.json()["job"]["id"]
+
+    def killed(**kwargs):
+        raise _WorkerKilled
+
+    monkeypatch.setattr(env["fake"], "restore", killed)
+    monkeypatch.setattr(backups, "_discard_new_source", lambda factory, ds_id: None)  # dead: no cleanup
+    with pytest.raises(_WorkerKilled):
+        jobs.run_job(restore_job)
+    monkeypatch.undo()
+    monkeypatch.setattr(executors, "executor_for", lambda _host: env["fake"])
+    monkeypatch.setattr(provisioning, "drop_managed_source", lambda db, ds: env["dropped"].append(ds.database_name))
+    half = db.query(DataSource).filter_by(name="half").one()
+    half_id, half_db = half.id, half.database_name
+    job = db.get(Job, restore_job)
+    job.started_at = utcnow() - timedelta(minutes=10)
+    db.commit()
+    fake_redis.delete(jobs.heartbeat_key(restore_job))
+    assert jobs.recover_stale() == 1
+
+    assert backups.reconcile_interrupted(jobs.get_sessionmaker()) == 2
+    db.expire_all()
+    cancelled = db.get(Backup, backup_id)
+    assert cancelled.status == "failed" and cancelled.finished_at is not None
+    assert db.get(DataSource, half_id) is None and half_db in env["dropped"]
+    assert db.get(BackupPolicy, half_id) is None and db.get(Job, restore_job).result is None
+    assert backups.reconcile_interrupted(jobs.get_sessionmaker()) == 0
+    # No longer "running": deletable like any other failed version.
+    assert client.delete(f"{env['base']}/backups/{backup_id}", headers=env["admin"]).json() == {"ok": True}
+
+
+def test_sweep_leftovers_removes_stale_partials_and_temp_databases(tmp_path, monkeypatch):
+    import os
+    import time
+    from contextlib import contextmanager
+
+    stale, fresh, done = tmp_path / "a" / "x.bin.partial", tmp_path / "y.bin.partial", tmp_path / "z.bin"
+    for path in (stale, fresh, done):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"x")
+    old = time.time() - 2 * backup_engine.PARTIAL_MAX_AGE_S
+    os.utime(stale, (old, old))
+    os.utime(done, (old, old))
+    sql = []
+
+    class Conn:
+        def exec_driver_sql(self, statement, params=None):
+            sql.append(statement)
+            return [("rtmp_0a1b2c",), ("verify_0a1b2c",), ("rtrash_0a1b2c",), ("p_shop_abc123",), ("mysql",)]
+
+    class Engine:
+        @contextmanager
+        def connect(self):
+            yield Conn()
+
+    class Mongo:
+        def __init__(self):
+            self.dropped = []
+
+        def list_database_names(self):
+            return ["verify_0a1b2c", "p_shop_abc123", "admin"]
+
+        def drop_database(self, name):
+            self.dropped.append(name)
+
+    mongo = Mongo()
+    monkeypatch.setattr(backup_engine, "_root_engine", Engine)
+    monkeypatch.setattr(backup_engine, "_mongo_client", lambda: mongo)
+    assert backup_engine.sweep_leftovers(tmp_path) == {"partial_files": 1, "databases": 4}
+    assert not stale.exists() and fresh.exists() and done.exists()
+    assert [s for s in sql if s.startswith("DROP")] == [
+        f"DROP DATABASE IF EXISTS `{n}`" for n in ("rtmp_0a1b2c", "verify_0a1b2c", "rtrash_0a1b2c")
+    ]
+    assert mongo.dropped == ["verify_0a1b2c"]
+
+
 def test_archive_logs_creates_and_extends_segments(client, env, db):
     ds = env["ds"]
     _snapshot(client, env)

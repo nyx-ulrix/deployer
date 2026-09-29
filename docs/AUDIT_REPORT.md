@@ -99,7 +99,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-034 **[MEDIUM][bug]** Statement timeout is not enforced for MySQL writes, and is silently skipped when SET fails - `api/app/services/query_console.py:227-235, 301-306` - client watchdog that cancels or `KILL QUERY`s.
 
 **Backups**
-- [ ] A-035 **[MEDIUM][bug]** Backup rows, restore targets, temp DBs and .partial files stay stuck when a job is recovered or cancelled - `api/app/services/jobs.py:279-291, 422-447` - reconcile Backup rows with final jobs; sweep .partial and rtmp_/verify_ at worker start.
+- [x] A-035 **[MEDIUM][bug]** Backup rows, restore targets, temp DBs and .partial files stay stuck when a job is recovered or cancelled - `api/app/services/jobs.py:279-291, 422-447` - reconcile Backup rows with final jobs; sweep .partial and rtmp_/verify_ at worker start.
 - [ ] A-036 **[MEDIUM][bug]** The MariaDB PITR chain walks past the restore gap marker - `api/app/services/backups.py:644-659, 762-792` - break on `key.gap` before the duplicate check; add a test.
 - [ ] A-037 **[MEDIUM][usability]** Daily platform snapshots can never be restored or downloaded - `api/app/services/backups.py:278-282, 1416-1470` - add owner download plus a documented restore, or drop the feature and point to Export.
 - [ ] A-038 **[MEDIUM][usability]** A failed backup verification raises no alert and doesn't appear in instance health - `api/app/services/backups.py:1150-1191, 1797-1857` - add last_verify_status to health, an alert rule, and a sooner retry.

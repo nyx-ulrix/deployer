@@ -1400,6 +1400,48 @@ def mongo_verify(snapshot_path: Path, expected: dict | None) -> dict[str, Any]:
 
 
 # =============================================================================================
+# leftovers of killed jobs
+# =============================================================================================
+
+PARTIAL_MAX_AGE_S = 3600  # an ArtifactWriter touches its .partial on every write
+
+
+def sweep_leftovers(root: Path) -> dict[str, int]:
+    """Removes what a restore, verify or snapshot killed mid-way (crash, reboot, sleep) left behind:
+    `.partial` artifacts untouched for an hour, and every rtmp_/verify_/rtrash_ database.
+
+    Call at worker start only: restores and verifies run only inside the worker, so none is live then
+    (snapshots can run in the API process, hence the age check on `.partial` files).
+    """
+    cutoff = time.time() - PARTIAL_MAX_AGE_S
+    partial = 0
+    with suppress(OSError):
+        for path in root.rglob("*.partial"):
+            with suppress(OSError):
+                if path.stat().st_mtime < cutoff:
+                    path.unlink()
+                    partial += 1
+    databases = 0
+    try:
+        with _root_engine().connect() as conn:
+            names = [r[0] for r in conn.exec_driver_sql("SHOW DATABASES")]
+        for name in names:
+            if name.startswith((TMP_PREFIX, VERIFY_PREFIX, "rtrash_")) and DB_NAME_RE.fullmatch(name):
+                _mariadb_drop_db(name)
+                databases += 1
+    except Exception:  # noqa: BLE001 - MariaDB may still be starting; the next worker start retries
+        log.warning("could not sweep temporary MariaDB databases", exc_info=True)
+    try:
+        for name in _mongo_client().list_database_names():
+            if name.startswith((TMP_PREFIX, VERIFY_PREFIX)) and DB_NAME_RE.fullmatch(name):
+                _mongo_drop_tmp(name)
+                databases += 1
+    except Exception:  # noqa: BLE001
+        log.warning("could not sweep temporary MongoDB databases", exc_info=True)
+    return {"partial_files": partial, "databases": databases}
+
+
+# =============================================================================================
 # restore-as-new target
 # =============================================================================================
 
