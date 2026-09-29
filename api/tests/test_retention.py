@@ -119,3 +119,20 @@ def test_chain_stops_at_the_restore_gap_marker():
     before, marker, after = seg(6, 6, t), seg(6, 6, t, gap=True), seg(7, 7, t + timedelta(hours=1))
     chain = chain_from(base, [seg(5, 5, t), before, marker, after])
     assert [s.start_point["binlog_file"][-1] for s in chain] == ["5", "6"]
+
+
+def test_snapshot_taken_in_the_restore_resume_file_does_not_replay_across_it():
+    # The restore resumed mid mysql-bin.000007 (marker on 000006); binlog 7 mixes pre- and post-restore events.
+    safety = snap(START + timedelta(hours=6), trigger="pre_restore")  # anchored on 000007, before the restore
+    follow = snap(START + timedelta(hours=6, minutes=30))  # same file, after the restore
+    restored_at = START + timedelta(hours=6, minutes=10)
+    marker = seg(6, 6, restored_at, gap=True)
+    marker.start_point.update(reason="restore", at=restored_at.isoformat())
+    segments = [
+        seg(6, 6, restored_at),
+        marker,
+        seg(7, 7, restored_at + timedelta(hours=1)),
+        seg(8, 8, START + timedelta(hours=8)),
+    ]
+    assert chain_from(safety, segments) == []
+    assert [s.start_point["binlog_file"][-1] for s in chain_from(follow, segments)] == ["7", "8"]

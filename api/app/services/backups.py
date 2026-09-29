@@ -644,13 +644,28 @@ def ordered_segments(db: Session, data_source_id: str) -> list[BackupLogSegment]
 def chain_from(backup: Backup, segments: list[BackupLogSegment]) -> list[BackupLogSegment]:
     """Contiguous segments starting at the snapshot's consistent point (empty if logs don't reach it)."""
     anchor = _snapshot_anchor(backup)
+    taken = consistent_at(backup)
+    # An in-place restore after this snapshot caps its chain at the marker's start. A MariaDB restore resumes
+    # mid-file, so a snapshot taken in that file (the pre_restore safety snapshot) has no chain at all.
+    cap = min(
+        (
+            k.lo
+            for s in segments
+            if (s.start_point or {}).get("reason") == "restore"
+            and (k := seg_key(s))
+            and (parse_time(s.start_point.get("at")) or s.start_at) > taken
+        ),
+        default=None,
+    )
     chain: list[BackupLogSegment] = []
     for seg in segments:
+        key = seg_key(seg)
+        if cap is not None and key and key.hi > cap:
+            break
         if not chain:
             if covers_anchor(seg, anchor):
                 chain.append(seg)
             continue
-        key = seg_key(seg)
         if key and key.gap:
             break  # an in-place restore: older logs can't be replayed across it
         if contiguous(chain[-1], seg):
@@ -788,7 +803,8 @@ def _gap_marker(db: Session, ds: DataSource, resume_point: dict | None) -> None:
             kind=kind,
             start_at=now,
             end_at=now,
-            start_point={**point, "gap": True, "reason": "restore"},
+            # "at" is the restoring host's clock, the same one that stamps its snapshots' consistent_at.
+            start_point={**point, "gap": True, "reason": "restore", "at": resume_point.get("at")},
             end_point=point,
             size_bytes=0,
         )
