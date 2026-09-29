@@ -359,7 +359,8 @@ def test_move_job_runs(db, owner, make_project, make_device, fake_device, monkey
         ),
     )
     monkeypatch.setattr(
-        "app.services.transfer.restore_data", lambda target, payload: restored.append((target, payload)) or (0, 0)
+        "app.services.transfer.restore_data",
+        lambda target, payload: restored.append((target, {**payload, "tables": list(payload["tables"])})) or (0, 0),
     )
     job = device_moves.create_move_job(db, ds, None, db.get(User, owner.id))
     db.commit()

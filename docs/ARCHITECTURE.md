@@ -123,7 +123,9 @@ importing API takes at most a sixth of its free memory (the less of the machine'
 `API_MEM_LIMIT`, 768m by default, so roughly 80 MB), capped at 1 GiB, for both the uploaded file and the
 unpacked payload (`413 file_too_large` with the current limit in `details.limit_bytes`). Raise
 `API_MEM_LIMIT` in `deploy/.env` for bigger imports, or move bigger databases with a SQL dump
-(`mariadb-dump` / `mongodump`).
+(`mariadb-dump` / `mongodump`). Moves, co-host copies and restores on a host device read a single
+source's `data` entry as a stream instead (`transfer.restore_file`: one batch of rows / documents in
+memory at a time), so they have no such limit.
 
 Time: exports and imports run inside the HTTP request, and the file is sent only once it is fully
 built. Through remote access (Cloudflare Tunnel) a request that has not answered within about 100

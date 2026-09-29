@@ -172,9 +172,7 @@ def restore_into(target: DataSource, dump: Path, *, timeout: float = LONG_TIMEOU
             )
         finally:
             device_rpc.finish_transfer(transfer_id)
-    with gzip.open(dump, "rt", encoding="utf-8") as fh:
-        data = json.load(fh)
-    rows, documents = transfer.restore_data(target, data)
+    rows, documents = transfer.restore_file(target, dump)
     return {"rows": rows, "documents": documents}
 
 

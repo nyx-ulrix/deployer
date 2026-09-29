@@ -56,13 +56,14 @@ from __future__ import annotations
 import base64
 import binascii
 import gzip
+import itertools
 import json
 import logging
 import os
 import re
 import tempfile
 import zlib
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from datetime import UTC, date, datetime
 from typing import IO, Any
 
@@ -788,6 +789,20 @@ def _decode_cell(value: Any) -> Any:
     return value
 
 
+def _parts(data: dict, key: str) -> Iterable[dict]:
+    """`tables` / `collections` of a data entry: a list, or a generator from `read_data_entry`."""
+    value = data.get(key) or []
+    if not isinstance(value, list | Iterator):
+        raise ApiError(400, "invalid_export", f"Malformed export section: {key}")
+    return value
+
+
+def _batches(items: Iterable[Any]) -> Iterator[list[Any]]:
+    it = iter(items)
+    while batch := list(itertools.islice(it, BATCH)):
+        yield batch
+
+
 def restore_sql_data(ds: DataSource, data: dict) -> int:
     config = decrypt_json(ds.config_encrypted)
     engine = connections.build_sql_engine(ds.engine, config, pooled=False)
@@ -796,20 +811,19 @@ def restore_sql_data(ds: DataSource, data: dict) -> int:
         return engine.dialect.identifier_preparer.quote_identifier(name).replace("%", "%%")
 
     rows_total = 0
-    tables = _list(data, "tables")
     try:
         with engine.connect() as conn:
+            # One pass (create, then fill, table by table) so a streamed entry works; with foreign key
+            # checks off a table may reference one created later.
             conn.exec_driver_sql("SET FOREIGN_KEY_CHECKS=0")
-            for t in tables:
+            for t in _parts(data, "tables"):
                 create_sql = t.get("create_sql") or ""
                 if not isinstance(create_sql, str) or not _CREATE_TABLE_RE.match(create_sql):
                     raise ApiError(400, "invalid_export", f"Invalid table definition for {t.get('name')!r}")
                 conn.exec_driver_sql(create_sql.replace("%", "%%"))
-            conn.commit()
-            for t in tables:
+                conn.commit()
                 columns = [c["name"] for c in t.get("columns") or []]
-                rows = t.get("rows") or []
-                if not columns or not rows:
+                if not columns:
                     continue
                 sql = (
                     f"INSERT INTO {q(t['name'])} ("
@@ -818,9 +832,8 @@ def restore_sql_data(ds: DataSource, data: dict) -> int:
                     + ", ".join(["%s"] * len(columns))
                     + ")"
                 )
-                for i in range(0, len(rows), BATCH):
-                    batch = [tuple(_decode_cell(v) for v in row) for row in rows[i : i + BATCH]]
-                    conn.exec_driver_sql(sql, batch)
+                for batch in _batches(t.get("rows") or ()):
+                    conn.exec_driver_sql(sql, [tuple(_decode_cell(v) for v in row) for row in batch])
                     conn.commit()
                     rows_total += len(batch)
             conn.exec_driver_sql("SET FOREIGN_KEY_CHECKS=1")
@@ -840,21 +853,17 @@ def restore_mongo_data(ds: DataSource, data: dict) -> int:
     documents = 0
     try:
         database = client[config["database"]]
-        collections = _list(data, "collections")
-        ordered = sorted(collections, key=lambda c: c.get("type") == "view")
-        for coll in ordered:
+        # Writers list views last (and MongoDB does not need a view's source to exist).
+        for coll in _parts(data, "collections"):
             name = coll["name"]
             options = _from_canonical(coll.get("options") or {})
             database.create_collection(name, **options)
             if coll.get("type") == "view":
                 continue
-            docs = coll.get("documents") or []
             target = database[name]
-            for i in range(0, len(docs), BATCH):
-                batch = _from_canonical(docs[i : i + BATCH])
-                if batch:
-                    target.insert_many(batch, ordered=False, bypass_document_validation=True)
-                    documents += len(batch)
+            for batch in _batches(coll.get("documents") or ()):
+                target.insert_many(_from_canonical(batch), ordered=False, bypass_document_validation=True)
+                documents += len(batch)
             for ix in _from_canonical(coll.get("indexes") or []):
                 ix_name = ix.pop("name", None)
                 if not ix_name or ix_name == "_id_":
@@ -888,6 +897,116 @@ def restore_device_data(ds: DataSource, data: dict) -> tuple[int, int]:
         device_rpc.finish_transfer(transfer_id)
     result = result if isinstance(result, dict) else {}
     return int(result.get("rows") or 0), int(result.get("documents") or 0)
+
+
+class _JsonReader:
+    """Pull parser over a text stream: containers are walked token by token and each leaf value (a
+    row, a document, a column list) is decoded whole with json's raw_decode."""
+
+    _decoder = json.JSONDecoder()
+
+    def __init__(self, fh: IO[str]):
+        self.fh = fh
+        self.buf, self.pos, self.eof = "", 0, False
+
+    def _more(self, n: int = 1 << 16) -> None:
+        data = "" if self.eof else self.fh.read(n)
+        self.eof = not data
+        self.buf = self.buf[self.pos :] + data
+        self.pos = 0
+
+    def peek(self) -> str:
+        while True:
+            while self.pos < len(self.buf) and self.buf[self.pos] in " \t\r\n":
+                self.pos += 1
+            if self.pos < len(self.buf):
+                return self.buf[self.pos]
+            if self.eof:
+                raise ValueError("unexpected end of JSON data")
+            self._more()
+
+    def take(self, char: str) -> None:
+        if self.peek() != char:
+            raise ValueError(f"expected {char!r} in JSON data")
+        self.pos += 1
+
+    def value(self) -> Any:
+        self.peek()
+        while True:
+            try:
+                value, end = self._decoder.raw_decode(self.buf, self.pos)
+                if end < len(self.buf) or self.eof:  # a number at the end of the buffer may go on
+                    self.pos = end
+                    return value
+            except ValueError:
+                if self.eof:
+                    raise
+            self._more(max(1 << 16, len(self.buf) - self.pos))  # doubling: a big value still parses in O(n)
+
+    def _members(self, close: str) -> Iterator[None]:
+        """Yields before each member of the container just opened; the caller reads it."""
+        if self.peek() == close:
+            self.pos += 1
+            return
+        while True:
+            yield
+            if self.peek() != ",":
+                self.take(close)
+                return
+            self.pos += 1
+
+    def keys(self) -> Iterator[str]:
+        """Each key of an object; the caller reads its value before asking for the next."""
+        self.take("{")
+        for _ in self._members("}"):
+            key = self.value()
+            if not isinstance(key, str):
+                raise ValueError("expected an object key in JSON data")
+            self.take(":")
+            yield key
+
+    def values(self) -> Iterator[Any]:
+        self.take("[")
+        for _ in self._members("]"):
+            yield self.value()
+
+
+def _stream_parts(r: _JsonReader, bulk: str) -> Iterator[dict]:
+    r.take("[")
+    for _ in r._members("]"):
+        part: dict[str, Any] = {}
+        rows: Iterator[Any] | None = None
+        for key in r.keys():
+            if key == bulk and rows is None:
+                rows = part[key] = r.values()
+                yield part  # rows / documents are written last, so the rest of `part` is already here
+                for _ in rows:  # whatever the consumer did not read
+                    pass
+            else:
+                part[key] = r.value()
+        if rows is None:
+            yield part
+
+
+def read_data_entry(fh: IO[str]) -> dict[str, Any]:
+    """A source's `data` entry parsed lazily from `fh`: `tables` / `collections` and their `rows` /
+    `documents` are generators that parse as they are consumed, so a restore holds about one batch
+    instead of the whole dump (the device worker has 384 MB; audit A-049). Keys after the tables
+    (`skipped`) are not read. Consume it in order while `fh` is open."""
+    r = _JsonReader(fh)
+    entry: dict[str, Any] = {}
+    for key in r.keys():
+        if key in ("tables", "collections"):
+            entry[key] = _stream_parts(r, "rows" if key == "tables" else "documents")
+            break
+        entry[key] = r.value()
+    return entry
+
+
+def restore_file(ds: DataSource, path: str | os.PathLike) -> tuple[int, int]:
+    """Restores a gzip JSON `data` entry (write_source_data) into a source on this machine, streaming it."""
+    with gzip.open(path, "rt", encoding="utf-8") as fh:
+        return restore_data(ds, read_data_entry(fh))
 
 
 def restore_data(ds: DataSource, data: dict | None) -> tuple[int, int]:

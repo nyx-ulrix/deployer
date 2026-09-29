@@ -605,9 +605,7 @@ def m_import(params: dict, ctx: CallContext) -> dict:
     os.close(fd)
     try:
         download_file(ctx, params.get("transfer_id"), Path(tmp))
-        with gzip.open(tmp, "rt", encoding="utf-8") as fh:
-            data = json.load(fh)
-        rows, documents = transfer.restore_data(ds, data)
+        rows, documents = transfer.restore_file(ds, tmp)
     finally:
         Path(tmp).unlink(missing_ok=True)
     return {"rows": rows, "documents": documents}
