@@ -52,6 +52,9 @@ GitHub push ──webhook──▶ api ──job app.deploy──▶ worker (roo
 - **Zero-downtime swap**: the new container starts, the worker waits for a TCP accept on its port
   (up to 60 s), rewrites the Caddy file to the new container, reloads, then stops and removes the
   previous container. A failed start leaves the previous deployment live.
+  A timed-out wait says the app must listen on `0.0.0.0` and on `$PORT` (not for the `static`
+  preset, whose nginx is Deployer's own). A clone that fails on a missing branch or an unreadable
+  (private, mistyped) repository puts a plain next step above git's own lines in the error.
 - **Cloudflare hostnames** for apps reuse the `domains` table (`domains.app_id` nullable FK,
   `domains.target_type` = `app`): adding one resolves the zone from the hostname (longest matching
   zone of the linked account, else 404 `zone_not_found`), creates the DNS CNAME and adds the

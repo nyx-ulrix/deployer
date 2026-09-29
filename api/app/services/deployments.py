@@ -609,9 +609,45 @@ def _update(factory: jobs.SessionFactory, deployment_id: str, **values) -> None:
             db.commit()
 
 
+_NO_BRANCH = re.compile(r"Remote branch (\S+) not found|Could not find remote branch (\S+) to clone")
+_NO_ACCESS = re.compile(
+    r"could not read Username|Authentication failed|Repository not found|repository '[^']*' not found"
+    r"|Invalid username or password|Permission to \S+ denied",
+    re.IGNORECASE,
+)
+
+
+def _failure_hint(output: str) -> str:
+    """A-060: a plain-language next step for the commonest clone failures, appended to git's own lines."""
+    if match := _NO_BRANCH.search(output):
+        branch = match.group(1) or match.group(2)
+        return (
+            f"The branch '{branch}' does not exist in this repository. Check the branch in the app's settings "
+            "(the default branch is usually 'main' or 'master')."
+        )
+    if _NO_ACCESS.search(output):
+        return (
+            "Git could not read this repository. Check the repository URL; if the repository is private, "
+            "connect GitHub or add an access token in the app's settings."
+        )
+    return ""
+
+
+def listen_hint(app: App, port: int) -> str:
+    """A-060: why a container never accepts connections (the static preset's nginx is ours, no hint)."""
+    if app.preset == "static":
+        return ""
+    return (
+        f" Your app must listen on 0.0.0.0 (not localhost or 127.0.0.1) and on the port in the PORT "
+        f"environment variable (currently {port}), e.g. app.listen(process.env.PORT, '0.0.0.0')."
+    )
+
+
 def _docker_failure(exc: DockerError, secrets: list[str | None]) -> str:
     tail = "\n".join(exc.output.strip().splitlines()[-5:])
-    text = f"{exc}" + (f"\n{tail}" if tail else "")
+    hint = _failure_hint(exc.output)
+    # The hint comes before git's/docker's own lines so the 2000-character cap never cuts it off.
+    text = f"{exc}" + (f"\n{hint}" if hint else "") + (f"\n{tail}" if tail else "")
     return redact(text, secrets, limit=2000)
 
 
@@ -842,7 +878,8 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
                 for line in cli.logs(name, since=None, tail=50):
                     log_.write(f"    {line}")
                 raise jobs.JobError(
-                    f"The container did not accept connections on port {port} within {HEALTH_TIMEOUT_S} s"
+                    f"The container did not accept connections on port {port} within {HEALTH_TIMEOUT_S} s."
+                    + listen_hint(app, port)
                 )
             ctx.check_cancelled()
             ctx.progress(0.85, "Routing", force=True)

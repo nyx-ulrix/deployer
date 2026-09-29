@@ -108,12 +108,57 @@ def test_second_deploy_supersedes_and_failed_start_keeps_previous(db, docker, pr
     db.expire_all()
     third, second, app = db.get(Deployment, third.id), db.get(Deployment, second.id), db.get(App, app.id)
     assert third.status == "failed" and "did not accept connections on port 3000" in third.error
+    assert "listen on 0.0.0.0" in third.error and "(currently 3000)" in third.error  # A-060
     assert second.status == "live" and app.live_deployment_id == second.id
     assert third.container_name not in docker.containers and second.container_name in docker.containers
     assert docker.steps() == ["clone", "build", "rm", "run", "health", "logs", "rm", "rmi"]
     assert third.image_tag is None and docker.images == {first.image_tag, second.image_tag}  # A-059
     assert "reload" not in docker.steps() and second.container_name in caddy_file(app)
     assert "hello from the app" in third.log
+
+
+@pytest.mark.parametrize(
+    ("output", "hint"),
+    [
+        (
+            "warning: Could not find remote branch mian to clone.\n"
+            "fatal: Remote branch mian not found in upstream origin",
+            "The branch 'mian' does not exist",
+        ),
+        (
+            "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+            "if the repository is private",
+        ),
+        ("remote: Repository not found.\nfatal: repository 'https://github.com/acme/shop/' not found", "access token"),
+        ("fatal: unable to access 'https://github.com/acme/shop/': Could not resolve host", None),
+    ],
+)
+def test_clone_failure_hints(db, docker, project, output, hint):
+    """A-060: the commonest clone failures end with a plain next step, not only git's own lines."""
+
+    def fail():
+        raise app_runner.DockerError("git clone failed (exit 128)", output)
+
+    docker.hooks["clone"] = fail
+    dep, job = deploy(db, make_app(db, project))
+    assert jobs.run_queued() == [(job.id, "failed")]
+    db.expire_all()
+    error = db.get(Deployment, dep.id).error
+    assert error.startswith("git clone failed (exit 128)") and "fatal:" in error
+    if hint:
+        assert hint in error and hint in db.get(Deployment, dep.id).log
+    else:
+        assert "branch" not in error and "private" not in error
+
+
+def test_static_health_failure_has_no_listen_hint(db, docker, project):
+    """The static preset's nginx is Deployer's own: telling the user to fix their listen address is wrong."""
+    docker.fail_at = "health"
+    dep, _ = deploy(db, make_app(db, project, preset="static"))
+    jobs.run_queued()
+    db.expire_all()
+    error = db.get(Deployment, dep.id).error
+    assert "did not accept connections on port 80" in error and "0.0.0.0" not in error
 
 
 def test_build_failure_is_redacted(db, docker, project):

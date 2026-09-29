@@ -65,7 +65,8 @@ export function BuildLog({ projectId, appId, deployment }: { projectId: string; 
       </pre>
       {d.error && (
         <Alert tone="danger" title="Deployment failed">
-          {d.error}
+          {/* The error holds a plain hint and then git's/docker's own lines (A-060): keep the line breaks. */}
+          <span className="whitespace-pre-wrap">{d.error}</span>
         </Alert>
       )}
     </div>
