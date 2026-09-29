@@ -231,6 +231,14 @@ def test_remove_or_demote_lists_keys_to_rotate(client, team, auth_headers, make_
         headers=auth_headers(users["owner"]),
     )
     assert promote.json()["api_keys_to_rotate"] == []
+    # Demoting yourself lists nothing: you could no longer revoke them.
+    make_key("dev", "e")
+    self_demote = client.patch(
+        f"/v1/projects/{project.id}/members/{users['dev'].id}",
+        json={"role": "viewer"},
+        headers=auth_headers(users["dev"]),
+    )
+    assert self_demote.json()["api_keys_to_rotate"] == []
 
     removed = client.delete(
         f"/v1/projects/{project.id}/members/{users['admin'].id}", headers=auth_headers(users["owner"])

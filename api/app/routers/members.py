@@ -110,7 +110,8 @@ def update_member(user_id: str, body: MemberUpdate, request: Request, access: Ad
     db.commit()
     out = member_out(member, db.get(User, user_id))
     # A-024: only admins create or reveal keys, so losing admin means those keys should be rotated.
-    demoted = role_rank(old_role) >= role_rank("admin") > role_rank(member.role)
+    # Not for yourself: once demoted you can no longer revoke them.
+    demoted = not is_self and role_rank(old_role) >= role_rank("admin") > role_rank(member.role)
     out["api_keys_to_rotate"] = keys_to_rotate(db, access.project.id, user_id) if demoted else []
     return out
 
@@ -139,7 +140,8 @@ def remove_member(user_id: str, request: Request, access: Viewer, db: DbSession)
     )
     db.commit()
     # A-024: removal doesn't stop the keys they created or saw; the dashboard offers to revoke these.
-    return {"ok": True, "api_keys_to_rotate": keys_to_rotate(db, access.project.id, user_id)}
+    # Not when leaving: a former member can't revoke them.
+    return {"ok": True, "api_keys_to_rotate": [] if is_self else keys_to_rotate(db, access.project.id, user_id)}
 
 
 # --- invites (project side) ----------------------------------------------------------------------
