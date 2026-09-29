@@ -99,7 +99,7 @@ Off by default. An app normally reaches its project's data only through the data
   lists the injected variable **names**; passwords and URLs are redacted from the log.
 - **Injected environment** (the app's own variables with the same name win), for each non-deleted
   managed source of the project on the main server, `NAME` = source name upper-cased with every
-  non-alphanumeric turned into `_`:
+  non-alphanumeric turned into `_` (so renaming a source renames its variables from the next deploy):
   - SQL: `DEPLOYER_DB_<NAME>_HOST`, `_PORT`, `_USER`, `_PASSWORD`, `_DATABASE`, `_URL`
     (`mysql://<user>:<password>@mariadb:3306/<db>` with user and password URL-encoded; placeholders
     in angle brackets here so the secret scanner doesn't read the example as a credential);

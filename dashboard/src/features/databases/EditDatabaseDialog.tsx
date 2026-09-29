@@ -109,7 +109,15 @@ export function EditDatabaseDialog({
       }
     >
       <form id="edit-db" className="space-y-4" onSubmit={onSubmit}>
-        <Field label="Display name">
+        <Field
+          label="Display name"
+          hint={
+            // Apps with database access get DEPLOYER_DB_<NAME>_* for managed sources (docs/DEPLOYMENTS.md).
+            !external && name.trim() !== source.name
+              ? `Apps with database access get ${envPrefix(name)}* instead of ${envPrefix(source.name)}* from their next deploy; update any app that reads the old names.`
+              : undefined
+          }
+        >
           {(id) => (
             <Input
               id={id}
@@ -234,3 +242,9 @@ export function EditDatabaseDialog({
     </Dialog>
   );
 }
+
+const envPrefix = (name: string) =>
+  `DEPLOYER_DB_${name
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "_")}_`;
