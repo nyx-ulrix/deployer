@@ -4,11 +4,13 @@ import { api, qk } from "../../api/endpoints";
 import { usePlacementOptions } from "../../api/hooks";
 import type { BackupPolicy, BackupSchedule, DataSource, PlacementOption } from "../../api/types";
 import { Button } from "../../components/ui/Button";
+import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Dialog } from "../../components/ui/Dialog";
 import { Checkbox, Field, Input, Select } from "../../components/ui/Input";
 import { Alert, ErrorAlert } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { formatBytes, formatDateTime } from "../../lib/format";
+import { pitrLossWarning } from "./pitr";
 import { SCHEDULE_LABELS } from "./timeline";
 
 const NONE = "none";
@@ -81,6 +83,7 @@ export function PolicyDialog({
     copy: copyTargetValue(policy),
     safety_snapshots: policy.safety_snapshots,
   }));
+  const [confirmLoss, setConfirmLoss] = useState<string | null>(null);
   const set = <K extends keyof typeof draft>(key: K, value: (typeof draft)[K]) => setDraft((d) => ({ ...d, [key]: value }));
 
   const windowDays = Number(draft.pitr_window_days);
@@ -105,6 +108,7 @@ export function PolicyDialog({
         copy_to_device_id: draft.copy === PRIMARY || draft.copy === NONE ? null : draft.copy,
         safety_snapshots: draft.safety_snapshots,
       }),
+    onError: () => setConfirmLoss(null),
     onSuccess: (p) => {
       queryClient.setQueryData(qk.backupPolicy(projectId, source.id), p);
       void queryClient.invalidateQueries({ queryKey: qk.recoveryWindow(projectId, source.id) });
@@ -115,7 +119,13 @@ export function PolicyDialog({
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (canEdit && windowValid) save.mutate();
+    if (!canEdit || !windowValid) return;
+    const loss = pitrLossWarning(policy, {
+      pitr_enabled: draft.pitr_enabled,
+      pitr_window_days: clampInt(draft.pitr_window_days, 1, 35),
+    });
+    if (loss) setConfirmLoss(loss);
+    else save.mutate();
   };
 
   const keepField = (key: "keep_hourly" | "keep_daily" | "keep_weekly" | "keep_monthly", label: string) => (
@@ -142,7 +152,7 @@ export function PolicyDialog({
       size="lg"
       title={`Backup policy — ${source.name}`}
       description={`Last changed ${formatDateTime(policy.updated_at)}.`}
-      dismissible={!save.isPending}
+      dismissible={!save.isPending && confirmLoss === null}
       footer={
         canEdit ? (
           <>
@@ -263,6 +273,15 @@ export function PolicyDialog({
 
         {save.error && <ErrorAlert error={save.error} />}
       </form>
+      <ConfirmDialog
+        open={confirmLoss !== null}
+        onClose={() => setConfirmLoss(null)}
+        onConfirm={() => save.mutate()}
+        loading={save.isPending}
+        title="Delete recovery logs?"
+        confirmLabel="Save and delete logs"
+        description={confirmLoss}
+      />
     </Dialog>
   );
 }

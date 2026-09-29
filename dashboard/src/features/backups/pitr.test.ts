@@ -7,6 +7,7 @@ import {
   inputConstraints,
   percentOf,
   pitrBounds,
+  pitrLossWarning,
   timelineBar,
   toDateInput,
   toTimeInput,
@@ -118,5 +119,26 @@ describe("timeline bar", () => {
     const backups = [snap("a", new Date(2026, 8, 10)), snap("b", new Date(2026, 8, 12)), snap("c", new Date(2026, 8, 11), "failed")];
     expect(baseSnapshotFor(new Date(2026, 8, 11, 12), backups)?.id).toBe("a");
     expect(baseSnapshotFor(new Date(2026, 8, 9), backups)).toBeNull();
+  });
+});
+
+describe("pitrLossWarning", () => {
+  const on = (days: number) => ({ pitr_enabled: true, pitr_window_days: days });
+  const off = (days: number) => ({ pitr_enabled: false, pitr_window_days: days });
+
+  it("warns when PITR is turned off", () => {
+    expect(pitrLossWarning(on(7), off(7))).toMatch(/deletes all archived recovery logs/);
+  });
+
+  it("warns when the window shrinks", () => {
+    expect(pitrLossWarning(on(7), on(3))).toMatch(/older than 3 days/);
+    expect(pitrLossWarning(on(7), on(1))).toMatch(/older than 1 day will/);
+  });
+
+  it("stays quiet when nothing is lost", () => {
+    expect(pitrLossWarning(on(7), on(7))).toBeNull();
+    expect(pitrLossWarning(on(7), on(14))).toBeNull();
+    expect(pitrLossWarning(off(7), off(1))).toBeNull();
+    expect(pitrLossWarning(off(7), on(3))).toBeNull();
   });
 });

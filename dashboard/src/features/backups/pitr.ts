@@ -126,3 +126,20 @@ export function baseSnapshotFor(t: Date, backups: readonly Backup[]): Backup | n
   }
   return best;
 }
+
+type PitrSetting = { pitr_enabled: boolean; pitr_window_days: number };
+
+/**
+ * Warning for a policy change that throws away archived recovery logs (turning PITR off or
+ * shortening the window): the hourly prune deletes them for good. Null when nothing is lost.
+ */
+export function pitrLossWarning(before: PitrSetting, after: PitrSetting): string | null {
+  if (!before.pitr_enabled) return null;
+  if (!after.pitr_enabled) {
+    return "Turning off point-in-time recovery deletes all archived recovery logs within the hour. You can only restore to saved versions after that, and turning it back on starts a new, empty window.";
+  }
+  if (after.pitr_window_days < before.pitr_window_days) {
+    return `Recovery logs older than ${after.pitr_window_days} day${after.pitr_window_days === 1 ? "" : "s"} will be deleted within the hour. Making the window longer again later does not bring them back.`;
+  }
+  return null;
+}

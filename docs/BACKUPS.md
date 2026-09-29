@@ -24,7 +24,9 @@ keyfile auth). MariaDB runs with `log_bin`, `binlog_format=ROW`, `server_id=1`, 
 Default policy per data source: keep **24 hourly, 7 daily, 4 weekly, 12 monthly** snapshots.
 A snapshot is kept if it is the newest one in any bucket it qualifies for. **Pinned** (labelled)
 versions and safety snapshots from the last 30 days are never pruned automatically. Log segments are
-kept for the PITR window plus the age of the oldest snapshot needed to replay into that window.
+kept for the PITR window plus the age of the oldest snapshot needed to replay into that window. Turning
+PITR off, or shortening the window, lets the next hourly prune delete the logs that fall outside it
+for good, so the policy dialog asks for confirmation before saving such a change.
 
 ## Storage & encryption
 
