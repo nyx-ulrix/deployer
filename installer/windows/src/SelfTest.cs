@@ -104,6 +104,9 @@ namespace DeployerSetup
                   && SignInAppsDialog.CheckValue("github", false, "ID Ov23liExample") != null
                   && SignInAppsDialog.CheckValue("google", true, gid) != null
                   && SignInAppsDialog.CheckValue("github", true, "secret:abc") != null, "sign-in app paste checks");
+            Check(ResetPasswordDialog.Check("short", "short") != null
+                  && ResetPasswordDialog.Check("long-enough-1", "long-enough-2") != null
+                  && ResetPasswordDialog.Check("long-enough-1", "long-enough-1") == null, "reset password checks");
         }
 
         /// <summary>Renders a form that is never shown: handles are created, nothing appears on screen.</summary>
@@ -347,6 +350,11 @@ namespace DeployerSetup
             signIn.messageIsError = true;
             signIn.ApplyStatus(SampleOAuthStatus(), null);
             Save(signIn, dir, "dialog-signin-github-error");
+            ResetPasswordDialog resetPassword = new ResetPasswordDialog(null, @"C:\ProgramData\Deployer", scale);
+            resetPassword.message = ResetPasswordDialog.Check("new-password-1", "new-password-2");
+            resetPassword.messageIsError = true;
+            resetPassword.Rebuild();
+            Save(resetPassword, dir, "dialog-reset-password");
             Dictionary<string, object> device = new Dictionary<string, object>();
             device["mode"] = "host";
             device["primary_url"] = "https://deployer.example.org";

@@ -850,7 +850,8 @@ namespace DeployerSetup
             if (status == null) return;
             using (SettingsDialog d = new SettingsDialog(port, status.Lan, status.KeepAwake, status.Autostart, 0))
             {
-                d.OpenSignInApps = ShowSignInApps;
+                d.OpenSignInApps = owner => ShowScriptDialog(owner, "sign-in apps", script => new SignInAppsDialog(script, installDir, 0));
+                d.OpenResetPassword = owner => ShowScriptDialog(owner, "password reset", script => new ResetPasswordDialog(script, installDir, 0));
                 d.PlaceCentered(this);
                 if (d.ShowDialog(this) != DialogResult.OK) return;
                 List<string[]> commands = new List<string[]>();
@@ -862,7 +863,7 @@ namespace DeployerSetup
             }
         }
 
-        void ShowSignInApps(Form owner)
+        void ShowScriptDialog(Form owner, string what, Func<string, ThemedForm> create)
         {
             string script;
             try
@@ -871,10 +872,10 @@ namespace DeployerSetup
             }
             catch (Exception ex)
             {
-                ErrorDialog.Show(owner, "Couldn't open sign-in apps", "Couldn't prepare the Deployer scripts.", ex.ToString());
+                ErrorDialog.Show(owner, "Couldn't open " + what, "Couldn't prepare the Deployer scripts.", ex.ToString());
                 return;
             }
-            using (SignInAppsDialog d = new SignInAppsDialog(script, installDir, 0))
+            using (ThemedForm d = create(script))
             {
                 d.PlaceCentered(owner);
                 d.ShowDialog(owner);
@@ -1126,6 +1127,8 @@ namespace DeployerSetup
         public bool Autostart { get; private set; }
         /// <summary>Opens the sign-in apps dialog over this one (set by Deployer Control).</summary>
         public Action<Form> OpenSignInApps;
+        /// <summary>Opens the reset-password dialog over this one (set by Deployer Control).</summary>
+        public Action<Form> OpenResetPassword;
         readonly int originalPort;
         InputBox portInput;
         TextBlock portHint;
@@ -1185,23 +1188,10 @@ namespace DeployerSetup
             y = Toggle(y, cw, pad, "Start Deployer when I sign in to Windows",
                 "Also shows the Deployer icon next to the clock.", Autostart, v => Autostart = v);
 
-            Rule signInRule = new Rule(Theme.Border);
-            signInRule.Bounds = new Rectangle(pad, y + ui.S(6), cw, Math.Max(1, ui.S(1)));
-            Controls.Add(signInRule);
-            y += ui.S(18);
-            FlatButton signIn = new FlatButton(ui, "Set up…", ButtonStyle.Secondary);
-            int siw = signIn.PreferredWidth(ui.S(96));
-            TextBlock signInTitle = new TextBlock(ui, "Sign-in apps (Google & GitHub)", ui.SemiBold(10f), Theme.Text);
-            int th = signInTitle.LayoutAt(pad, y, cw - siw - ui.S(16)) + ui.S(2);
-            Controls.Add(signInTitle);
-            TextBlock signInText = new TextBlock(ui, "Let people sign in with Google or GitHub: enter your OAuth Client IDs and secrets.", ui.Font(9.5f), Theme.TextMuted);
-            th += signInText.LayoutAt(pad, y + th, cw - siw - ui.S(16));
-            Controls.Add(signInText);
-            int sbh = ui.S(34);
-            signIn.Bounds = new Rectangle(pad + cw - siw, y + Math.Max(0, (th - sbh) / 2), siw, sbh);
-            signIn.Click += delegate { if (OpenSignInApps != null) OpenSignInApps(this); };
-            Controls.Add(signIn);
-            y += Math.Max(th, sbh) + ui.S(18);
+            y = ButtonRow(y, cw, pad, "Sign-in apps (Google & GitHub)",
+                "Let people sign in with Google or GitHub: enter your OAuth Client IDs and secrets.", "Set up…", () => OpenSignInApps);
+            y = ButtonRow(y, cw, pad, "Reset a password",
+                "Forgot a Deployer account password? Set a new one.", "Reset…", () => OpenResetPassword);
 
             Panel footer = new Panel();
             footer.BackColor = Theme.SurfaceAlt;
@@ -1226,6 +1216,27 @@ namespace DeployerSetup
             CancelButton = cancel;
             ClientSize = new Size(w, y + fh);
             Validate2();
+        }
+
+        int ButtonRow(int y, int cw, int pad, string title, string description, string buttonText, Func<Action<Form>> open)
+        {
+            Rule rule = new Rule(Theme.Border);
+            rule.Bounds = new Rectangle(pad, y + ui.S(6), cw, Math.Max(1, ui.S(1)));
+            Controls.Add(rule);
+            y += ui.S(18);
+            FlatButton button = new FlatButton(ui, buttonText, ButtonStyle.Secondary);
+            int bw = button.PreferredWidth(ui.S(96));
+            TextBlock heading = new TextBlock(ui, title, ui.SemiBold(10f), Theme.Text);
+            int th = heading.LayoutAt(pad, y, cw - bw - ui.S(16)) + ui.S(2);
+            Controls.Add(heading);
+            TextBlock text = new TextBlock(ui, description, ui.Font(9.5f), Theme.TextMuted);
+            th += text.LayoutAt(pad, y + th, cw - bw - ui.S(16));
+            Controls.Add(text);
+            int bh = ui.S(34);
+            button.Bounds = new Rectangle(pad + cw - bw, y + Math.Max(0, (th - bh) / 2), bw, bh);
+            button.Click += delegate { Action<Form> a = open(); if (a != null) a(this); };
+            Controls.Add(button);
+            return y + Math.Max(th, bh) + ui.S(18);
         }
 
         int Toggle(int y, int cw, int pad, string title, string description, bool value, Action<bool> set)

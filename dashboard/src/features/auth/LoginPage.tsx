@@ -86,6 +86,15 @@ export function LoginPage() {
           </Button>
         </form>
 
+        <details className="text-center text-sm text-muted">
+          <summary className="cursor-pointer font-medium text-accent hover:underline">Forgot your password?</summary>
+          <p className="mt-2 text-left">
+            On the PC that runs Deployer, open <strong>Deployer Control</strong> &gt; <strong>Settings</strong> &gt;{" "}
+            <strong>Reset a password</strong>, or run <code>deployer reset-password</code> in PowerShell. Without an
+            email it resets the owner account. Members can ask the owner to reset theirs.
+          </p>
+        </details>
+
         {providers.data?.allow_signup && (
           <p className="text-center text-sm text-muted">
             New here?{" "}

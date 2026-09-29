@@ -34,6 +34,10 @@
                                     Store a Client ID and secret: read from DEPLOYER_OAUTH_CLIENT_ID /
                                     DEPLOYER_OAUTH_CLIENT_SECRET, else asked for (an empty secret keeps the stored one)
     deployer oauth clear google|github
+
+    Account recovery (no administrator rights needed):
+    deployer reset-password [email] Set a new password for a Deployer account (default: the owner) and sign it
+                                    out everywhere. Read from DEPLOYER_NEW_PASSWORD, else asked for twice
 #>
 [CmdletBinding()]
 param(
@@ -99,6 +103,8 @@ function Show-Help {
     Write-Host '  deployer oauth status [-Json]        Google/GitHub sign-in apps and their callback URLs'
     Write-Host '  deployer oauth set google|github     Save a Client ID and secret (asks, or reads DEPLOYER_OAUTH_CLIENT_ID/_SECRET)'
     Write-Host '  deployer oauth clear google|github   Remove a sign-in app'
+    Write-Host ''
+    Write-Host '  deployer reset-password [email]      Forgot your password? Set a new one (default: the owner account)'
     Write-Host ''
     Write-Host "  Install directory: $InstallDir"
     Write-Host ''
@@ -445,12 +451,6 @@ function Invoke-Device {
     if ($code -ne 0) { throw "deployer device $sub failed (exit code $code)." }
 }
 
-function Read-OAuthSecretPrompt {
-    $secure = Read-Host '    Client secret (leave empty to keep the saved one)' -AsSecureString
-    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-}
-
 function Invoke-OAuth {
     # Google/GitHub sign-in apps through the API's CLI: python -m app.cli oauth status|set|clear.
     # The secret only ever travels on stdin - never on a command line and never into the log.
@@ -466,7 +466,7 @@ function Invoke-OAuth {
         if ($null -eq $id) {
             try {
                 $id = Read-Host "    $provider Client ID"
-                $secret = Read-OAuthSecretPrompt
+                $secret = Read-SecretPrompt 'Client secret (leave empty to keep the saved one)'
             } catch {
                 throw 'Set DEPLOYER_OAUTH_CLIENT_ID and DEPLOYER_OAUTH_CLIENT_SECRET, or run this in an interactive PowerShell window.'
             }
@@ -496,6 +496,43 @@ function Invoke-OAuth {
         Write-Host "    Callback URL: $($p.callback_url)"
     }
     Write-Host ''
+}
+
+function Read-SecretPrompt {
+    param([string]$Prompt)
+    $secure = Read-Host "    $Prompt" -AsSecureString
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+    try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) } finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+}
+
+function Invoke-ResetPassword {
+    # Forgotten-password recovery through the API's CLI: python -m app.cli user reset-password [--email].
+    # Being on this PC is the proof of ownership. The password only travels on stdin (never argv, never the log).
+    $ctx = Get-Context
+    $email = $Service.Trim()
+    $password = $env:DEPLOYER_NEW_PASSWORD
+    if ($null -eq $password) {
+        try {
+            $password = Read-SecretPrompt 'New password (at least 10 characters)'
+            $again = Read-SecretPrompt 'Type it again'
+        } catch {
+            throw 'Set DEPLOYER_NEW_PASSWORD, or run this in an interactive PowerShell window.'
+        }
+        if ($password -cne $again) { throw 'The two passwords are different. Nothing was changed.' }
+    }
+    if (-not (Test-DeployerDockerEngine -Runtime $ctx.Runtime)) {
+        throw 'Deployer is not running. Start it first with "deployer start".'
+    }
+    $cliArgs = @('exec', '-T', 'api', 'python', '-m', 'app.cli', 'user', 'reset-password')
+    if ($email) { $cliArgs += @('--email', $email) }
+    $stdin = ConvertTo-Json -Compress -InputObject @{ password = "$password" }
+    $r = Invoke-DeployerComposeCapture -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments $cliArgs -StdinText $stdin -TimeoutSeconds 120
+    if ($r.ExitCode -ne 0) {
+        $lines = @($r.Output -split "`r?`n" | Where-Object { $_.Trim() })
+        $why = if ($r.ExitCode -eq 2 -and $r.StdOut.Trim()) { $r.StdOut.Trim() } elseif ($lines) { $lines[-1] } else { "exit code $($r.ExitCode)" }
+        throw $why
+    }
+    Write-DeployerOk $r.StdOut.Trim()
 }
 
 function Invoke-Status {
@@ -747,6 +784,7 @@ try {
         'keepawake' { Invoke-KeepAwake }
         'device' { Invoke-Device }
         'oauth' { Invoke-OAuth }
+        'reset-password' { Invoke-ResetPassword }
         { $_ -in @('help', '-h', '--help', '/?') } { Show-Help }
         default {
             Write-DeployerError "Unknown command '$Command'."

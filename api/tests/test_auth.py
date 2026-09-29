@@ -311,6 +311,47 @@ def test_change_password(client, owner, login, db):
     assert db.query(AuditLog).filter_by(action="auth.password_change").count() == 1
 
 
+def test_reset_password_cli(client, owner, make_user, login, db, capsys, monkeypatch):
+    """A-003: the forgotten-password recovery run on the Deployer PC (deployer reset-password)."""
+    import io
+    import json
+
+    from app import cli
+
+    member = make_user("member@example.com")
+    login("owner@example.com")
+
+    def run(*argv, stdin=""):
+        monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(stdin.encode("utf-8-sig"))))
+        code = cli.main(["user", "reset-password", *argv])
+        return code, capsys.readouterr().out
+
+    code, out = run(stdin=json.dumps({"password": "short"}))
+    assert code == 2 and "at least 10 characters" in out
+    assert run(stdin="not json")[0] == 2
+    code, out = run("--email", "nobody@example.com", stdin=json.dumps({"password": "a-new-password-1"}))
+    assert code == 2 and "No account" in out
+
+    # No --email resets the owner and signs them out everywhere.
+    code, out = run(stdin=json.dumps({"password": "a-new-password-1"}))
+    assert code == 0 and "owner@example.com" in out and "a-new-password-1" not in out
+    db.expire_all()
+    assert all(t.revoked_at is not None for t in db.query(RefreshToken).filter_by(user_id=owner.id))
+    assert (
+        client.post("/v1/auth/login", json={"email": "owner@example.com", "password": DEFAULT_PASSWORD}).status_code
+        == 401
+    )
+    login("owner@example.com", "a-new-password-1")
+
+    assert run("--email", " MEMBER@example.com", stdin=json.dumps({"password": "member-password-2"}))[0] == 0
+    login(member.email, "member-password-2")
+    assert db.query(AuditLog).filter_by(action="auth.password_change").count() == 2
+
+    make_user("second-owner@example.com", owner=True)
+    code, out = run(stdin=json.dumps({"password": "a-new-password-3"}))
+    assert code == 2 and "email" in out
+
+
 def test_set_password_for_oauth_only_user(client, make_user, owner, auth_headers):
     user = make_user("oauth@example.com", password=None)
     resp = client.post("/v1/auth/password", json={"new_password": "brand-new-password"}, headers=auth_headers(user))

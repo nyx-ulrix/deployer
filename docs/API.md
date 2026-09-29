@@ -93,7 +93,7 @@ type ApiKey = { id: string; name: string; prefix: string; role: "anon" | "servic
 | POST | `/auth/logout` | cookie | – | `{ok:true}` (revokes refresh token, clears cookie) |
 | GET | `/auth/me` | bearer | – | `User` |
 | PATCH | `/auth/me` | bearer | `{display_name?}` | `User` |
-| POST | `/auth/password` | bearer | `{current_password?, new_password}` | `{ok:true}` (`current_password` required if one exists) |
+| POST | `/auth/password` | bearer | `{current_password?, new_password}` | `{ok:true}` (`current_password` required if one exists; a forgotten one is reset on the Deployer PC with `python -m app.cli user reset-password [--email]`, password as `{"password"}` JSON on stdin) |
 | GET | `/auth/oauth/{provider}/start?redirect=/path&invite_token=` | – | – | **302** to provider (login/signup intent) |
 | POST | `/auth/oauth/{provider}/link` | bearer | `{redirect?:"/settings/account"}` | `{authorize_url}` — dashboard navigates to it |
 | GET | `/auth/oauth/{provider}/callback?code&state` | – | – | **302** to dashboard (see below) |

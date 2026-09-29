@@ -5,10 +5,14 @@
     python -m app.cli oauth status             # sign-in apps: client IDs, secret set?, callback URLs (JSON)
     python -m app.cli oauth set --provider google|github   # JSON {"client_id", "client_secret"} on stdin
     python -m app.cli oauth clear --provider google|github
+    python -m app.cli user reset-password [--email E]  # JSON {"password"} on stdin; no --email = the owner
 
 `device detach` refuses while this device still hosts databases unless `--force` is given. Forced
 detach keeps the hosted databases and their credentials on this machine (nothing is dropped); the
 main Deployer will show the device as offline until its owner removes it there.
+
+`user reset-password` is the forgotten-password recovery: only someone with access to this PC can run
+it. It signs that account out everywhere.
 """
 
 from __future__ import annotations
@@ -17,10 +21,14 @@ import argparse
 import json
 import sys
 
+from sqlalchemy import func, select
+
 from app.db import get_sessionmaker
 from app.errors import ApiError
-from app.services import audit, device_agent, device_host, instance_settings
+from app.models import User
+from app.services import audit, device_agent, device_host, instance_settings, tokens
 from app.services.instance_settings import validate_oauth_value
+from app.services.passwords import hash_password, normalize_email, validate_password
 
 PROVIDERS = ("google", "github")
 
@@ -83,6 +91,49 @@ def _detach(force: bool) -> int:
     return 0
 
 
+def _read_json_stdin() -> object:
+    try:
+        # Bytes, not text: json detects the UTF-8 BOM that Windows' .NET stdin writer may prepend.
+        return json.loads(sys.stdin.buffer.read() or b"null")
+    except ValueError:
+        return None
+
+
+def _reset_password(email: str | None) -> int:
+    """Reads {"password"} JSON from stdin (never argv). Errors are one line on stdout with exit code 2."""
+    data = _read_json_stdin()
+    password = data.get("password") if isinstance(data, dict) else None
+    if not isinstance(password, str):
+        print('Expected JSON on stdin: {"password": "..."}')
+        return 2
+    try:
+        validate_password(password)
+    except ApiError as exc:
+        print(exc.message)
+        return 2
+    session = get_sessionmaker()()
+    try:
+        if email:
+            user = session.scalar(select(User).where(func.lower(User.email) == normalize_email(email)))
+            if user is None:
+                print(f"No account uses the email {email.strip()}.")
+                return 2
+        else:
+            owners = session.scalars(select(User).where(User.is_instance_owner.is_(True))).all()
+            if len(owners) != 1:
+                print("Enter the account's email." if owners else "Deployer has no owner account yet.")
+                return 2
+            user = owners[0]
+        user.password_hash = hash_password(password)
+        tokens.revoke_user_tokens(session, user.id)
+        audit.record(session, "auth.password_change", user_id=user.id, kind="reset", source="cli")
+        session.commit()
+        print(f"Password reset for {user.email}. Sign in with the new password; other sessions were signed out.")
+    finally:
+        session.close()
+    return 0
+
+
 def _oauth_status() -> int:
     session = get_sessionmaker()()
     try:
@@ -115,11 +166,7 @@ def _oauth_write(provider: str, values: dict[str, str | None]) -> None:
 def _oauth_set(provider: str) -> int:
     """Reads {"client_id", "client_secret"} JSON from stdin (never argv). An empty secret keeps the stored one.
     Errors are one line on stdout with exit code 2, for the Control app to show."""
-    try:
-        # Bytes, not text: json detects the UTF-8 BOM that Windows' .NET stdin writer may prepend.
-        data = json.loads(sys.stdin.buffer.read() or b"null")
-    except ValueError:
-        data = None
+    data = _read_json_stdin()
     if not isinstance(data, dict):
         print('Expected JSON on stdin: {"client_id": "...", "client_secret": "..."}')
         return 2
@@ -164,7 +211,13 @@ def main(argv: list[str] | None = None) -> int:
     device_sub.add_parser("status", help="show the host device link and hosted databases")
     detach = device_sub.add_parser("detach", help="forget the main Deployer on this machine")
     detach.add_argument("--force", action="store_true", help="detach even while databases are hosted here")
+    user = sub.add_parser("user", help="account recovery")
+    user_sub = user.add_subparsers(dest="command", required=True)
+    reset = user_sub.add_parser("reset-password", help='set a new password, read as JSON {"password"} from stdin')
+    reset.add_argument("--email", help="the account to reset (default: the instance owner)")
     args = parser.parse_args(argv)
+    if args.group == "user" and args.command == "reset-password":
+        return _reset_password(args.email)
     if args.group == "device" and args.command == "status":
         return _status()
     if args.group == "device" and args.command == "detach":

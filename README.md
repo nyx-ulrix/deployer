@@ -277,6 +277,7 @@ Open a new terminal after installing:
 | `deployer oauth status [-Json]` | Google/GitHub sign-in apps: Client IDs, whether a secret is saved, callback URLs |
 | `deployer oauth set google\|github` | Save a Client ID and secret (asks for them; the secret is never put on a command line) |
 | `deployer oauth clear google\|github` | Remove a sign-in app |
+| `deployer reset-password [email]` | Forgot a password? Set a new one for that account (no email = the owner) and sign it out everywhere. Also in *Deployer Control → Settings → Reset a password* |
 
 Autostart is a scheduled task named **Deployer** that runs at sign-in of the account that installed
 it. WSL distros belong to a single Windows account, so with the WSL runtime Deployer runs while that
@@ -296,6 +297,7 @@ stored in the database and the encrypted backup versions.
 |---|---|
 | *"Windows protected your PC"* when opening `DeployerSetup.exe` | The exe isn't code-signed yet. Click **More info → Run anyway**, or install with PowerShell instead. |
 | *Virtualization is turned off* | Restart, open the BIOS/UEFI setup (usually F2, F10, Del or Esc while the PC starts), enable *Intel Virtualization Technology* (VT-x) or *SVM Mode* (AMD), save and run setup again. |
+| *Forgot your password* | On the Deployer PC open *Deployer Control → Settings → Reset a password*, or run `deployer reset-password` (add the email to reset a member instead of the owner). |
 | *Port 8080 is used by another program* | Pick another port in setup, or later in *Deployer Control → Settings* (`deployer set-port 8090`). |
 | *Your processor can't run MongoDB (no AVX)* | Everything else works. Use an external MongoDB such as a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster for NoSQL. |
 | Setup stopped with an error | Click **Try again** - setup continues where it stopped and never overwrites your `.env`. **Copy details** puts the full log on the clipboard. Logs: `%ProgramData%\Deployer\logs`. |
