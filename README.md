@@ -30,8 +30,10 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
   deploy apps. Copy-ready config under API keys → *Show usage* → *AI agents (MCP)* ([docs/MCP.md](docs/MCP.md)).
 - **Query console** - SQL and MongoDB shell (`mongosh`) in the browser, per database, with the
   project's roles (viewers are limited to read-only queries) ([docs/QUERY_CONSOLE.md](docs/QUERY_CONSOLE.md)).
-- **Full export / import** - one encrypted JSON file with settings, users, projects **and all data**;
-  restore a whole installation or selected projects on another device.
+- **Full export / import** - one encrypted JSON file with settings, users, projects **and the data
+  in your databases**; restore a whole installation or selected projects on another device. Not
+  carried: MariaDB views, triggers, routines and events (the import summary lists any left out),
+  backup / point-in-time history, deployment history and the audit log.
 - **Backups and point-in-time recovery** - every managed database gets automatic encrypted versions;
   restore to a version or to any point in time, with safety snapshots before risky actions
   ([docs/BACKUPS.md](docs/BACKUPS.md)).
