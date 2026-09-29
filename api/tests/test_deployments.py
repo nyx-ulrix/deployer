@@ -322,6 +322,16 @@ def test_generate_dockerfile_presets(db, project):
     assert deployments.internal_port(static) == 80 and deployments.internal_port(python) == 8000
 
 
+def test_static_preset_never_publishes_dotfiles(db, project):
+    # A-057: output "." (or the fallback) copied the checkout's .git and any committed .env into the site.
+    static = make_app(db, project, "s", preset="static")
+    strip = "find /out -mindepth 1 -name '.*' ! -name .well-known -prune -exec rm -rf {} +"
+    fallback = deployments.generate_dockerfile(static)
+    assert strip in fallback and "publishing the whole repository" in fallback
+    static.output_dir = "."
+    assert strip in deployments.generate_dockerfile(static)
+
+
 # --- database access (docs/DEPLOYMENTS.md "Database access") ------------------------------------
 
 

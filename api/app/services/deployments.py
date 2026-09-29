@@ -520,8 +520,13 @@ def generate_dockerfile(app: App) -> str | None:
         else:
             collect = (
                 "mkdir -p /out && for d in dist build out public .; "
-                'do if [ -d "$d" ]; then cp -r "$d/." /out/; break; fi; done'
+                'do if [ -d "$d" ]; then cp -r "$d/." /out/; break; fi; done; '
+                'if [ "$d" = . ]; then echo "Warning: no dist/build/out/public folder, publishing the whole '
+                'repository (dotfiles excluded)"; fi'
             )
+        # A-057: never publish dotfiles (.git, .env, ...) - an output of "." is the whole checkout. Only
+        # .well-known survives. Stripped here, not in nginx, so cloud uploads of /out are covered too.
+        collect += " && find /out -mindepth 1 -name '.*' ! -name .well-known -prune -exec rm -rf {} +"
         lines += [
             "FROM node:22-alpine AS build",
             "WORKDIR /app",
