@@ -650,9 +650,12 @@ def chain_from(backup: Backup, segments: list[BackupLogSegment]) -> list[BackupL
             if covers_anchor(seg, anchor):
                 chain.append(seg)
             continue
+        key = seg_key(seg)
+        if key and key.gap:
+            break  # an in-place restore: older logs can't be replayed across it
         if contiguous(chain[-1], seg):
             chain.append(seg)
-        elif seg_key(seg) and seg_key(chain[-1]) and seg_key(seg).hi <= seg_key(chain[-1]).hi:
+        elif key and seg_key(chain[-1]) and key.hi <= seg_key(chain[-1]).hi:
             continue  # duplicate/overlap (shouldn't happen)
         else:
             break

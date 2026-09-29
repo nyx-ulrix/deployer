@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 
 from app.models import Backup, BackupLogSegment, BackupPolicy, new_id
-from app.services.backups import gfs_keep, segments_to_prune
+from app.services.backups import chain_from, gfs_keep, segments_to_prune
 
 START = datetime(2025, 1, 1, 0, 30)
 
@@ -110,3 +110,12 @@ def test_segments_kept_for_pitr_window_from_the_base_snapshot():
     # PITR disabled -> every segment goes; no usable snapshot -> nothing is pruned.
     assert len(segments_to_prune(snaps, segments, policy(pitr_enabled=False), now)) == len(segments)
     assert segments_to_prune([], segments, pol, now) == []
+
+
+def test_chain_stops_at_the_restore_gap_marker():
+    # The gap marker shares its hi with the segment before it; it must end the chain, not be skipped as a duplicate.
+    base = snap(START + timedelta(hours=4))  # anchored on mysql-bin.000005
+    t = START + timedelta(hours=5)
+    before, marker, after = seg(6, 6, t), seg(6, 6, t, gap=True), seg(7, 7, t + timedelta(hours=1))
+    chain = chain_from(base, [seg(5, 5, t), before, marker, after])
+    assert [s.start_point["binlog_file"][-1] for s in chain] == ["5", "6"]
