@@ -407,18 +407,6 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
             raise forbidden("Only project admins can change where an app runs")
         teardown_job = _switch_target(db, request, access, app, target_before)
     _check_target(db, app)
-    warnings: list[str] = []
-    if repo_moved and app.github_connection_user_id:
-        # Only now, after validation: the webhook belongs to the old repository, and only the
-        # connection's owner may point the app (and a new webhook) at another one.
-        github.delete_hook(db, app, repo_url=old_repo_url)
-        if app.github_connection_user_id == access.user.id:
-            warnings = github.sync_hook(db, app, deployments.webhook_url(db, app), deployments.webhook_secret(app))
-        else:
-            app.github_connection_user_id = None
-            warnings = [
-                "The GitHub webhook was removed with the old repository; add one by hand (app Settings → Webhook)."
-            ]
     audit.record(
         db,
         "app.update",
@@ -434,6 +422,19 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
         ra.move_app_hostnames(db, app)  # to the apps tunnel or back; nothing is saved if Cloudflare fails
     if cohost_changed:
         _audit_cohost(db, request, access, app)
+    warnings: list[str] = []
+    if repo_moved and app.github_connection_user_id:
+        # Last before the commit, after validation and Cloudflare (either may raise): the webhook
+        # belongs to the old repository, and only the connection's owner may point the app (and a
+        # new webhook) at another one.
+        github.delete_hook(db, app, repo_url=old_repo_url)
+        if app.github_connection_user_id == access.user.id:
+            warnings = github.sync_hook(db, app, deployments.webhook_url(db, app), deployments.webhook_secret(app))
+        else:
+            app.github_connection_user_id = None
+            warnings = [
+                "The GitHub webhook was removed with the old repository; add one by hand (app Settings → Webhook)."
+            ]
     db.commit()
     if teardown_job:
         jobs.dispatch(teardown_job)

@@ -454,3 +454,28 @@ def test_hook_follows_public_url_and_repo_changes(client, env, gh, db, owner_hea
         ("POST", "/repos/acme/store/hooks"),
     ]
     assert moved.json()["github"]["hook_active"] is True
+
+
+def test_failed_cloudflare_move_leaves_the_hook(client, env, gh, set_setting, db, monkeypatch):
+    """A-014: a PATCH that fails after validation (Cloudflare, on a co-host change) must not touch GitHub."""
+    from app.errors import ApiError
+    from app.services import remote_access
+
+    def fail(db, app):
+        raise ApiError(502, "cloudflare_error", "Cloudflare is down")
+
+    monkeypatch.setattr(remote_access, "move_app_hostnames", fail)
+    set_setting("public_url", "https://deploy.example.com")
+    connect(db, env["dev_user"])
+    gh.routes[("POST", "/repos/acme/shop/hooks")] = (201, {"id": 7})
+    app_id = client.post(env["base"], json=BODY, headers=env["dev"]).json()["id"]
+    calls = len(gh.calls)
+    resp = client.patch(
+        f"{env['base']}/{app_id}",
+        json={"repo_url": "https://github.com/acme/store", "cohost": True},
+        headers=env["admin"],
+    )
+    assert resp.status_code == 502 and len(gh.calls) == calls
+    db.expire_all()
+    app = db.get(App, app_id)
+    assert app.github_hook_id == "7" and app.github_connection_user_id == env["dev_user"].id
