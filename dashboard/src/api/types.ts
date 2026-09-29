@@ -789,8 +789,10 @@ export type Domain = {
   hostname: string;
   zone_id: string;
   zone_name: string;
-  target_type: "dashboard" | "project";
+  /** The remote-access page lists only `dashboard` hostnames; app ones are in each app's settings. */
+  target_type: "dashboard" | "app" | "cloud_app";
   project_id: string | null;
+  app_id: string | null;
   status: "pending" | "active" | "error";
   status_message: string | null;
   url: string;

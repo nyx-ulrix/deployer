@@ -4,6 +4,8 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from app.deps import DbSession, InstanceOwner
+from app.errors import conflict
+from app.models import Domain
 from app.routers.instance import settings_out
 from app.services import deployments
 from app.services import remote_access as ra
@@ -54,6 +56,10 @@ def add_hostname(body: HostnameBody, request: Request, owner: InstanceOwner, db:
 
 @router.delete(f"{PREFIX}/cloudflare/hostnames/{{domain_id}}")
 def remove_hostname(domain_id: str, request: Request, owner: InstanceOwner, db: DbSession) -> dict:
+    domain = db.get(Domain, domain_id)
+    if domain is not None and domain.target_type != "dashboard":
+        # The app's own remove endpoint also re-routes the app; this one would skip that.
+        raise conflict("not_dashboard_hostname", f"{domain.hostname} serves an app. Remove it in the app's settings.")
     ra.remove_hostname(db, domain_id, request=request, user_id=owner.id)
     return {"ok": True}
 

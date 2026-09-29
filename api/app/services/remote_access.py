@@ -357,7 +357,8 @@ def remote_access_out(db: Session, *, live: bool = True) -> dict:
                     if tunnel is not None:
                         tunnel["status"] = "deleted"
         cloudflare["tunnel"] = tunnel
-        cloudflare["domains"] = [domain_out(d) for d in _domains(db)]
+        # App hostnames are managed (and removed, with a re-route) in each app's settings.
+        cloudflare["domains"] = [domain_out(d) for d in _domains(db) if d.target_type == "dashboard"]
         cloudflare["zones"] = zones or []  # [] while Cloudflare can't be reached
     return {
         "mode": mode(db),
@@ -842,6 +843,8 @@ def switch_public_url(
         domain = db.get(Domain, domain_id)
         if domain is None:
             raise not_found("Domain")
+        if domain.target_type != "dashboard":
+            raise conflict("not_dashboard_hostname", f"{domain.hostname} serves an app, not the dashboard")
         if domain.status != "active":
             raise conflict("domain_not_active", f"{domain.hostname} is not active yet")
         if mode(db) != "cloudflare":

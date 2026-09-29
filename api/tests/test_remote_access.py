@@ -509,6 +509,26 @@ def test_public_url_local_and_validation(client, owner_headers, fake_cf, set_set
     assert resp.status_code == 404
 
 
+def test_app_hostnames_are_not_dashboard_hostnames(client, owner_headers, fake_cf, db):
+    """A-056: an app's hostname is neither listed here, nor usable as the public URL, nor removable here
+    (the app's own endpoint also re-routes the app)."""
+    link(client, owner_headers)
+    dash = add_host(client, owner_headers, hostname="deployer.example.com").json()
+    app_host = add_host(client, owner_headers, hostname="shop.example.com").json()
+    db.get(Domain, app_host["id"]).target_type = "app"
+    db.commit()
+
+    listed = client.get(BASE, headers=owner_headers).json()["cloudflare"]["domains"]
+    assert [d["hostname"] for d in listed] == [dash["hostname"]]
+    resp = client.post(f"{BASE}/public-url", json={"domain_id": app_host["id"]}, headers=owner_headers)
+    assert (resp.status_code, resp.json()["error"]["code"]) == (409, "not_dashboard_hostname")
+    assert client.get("/v1/instance/settings", headers=owner_headers).json()["public_url"] == "http://localhost:8080"
+    resp = client.delete(f"{BASE}/cloudflare/hostnames/{app_host['id']}", headers=owner_headers)
+    assert (resp.status_code, resp.json()["error"]["code"]) == (409, "not_dashboard_hostname")
+    db.expire_all()
+    assert db.get(Domain, app_host["id"]) is not None
+
+
 def test_public_url_domain_requires_cloudflare_mode(client, owner_headers, fake_cf):
     link(client, owner_headers)
     domain = add_host(client, owner_headers).json()

@@ -31,6 +31,7 @@ const domain = {
   zone_name: "example.com",
   target_type: "dashboard" as const,
   project_id: null,
+  app_id: null,
   status: "active" as const,
   status_message: null,
   url: "https://deployer.example.com",

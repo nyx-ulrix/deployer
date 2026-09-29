@@ -204,6 +204,7 @@ Errors:
 | `not_linked` | 409 | No Cloudflare account linked |
 | `already_linked` | 409 | Linking a different account while hostnames exist |
 | `domain_not_active`, `tunnel_not_active`, `quick_tunnel_not_ready` | 409 | `public-url` preconditions |
+| `not_dashboard_hostname` | 409 | The domain serves an app: it is not the dashboard's public URL, and it is removed in the app's settings (`RemoteAccess.cloudflare.domains` lists dashboard hostnames only) |
 
 No endpoint ever returns the API token or the connector token.
 
