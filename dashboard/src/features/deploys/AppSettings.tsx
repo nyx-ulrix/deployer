@@ -463,6 +463,7 @@ function DeleteCard({ projectId, app }: Props) {
     onSuccess: (r) => {
       setConfirming(false);
       setJobId(r.teardown_job_id ?? r.job_id); // cloud apps: follow the teardown so its errors are shown
+      for (const w of r.warnings ?? []) toast.info(w, "Cloudflare");
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't delete the app"),
   });

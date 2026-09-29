@@ -449,9 +449,11 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
 def delete_app(app_id: str, request: Request, access: Admin, db: DbSession) -> dict:
     app = deployments.get_app(db, access.project.id, app_id)
     teardown_job = cloud_deploy.enqueue_teardown(db, app, access.user.id)  # also the cloud domains' records
+    warnings: list[str] = []
     for domain in deployments.app_domains(db, app.id):
         if domain.target_type != "cloud_app":
-            ra.remove_hostname(db, domain.id, request=request, user_id=access.user.id)  # DNS + ingress; commits
+            # DNS + ingress, best effort: a revoked token or no internet must not block the delete
+            warnings += ra.remove_hostname(db, domain.id, request=request, user_id=access.user.id, best_effort=True)
     for dep in db.scalars(
         select(Deployment).where(Deployment.app_id == app.id, Deployment.status.in_(deployments.ACTIVE_STATUSES))
     ):
@@ -478,7 +480,7 @@ def delete_app(app_id: str, request: Request, access: Admin, db: DbSession) -> d
     jobs.dispatch(job.id)
     if teardown_job:
         jobs.dispatch(teardown_job)
-    return {"job_id": job.id, "teardown_job_id": teardown_job}
+    return {"job_id": job.id, "teardown_job_id": teardown_job, "warnings": warnings}
 
 
 @router.get(BASE + "/{app_id}/env")

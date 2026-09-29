@@ -320,6 +320,28 @@ def test_app_hostnames(client, env, db, owner_headers, fake_cf):  # noqa: F811
     assert [r.get("hostname") for r in fake_cf.tunnel_configs[tunnel_id]["ingress"]] == [None]
 
 
+@pytest.mark.parametrize("failure", ["unreachable", "revoked"])
+def test_delete_app_when_cloudflare_fails(client, env, db, owner_headers, fake_cf, failure):  # noqa: F811
+    # A-061: the app still goes, all in one commit, with a "remove the DNS record by hand" warning per host.
+    app = create(client, env)
+    url = f"{env['base']}/{app['id']}"
+    link(client, owner_headers)
+    for host in ("shop.example.com", "www.example.com"):
+        assert client.post(f"{url}/domains", json={"hostname": host}, headers=env["admin"]).status_code == 200
+    if failure == "unreachable":
+        fake_cf.unreachable = True
+    else:
+        fake_cf.token = "rotated"
+    resp = client.delete(url, headers=env["admin"])
+    assert resp.status_code == 200, resp.text
+    warnings = resp.json()["warnings"]
+    assert len(warnings) == 2 and all("by hand" in w for w in warnings)
+    assert "shop.example.com" in warnings[0] + warnings[1] and "www.example.com" in warnings[0] + warnings[1]
+    db.expire_all()
+    assert db.scalar(select(Domain)) is None and db.get(deployments.App, app["id"]) is None
+    assert db.get(Job, resp.json()["job_id"]).type == "app.remove"
+
+
 def test_export_import_roundtrip(client, env, db, make_user, auth_headers):
     token = new_token()
     project = env["project"]

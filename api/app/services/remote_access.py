@@ -707,7 +707,12 @@ def add_hostname(
     return domain_out(domain)
 
 
-def remove_hostname(db: Session, domain_id: str, *, request: Request | None, user_id: str) -> None:
+def remove_hostname(
+    db: Session, domain_id: str, *, request: Request | None, user_id: str, best_effort: bool = False
+) -> list[str]:
+    """Deletes the CNAME + tunnel ingress and the Domain row, then commits. With `best_effort` (deleting
+    an app) a Cloudflare failure only returns a warning, the row goes anyway and the caller commits;
+    a stale ingress entry is rewritten by the next hostname change."""
     domain = db.get(Domain, domain_id)
     if domain is None or domain.provider != "cloudflare":
         raise not_found("Domain")
@@ -715,23 +720,35 @@ def remove_hostname(db: Session, domain_id: str, *, request: Request | None, use
     account_id = get_value(db, "cloudflare_account_id")
     on_apps = on_apps_tunnel(db, domain)
     tunnel_id = get_value(db, "cloudflare_apps_tunnel_id" if on_apps else "cloudflare_tunnel_id")
-    if token and account_id and tunnel_id:
-        with _client(token) as client:
-            if domain.dns_record_id and domain.zone_id:
-                try:
-                    client.delete_dns_record(domain.zone_id, domain.dns_record_id)
-                except cf.CloudflareError as exc:
-                    if not exc.is_not_found:
-                        raise cf.to_api_error(exc, cf.PERM_DNS) from None
-            remaining = _active_hostnames(db, exclude=domain.hostname, apps=on_apps)
-            _put_ingress(client, account_id, tunnel_id, remaining)
     hostname = domain.hostname
+    warnings: list[str] = []
+    if token and account_id and tunnel_id:
+        try:
+            with _client(token) as client:
+                if domain.dns_record_id and domain.zone_id:
+                    try:
+                        client.delete_dns_record(domain.zone_id, domain.dns_record_id)
+                    except cf.CloudflareError as exc:
+                        if not exc.is_not_found:
+                            raise cf.to_api_error(exc, cf.PERM_DNS) from None
+                remaining = _active_hostnames(db, exclude=hostname, apps=on_apps)
+                _put_ingress(client, account_id, tunnel_id, remaining)
+        except ApiError as exc:
+            if not best_effort:
+                raise
+            log.warning("Could not remove %s from Cloudflare: %s", hostname, exc.message)
+            warnings.append(
+                f"Could not remove {hostname} from Cloudflare ({exc.message}). "
+                "Delete its DNS record by hand in the Cloudflare dashboard."
+            )
     db.delete(domain)
     reverted = _revert_public_url(db, request, hostnames=[hostname])
     audit.record(
         db, "remote_access.hostname_remove", request=request, user_id=user_id, hostname=hostname, reverted=reverted
     )
-    db.commit()
+    if not best_effort:
+        db.commit()
+    return warnings
 
 
 def unlink(db: Session, delete_dns: bool, delete_tunnel: bool, *, request: Request | None, user_id: str) -> dict:

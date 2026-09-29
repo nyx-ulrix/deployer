@@ -438,8 +438,9 @@ export const api = {
      *  `warnings`: the repository changed and its GitHub webhook could not be moved. */
     update: (pid: string, id: string, body: AppPatch) =>
       client.patch<App & { teardown_job_id?: string | null; warnings?: string[] }>(`/projects/${e(pid)}/apps/${e(id)}`, body),
+    /** `warnings`: hostnames whose Cloudflare DNS record could not be removed (remove by hand). */
     remove: (pid: string, id: string) =>
-      client.del<{ job_id: string; teardown_job_id: string | null }>(`/projects/${e(pid)}/apps/${e(id)}`),
+      client.del<{ job_id: string; teardown_job_id: string | null; warnings?: string[] }>(`/projects/${e(pid)}/apps/${e(id)}`),
     env: (pid: string, id: string) => client.get<{ env: Record<string, string> }>(`/projects/${e(pid)}/apps/${e(id)}/env`),
     webhook: (pid: string, id: string) => client.get<AppWebhook>(`/projects/${e(pid)}/apps/${e(id)}/webhook`),
     rotateWebhook: (pid: string, id: string) => client.post<AppWebhook>(`/projects/${e(pid)}/apps/${e(id)}/webhook/rotate`),
