@@ -1358,7 +1358,12 @@ def _drop_before_purge(db: Session, ds: DataSource) -> None:
         return
     if ds.device_id is None and ds.status_message == "device removed":
         return  # the database lived on a device that is gone; nothing here to drop
-    _provisioning().drop_managed_source(db, ds)
+    try:
+        _provisioning().drop_managed_source(db, ds)
+    except ApiError as exc:
+        # Already gone from its device (e.g. a drop that timed out but finished): retrying would never end.
+        if exc.code != "not_hosted":
+            raise
 
 
 def prune_all(factory: jobs.SessionFactory, now: datetime | None = None) -> dict:

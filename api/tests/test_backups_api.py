@@ -763,6 +763,19 @@ def test_purge_drops_a_database_deleted_without_drop(client, env, db, monkeypatc
     assert db.get(DataSource, ds_id) is None and env["dropped"] == ["p_shop_abc123"]
 
 
+def test_purge_treats_a_database_gone_from_its_device_as_dropped(client, env, db, monkeypatch):
+    # A drop that timed out on the device but finished there answers 404 not_hosted on every retry.
+    ds_id = env["ds"].id
+    client.delete(f"{env['pbase']}/data-sources/{ds_id}", headers=env["admin"])
+    jobs.run_queued()
+
+    def gone(db, ds):
+        raise ApiError(404, "not_hosted", "That database is not hosted on this device")
+
+    monkeypatch.setattr(provisioning, "drop_managed_source", gone)
+    assert backups.prune_all(jobs.get_sessionmaker(), utcnow() + timedelta(days=31))["purged_sources"] == 1
+
+
 def test_purge_does_not_drop_twice(client, env, db):
     ds_id = env["ds"].id
     client.delete(f"{env['pbase']}/data-sources/{ds_id}?drop=true", headers=env["owner"])
