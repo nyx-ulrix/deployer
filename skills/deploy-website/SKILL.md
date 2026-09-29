@@ -167,8 +167,8 @@ never ask for a token in chat:
 
    | Preset | Build | Runs |
    |---|---|---|
-   | `static` | `npm ci` + `npm run build` when a package.json exists; output dir auto-detected (`dist`, `build`, `out`, `public`, `.`) | nginx, port 80 |
-   | `node` | `npm ci` (+ optional build command) | `npm start` (or `start_command`) with `PORT=3000` |
+   | `static` | `npm ci` (`npm install` without a lockfile) + `npm run build` when a package.json exists; output dir auto-detected (`dist`, `build`, `out`, `public`, `.`) | nginx, port 80 |
+   | `node` | `npm ci`, or `npm install` without a lockfile (+ optional build command) | `npm start` (or `start_command`) with `PORT=3000` |
    | `python` | `pip install -r requirements.txt` | `start_command` (required), `PORT=8000` |
    | `dockerfile` | the repo's Dockerfile (`root_dir` relative) | the image's CMD on `container_port` |
 

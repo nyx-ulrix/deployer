@@ -523,3 +523,11 @@ def test_worker_moves_old_app_containers_off_the_api_network(monkeypatch):
     monkeypatch.setattr(cli, "_run", no_apps_network)
     deployments.move_legacy_app_containers(cli)  # an older compose file without `apps`: leave them be
     assert all(c[:3] == ["docker", "network", "inspect"] for c in calls)
+
+
+def test_default_npm_install_works_without_a_lockfile(db, project):
+    # A-058: a bare `npm ci` fails on repos without package-lock.json.
+    npm = "if [ -f package-lock.json ]; then npm ci; else npm install; fi"
+    for preset in ("static", "node"):
+        text = deployments.generate_dockerfile(make_app(db, project, preset[0], preset=preset))
+        assert npm in text and "RUN npm ci\n" not in text

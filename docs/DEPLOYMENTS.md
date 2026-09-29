@@ -202,8 +202,8 @@ github_login, github_user_id, token_encrypted, scopes, created_at, updated_at)`,
 
 | `preset` | Build | Run | Port |
 |---|---|---|---|
-| `static` | `install_command` (default `npm ci` if package.json), `build_command` (default `npm run build` if package.json has one), output `output_dir` (default: first of `dist`, `build`, `out`, `public`, `.`; falling back to `.` logs a warning that the whole repository is published). Dotfiles and dot-folders (`.git`, `.env`, ...) are removed from the output, except `.well-known`, so they are never served or uploaded to AWS/Firebase | `nginx:1.27-alpine` serving the output with `try_files $uri $uri/ /index.html` | 80 |
-| `node` | `node:22-alpine`, `install_command` (default `npm ci`), optional `build_command` | `start_command` (default `npm start`), `PORT=3000` | 3000 |
+| `static` | `install_command` (default `npm ci` if package.json, `npm install` when there is no package-lock.json), `build_command` (default `npm run build` if package.json has one), output `output_dir` (default: first of `dist`, `build`, `out`, `public`, `.`; falling back to `.` logs a warning that the whole repository is published). Dotfiles and dot-folders (`.git`, `.env`, ...) are removed from the output, except `.well-known`, so they are never served or uploaded to AWS/Firebase | `nginx:1.27-alpine` serving the output with `try_files $uri $uri/ /index.html` | 80 |
+| `node` | `node:22-alpine`, `install_command` (default `npm ci`, or `npm install` when there is no package-lock.json), optional `build_command` | `start_command` (default `npm start`), `PORT=3000` | 3000 |
 | `python` | `python:3.12-slim`, `pip install -r requirements.txt` | `start_command` (required, e.g. `uvicorn main:app --host 0.0.0.0 --port 8000`) | 8000 |
 | `dockerfile` | the repo's `Dockerfile` (`root_dir` relative) | the image's CMD | `container_port` (required) |
 

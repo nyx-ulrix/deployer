@@ -498,6 +498,9 @@ def route_app(cli: DockerCli, db: Session, app: App, live: Deployment | None) ->
 # Dockerfile generation
 # =============================================================================================
 
+# A-058: `npm ci` refuses to run without a lockfile, so a beginner repo without one fell over on its first deploy.
+_NPM_INSTALL = "if [ -f package-lock.json ]; then npm ci; else npm install; fi"
+
 _NGINX_CONF = (
     "server { listen 80; root /usr/share/nginx/html; index index.html; "
     "location / { try_files $uri $uri/ /index.html; } }"
@@ -510,7 +513,7 @@ def generate_dockerfile(app: App) -> str | None:
         return None
     lines: list[str] = []
     if app.preset == "static":
-        install = app.install_command or "if [ -f package.json ]; then npm ci; fi"
+        install = app.install_command or f"if [ -f package.json ]; then {_NPM_INSTALL}; fi"
         build = app.build_command or (
             "if [ -f package.json ] && node -e \"process.exit(require('./package.json').scripts?.build ? 0 : 1)\"; "
             "then npm run build; fi"
@@ -540,7 +543,7 @@ def generate_dockerfile(app: App) -> str | None:
             "EXPOSE 80",
         ]
     elif app.preset == "node":
-        lines += ["FROM node:22-alpine", "WORKDIR /app", "COPY . .", f"RUN {app.install_command or 'npm ci'}"]
+        lines += ["FROM node:22-alpine", "WORKDIR /app", "COPY . .", f"RUN {app.install_command or _NPM_INSTALL}"]
         if app.build_command:
             lines.append(f"RUN {app.build_command}")
         lines += ["ENV PORT=3000", "EXPOSE 3000", f"CMD {json.dumps(['sh', '-c', app.start_command or 'npm start'])}"]

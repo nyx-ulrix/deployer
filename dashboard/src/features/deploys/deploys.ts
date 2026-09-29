@@ -139,7 +139,7 @@ export const PRESETS: Record<
 };
 
 export const FIELD_LABELS: Record<PresetField, { label: string; hint: string }> = {
-  install_command: { label: "Install command", hint: "Leave blank for the default (npm ci, or pip install -r requirements.txt)." },
+  install_command: { label: "Install command", hint: "Leave blank for the default (npm ci, npm install without a lockfile, or pip install -r requirements.txt)." },
   build_command: { label: "Build command", hint: "Defaults to npm run build when package.json has one." },
   start_command: { label: "Start command", hint: "Runs inside the container; listen on $PORT." },
   output_dir: { label: "Output directory", hint: "Defaults to the first of dist, build, out, public." },
