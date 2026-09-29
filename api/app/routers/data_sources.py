@@ -36,8 +36,9 @@ class DataSourceInput(BaseModel):
 # A-027: Deployer connects from inside its container, where localhost is the container itself.
 SAME_PC_HOST_MESSAGE = (
     "'{host}' is the Deployer container itself, not this PC. For a database on this PC, use the PC's "
-    "network IP address (from ipconfig) or host.docker.internal as the host, and let the database accept "
-    "network connections (MySQL/MariaDB: bind-address=0.0.0.0; PostgreSQL: listen_addresses and pg_hba.conf)."
+    "network IP address (from ipconfig) as the host (host.docker.internal reaches Windows only with the "
+    "Docker Desktop runtime), and let the database accept network connections (MySQL/MariaDB: "
+    "bind-address=0.0.0.0; PostgreSQL: listen_addresses and pg_hba.conf)."
 )
 
 
