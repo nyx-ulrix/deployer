@@ -86,7 +86,9 @@ Source of truth: `api/app/models.py`.
   IP (cleared by a successful sign-in or `deployer reset-password`), and 30 password logins + signups
   / 15 min per IP (Redis); at most two argon2 hashes run at once so floods queue instead of exhausting memory. Project API keys: 600 requests/min per
   key by default (`api_key_rate_limit`), 429 with `Retry-After` ([MONITORING.md](MONITORING.md)).
-- Managed databases get their own DB user restricted to that database only.
+- Managed databases get their own DB user restricted to that database only, capped at
+  `MANAGED_DB_MAX_USER_CONNECTIONS` (default 20) connections so one app cannot use up the connections
+  the platform database shares with it; the worker applies the cap to existing users when it starts.
 
 ## Export / import format
 

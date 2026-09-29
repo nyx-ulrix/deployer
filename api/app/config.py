@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     mariadb_user: str = "deployer"
     mariadb_password: str = ""
     mariadb_root_password: str = ""
+    # A-025: connection cap for each managed database user. MariaDB allows 150 connections in total
+    # and the platform user shares them, so one leaky app must not be able to take them all (0 = no cap).
+    managed_db_max_user_connections: int = 20
 
     # Managed MongoDB.
     mongo_host: str = "mongodb"

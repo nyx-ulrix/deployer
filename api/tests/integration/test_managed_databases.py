@@ -103,6 +103,10 @@ def test_managed_lifecycle_and_roundtrip(client, db, managed_servers, make_user,
         visible = {r[0] for r in cur.fetchall()}
     user_conn.close()
     assert sql["database_name"] in visible and "mysql" not in visible
+    # A-025: the user can't take all the connections the platform database shares with it
+    with _root_mysql() as root, root.cursor() as cur:
+        cur.execute("SELECT max_user_connections FROM mysql.user WHERE User = %s", (conn_info["username"],))
+        assert cur.fetchone()[0] == get_settings().managed_db_max_user_connections
 
     checked = client.post(f"{base}/data-sources/{sql['id']}/check", headers=h).json()
     assert checked["status"] == "ok"

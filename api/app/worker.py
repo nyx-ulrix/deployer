@@ -41,7 +41,7 @@ import redis
 from redis.exceptions import WatchError
 
 from app.config import get_settings, seal_process
-from app.services import jobs
+from app.services import jobs, provisioning
 
 log = logging.getLogger("app.worker")
 
@@ -259,6 +259,12 @@ def main() -> None:
             log.warning("marked %d interrupted job(s) as failed", failed)
     except Exception:  # noqa: BLE001 - the database may still be starting; the scheduler retries
         log.warning("could not check for interrupted jobs yet", exc_info=True)
+    try:
+        capped = provisioning.cap_mariadb_users()
+        if capped:
+            log.info("applied the connection cap to %d managed database user(s)", capped)
+    except Exception:  # noqa: BLE001 - new users still get the cap; retried on the next start
+        log.warning("could not apply the managed database connection cap", exc_info=True)
     stop = threading.Event()
 
     def _signal(signum, _frame) -> None:

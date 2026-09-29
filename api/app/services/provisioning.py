@@ -146,7 +146,10 @@ def create_mariadb_database(database: str, username: str, password: str) -> dict
         with mariadb_root_engine().connect() as conn:
             conn.exec_driver_sql(f"CREATE DATABASE `{database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
             created_db = True
-            conn.exec_driver_sql(f"CREATE USER '{username}'@'%%' IDENTIFIED BY '{password}'")
+            conn.exec_driver_sql(
+                f"CREATE USER '{username}'@'%%' IDENTIFIED BY '{password}'"
+                f" WITH MAX_USER_CONNECTIONS {_max_user_connections()}"
+            )
             conn.exec_driver_sql(f"GRANT ALL PRIVILEGES ON `{database}`.* TO '{username}'@'%%'")
     except Exception as exc:
         if created_db:
@@ -165,6 +168,24 @@ def create_mariadb_database(database: str, username: str, password: str) -> dict
         "database": database,
         "tls": False,
     }
+
+
+def _max_user_connections() -> int:
+    return max(0, int(get_settings().managed_db_max_user_connections))
+
+
+def cap_mariadb_users() -> int:
+    """Applies the connection cap (A-025) to managed users created before it existed, or after the
+    setting changed. Runs once when the worker starts; returns how many users were changed."""
+    limit = _max_user_connections()
+    with mariadb_root_engine().connect() as conn:
+        rows = conn.exec_driver_sql(
+            "SELECT User FROM mysql.user WHERE Host = '%%' AND max_user_connections <> %s", (limit,)
+        ).fetchall()
+        users = [u for (u,) in rows if USER_RE.fullmatch(u)]
+        for username in users:
+            conn.exec_driver_sql(f"ALTER USER '{username}'@'%%' WITH MAX_USER_CONNECTIONS {limit}")
+    return len(users)
 
 
 def drop_mariadb_database(database: str, username: str | None) -> None:

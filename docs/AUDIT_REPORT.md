@@ -85,7 +85,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-024 **[MEDIUM][security]** Removing or demoting a member leaves the API keys they created or revealed working - `api/app/routers/members.py:112-135` - return `api_keys_to_rotate` and offer revoke; fall back to the project owner when the creator is no longer a member.
 
 **Data**
-- [ ] A-025 **[MEDIUM][security]** Managed DB users have no connection cap on the MariaDB that also hosts the platform DB - `api/app/services/provisioning.py:149-150` - `WITH MAX_USER_CONNECTIONS 20` for new users, and ALTER existing ones.
+- [x] A-025 **[MEDIUM][security]** Managed DB users have no connection cap on the MariaDB that also hosts the platform DB - `api/app/services/provisioning.py:149-150` - `WITH MAX_USER_CONNECTIONS 20` for new users, and ALTER existing ones.
 - [ ] A-026 **[MEDIUM][usability]** Connection dialog is jargon-heavy, repeats itself, and wrongly says every app (and device-hosted DBs) can use the URI - `api/app/services/connections.py:324-331` (also `DatabasesTab.tsx:273-279`, `source_ops.py:327-331`) - one plain hint per case from the API; mention "Database access"; drop the duplicate prefix.
 - [ ] A-027 **[MEDIUM][usability]** An external database on the same PC ("localhost") always fails, with no explanation - `api/app/routers/data_sources.py:48-67` - detect localhost in normalize_input and explain; add `host.docker.internal:host-gateway`.
 - [ ] A-028 **[MEDIUM][bug]** Soft-deleting a data source permanently deletes its cross-database links - `api/app/routers/data_sources.py:201-204` - delete links only on hard delete or purge; filter deleted ends in project_links().
