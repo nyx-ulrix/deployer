@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowRightLeft, Database, History, Leaf, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowRightLeft, Database, History, Leaf, Pencil, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { errorMessage, isDeviceOffline } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import { useCohostEligibility, useDataSourcesWithReplicas } from "../../api/hooks";
@@ -22,6 +22,7 @@ import { MoveDatabaseDialog } from "../devices/MoveDatabaseDialog";
 import { useDeviceNames } from "../devices/useDeviceNames";
 import { useProjectContext } from "../projects/project-context";
 import { AddDatabaseDialog } from "./AddDatabaseDialog";
+import { EditDatabaseDialog } from "./EditDatabaseDialog";
 import { EngineBadge, KindBadge, ModeBadge, StatusBadge } from "./SourceBadges";
 
 export function DatabasesTab() {
@@ -33,6 +34,7 @@ export function DatabasesTab() {
   const [connectionFor, setConnectionFor] = useState<DataSource | null>(null);
   const [deleting, setDeleting] = useState<DataSource | null>(null);
   const [moving, setMoving] = useState<DataSource | null>(null);
+  const [editing, setEditing] = useState<DataSource | null>(null);
   const anyOnDevice = sources.data?.some((s) => s.device_id) ?? false;
   const deviceName = useDeviceNames(project.id, anyOnDevice);
 
@@ -81,6 +83,7 @@ export function DatabasesTab() {
                 onConnection={() => setConnectionFor(s)}
                 onDelete={() => setDeleting(s)}
                 onMove={() => setMoving(s)}
+                onEdit={() => setEditing(s)}
               />
             </li>
           ))}
@@ -91,6 +94,7 @@ export function DatabasesTab() {
 
       {moving && <MoveDatabaseDialog projectId={project.id} source={moving} onClose={() => setMoving(null)} />}
       {adding && <AddDatabaseDialog projectId={project.id} onClose={() => setAdding(false)} />}
+      {editing && <EditDatabaseDialog projectId={project.id} source={editing} onClose={() => setEditing(null)} />}
       {connectionFor && (
         <ConnectionDialog projectId={project.id} source={connectionFor} onClose={() => setConnectionFor(null)} />
       )}
@@ -114,6 +118,7 @@ function SourceCard({
   onConnection,
   onDelete,
   onMove,
+  onEdit,
 }: {
   source: DataSource;
   allSources: DataSource[];
@@ -122,6 +127,7 @@ function SourceCard({
   onConnection: () => void;
   onDelete: () => void;
   onMove: () => void;
+  onEdit: () => void;
 }) {
   const { project, can } = useProjectContext();
   const toast = useToast();
@@ -210,6 +216,11 @@ function SourceCard({
           >
             <History className="size-3.5" /> Backups
           </Link>
+        )}
+        {can("admin") && (
+          <Button size="sm" icon={<Pencil className="size-3.5" />} onClick={onEdit}>
+            Edit
+          </Button>
         )}
         {can("admin") && source.mode === "managed" && (
           <Button size="sm" icon={<ArrowRightLeft className="size-3.5" />} onClick={onMove}>

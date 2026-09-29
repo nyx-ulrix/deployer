@@ -90,7 +90,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-027 **[MEDIUM][usability]** An external database on the same PC ("localhost") always fails, with no explanation - `api/app/routers/data_sources.py:48-67` - detect localhost in normalize_input and explain; add `host.docker.internal:host-gateway`.
 - [x] A-028 **[MEDIUM][bug]** Soft-deleting a data source permanently deletes its cross-database links - `api/app/routers/data_sources.py:201-204` - delete links only on hard delete or purge; filter deleted ends in project_links().
 - [x] A-029 **[MEDIUM][bug]** Schema "compare with current" reports false changes, and shows every table as removed when the DB is down - `api/app/services/schema_diff.py:55-66` - 503 on introspection error; don't let estimated row counts mark "changed".
-- [ ] A-030 **[MEDIUM][usability]** External data sources cannot be edited, only deleted and re-created - `api/app/routers/data_sources.py:83-228` - admin `PATCH` with normalize_input, try_config, invalidate and audit.
+- [x] A-030 **[MEDIUM][usability]** External data sources cannot be edited, only deleted and re-created - `api/app/routers/data_sources.py:83-228` - admin `PATCH` with normalize_input, try_config, invalidate and audit.
 
 **Query console**
 - [ ] A-031 **[MEDIUM][security]** Public anon keys can use the query console: mongosh/pool exhaustion and unbounded query-log growth - `api/app/routers/query.py:21, 74-85` - refuse anon keys here; cap stored query_text; prune more often.

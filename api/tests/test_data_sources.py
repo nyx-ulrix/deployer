@@ -188,6 +188,43 @@ def test_check_connection_and_delete(client, db, project_setup, fake_connect, mo
     assert client.delete(f"{s['base']}/data-sources/{sid}", headers=s["admin"]).status_code == 404
 
 
+def test_update_external_source_in_place(client, db, project_setup, fake_connect, monkeypatch):
+    # A-030: a rotated password is edited in place, keeping the id (links, key configs, saved queries).
+    s = project_setup
+    sid = client.post(f"{s['base']}/data-sources", json=EXTERNAL_SQL, headers=s["admin"]).json()["id"]
+    invalidated = []
+    monkeypatch.setattr(connections, "invalidate", invalidated.append)
+    url = f"{s['base']}/data-sources/{sid}"
+    rotated = "fake-rotated-password"
+
+    assert client.patch(url, json={"name": "x"}, headers=s["dev"]).status_code == 403
+    fake_connect["ok"] = False
+    resp = client.patch(url, json={"config": {"password": rotated}}, headers=s["admin"])
+    assert resp.status_code == 400 and resp.json()["error"]["code"] == "connection_failed"
+    db.expire_all()
+    assert decrypt_json(db.get(DataSource, sid).config_encrypted)["password"] == FAKE_SQL_PASSWORD
+
+    fake_connect["ok"] = True
+    resp = client.patch(url, json={"name": "shop-main", "config": {"password": rotated}}, headers=s["admin"])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["id"] == sid and resp.json()["name"] == "shop-main" and rotated not in resp.text
+    db.expire_all()
+    config = decrypt_json(db.get(DataSource, sid).config_encrypted)
+    assert config["password"] == rotated and config["host"] == "db.example.com"
+    assert fake_connect["calls"][-1][2] == config
+    assert invalidated == [sid]
+    log = db.scalar(select(AuditLog).where(AuditLog.action == "data_source.update"))
+    assert log is not None and rotated not in str(log.details)
+
+    bad = client.patch(url, json={"config": {"host": "localhost"}}, headers=s["admin"])
+    assert bad.status_code == 422
+    client.post(f"{s['base']}/data-sources", json={**EXTERNAL_SQL, "name": "other"}, headers=s["admin"])
+    assert client.patch(url, json={"name": "other"}, headers=s["admin"]).status_code == 409
+    calls = len(fake_connect["calls"])
+    assert client.patch(url, json={"name": "shop-main", "config": {}}, headers=s["admin"]).status_code == 200
+    assert len(fake_connect["calls"]) == calls  # nothing changed: no reconnect
+
+
 def test_other_projects_sources_are_hidden(client, make_user, make_project, auth_headers, project_setup, fake_connect):
     s = project_setup
     sid = client.post(f"{s['base']}/data-sources", json=EXTERNAL_SQL, headers=s["admin"]).json()["id"]

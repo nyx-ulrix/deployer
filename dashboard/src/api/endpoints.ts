@@ -220,6 +220,9 @@ export const api = {
     test: (pid: string, body: DataSourceInput) =>
       client.post<ConnectionTestResult>(`/projects/${e(pid)}/data-sources/test`, body),
     create: (pid: string, body: DataSourceInput) => client.post<DataSource>(`/projects/${e(pid)}/data-sources`, body),
+    /** A-030: rename, or change an external source's connection; only the config keys given change. */
+    update: (pid: string, sid: string, body: { name?: string; config?: Record<string, unknown> }) =>
+      client.patch<DataSource>(`/projects/${e(pid)}/data-sources/${e(sid)}`, body),
     check: (pid: string, sid: string) =>
       client.post<DataSource>(`/projects/${e(pid)}/data-sources/${e(sid)}/check`),
     connection: (pid: string, sid: string) =>

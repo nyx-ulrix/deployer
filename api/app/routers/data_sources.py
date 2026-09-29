@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from app.crypto import encrypt_json
+from app.crypto import decrypt_json, encrypt_json
 from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import ApiError, forbidden, validation_error
 from app.models import DataSource, utcnow
@@ -51,6 +51,12 @@ def _reject_loopback(host: str | None) -> None:
         loopback = h == "localhost" or h.endswith(".localhost")
     if loopback:
         raise validation_error(SAME_PC_HOST_MESSAGE.format(host=h))
+
+
+class DataSourceUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=63)
+    # External sources only: keys given here replace the stored ones (e.g. just a rotated password).
+    config: dict[str, Any] | None = None
 
 
 def normalize_input(body: DataSourceInput) -> tuple[str, dict[str, Any] | None]:
@@ -97,8 +103,11 @@ def normalize_input(body: DataSourceInput) -> tuple[str, dict[str, Any] | None]:
     return name, {"uri": uri, "database": database}
 
 
-def _ensure_name_free(db: DbSession, project_id: str, name: str) -> None:
-    exists = db.scalar(select(DataSource.id).where(DataSource.project_id == project_id, DataSource.name == name))
+def _ensure_name_free(db: DbSession, project_id: str, name: str, *, except_id: str | None = None) -> None:
+    query = select(DataSource.id).where(DataSource.project_id == project_id, DataSource.name == name)
+    if except_id:
+        query = query.where(DataSource.id != except_id)
+    exists = db.scalar(query)
     if exists:
         raise ApiError(409, "name_taken", f"A data source named '{name}' already exists in this project")
 
@@ -179,6 +188,53 @@ def create_data_source(body: DataSourceInput, access: Admin, db: DbSession, requ
         mode=ds.mode,
     )
     db.commit()
+    return data_source_out(ds)
+
+
+@router.patch("/projects/{project_id}/data-sources/{source_id}")
+def update_data_source(source_id: str, body: DataSourceUpdate, access: Admin, db: DbSession, request: Request) -> dict:
+    """A-030: rename a source or change an external source's connection (password rotation) in place,
+    keeping its id, schema links, key configs and saved queries."""
+    ds = get_source(db, access.project.id, source_id)
+    if body.config is not None and ds.mode != "external":
+        raise validation_error("Managed databases have no connection settings to edit")
+    name = (body.name or ds.name).strip()
+    if not name:
+        raise validation_error("name is required")
+    config = None
+    if body.config is not None:
+        merged = {**decrypt_json(ds.config_encrypted), **body.config}
+        _, config = normalize_input(
+            DataSourceInput(kind=ds.kind, mode=ds.mode, engine=ds.engine, name=name, config=merged)
+        )
+    changed = []
+    if name != ds.name:
+        _ensure_name_free(db, access.project.id, name, except_id=ds.id)
+        ds.name = name
+        changed.append("name")
+    if config is not None and config != decrypt_json(ds.config_encrypted):
+        ok, message, version = connections.try_config(ds.kind, ds.engine, config)
+        if not ok:
+            raise ApiError(400, "connection_failed", message)
+        ds.config_encrypted = encrypt_json(config)
+        ds.database_name = config["database"]
+        ds.status = "ok"
+        ds.status_message = f"Connected (server {version})" if version else "Connected"
+        ds.last_checked_at = utcnow()
+        changed.append("config")
+    if changed:
+        connections.invalidate(ds.id)
+        audit.record(
+            db,
+            "data_source.update",
+            request=request,
+            user_id=access.user.id,
+            project_id=access.project.id,
+            data_source_id=ds.id,
+            name=ds.name,
+            changed=changed,
+        )
+        db.commit()
     return data_source_out(ds)
 
 
