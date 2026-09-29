@@ -114,7 +114,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 
 **Devices / co-hosting**
 - [x] A-047 **[MEDIUM][bug]** Removing a device silently re-points its databases at the main server - `api/app/routers/devices.py:251-254` - keep device_id (or mark as orphaned); refuse on_device sources with no device.
-- [ ] A-048 **[MEDIUM][bug]** auto_increment step/offset are runtime-only, so ID collisions follow reboots - `api/app/services/source_sync.py:448-469` - persist them in conf.d or the compose command.
+- [x] A-048 **[MEDIUM][bug]** auto_increment step/offset are runtime-only, so ID collisions follow reboots - `api/app/services/source_sync.py:448-469` - persist them in conf.d or the compose command.
 - [ ] A-049 **[MEDIUM][bug]** Initial co-host copy and moves load the whole dump into memory (384 MB worker) - `api/app/services/device_host.py:589-591` (also `device_moves.py:167-169`) - stream the restore table by table.
 - [ ] A-050 **[MEDIUM][bug]** Device agent runs calls after the caller has already timed out - `api/app/services/device_agent.py:219-231` - stamp deadlines and skip expired calls; use a separate pool for short calls.
 - [ ] A-051 **[MEDIUM][bug]** Resolving a conflict can leave the two copies different with no record - `api/app/services/cohosting.py:407-413` - write to the main server first; on a device failure, re-apply the previous value.

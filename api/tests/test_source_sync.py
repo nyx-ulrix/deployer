@@ -578,3 +578,46 @@ def test_oversized_row_error_says_to_re_copy(db, world, monkeypatch):
     db.expire_all()
     rep = db.get(SourceReplica, w["rep"].id)
     assert rep.status == "error" and "Re-copy" in rep.error
+
+
+def test_auto_increment_is_persisted_for_restarts_and_repaired_with_a_log(monkeypatch, tmp_path, caplog):
+    """A-048: the step/offset go into MariaDB's conf.d (survive a restart); a runtime drift is still
+    repaired every round and logged."""
+    from app.config import get_settings
+    from app.services import provisioning
+
+    monkeypatch.setattr(get_settings(), "mariadb_conf_dir", str(tmp_path))
+    runtime = {"inc": 1, "off": 1}
+    executed: list[str] = []
+
+    class Conn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def exec_driver_sql(self, sql):
+            executed.append(sql)
+            row = (1, "ROW", "FULL", "FULL", 691200, runtime["inc"], runtime["off"])
+            return type("R", (), {"first": lambda self: row})()
+
+    monkeypatch.setattr(provisioning, "mariadb_root_engine", lambda: type("E", (), {"connect": lambda s: Conn()})())
+
+    with caplog.at_level("WARNING"):
+        source_sync.ensure_mariadb_settings(offset=3)
+    cnf = (tmp_path / source_sync.AUTO_INCREMENT_CNF).read_text()
+    assert "[mariadbd]" in cnf and "auto_increment_increment = 10" in cnf and "auto_increment_offset = 3" in cnf
+    assert "SET GLOBAL auto_increment_offset = 3" in executed
+    assert "auto_increment was 1/1" in caplog.text
+
+    executed.clear()
+    caplog.clear()
+    runtime.update(inc=10, off=3)
+    with caplog.at_level("WARNING"):
+        source_sync.ensure_mariadb_settings(offset=3)
+    assert not [s for s in executed if s.startswith("SET GLOBAL auto_increment")] and not caplog.text
+
+    with pytest.raises(ApiError):
+        source_sync.ensure_mariadb_settings(offset=11)
+    assert "auto_increment_offset = 3" in (tmp_path / source_sync.AUTO_INCREMENT_CNF).read_text()

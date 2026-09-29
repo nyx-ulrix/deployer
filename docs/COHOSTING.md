@@ -107,8 +107,11 @@ error, warnings, created_by_id, created_at, updated_at`, unique `(data_source_id
     (applying a row with a high id moves the other copy's counter into that range). So the sync sets
     the server-wide `auto_increment_increment = 10` with `auto_increment_offset = 1` on the main server
     and `2..10` on co-host devices (one offset per device, shared by all its copies, stored in
-    `source_replicas.id_offset`) - only on servers that hold copies, at copy time and re-asserted at
-    every round (a MariaDB restart resets runtime settings; no compose change needed). It affects every
+    `source_replicas.id_offset`) - only on servers that hold copies. At copy time the worker writes
+    them to `zz-deployer-cohosting.cnf` in MariaDB's conf.d (`mariadb_conf` volume, `MARIADB_CONF_DIR`)
+    so MariaDB starts with them after a restart, and sets them at runtime; every round re-checks them
+    and logs a warning when it had to set them again. The file stays after the last copy is removed
+    (harmless). It affects every
     database on those servers: new ids skip numbers (unique, just sparser). Connections opened before
     co-hosting was enabled keep the old step until they reconnect - redeploy apps after the first copy;
     any id collision that still happens surfaces as a conflict, never an overwrite. MongoDB `ObjectId`s

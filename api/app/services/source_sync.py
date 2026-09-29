@@ -449,10 +449,39 @@ def apply_local(
 # =============================================================================================
 
 
+AUTO_INCREMENT_CNF = "zz-deployer-cohosting.cnf"
+
+
+def persist_auto_increment(offset: int) -> None:
+    """Writes the step/offset into MariaDB's conf.d (settings.mariadb_conf_dir) so the server starts
+    with them after a restart: runtime SET GLOBAL alone lets both copies hand out the same ids until
+    the next sync round, and connections opened in between keep the default step."""
+    from pathlib import Path
+
+    conf_dir = get_settings().mariadb_conf_dir
+    if not conf_dir or not Path(conf_dir).is_dir():
+        return
+    path = Path(conf_dir) / AUTO_INCREMENT_CNF
+    text = f"[mariadbd]\nauto_increment_increment = {AUTO_INCREMENT_STEP}\nauto_increment_offset = {int(offset)}\n"
+    try:
+        if path.is_file() and path.read_text() == text:
+            return
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(text)
+        tmp.chmod(0o644)  # MariaDB ignores world-writable option files
+        tmp.replace(path)
+    except OSError:
+        log.warning("Could not persist auto_increment settings in %s", conf_dir, exc_info=True)
+
+
 def ensure_mariadb_settings(*, offset: int | None = None) -> None:
     """Binlog prerequisites (ROW format with full images and column metadata, >= 7 days retention)
-    and, with `offset`, this server's auto_increment step/offset. Re-asserted every sync round so a
-    MariaDB restart (which resets runtime settings) is repaired within seconds."""
+    and, with `offset`, this server's auto_increment step/offset - persisted in conf.d for restarts
+    and re-asserted every sync round as a safety net (logged when it had to act)."""
+    if offset is not None:
+        if not 1 <= int(offset) <= AUTO_INCREMENT_STEP:
+            raise ApiError(422, "validation_error", "Invalid auto_increment offset")
+        persist_auto_increment(offset)
     with provisioning.mariadb_root_engine().connect() as conn:
         row = conn.exec_driver_sql(
             "SELECT @@log_bin, @@binlog_format, @@binlog_row_image, @@binlog_row_metadata, "
@@ -467,8 +496,13 @@ def ensure_mariadb_settings(*, offset: int | None = None) -> None:
         if 0 < int(row[4] or 0) < MIN_BINLOG_EXPIRE_SECONDS:
             conn.exec_driver_sql(f"SET GLOBAL binlog_expire_logs_seconds = {MIN_BINLOG_EXPIRE_SECONDS}")
         if offset is not None and (int(row[5]), int(row[6])) != (AUTO_INCREMENT_STEP, int(offset)):
-            if not 1 <= int(offset) <= AUTO_INCREMENT_STEP:
-                raise ApiError(422, "validation_error", "Invalid auto_increment offset")
+            log.warning(
+                "MariaDB auto_increment was %s/%s, setting %s/%s (ids handed out meanwhile may conflict)",
+                row[5],
+                row[6],
+                AUTO_INCREMENT_STEP,
+                offset,
+            )
             conn.exec_driver_sql(f"SET GLOBAL auto_increment_increment = {AUTO_INCREMENT_STEP}")
             conn.exec_driver_sql(f"SET GLOBAL auto_increment_offset = {int(offset)}")
 

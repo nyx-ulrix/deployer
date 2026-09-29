@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # docs/DEPLOYMENTS.md (worker only): generated Caddy site files (`caddy_apps` volume), the compose
     # network app containers join, their memory limit, and where checkouts are built (default: tmp).
     caddy_apps_dir: str = "/etc/caddy/apps"
+    # docs/COHOSTING.md "Ids" (worker only): MariaDB's conf.d (`mariadb_conf` volume); co-hosting writes
+    # its auto_increment step/offset there so they survive MariaDB restarts. Empty = runtime only.
+    mariadb_conf_dir: str = ""
     app_network: str = "deployer_apps"  # only caddy and the worker share it (A-019)
     app_db_network: str = "deployer_backend"  # joined only by apps with database access
     app_mem_limit: str = "512m"
