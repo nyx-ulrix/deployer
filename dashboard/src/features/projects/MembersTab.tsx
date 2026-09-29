@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MailPlus, Trash2, UserMinus } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import type { Invite, InviteRole, Member } from "../../api/types";
+import type { ApiKey, Invite, InviteRole, Member } from "../../api/types";
 import { useCurrentUser } from "../../auth/auth-context";
 import { Avatar } from "../../components/layout/Brand";
 import { Badge } from "../../components/ui/Badge";
@@ -46,6 +46,11 @@ function MembersCard() {
   const members = useQuery({ queryKey: qk.members(project.id), queryFn: () => api.members.list(project.id) });
   const [removing, setRemoving] = useState<Member | null>(null);
   const [stopCohost, setStopCohost] = useState<Member | null>(null);
+  // A-024: keys a removed or demoted admin created or revealed keep working until revoked.
+  const [rotate, setRotate] = useState<{ name: string; keys: ApiKey[] } | null>(null);
+  const offerRotate = (name: string, keys: ApiKey[] | undefined) => {
+    if (keys?.length) setRotate({ name, keys });
+  };
 
   const updateRole = useMutation({
     mutationFn: ({ userId, role }: { userId: string; role: InviteRole }) =>
@@ -55,6 +60,7 @@ function MembersCard() {
         list?.map((x) => (x.user_id === m.user_id ? m : x)),
       );
       toast.success(`${m.display_name || m.email} is now ${ROLE_LABELS[m.role]}.`);
+      offerRotate(m.display_name || m.email, m.api_keys_to_rotate);
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't change role"),
   });
@@ -84,7 +90,7 @@ function MembersCard() {
 
   const remove = useMutation({
     mutationFn: (m: Member) => api.members.remove(project.id, m.user_id),
-    onSuccess: (_d, m) => {
+    onSuccess: (res, m) => {
       setRemoving(null);
       if (m.user_id === me.id) {
         void queryClient.invalidateQueries({ queryKey: qk.projects });
@@ -94,8 +100,19 @@ function MembersCard() {
       }
       queryClient.setQueryData<Member[]>(qk.members(project.id), (list) => list?.filter((x) => x.user_id !== m.user_id));
       toast.success(`${m.display_name || m.email} removed.`);
+      offerRotate(m.display_name || m.email, res.api_keys_to_rotate);
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't remove member"),
+  });
+
+  const revokeKeys = useMutation({
+    mutationFn: (keys: ApiKey[]) => Promise.all(keys.map((k) => api.apiKeys.revoke(project.id, k.id))),
+    onSuccess: (_d, keys) => {
+      setRotate(null);
+      toast.success(`${keys.length} API key${keys.length === 1 ? "" : "s"} revoked.`);
+    },
+    onError: (e) => toast.error(errorMessage(e), "Couldn't revoke API keys"),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: qk.apiKeys(project.id) }),
   });
 
   return (
@@ -185,6 +202,25 @@ function MembersCard() {
           description="Their copies stop syncing (paused). The data already on their PC stays there until the copy is removed on the Databases tab."
           confirmLabel="Stop co-hosting"
         />
+      )}
+      {rotate && (
+        <ConfirmDialog
+          open
+          onClose={() => setRotate(null)}
+          onConfirm={() => revokeKeys.mutate(rotate.keys)}
+          loading={revokeKeys.isPending}
+          title="Revoke their API keys?"
+          description={`${rotate.name} created or revealed these keys, so they may still have a copy. The keys keep working until you revoke them; apps using them will need new keys.`}
+          confirmLabel="Revoke these keys"
+        >
+          <ul className="list-disc space-y-1 pl-5 text-sm">
+            {rotate.keys.map((k) => (
+              <li key={k.id}>
+                {k.name} <span className="font-mono text-xs text-muted">{k.prefix}…</span> ({k.role})
+              </li>
+            ))}
+          </ul>
+        </ConfirmDialog>
       )}
       {removing && (
         <ConfirmDialog

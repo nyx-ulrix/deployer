@@ -102,6 +102,9 @@ export type ApiKey = {
   revealable: boolean;
 };
 
+/** A-024: live keys a removed or demoted admin created or revealed; they keep working until revoked. */
+export type KeysToRotate = { api_keys_to_rotate: ApiKey[] };
+
 /** `GET /projects/{pid}/api-keys/{id}/config`: a ready-to-use client config (docs/DATA_API.md). */
 export type ApiKeyConfig = {
   deployer: {

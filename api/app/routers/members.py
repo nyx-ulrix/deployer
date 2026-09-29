@@ -7,6 +7,7 @@ from sqlalchemy import select
 from app.deps import CurrentUser, DbSession, ProjectAccess, require_role
 from app.errors import ApiError, forbidden, not_found, validation_error
 from app.models import Project, ProjectInvite, ProjectMember, User, role_rank, utcnow
+from app.routers.api_keys import keys_to_rotate
 from app.serializers import iso
 from app.services import audit, cohosting, invites
 from app.services.instance_settings import reachable_elsewhere
@@ -107,7 +108,11 @@ def update_member(user_id: str, body: MemberUpdate, request: Request, access: Ad
                 db, access.project.id, user_id, "Co-hosting was switched off for this member"
             )
     db.commit()
-    return member_out(member, db.get(User, user_id))
+    out = member_out(member, db.get(User, user_id))
+    # A-024: only admins create or reveal keys, so losing admin means those keys should be rotated.
+    demoted = role_rank(old_role) >= role_rank("admin") > role_rank(member.role)
+    out["api_keys_to_rotate"] = keys_to_rotate(db, access.project.id, user_id) if demoted else []
+    return out
 
 
 @router.delete("/projects/{project_id}/members/{user_id}")
@@ -133,7 +138,8 @@ def remove_member(user_id: str, request: Request, access: Viewer, db: DbSession)
         role=member.role,
     )
     db.commit()
-    return {"ok": True}
+    # A-024: removal doesn't stop the keys they created or saw; the dashboard offers to revoke these.
+    return {"ok": True, "api_keys_to_rotate": keys_to_rotate(db, access.project.id, user_id)}
 
 
 # --- invites (project side) ----------------------------------------------------------------------

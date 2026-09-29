@@ -108,7 +108,11 @@ def load_api_key_access(db: Session, token: str, project_id: str) -> ProjectAcce
     check_api_key_rate(db, key.id)
     project = db.get(Project, project_id)
     user = db.get(User, key.created_by_id) if key.created_by_id else None
-    if user is None or not user.is_active:
+    # A-024: a creator who left the project (or is disabled) is no longer credited; the owner is.
+    is_member = user is not None and db.scalar(
+        select(ProjectMember.user_id).where(ProjectMember.project_id == project_id, ProjectMember.user_id == user.id)
+    )
+    if not is_member or not user.is_active:
         user = db.get(User, project.owner_id)
     if user is None or not user.is_active:
         # The project's owner was disabled by the instance owner (A-023): their keys stop too.

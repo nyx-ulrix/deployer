@@ -13,7 +13,7 @@ from sqlalchemy import select
 from app.crypto import decrypt_secret, encrypt_secret, sha256_hex
 from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import conflict, not_found
-from app.models import ApiKey, utcnow
+from app.models import ApiKey, AuditLog, utcnow
 from app.routers.data import COLLECTION_DOCS, TABLE_ROWS
 from app.serializers import iso
 from app.services import audit
@@ -37,6 +37,25 @@ def api_key_out(key: ApiKey) -> dict:
         "revoked_at": iso(key.revoked_at),
         "revealable": key.secret_encrypted is not None,
     }
+
+
+def keys_to_rotate(db, project_id: str, user_id: str) -> list[dict]:
+    """A-024: the project's live keys this person created or saw the secret of (reveal / config
+    download). Removing or demoting them doesn't stop those keys; the caller offers to revoke them."""
+    seen = db.scalars(
+        select(AuditLog.details).where(
+            AuditLog.project_id == project_id,
+            AuditLog.user_id == user_id,
+            AuditLog.action.in_(("api_key.reveal", "api_key.config")),
+        )
+    ).all()
+    seen_ids = {d.get("api_key_id") for d in seen if d}
+    keys = db.scalars(
+        select(ApiKey)
+        .where(ApiKey.project_id == project_id, ApiKey.revoked_at.is_(None))
+        .order_by(ApiKey.created_at.desc())
+    ).all()
+    return [api_key_out(k) for k in keys if k.created_by_id == user_id or k.id in seen_ids]
 
 
 def generate_secret(role: str) -> str:

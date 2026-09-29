@@ -2,6 +2,7 @@ from datetime import timedelta
 
 import pytest
 
+from app.deps import load_api_key_access
 from app.models import AuditLog, ProjectInvite, ProjectMember, utcnow
 from app.services import invites
 
@@ -203,3 +204,49 @@ def test_invite_other_project_not_found(client, team, auth_headers, make_project
     db.commit()
     resp = client.delete(f"/v1/projects/{project.id}/invites/{invite.id}", headers=auth_headers(users["owner"]))
     assert resp.status_code == 404
+
+
+def test_remove_or_demote_lists_keys_to_rotate(client, team, auth_headers, make_user, db):
+    # A-024: a removed or demoted admin's keys keep working, so the API names them for revoking.
+    project, users = team
+    keys = f"/v1/projects/{project.id}/api-keys"
+
+    def make_key(actor, name):
+        resp = client.post(keys, json={"name": name, "role": "service"}, headers=auth_headers(users[actor]))
+        return resp.json()["api_key"]["id"]
+
+    admins_key, owners_key, _other = make_key("admin", "a"), make_key("owner", "b"), make_key("owner", "c")
+    assert client.get(f"{keys}/{owners_key}/reveal", headers=auth_headers(users["admin"])).status_code == 200
+    admin2s_key = make_key("admin2", "d")
+
+    demote = client.patch(
+        f"/v1/projects/{project.id}/members/{users['admin2'].id}",
+        json={"role": "developer"},
+        headers=auth_headers(users["owner"]),
+    )
+    assert [k["id"] for k in demote.json()["api_keys_to_rotate"]] == [admin2s_key]
+    promote = client.patch(
+        f"/v1/projects/{project.id}/members/{users['dev'].id}",
+        json={"role": "admin"},
+        headers=auth_headers(users["owner"]),
+    )
+    assert promote.json()["api_keys_to_rotate"] == []
+
+    removed = client.delete(
+        f"/v1/projects/{project.id}/members/{users['admin'].id}", headers=auth_headers(users["owner"])
+    )
+    assert removed.status_code == 200
+    assert {k["id"] for k in removed.json()["api_keys_to_rotate"]} == {admins_key, owners_key}
+
+
+def test_key_of_a_removed_member_acts_as_the_owner(client, team, auth_headers, db):
+    # A-024: the audit trail must not credit someone who is no longer in the project.
+    project, users = team
+    resp = client.post(
+        f"/v1/projects/{project.id}/api-keys",
+        json={"name": "k", "role": "service"},
+        headers=auth_headers(users["admin"]),
+    )
+    secret = resp.json()["secret"]
+    client.delete(f"/v1/projects/{project.id}/members/{users['admin'].id}", headers=auth_headers(users["owner"]))
+    assert load_api_key_access(db, secret, project.id).user.id == users["owner"].id

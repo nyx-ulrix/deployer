@@ -200,8 +200,8 @@ type Alert = { id: string; alert: string; severity: "warning" | "critical"; mess
 | Method | Path | Role | Body | Response |
 |---|---|---|---|---|
 | GET | `/projects/{id}/members` | viewer+ | – | `Member[]` |
-| PATCH | `/projects/{id}/members/{user_id}` | admin+ | `{role?, can_cohost?}` (role not `owner`; can't change the owner's role; only the owner changes the owner's `can_cohost`; `can_cohost` needs developer+, 422 otherwise, and is cleared on demotion — [COHOSTING.md](COHOSTING.md)) | `Member` |
-| DELETE | `/projects/{id}/members/{user_id}` | admin+ or self | – | `{ok:true}` (owner can't be removed) |
+| PATCH | `/projects/{id}/members/{user_id}` | admin+ | `{role?, can_cohost?}` (role not `owner`; can't change the owner's role; only the owner changes the owner's `can_cohost`; `can_cohost` needs developer+, 422 otherwise, and is cleared on demotion — [COHOSTING.md](COHOSTING.md)) | `Member` + `api_keys_to_rotate: ApiKey[]` (live keys they created or revealed, when demoted below admin; else `[]`) |
+| DELETE | `/projects/{id}/members/{user_id}` | admin+ or self | – | `{ok:true, api_keys_to_rotate: ApiKey[]}` (owner can't be removed; the live keys they created or revealed keep working until revoked) |
 | GET | `/projects/{id}/invites` | admin+ | – | `Invite[]` (pending only) |
 | POST | `/projects/{id}/invites` | admin+ | `{email?, role, expires_in_days?:1..30 (default 7)}` | `{invite:Invite, invite_url, reachable_elsewhere:boolean}` — token only returned here |
 | DELETE | `/projects/{id}/invites/{invite_id}` | admin+ | – | `{ok:true}` |

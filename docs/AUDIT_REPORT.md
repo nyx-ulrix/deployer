@@ -82,7 +82,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-021 **[MEDIUM][bug]** Refresh/OAuth cookies are marked Secure from public_url, not the request, so LAN http sessions break - `api/app/services/tokens.py:156-179` (also `RemoteAccessPage.tsx:170-174`) - `secure = request.url.scheme == "https"`; add an API test.
 - [x] A-022 **[MEDIUM][usability]** Every body-validation error reads "Invalid request"; friendly validator messages are dropped - `api/app/errors.py:63-68` (also `dashboard/src/api/client.ts:28-32, 61-78`) - build the message from the first error's loc and msg, and drop `input` from details.
 - [x] A-023 **[MEDIUM][usability]** Owner cannot see, disable or remove other users or their projects; `is_active` is never set - `api/app/routers/instance.py:122-125` - owner-only `PATCH /instance/users/{id}` plus a Disable button, `GET /instance/projects`, and an optional "only owner creates projects" setting.
-- [ ] A-024 **[MEDIUM][security]** Removing or demoting a member leaves the API keys they created or revealed working - `api/app/routers/members.py:112-135` - return `api_keys_to_rotate` and offer revoke; fall back to the project owner when the creator is no longer a member.
+- [x] A-024 **[MEDIUM][security]** Removing or demoting a member leaves the API keys they created or revealed working - `api/app/routers/members.py:112-135` - return `api_keys_to_rotate` and offer revoke; fall back to the project owner when the creator is no longer a member.
 
 **Data**
 - [ ] A-025 **[MEDIUM][security]** Managed DB users have no connection cap on the MariaDB that also hosts the platform DB - `api/app/services/provisioning.py:149-150` - `WITH MAX_USER_CONNECTIONS 20` for new users, and ALTER existing ones.

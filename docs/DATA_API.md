@@ -256,3 +256,7 @@ before this feature cannot be revealed (`409 not_revealable`): create a new one.
 3. Revoke the old key. Requests with it fail immediately with `401 api_key_revoked`.
 
 Each key shows a *last used* time in the dashboard, so you can confirm the old key is idle before revoking it.
+
+Removing a member, or demoting an admin, does not stop the keys they created or revealed: they may have
+kept a copy. The dashboard lists those keys and offers **Revoke these keys**; rotate them as above. A key
+whose creator has left the project is credited to the project owner in audit and query logs.

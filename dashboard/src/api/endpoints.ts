@@ -68,6 +68,7 @@ import type {
   InviteCreate,
   InviteCreateResponse,
   InvitePreview,
+  KeysToRotate,
   JsonObject,
   Member,
   Ok,
@@ -188,8 +189,9 @@ export const api = {
   members: {
     list: (pid: string) => client.get<Member[]>(`/projects/${e(pid)}/members`),
     update: (pid: string, userId: string, role: Exclude<Role, "owner">) =>
-      client.patch<Member>(`/projects/${e(pid)}/members/${e(userId)}`, { role }),
-    remove: (pid: string, userId: string) => client.del<Ok>(`/projects/${e(pid)}/members/${e(userId)}`),
+      client.patch<Member & KeysToRotate>(`/projects/${e(pid)}/members/${e(userId)}`, { role }),
+    remove: (pid: string, userId: string) =>
+      client.del<Ok & KeysToRotate>(`/projects/${e(pid)}/members/${e(userId)}`),
   },
 
   invites: {
