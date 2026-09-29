@@ -253,8 +253,11 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
   co-host device (docs/COHOSTING.md); enqueued when a deployment goes live and by the scheduler sweep.
 - Scheduler: every tick, containers labelled `deployer.app` whose app or deployment no longer exists
   (or is not `deploying`/`live`) are removed, Caddy files of deleted apps are deleted, `queued`
-  deployments without a job get one when no deploy of their app is active, and `queued` deployments
-  whose job ended without running them are closed as `failed`/`cancelled`. Containers
+  deployments without a job get one when no deploy of their app is active, and `queued`/`building`/
+  `deploying` deployments whose job ended or vanished without closing them (a worker crash, reboot or
+  power cut: `jobs.recover_stale` fails only the job) are closed as `failed`/`cancelled`, their
+  half-started container removed and the app's next deployment started. **Cancel** on such a
+  deployment closes it at once. Containers
   labelled `deployer.cohost_app` and `cohost-*.caddy` files (copies a co-host device runs for its main
   Deployer) are left alone.
 

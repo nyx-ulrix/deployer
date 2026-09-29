@@ -187,6 +187,33 @@ def test_sweep_starts_waiting_and_closes_dead(db, docker, project):
     assert jobs.run_queued()[0][1] == "succeeded"
 
 
+def test_sweep_and_cancel_close_deployments_stranded_by_a_crash(db, docker, project):
+    """A-054: after a worker crash `recover_stale` fails only the job; the deployment it left in
+    building/deploying is closed by the sweep (its half-started container removed, the next one
+    started), and Cancel closes one whose job has already ended."""
+    app = make_app(db, project)
+    dead_job = jobs.enqueue(db, type="app.deploy", params={"key": app.id}, project_id=project.id)
+    dead_job.status, dead_job.error = "failed", "The worker stopped while running this job"
+    stranded = Deployment(
+        app_id=app.id, status="deploying", trigger="manual", branch="main", log="", job_id=dead_job.id
+    )
+    waiting = Deployment(app_id=app.id, status="queued", trigger="manual", branch="main", log="")
+    db.add_all([stranded, waiting])
+    db.commit()
+    docker.containers["deployer-app-half"] = {"labels": {"deployer.app": app.id, "deployer.deployment": stranded.id}}
+    deployments.scheduler_tick(jobs.get_sessionmaker())
+    db.expire_all()
+    stranded = db.get(Deployment, stranded.id)
+    assert (stranded.status, stranded.error) == ("failed", "The worker stopped while running this job")
+    assert stranded.finished_at is not None and "deployer-app-half" not in docker.containers
+    assert db.get(Deployment, waiting.id).job_id is not None
+
+    orphan = Deployment(app_id=app.id, status="building", trigger="manual", branch="main", log="", job_id=dead_job.id)
+    db.add(orphan)
+    db.commit()
+    assert deployments.cancel_deployment(db, orphan).status == "cancelled" and orphan.finished_at is not None
+
+
 def test_image_pruning_keeps_five(db, docker, project):
     app = make_app(db, project)
     ids = []

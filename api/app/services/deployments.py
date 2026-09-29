@@ -376,8 +376,11 @@ def cancel_deployment(db: Session, dep: Deployment) -> Deployment:
         if dep.job_id and (job := db.get(Job, dep.job_id)) is not None and job.status in jobs.ACTIVE_STATUSES:
             jobs.request_cancel(db, job)
     elif dep.status in ("building", "deploying"):
-        if dep.job_id and (job := db.get(Job, dep.job_id)) is not None:
-            jobs.request_cancel(db, job)
+        job = db.get(Job, dep.job_id) if dep.job_id else None
+        if job is not None and job.status in jobs.ACTIVE_STATUSES:
+            jobs.request_cancel(db, job)  # the handler closes the deployment when it stops
+        if job is None or job.status in jobs.FINAL_STATUSES:  # no job left to close it (crash, reboot)
+            dep.status, dep.finished_at = "cancelled", utcnow()
     else:
         raise conflict("not_cancellable", f"This deployment is {dep.status}")
     return dep
@@ -907,18 +910,23 @@ def scheduler_tick(factory: jobs.SessionFactory) -> None:
 
 
 def _sweep_queued(factory: jobs.SessionFactory) -> None:
-    """Queued deployments without a job get one; those whose job died are closed."""
+    """Queued deployments without a job get one; active ones whose job ended or vanished without
+    closing them (worker crash, reboot: `jobs.recover_stale`) are closed, so the app is free again."""
     with factory() as db:
-        waiting = list(db.scalars(select(Deployment).where(Deployment.status == "queued")))
+        active = list(db.scalars(select(Deployment).where(Deployment.status.in_(ACTIVE_STATUSES))))
         app_ids: set[str] = set()
-        for dep in waiting:
-            if dep.job_id is None:
+        for dep in active:
+            if dep.job_id is None and dep.status == "queued":
                 app_ids.add(dep.app_id)
                 continue
-            job = db.get(Job, dep.job_id)
+            job = db.get(Job, dep.job_id) if dep.job_id else None
             if job is None or job.status in jobs.FINAL_STATUSES:
                 dep.status = "cancelled" if job is not None and job.status == "cancelled" else "failed"
-                dep.error = dep.error or (job.error if job is not None else "The deploy job disappeared")
+                dep.error = (
+                    dep.error
+                    or (job.error if job is not None else None)
+                    or "The deploy job stopped without finishing (worker restart?)"
+                )
                 dep.finished_at = utcnow()
                 app_ids.add(dep.app_id)
         db.commit()
