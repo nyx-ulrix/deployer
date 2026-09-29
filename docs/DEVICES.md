@@ -174,7 +174,7 @@ device, never stored on the primary) with an `external_hint` and `device_id`.
 | `not_managed`, `already_there`, `move_in_progress`, `apps_use_database` | 400 / 409 / 409 / 409 | Move preconditions |
 | `device_offline` | 503 | The device is not connected (also for every schema/data/backup route of its sources) |
 | `device_timeout` | 504 | The device did not answer an RPC in time |
-| `device_busy` | 503 | The device's call queue is full |
+| `device_busy` | 503 | The device's call queue is full, or no worker slot freed up before the call's timeout (the call is then not run at all). Short calls (timeout up to 120 s) and long ones (snapshots, deploys) have separate slots, 4 each |
 | `device_error`, `result_too_large` | 502 | Malformed or oversized answer from the device |
 | `payload_too_large` | 413 | An RPC request exceeds the 8 MiB message limit |
 | `file_too_large` | 413 | A transfer upload exceeds `DEVICE_MAX_TRANSFER_BYTES` (default 64 GiB) |

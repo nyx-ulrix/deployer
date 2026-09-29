@@ -4,7 +4,7 @@ Runs inside `python -m app.worker` on installations that have a `device_link`:
 
 - opens `WS {primary}/v1/devices/connect` with `Authorization: Device <token>`, sends `hello`, then a
   `heartbeat` with metrics every 20 s;
-- executes `call` messages in worker threads (bounded concurrency) through
+- executes `call` messages in worker threads (separate bounded pools for short and long calls) through
   `device_host.dispatch`, answering with `result` messages; long jobs stream `progress`;
 - reconnects with exponential backoff (1 s -> 60 s) and never follows redirects to other hosts;
 - publishes its connection state to Redis (`device:agent:status`) for `GET /v1/device/status`.
@@ -18,6 +18,7 @@ import logging
 import random
 import socket
 import time
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -32,7 +33,9 @@ log = logging.getLogger(__name__)
 HEARTBEAT_SECONDS = 20
 MIN_BACKOFF = 1.0
 MAX_BACKOFF = 60.0
-MAX_CONCURRENT_CALLS = 4
+MAX_CONCURRENT_CALLS = 4  # long calls (snapshots, deploys, transfers)
+MAX_SHORT_CALLS = 4  # calls with a timeout up to SHORT_CALL_SECONDS (provision, sync, queries)
+SHORT_CALL_SECONDS = 120
 MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 STATUS_KEY = "device:agent:status"
 LINK_CHECK_SECONDS = 5
@@ -92,7 +95,10 @@ class DeviceAgent:
     def __init__(self) -> None:
         self._stop = asyncio.Event()
         self._detached = False
-        self._semaphore = asyncio.Semaphore(MAX_CONCURRENT_CALLS)
+        # One thread per slot, so a call that holds a slot is really running, never queued behind a
+        # timed-out one that is still finishing.
+        self._long = (asyncio.Semaphore(MAX_CONCURRENT_CALLS), ThreadPoolExecutor(MAX_CONCURRENT_CALLS, "device-long"))
+        self._short = (asyncio.Semaphore(MAX_SHORT_CALLS), ThreadPoolExecutor(MAX_SHORT_CALLS, "device-call"))
 
     def stop(self) -> None:
         self._stop.set()
@@ -216,6 +222,33 @@ class DeviceAgent:
             await _send(ws, {"type": "heartbeat", "metrics": metrics})
             write_status(mode="host", connected=True, metrics=metrics)
 
+    async def _run_call(self, method, params, ctx: device_host.CallContext, timeout: float) -> Any:
+        """Runs one call before its deadline, or raises `device_busy` without running it.
+
+        The deadline counts from when the call arrived, so time spent waiting for a slot is part of
+        it: a call the primary has already given up on never starts (it would create a database or
+        a sync the primary does not know about). A slot is held until the thread really ends, even
+        after a timeout, and long calls (snapshots, deploys) use their own pool so they can never
+        starve short ones (provision, sync, queries)."""
+        deadline = time.monotonic() + timeout
+        semaphore, executor = self._long if timeout > SHORT_CALL_SECONDS else self._short
+        try:
+            await asyncio.wait_for(semaphore.acquire(), timeout=max(deadline - time.monotonic(), 0))
+        except TimeoutError:
+            raise ApiError(503, "device_busy", f"The device was too busy to start {method} in time") from None
+        try:
+            if deadline - time.monotonic() <= 0:
+                raise ApiError(503, "device_busy", f"The device was too busy to start {method} in time")
+            running = asyncio.get_running_loop().run_in_executor(executor, device_host.dispatch, method, params, ctx)
+        except BaseException:
+            semaphore.release()
+            raise
+        running.add_done_callback(lambda _: semaphore.release())
+        try:
+            return await asyncio.wait_for(asyncio.shield(running), timeout=deadline - time.monotonic() + 1)
+        except TimeoutError:
+            raise ApiError(504, "device_timeout", f"{method} timed out on the device") from None
+
     async def _handle_call(self, ws, msg: dict, ctx: device_host.CallContext) -> None:
         call_id = str(msg.get("id") or "")[:64]
         method = msg.get("method")
@@ -224,23 +257,13 @@ class DeviceAgent:
             timeout = float(msg.get("timeout") or 30)
         except (TypeError, ValueError):
             timeout = 30.0
-        async with self._semaphore:
-            try:
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(device_host.dispatch, method, params, ctx), timeout=timeout + 1
-                )
-                reply = {"type": "result", "id": call_id, "ok": True, "result": result}
-            except TimeoutError:
-                reply = {
-                    "type": "result",
-                    "id": call_id,
-                    "ok": False,
-                    "error": {"status": 504, "code": "device_timeout", "message": f"{method} timed out on the device"},
-                }
-            except Exception as exc:  # noqa: BLE001
-                if not isinstance(exc, ApiError):
-                    log.exception("device call %s failed", method)
-                reply = {"type": "result", "id": call_id, "ok": False, "error": device_host.error_payload(exc)}
+        try:
+            result = await self._run_call(method, params, ctx, timeout)
+            reply = {"type": "result", "id": call_id, "ok": True, "result": result}
+        except Exception as exc:  # noqa: BLE001
+            if not isinstance(exc, ApiError):
+                log.exception("device call %s failed", method)
+            reply = {"type": "result", "id": call_id, "ok": False, "error": device_host.error_payload(exc)}
         data = json.dumps(reply, default=str)
         if len(data) > MAX_MESSAGE_BYTES:
             data = json.dumps(

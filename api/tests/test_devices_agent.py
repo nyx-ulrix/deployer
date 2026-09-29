@@ -103,6 +103,53 @@ def test_agent_connects_serves_calls_and_detaches(server, db, owner, make_device
         runner.join(15)
 
 
+def test_agent_skips_calls_whose_deadline_passed_and_keeps_short_calls_free(monkeypatch):
+    """A-050: a call that waited out its timeout for a slot is answered device_busy and never runs
+    (the primary already gave up on it), and long calls cannot take the slots of short ones."""
+    release = threading.Event()
+    ran = []
+
+    def dispatch(method, params, ctx):
+        ran.append(method)
+        if method in ("snapshot", "stuck"):
+            release.wait(10)
+        return {"method": method}
+
+    monkeypatch.setattr(device_host, "dispatch", dispatch)
+    monkeypatch.setattr(device_agent, "MAX_CONCURRENT_CALLS", 1)
+    monkeypatch.setattr(device_agent, "MAX_SHORT_CALLS", 1)
+
+    class WS:
+        def __init__(self):
+            self.sent = []
+
+        async def send(self, data):
+            self.sent.append(json.loads(data))
+
+    async def scenario():
+        agent, ws = device_agent.DeviceAgent(), WS()
+
+        def call(call_id, method, timeout):
+            msg = {"type": "call", "id": call_id, "method": method, "params": {}, "timeout": timeout}
+            return asyncio.create_task(agent._handle_call(ws, msg, None))
+
+        long_call = call("a", "snapshot", 3600)
+        await asyncio.sleep(0.1)
+        await call("b", "provision", 5)  # the long pool is full, the short one is free
+        stuck = call("c", "stuck", 0.2)  # times out on the device but keeps its slot while it runs
+        await stuck
+        await call("d", "provision", 0.3)  # waits for that slot past its deadline: must not run
+        release.set()
+        await long_call
+        return {m["id"]: m for m in ws.sent}
+
+    replies = asyncio.run(scenario())
+    assert replies["a"]["ok"] and replies["b"]["result"] == {"method": "provision"}
+    assert replies["c"]["error"]["code"] == "device_timeout"
+    assert replies["d"]["error"]["code"] == "device_busy"
+    assert ran == ["snapshot", "provision", "stuck"]
+
+
 def test_agent_reports_rejection(server, db, owner, set_setting, monkeypatch):
     set_setting(
         "device_link",
