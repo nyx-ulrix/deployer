@@ -30,7 +30,9 @@ Device dashboard (http://localhost:8080, not initialized OR local instance owner
   2. Device API → POST {primary}/v1/devices/enrollments  {name, hostname, os, version, capabilities}
        ← {enrollment_id, user_code "ABCD-EFGH", verification_uri, poll_secret, expires_in: 900}
   3. Device dashboard shows the code and a button opening
-       {primary}/devices/approve?code=ABCD-EFGH   (new tab)
+       {primary}/devices/approve?code=ABCD-EFGH   (new tab; {primary} is the URL the user typed -
+       the server's verification_uri is used only when it has that same origin, since a default
+       LAN install reports http://localhost:8080)
   4. User signs in to the MAIN Deployer there (password / Google / GitHub) and approves:
        name, roles [database_host], sharing (all my projects | selected projects)
   5. Device API polls POST {primary}/v1/devices/enrollments/{id}/poll {poll_secret} every 5 s

@@ -125,6 +125,18 @@ def test_enrollment_on_uninitialized_device(client, db, fake_primary, fake_redis
     assert resp.status_code == 409
 
 
+@pytest.mark.parametrize("uri", ["http://localhost:8080/devices/approve?code=ABCD-EFGH", "javascript:alert(1)", None])
+def test_verification_url_uses_typed_primary_url(client, fake_primary, fake_redis, monkeypatch, uri):
+    # A default LAN install has PUBLIC_URL=http://localhost:8080, which on this PC is our own dashboard.
+    def primary(primary_url, method, path, body=None):
+        resp = fake_primary(primary_url, method, path, body)
+        return httpx.Response(200, request=resp.request, json={**resp.json(), "verification_uri": uri})
+
+    monkeypatch.setattr(device_local, "primary_request", primary)
+    resp = client.post("/v1/device/enroll/start", json={"primary_url": "http://192.168.1.2:8080", "device_name": "PC"})
+    assert resp.json()["verification_url"] == "http://192.168.1.2:8080/devices/approve?code=ABCD-EFGH"
+
+
 def test_enrollment_denied_and_cancel(client, fake_primary, fake_redis):
     client.post("/v1/device/enroll/start", json={"primary_url": "https://main.example.com", "device_name": "PC"})
     fake_primary.poll_result = {"status": "denied"}

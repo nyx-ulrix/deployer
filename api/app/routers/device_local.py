@@ -16,6 +16,7 @@ import socket
 import threading
 import time
 from typing import Annotated, Any
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, Request
@@ -256,9 +257,11 @@ def enroll_start(body: EnrollStart, _: LocalAdmin, db: DbSession) -> dict:
         expires_in = int(data.get("expires_in") or 900)
     except (ValueError, KeyError, TypeError) as exc:
         raise ApiError(502, "enrollment_failed", "Unexpected answer from the main Deployer") from exc
+    # The main server builds its URI from its own PUBLIC_URL, which is http://localhost:8080 on a default
+    # LAN install - on this PC that opens our own dashboard. Only trust it when it matches what the user typed.
     verification = str(data.get("verification_uri") or "")
-    if not verification.startswith(("https://", "http://")):
-        verification = f"{primary_url}/devices/approve?code={user_code}"
+    if not device_host.same_origin(verification, primary_url):
+        verification = f"{primary_url}/devices/approve?code={quote(str(user_code))}"
     _save_state(
         {
             "status": "pending",

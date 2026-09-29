@@ -118,7 +118,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-049 **[MEDIUM][bug]** Initial co-host copy and moves load the whole dump into memory (384 MB worker) - `api/app/services/device_host.py:589-591` (also `device_moves.py:167-169`) - stream the restore table by table.
 - [x] A-050 **[MEDIUM][bug]** Device agent runs calls after the caller has already timed out - `api/app/services/device_agent.py:219-231` - stamp deadlines and skip expired calls; use a separate pool for short calls.
 - [x] A-051 **[MEDIUM][bug]** Resolving a conflict can leave the two copies different with no record - `api/app/services/cohosting.py:407-413` - write to the main server first; on a device failure, re-apply the previous value.
-- [ ] A-052 **[MEDIUM][usability]** The device approval link points to http://localhost:8080 on a default LAN install - `api/app/routers/devices.py:94` - build it from the primary_url the user typed.
+- [x] A-052 **[MEDIUM][usability]** The device approval link points to http://localhost:8080 on a default LAN install - `api/app/routers/devices.py:94` - build it from the primary_url the user typed.
 - [ ] A-053 **[MEDIUM][usability]** The pending enrollment code is lost after a page refresh - `api/app/routers/device_local.py:77-81, 280-286` - return user_code, verification_url and expires_at while pending.
 
 **Deploys / monitoring / remote access**
