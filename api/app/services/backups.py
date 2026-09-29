@@ -22,6 +22,7 @@ from __future__ import annotations
 import importlib
 import logging
 import re
+from bisect import bisect_left
 from collections.abc import Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
@@ -649,13 +650,14 @@ def seg_key(seg: BackupLogSegment) -> SegKey | None:
     return SegKey(lo, hi, bool(sp.get("inclusive")), bool(sp.get("gap")))
 
 
-def contiguous(prev: BackupLogSegment, nxt: BackupLogSegment) -> bool:
-    a, b = seg_key(prev), seg_key(nxt)
+def _follows(kind: str, a: SegKey | None, b: SegKey | None) -> bool:
     if a is None or b is None or b.gap:
         return False
-    if nxt.kind == "binlog":
-        return b.lo == a.hi + 1
-    return b.lo == a.hi
+    return b.lo == (a.hi + 1 if kind == "binlog" else a.hi)
+
+
+def contiguous(prev: BackupLogSegment, nxt: BackupLogSegment) -> bool:
+    return _follows(nxt.kind, seg_key(prev), seg_key(nxt))
 
 
 def _snapshot_anchor(backup: Backup) -> Any:
@@ -665,13 +667,16 @@ def _snapshot_anchor(backup: Backup) -> Any:
     return _ts(cp.get("oplog_ts_start"))
 
 
-def covers_anchor(seg: BackupLogSegment, anchor: Any) -> bool:
-    key = seg_key(seg)
+def _covers(kind: str, key: SegKey | None, anchor: Any) -> bool:
     if key is None or anchor is None:
         return False
-    if seg.kind == "binlog":
+    if kind == "binlog":
         return key.lo <= anchor <= key.hi
     return (key.lo < anchor <= key.hi) or (key.inclusive and key.lo == anchor)
+
+
+def covers_anchor(seg: BackupLogSegment, anchor: Any) -> bool:
+    return _covers(seg.kind, seg_key(seg), anchor)
 
 
 def ordered_segments(db: Session, data_source_id: str) -> list[BackupLogSegment]:
@@ -685,40 +690,81 @@ def ordered_segments(db: Session, data_source_id: str) -> list[BackupLogSegment]
     return segs
 
 
+class SegmentChains:
+    """Replay chains over segments in ordered_segments() order, built once per source (A-045).
+
+    Each segment's key and successor are worked out once (a successor doesn't depend on the snapshot), so a
+    snapshot's chain is: the first segment covering its anchor, then successors, stopping at a restore cap."""
+
+    def __init__(self, segments: list[BackupLogSegment]):
+        self.segments = segments
+        self.keys = [seg_key(s) for s in segments]
+        n = len(segments)
+        self.first = sum(k is None for k in self.keys)  # ordered_segments sorts keyless segments first
+        self.his = [k.hi for k in self.keys[self.first :]]
+        self.markers = [
+            (k.lo, parse_time(s.start_point.get("at")) or s.start_at)
+            for s, k in zip(segments, self.keys, strict=True)
+            if k and (s.start_point or {}).get("reason") == "restore"
+        ]
+        self.next: list[int | None] = [None] * n
+        for i in range(self.first, n):
+            last = self.keys[i]
+            for j in range(i + 1, n):
+                key = self.keys[j]
+                if key.gap:
+                    break  # an in-place restore: older logs can't be replayed across it
+                if _follows(segments[j].kind, last, key):
+                    self.next[i] = j
+                    break
+                if key.hi > last.hi:
+                    break  # a hole in the logs; hi <= last.hi is a duplicate/overlap (shouldn't happen): skip it
+        # Latest end_at reachable from each segment, and the smallest lo from each segment onwards.
+        self.reach: list[Any] = [None] * n
+        self.min_lo: list[Any] = [None] * (n + 1)
+        for i in reversed(range(self.first, n)):
+            j = self.next[i]
+            end = segments[i].end_at
+            self.reach[i] = end if j is None else max(end, self.reach[j])
+            lo = self.keys[i].lo
+            self.min_lo[i] = lo if self.min_lo[i + 1] is None else min(lo, self.min_lo[i + 1])
+
+    def _start(self, backup: Backup) -> int | None:
+        anchor = _snapshot_anchor(backup)
+        if anchor is None:
+            return None
+        for i in range(self.first + bisect_left(self.his, anchor), len(self.segments)):
+            if self.min_lo[i] > anchor:
+                return None  # nothing from here on starts early enough: the logs don't reach this snapshot
+            if _covers(self.segments[i].kind, self.keys[i], anchor):
+                return i
+        return None
+
+    def _cap(self, backup: Backup) -> Any:
+        # An in-place restore after this snapshot caps its chain at the marker's start. A MariaDB restore resumes
+        # mid-file, so a snapshot taken in that file (the pre_restore safety snapshot) has no chain at all.
+        taken = consistent_at(backup)
+        return min((lo for lo, at in self.markers if at > taken), default=None)
+
+    def chain(self, backup: Backup) -> list[BackupLogSegment]:
+        """Contiguous segments starting at the snapshot's consistent point (empty if logs don't reach it)."""
+        i, cap = self._start(backup), self._cap(backup)
+        out = []
+        while i is not None and (cap is None or self.keys[i].hi <= cap):
+            out.append(self.segments[i])
+            i = self.next[i]
+        return out
+
+    def end(self, backup: Backup) -> datetime | None:
+        """Latest end_at along the snapshot's chain (None when it has none)."""
+        if self._cap(backup) is not None:
+            return max((s.end_at for s in self.chain(backup)), default=None)
+        i = self._start(backup)
+        return None if i is None else self.reach[i]
+
+
 def chain_from(backup: Backup, segments: list[BackupLogSegment]) -> list[BackupLogSegment]:
-    """Contiguous segments starting at the snapshot's consistent point (empty if logs don't reach it)."""
-    anchor = _snapshot_anchor(backup)
-    taken = consistent_at(backup)
-    # An in-place restore after this snapshot caps its chain at the marker's start. A MariaDB restore resumes
-    # mid-file, so a snapshot taken in that file (the pre_restore safety snapshot) has no chain at all.
-    cap = min(
-        (
-            k.lo
-            for s in segments
-            if (s.start_point or {}).get("reason") == "restore"
-            and (k := seg_key(s))
-            and (parse_time(s.start_point.get("at")) or s.start_at) > taken
-        ),
-        default=None,
-    )
-    chain: list[BackupLogSegment] = []
-    for seg in segments:
-        key = seg_key(seg)
-        if cap is not None and key and key.hi > cap:
-            break
-        if not chain:
-            if covers_anchor(seg, anchor):
-                chain.append(seg)
-            continue
-        if key and key.gap:
-            break  # an in-place restore: older logs can't be replayed across it
-        if contiguous(chain[-1], seg):
-            chain.append(seg)
-        elif key and seg_key(chain[-1]) and key.hi <= seg_key(chain[-1]).hi:
-            continue  # duplicate/overlap (shouldn't happen)
-        else:
-            break
-    return chain
+    return SegmentChains(segments).chain(backup)
 
 
 def successful_snapshots(db: Session, data_source_id: str) -> list[Backup]:
@@ -741,7 +787,11 @@ def _replay_floor(backup: Backup) -> datetime:
 
 
 def recovery_window(
-    db: Session, ds: DataSource, policy: BackupPolicy | None = None, now: datetime | None = None
+    db: Session,
+    ds: DataSource,
+    policy: BackupPolicy | None = None,
+    now: datetime | None = None,
+    chains: SegmentChains | None = None,
 ) -> dict:
     policy = policy or ensure_policy(db, ds)
     now = now or utcnow()
@@ -749,15 +799,14 @@ def recovery_window(
     out = {"pitr_enabled": bool(policy.pitr_enabled), "earliest": None, "latest": None, "snapshots": len(snaps)}
     if not policy.pitr_enabled or not snaps:
         return out
-    segments = ordered_segments(db, ds.id)
+    chains = chains or SegmentChains(ordered_segments(db, ds.id))
     intervals: list[tuple[datetime, datetime]] = []
     for snap in snaps:
         if not pitr_base_ok(snap):
             continue
         start = _replay_floor(snap)
-        chain = chain_from(snap, segments)
-        end = max([start] + [s.end_at for s in chain])
-        intervals.append((start, end))
+        end = chains.end(snap)
+        intervals.append((start, start if end is None else max(start, end)))
     if not intervals:
         return out
     intervals.sort()
@@ -795,7 +844,8 @@ def plan_restore(
         return RestorePlan(backup, [], None)
     until = parse_time(point_in_time)
     policy = ensure_policy(db, ds)
-    window = recovery_window(db, ds, policy, now)
+    chains = SegmentChains(ordered_segments(db, ds.id))
+    window = recovery_window(db, ds, policy, now, chains)
     earliest, latest = parse_time(window["earliest"]), parse_time(window["latest"])
     if not window["pitr_enabled"] or earliest is None or latest is None or not earliest <= until <= latest:
         raise ApiError(
@@ -804,11 +854,10 @@ def plan_restore(
             "That point in time is outside the recovery window",
             {"earliest": window["earliest"], "latest": window["latest"]},
         )
-    segments = ordered_segments(db, ds.id)
     for snap in reversed(successful_snapshots(db, ds.id)):
         if not pitr_base_ok(snap) or _replay_floor(snap) > until:
             continue
-        chain = chain_from(snap, segments)
+        chain = chains.chain(snap)
         end = max([_replay_floor(snap)] + [s.end_at for s in chain])
         if end < until:
             continue

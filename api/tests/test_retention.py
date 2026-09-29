@@ -136,3 +136,29 @@ def test_snapshot_taken_in_the_restore_resume_file_does_not_replay_across_it():
     ]
     assert chain_from(safety, segments) == []
     assert [s.start_point["binlog_file"][-1] for s in chain_from(follow, segments)] == ["7", "8"]
+
+
+def test_chains_over_a_week_of_segments_key_each_segment_once(monkeypatch):
+    # A-045: ~40 snapshots over ~10k segments used to re-key every segment per snapshot (seconds per source).
+    from app.services import backups
+
+    calls = 0
+    real = backups.seg_key
+
+    def counting(s):
+        nonlocal calls
+        calls += 1
+        return real(s)
+
+    monkeypatch.setattr(backups, "seg_key", counting)
+    segments = [seg(h, h, START + timedelta(hours=h)) for h in range(20, 10_000)]
+    segments[5000:5001] = []  # a hole: chains anchored before it stop at mysql-bin.005019 (index 5000 is 005020)
+    snaps = [snap(START + timedelta(hours=h)) for h in range(0, 10_000, 250)]
+    chains = backups.SegmentChains(segments)
+    ends = {s.started_at: chains.end(s) for s in snaps}
+    assert calls == len(segments)
+    assert ends[START] is None  # logs were pruned past its anchor (mysql-bin.000001)
+    assert ends[START + timedelta(hours=250)] == START + timedelta(hours=5019)
+    assert ends[START + timedelta(hours=9750)] == START + timedelta(hours=9999)
+    assert [s.end_at for s in chains.chain(snaps[21])] == [START + timedelta(hours=h) for h in range(5251, 10_000)]
+    assert chains.chain(snaps[0]) == []

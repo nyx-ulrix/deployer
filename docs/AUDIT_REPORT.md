@@ -109,7 +109,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-042 **[MEDIUM][docs]** Instance export says "everything" but drops views, triggers, routines, events and backup history - `api/app/services/transfer.py:46-47, 325-362` (also `TransferPage.tsx:28-31`) - count and warn at export and import; fix the page text.
 - [x] A-043 **[MEDIUM][bug]** Import holds the whole export in memory, yet the upload limit is 8 GiB - `api/app/services/transfer.py:109, 564-566, 616-658` - memory-based limit with a clear 413; later, the chunked stream format.
 - [x] A-044 **[MEDIUM][usability]** Long-running work (safety snapshot before drop, export, import) runs inside HTTP requests - `api/app/services/backups.py:551-570` - run as jobs and serve the finished file from a download endpoint.
-- [ ] A-045 **[MEDIUM][bug]** recovery_window is O(snapshots x segments) and runs per source on the health page - `api/app/services/backups.py:681-714, 1841` - compute seg_key once; build one contiguous run backwards.
+- [x] A-045 **[MEDIUM][bug]** recovery_window is O(snapshots x segments) and runs per source on the health page - `api/app/services/backups.py:681-714, 1841` - compute seg_key once; build one contiguous run backwards.
 - [ ] A-046 **[MEDIUM][bug]** No timeout on local dump/restore tools; the heartbeat keeps a hung job running and blocks further snapshots - `api/app/services/backup_engine.py:188-191` - `proc.wait(timeout=...)` and kill; add a "no successful backup in 2x schedule" alert.
 
 **Devices / co-hosting**
