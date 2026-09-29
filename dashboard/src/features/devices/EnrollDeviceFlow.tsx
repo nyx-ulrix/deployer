@@ -65,6 +65,13 @@ export function EnrollDeviceFlow({ onCancel }: { onCancel?: () => void }) {
   const reported: EnrollState = status.data?.status ?? "idle";
   // Right after "Get a code" the status endpoint may still say idle until the next poll.
   const state: EnrollState = reported === "idle" && started ? "pending" : reported;
+  // After a page refresh `started` is gone; the status endpoint returns the pending code instead.
+  const d = status.data;
+  const code: EnrollStartResponse | null =
+    started ??
+    (d?.status === "pending" && d.user_code && d.verification_url
+      ? { user_code: d.user_code, verification_url: d.verification_url, expires_in: d.expires_in ?? 0 }
+      : null);
 
   useEffect(() => {
     if (state !== "approved") return;
@@ -133,20 +140,20 @@ export function EnrollDeviceFlow({ onCancel }: { onCancel?: () => void }) {
   if (state === "pending") {
     return (
       <div className="space-y-5">
-        {started ? (
+        {code ? (
           <>
             <div className="rounded-2xl border border-border bg-surface-2 p-5 text-center">
               <p className="text-sm text-muted">Your code</p>
               <div className="mt-1 flex items-center justify-center gap-1">
                 <code
                   className="font-mono text-3xl font-bold tracking-[0.2em] sm:text-4xl"
-                  aria-label={`Code ${started.user_code.split("").join(" ")}`}
+                  aria-label={`Code ${code.user_code.split("").join(" ")}`}
                 >
-                  {started.user_code}
+                  {code.user_code}
                 </code>
-                <CopyButton value={started.user_code} label="Copy code" />
+                <CopyButton value={code.user_code} label="Copy code" />
               </div>
-              <p className="mt-2 text-xs text-muted">Expires in about {Math.round(started.expires_in / 60)} minutes.</p>
+              <p className="mt-2 text-xs text-muted">Expires in about {Math.round(code.expires_in / 60)} minutes.</p>
             </div>
             <ol className="list-decimal space-y-1.5 pl-5 text-sm">
               <li>Open the approval page on the main Deployer (it opens in a new tab).</li>
@@ -154,7 +161,7 @@ export function EnrollDeviceFlow({ onCancel }: { onCancel?: () => void }) {
               <li>Check that the code matches, then click Approve.</li>
             </ol>
             <a
-              href={started.verification_url}
+              href={code.verification_url}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-accent px-3.5 text-sm font-medium text-accent-fg shadow-sm hover:bg-accent-hover"

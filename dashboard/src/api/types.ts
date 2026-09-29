@@ -517,7 +517,10 @@ export type EnrollStartResponse = { user_code: string; verification_url: string;
 
 export type EnrollState = "idle" | "pending" | "approved" | "denied" | "expired" | "error";
 
-export type EnrollStatus = { status: EnrollState; message: string | null };
+/** While pending, the code fields are included so a refreshed page can show them again. */
+export type EnrollStatus = { status: EnrollState; message: string | null } & Partial<EnrollStartResponse> & {
+    expires_at?: number;
+  };
 
 // ---- Jobs, backups & recovery (docs/BACKUPS.md) ----
 

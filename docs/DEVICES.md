@@ -239,7 +239,7 @@ Errors raised **on the device** and re-raised on the primary with the same statu
 |---|---|---|---|---|
 | GET | `/v1/device/status` | – | – | `{mode:"standalone"\|"host", primary_url, device_id, device_name, connected, last_error, last_connected_at, hosted_sources:[{database_name, kind, size_bytes}], metrics}` |
 | POST | `/v1/device/enroll/start` | none if instance not initialized, else instance-owner bearer | `{primary_url, device_name}` | `{user_code, verification_url, expires_in}` |
-| GET | `/v1/device/enroll/status` | same | – | `{status:"idle"\|"pending"\|"approved"\|"denied"\|"expired"\|"error", message}` |
+| GET | `/v1/device/enroll/status` | same | – | `{status:"idle"\|"pending"\|"approved"\|"denied"\|"expired"\|"error", message}`; while pending also `user_code, verification_url, expires_at, expires_in` (so a refreshed page shows the code again) |
 | POST | `/v1/device/enroll/cancel` | same | – | `{ok:true}` |
 
 `/v1/setup/status` gains `device_mode: "standalone" | "host"` so the dashboard can route to the

@@ -79,7 +79,17 @@ def _public_state(state: dict) -> dict:
     status = state.get("status") or "idle"
     if status == "pending" and time.time() > float(state.get("expires_at") or 0):
         status = "expired"
-    return {"status": status, "message": state.get("message")}
+    out: dict[str, Any] = {"status": status, "message": state.get("message")}
+    if status == "pending":
+        # So a refreshed page can show the code again instead of forcing a cancel and restart.
+        expires_at = float(state.get("expires_at") or 0)
+        out.update(
+            user_code=state.get("user_code"),
+            verification_url=state.get("verification_url"),
+            expires_at=expires_at,
+            expires_in=max(0, int(expires_at - time.time())),
+        )
+    return out
 
 
 # ---------------------------------------------------------------------------------------------

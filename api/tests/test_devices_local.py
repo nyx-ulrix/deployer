@@ -103,7 +103,12 @@ def test_enrollment_on_uninitialized_device(client, db, fake_primary, fake_redis
     assert fake_primary.requests[0][3]["name"] == "PC"
     assert "secret-1" not in fake_redis.get(device_local.STATE_KEY)
 
-    assert client.get("/v1/device/enroll/status").json()["status"] == "pending"
+    # A refreshed page gets the code back while it is pending.
+    pending = client.get("/v1/device/enroll/status").json()
+    assert pending["status"] == "pending"
+    assert pending["user_code"] == "ABCD-EFGH"
+    assert pending["verification_url"] == "http://192.168.1.2:8080/devices/approve?code=ABCD-EFGH"
+    assert 890 <= pending["expires_in"] <= 900 and pending["expires_at"] > 0
     assert fake_primary.requests[-1][2] == "/v1/devices/enrollments/e1/poll"
     assert fake_primary.requests[-1][3] == {"poll_secret": "secret-1"}
 
@@ -140,7 +145,8 @@ def test_verification_url_uses_typed_primary_url(client, fake_primary, fake_redi
 def test_enrollment_denied_and_cancel(client, fake_primary, fake_redis):
     client.post("/v1/device/enroll/start", json={"primary_url": "https://main.example.com", "device_name": "PC"})
     fake_primary.poll_result = {"status": "denied"}
-    assert client.get("/v1/device/enroll/status").json()["status"] == "denied"
+    denied = client.get("/v1/device/enroll/status").json()
+    assert denied["status"] == "denied" and "user_code" not in denied
     assert client.post("/v1/device/enroll/cancel").json() == {"ok": True}
     assert client.get("/v1/device/enroll/status").json()["status"] == "idle"
 
