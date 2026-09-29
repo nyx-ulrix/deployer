@@ -28,6 +28,9 @@ Errors always look like:
 
 Common codes: `unauthorized` (401), `forbidden` (403), `not_found` (404), `validation_error` (422),
 `conflict` (409), `rate_limited` (429), `not_initialized` / `already_initialized` (409).
+A malformed body or query is `422 validation_error` whose message names the first bad field
+(e.g. `branch: is not a valid branch name`); `details.errors` lists every error (`loc`, `msg`, `type`),
+without the submitted values.
 
 Roles are ordered `viewer < developer < admin < owner`. "admin+" means admin or owner.
 

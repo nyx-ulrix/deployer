@@ -62,9 +62,16 @@ def install_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
+        # Name the first bad field and keep the validator's own text; never echo `input` (it can be a password).
+        errors = [{k: v for k, v in e.items() if k != "input"} for e in exc.errors()]
+        message = "Invalid request"
+        if errors:
+            loc = [str(part) for part in errors[0].get("loc", ())]
+            field = ".".join(loc[1:] if loc[:1] == ["body"] else loc)
+            msg = str(errors[0].get("msg", "")).removeprefix("Value error, ")
+            message = f"{field}: {msg}" if field else msg or message
         return JSONResponse(
-            status_code=422,
-            content=_body("validation_error", "Invalid request", {"errors": jsonable_encoder(exc.errors())}),
+            status_code=422, content=_body("validation_error", message, {"errors": jsonable_encoder(errors)})
         )
 
     @app.exception_handler(HTTPException)

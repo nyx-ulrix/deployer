@@ -83,6 +83,11 @@ def test_validation_and_ports(client, env, monkeypatch):
     for extra in bad:
         resp = client.post(env["base"], json={**BODY, **extra}, headers=env["dev"])
         assert resp.status_code == 422, (extra, resp.text)
+    # A-022: the message names the field and keeps the validator's text; details never echo the input.
+    resp = client.post(env["base"], json={**BODY, "branch": "feat branch"}, headers=env["dev"])
+    err = resp.json()["error"]
+    assert err["message"] == "branch: is not a valid branch name"
+    assert err["details"]["errors"] and all("input" not in e for e in err["details"]["errors"])
     create(client, env, preset="dockerfile", container_port=5000, root_dir="/web/")
     monkeypatch.setattr(deployments, "PORT_MAX", 8101)
     create(client, env)
