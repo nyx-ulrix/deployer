@@ -2,7 +2,8 @@
 
 - `encrypt_secret` / `decrypt_secret`: AES-256-GCM with the instance MASTER_KEY, for secrets stored
   in the platform database (OAuth client secrets, external database credentials).
-- `encrypt_with_passphrase` / `decrypt_with_passphrase`: scrypt + AES-256-GCM, for export files.
+- `encrypt_with_passphrase` / `decrypt_with_passphrase`: scrypt + AES-256-GCM, for export files
+  (`encrypt_stream_with_passphrase` writes the same format from a file in chunks).
 """
 
 import base64
@@ -10,8 +11,10 @@ import hashlib
 import json
 import os
 import secrets
-from typing import Any
+from collections.abc import Iterator
+from typing import IO, Any
 
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.config import get_settings
@@ -65,11 +68,10 @@ def _derive(passphrase: str, salt: bytes, n: int, r: int, p: int) -> bytes:
     return hashlib.scrypt(passphrase.encode("utf-8"), salt=salt, n=n, r=r, p=p, dklen=32, maxmem=128 * 1024 * 1024)
 
 
-def encrypt_with_passphrase(plaintext: bytes, passphrase: str) -> tuple[dict[str, Any], str]:
-    """Returns (encryption header, base64 ciphertext)."""
+def _passphrase_key(passphrase: str) -> tuple[dict[str, Any], bytes, bytes]:
+    """(encryption header, key, nonce) for a new export file."""
     salt, nonce = os.urandom(16), os.urandom(12)
     key = _derive(passphrase, salt, SCRYPT_N, SCRYPT_R, SCRYPT_P)
-    ciphertext = AESGCM(key).encrypt(nonce, plaintext, None)
     header = {
         "cipher": "AES-256-GCM",
         "kdf": "scrypt",
@@ -79,7 +81,31 @@ def encrypt_with_passphrase(plaintext: bytes, passphrase: str) -> tuple[dict[str
         "salt": _b64e(salt),
         "nonce": _b64e(nonce),
     }
-    return header, _b64e(ciphertext)
+    return header, key, nonce
+
+
+def encrypt_with_passphrase(plaintext: bytes, passphrase: str) -> tuple[dict[str, Any], str]:
+    """Returns (encryption header, base64 ciphertext)."""
+    header, key, nonce = _passphrase_key(passphrase)
+    return header, _b64e(AESGCM(key).encrypt(nonce, plaintext, None))
+
+
+def encrypt_stream_with_passphrase(src: IO[bytes], passphrase: str) -> tuple[dict[str, Any], Iterator[str]]:
+    """Like `encrypt_with_passphrase` for a file, without holding it in memory: returns the header and an
+    iterator of base64 text chunks that join to the same format (ciphertext || 16-byte GCM tag)."""
+    header, key, nonce = _passphrase_key(passphrase)
+
+    def chunks() -> Iterator[str]:
+        enc = Cipher(algorithms.AES(key), modes.GCM(nonce)).encryptor()
+        pending = b""
+        while block := src.read(3 << 20):
+            pending += enc.update(block)
+            cut = len(pending) - len(pending) % 3  # base64 pads only at the very end
+            yield _b64e(pending[:cut])
+            pending = pending[cut:]
+        yield _b64e(pending + enc.finalize() + enc.tag)
+
+    return header, chunks()
 
 
 def decrypt_with_passphrase(header: dict[str, Any], payload_b64: str, passphrase: str) -> bytes:

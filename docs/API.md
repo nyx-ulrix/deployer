@@ -83,7 +83,7 @@ type ApiKey = { id: string; name: string; prefix: string; role: "anon" | "servic
 | GET | `/health` | – | `{status:"ok", version, services:{mariadb:bool, mongodb:bool, redis:bool}}` |
 | GET | `/setup/status` | – | `{initialized:boolean, version, public_url, reachable_elsewhere:boolean, providers:{google:boolean, github:boolean}, allow_signup:boolean, device_mode:"standalone"\|"host", managed_mongodb:boolean}` (`device_mode`: [DEVICES.md](DEVICES.md); `managed_mongodb` is false on CPUs without AVX, and the dashboard then unticks MongoDB in "New project") |
 | POST | `/setup/owner` | `{email, password, display_name?}` | `AuthResponse` (+ refresh cookie). 409 `already_initialized` if any user exists |
-| POST | `/setup/import` | multipart: `file`, `passphrase` | `{ok:true, summary:{users, projects, data_sources, rows, documents}}`. Only while not initialized; `scope` must be `instance`. 400 `bad_passphrase` / `invalid_export` |
+| POST | `/setup/import` | multipart: `file`, `passphrase` | `{ok:true, summary:{users, projects, data_sources, rows, documents}}`. Only while not initialized; `scope` must be `instance`. 400 `bad_passphrase` / `invalid_export`; 413 `file_too_large` when the file or its unpacked contents pass the memory-based import limit ([ARCHITECTURE.md](ARCHITECTURE.md#export--import-format)) |
 
 ## Auth
 
@@ -193,7 +193,7 @@ type Alert = { id: string; alert: string; severity: "warning" | "critical"; mess
 | PATCH | `/projects/{project_id}` | admin+ | `{name?, description?}` | `Project` |
 | DELETE | `/projects/{project_id}?confirm=<slug>` | owner | – | `{ok:true}` (managed databases get a final snapshot, kept 30 days, then are dropped by a job — [BACKUPS.md](BACKUPS.md)) |
 | POST | `/projects/export` | owner of each | `{project_ids:string[], passphrase}` | file download `deployer-projects-YYYYMMDD-HHMM.json` |
-| POST | `/projects/import` | as `POST /projects` | multipart: `file`, `passphrase` | `{ok:true, projects:Project[], summary}` (`scope` must be `projects`) |
+| POST | `/projects/import` | as `POST /projects` | multipart: `file`, `passphrase` | `{ok:true, projects:Project[], summary}` (`scope` must be `projects`; 413 `file_too_large` as for `/setup/import`) |
 
 ## Members & invites
 

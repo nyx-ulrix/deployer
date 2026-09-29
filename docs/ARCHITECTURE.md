@@ -118,6 +118,11 @@ Not carried: MariaDB views, triggers, stored routines and events (counted per da
 them from a SQL dump), backup files and versions / point-in-time history, deployments, query runs and
 audit logs. The dashboard's Export & import page lists these exclusions.
 
+Size: export streams to disk, but import unpacks and parses the whole payload in memory, so the
+importing machine takes at most a sixth of its free memory, capped at 1 GiB, for both the uploaded
+file and the unpacked payload (`413 file_too_large` with the current limit in `details.limit_bytes`).
+Move bigger databases with a SQL dump (`mariadb-dump` / `mongodump`).
+
 - `scope: instance` — made by the instance owner; imported by the setup wizard on a fresh install
   ("Restore from export") and restores everything, including all users.
 - `scope: projects` — made by any user for projects they own; imported by any user on another

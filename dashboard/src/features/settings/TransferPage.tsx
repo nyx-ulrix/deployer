@@ -33,7 +33,8 @@ export function TransferPage() {
       <Alert tone="warning" className="mb-5" title="Not included">
         MariaDB views, triggers, stored routines and events (the import summary lists any that were left out —
         recreate them from a SQL dump), backups and their version / point-in-time history, deployment history, query
-        runs and the audit log.
+        runs and the audit log. Imports are unpacked in memory, so a PC takes at most about 1 GB of unpacked data
+        (less when little memory is free) — move bigger databases with a SQL dump.
       </Alert>
       <div className="space-y-5">
         {user.is_instance_owner && <InstanceExportCard />}

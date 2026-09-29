@@ -2,6 +2,7 @@
 
 import base64
 import gzip
+import io
 import json
 import os
 from datetime import timedelta
@@ -9,7 +10,13 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import func, select
 
-from app.crypto import decrypt_json, decrypt_with_passphrase, encrypt_json, encrypt_with_passphrase
+from app.crypto import (
+    decrypt_json,
+    decrypt_with_passphrase,
+    encrypt_json,
+    encrypt_stream_with_passphrase,
+    encrypt_with_passphrase,
+)
 from app.errors import ApiError
 from app.models import (
     ApiKey,
@@ -23,7 +30,7 @@ from app.models import (
     UserIdentity,
     utcnow,
 )
-from app.services import instance_settings, transfer
+from app.services import device_host, instance_settings, transfer
 
 PASS = "correct horse battery staple"
 
@@ -202,6 +209,40 @@ def test_read_export_errors(db, populated, tmp_path):
     with pytest.raises(ApiError) as err:
         transfer.read_export_file(str(tampered), PASS, "projects")
     assert err.value.code == "bad_passphrase"
+
+
+def test_stream_encryption_matches_one_shot_format():
+    # Not a multiple of the 3 MiB read size nor of 3, so the base64 carry and the tag both matter.
+    data = os.urandom((3 << 20) + 7)
+    header, chunks = encrypt_stream_with_passphrase(io.BytesIO(data), PASS)
+    assert decrypt_with_passphrase(header, "".join(chunks), PASS) == data
+
+
+def test_import_limit_follows_free_memory(monkeypatch):
+    gib = 1024**3
+    monkeypatch.setattr(device_host, "_memory", lambda: (1 * gib, 7 * gib))  # 6 GiB free -> 1 GiB
+    assert transfer.import_limit() == gib
+    monkeypatch.setattr(device_host, "_memory", lambda: (2 * gib, 3 * gib))  # 1 GiB free -> a sixth
+    assert transfer.import_limit() == gib // 6
+    monkeypatch.setattr(device_host, "_memory", lambda: (None, None))
+    assert transfer.import_limit() == transfer.MAX_IMPORT_BYTES
+
+
+def test_import_over_memory_limit_is_413(db, populated, monkeypatch):
+    """A-043: a payload too big to unpack in memory is refused with a clear 413, not an OOM kill."""
+    with pytest.raises(ApiError) as err:
+        transfer.save_upload(io.BytesIO(b"x" * 2048), max_bytes=1024)
+    assert err.value.status_code == 413 and err.value.code == "file_too_large"
+
+    path, _ = transfer.build_export_file(db, scope="projects", projects=[populated["project"]], passphrase=PASS)
+    try:
+        monkeypatch.setattr(transfer, "import_limit", lambda: 100)  # the payload unpacks to more than this
+        with pytest.raises(ApiError) as err:
+            transfer.read_export_file(path, PASS, "projects")
+        assert err.value.status_code == 413 and err.value.code == "file_too_large"
+        assert "SQL dump" in err.value.message and err.value.details == {"limit_bytes": 100}
+    finally:
+        os.unlink(path)
 
 
 def test_instance_roundtrip(db, populated):

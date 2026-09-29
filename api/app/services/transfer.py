@@ -38,11 +38,11 @@ Streaming & limits
 ------------------
 - The plaintext JSON is written incrementally into a gzip temp file while rows / documents are read
   with server-side cursors, so exporting never holds a whole table or collection in Python objects.
-- AES-GCM (``app.crypto``) is one-shot, so the *compressed* payload, its ciphertext and the base64 text
-  are each held in memory once while the final file is produced (~3x the gzip size at peak).
+- The gzip file is then encrypted and base64-encoded in chunks (``encrypt_stream_with_passphrase``).
 - Import decrypts and decompresses in memory and parses the plaintext with ``json.loads``: peak memory
-  is roughly the uncompressed payload size plus Python object overhead. Very large databases
-  (multiple GB) should be moved with native dump tools instead.
+  is several times the uncompressed payload. ``import_limit()`` (a sixth of the memory available now,
+  at most 1 GiB) caps both the upload and the unpacked payload with a 413 ``file_too_large`` instead
+  of the API being OOM-killed. Larger databases should be moved with native dump tools.
 - Views, triggers, stored routines and events of managed MariaDB databases are not exported; MongoDB
   views are. They are counted into the source's ``data`` entry as ``"skipped": {"views": n, ...}`` and
   reported as ``warnings`` in the export counts (audit log) and the import summary. Generated
@@ -60,6 +60,7 @@ import logging
 import os
 import re
 import tempfile
+import zlib
 from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from typing import IO, Any
@@ -76,7 +77,7 @@ from app.crypto import (
     decrypt_with_passphrase,
     encrypt_json,
     encrypt_secret,
-    encrypt_with_passphrase,
+    encrypt_stream_with_passphrase,
 )
 from app.errors import ApiError
 from app.models import (
@@ -100,7 +101,7 @@ from app.models import (
     new_id,
     utcnow,
 )
-from app.services import backup_crypto, connections, ddl_export, device_rpc, provisioning
+from app.services import backup_crypto, connections, ddl_export, device_host, device_rpc, provisioning
 from app.services.data_browser import encode_value
 from app.services.slugs import unique_slug
 
@@ -109,7 +110,7 @@ log = logging.getLogger(__name__)
 FORMAT = "deployer-export"
 VERSION = 1
 MIN_PASSPHRASE = 12
-MAX_UPLOAD_BYTES = 8 * 1024**3
+MAX_IMPORT_BYTES = 1024**3
 BATCH = 1000
 DEVICE_TIMEOUT = 6 * 3600
 # A host device's own link/credentials never travel in exports: a restored copy must not
@@ -607,17 +608,14 @@ def build_export_file(db: Session, *, scope: str, projects: list[Project], passp
     try:
         with gzip.open(gz_path, "wt", encoding="utf-8", compresslevel=6) as fh:
             counts = write_payload(fh, db, scope=scope, projects=projects, created_at=created_at)
-        with open(gz_path, "rb") as fh:
-            compressed = fh.read()
-        header, payload_b64 = encrypt_with_passphrase(compressed, passphrase)
-        del compressed
-        with open(out_path, "w", encoding="utf-8") as out:
+        with open(gz_path, "rb") as src, open(out_path, "w", encoding="utf-8") as out:
+            header, payload_chunks = encrypt_stream_with_passphrase(src, passphrase)
             out.write("{")
             out.write(f'"format":{json.dumps(FORMAT)},"version":{VERSION},"scope":{json.dumps(scope)},')
             out.write(f'"created_at":{json.dumps(created_at)},"app_version":{json.dumps(__version__)},')
             out.write(f'"encryption":{json.dumps(header)},"payload":"')
-            for i in range(0, len(payload_b64), 1 << 20):
-                out.write(payload_b64[i : i + (1 << 20)])
+            for chunk in payload_chunks:
+                out.write(chunk)
             out.write('"}')
         return out_path, counts
     except BaseException:
@@ -639,8 +637,30 @@ def _unlink(path: str) -> None:
 # =============================================================================================
 
 
-def save_upload(src: IO[bytes], max_bytes: int = MAX_UPLOAD_BYTES) -> str:
-    """Copies an uploaded file to a temp file in chunks, enforcing a size limit."""
+def import_limit() -> int:
+    """Most bytes an import may hold: a sixth of the memory available now (the parsed payload takes
+    several times its text), at most MAX_IMPORT_BYTES; MAX_IMPORT_BYTES where memory can't be read."""
+    # ponytail: a heuristic cap; the real fix is a chunked import format (audit A-043, "later").
+    used, total = device_host._memory()
+    if used is None or total is None:
+        return MAX_IMPORT_BYTES
+    return min(MAX_IMPORT_BYTES, (total - used) // 6)
+
+
+def _too_large(what: str, limit: int) -> ApiError:
+    return ApiError(
+        413,
+        "file_too_large",
+        f"{what} too large to import on this machine: imports are unpacked in memory, and with the memory free "
+        f"now the limit is {limit // 2**20} MB. Close other apps and retry, or move large databases with a SQL "
+        "dump (mariadb-dump / mongodump) instead",
+        {"limit_bytes": limit},
+    )
+
+
+def save_upload(src: IO[bytes], max_bytes: int | None = None) -> str:
+    """Copies an uploaded file to a temp file in chunks, enforcing `import_limit()` (413)."""
+    max_bytes = import_limit() if max_bytes is None else max_bytes
     fd, path = tempfile.mkstemp(prefix="deployer-import-", suffix=".json")
     size = 0
     try:
@@ -651,12 +671,23 @@ def save_upload(src: IO[bytes], max_bytes: int = MAX_UPLOAD_BYTES) -> str:
                     break
                 size += len(chunk)
                 if size > max_bytes:
-                    raise ApiError(413, "file_too_large", "The export file is too large")
+                    raise _too_large("The export file is", max_bytes)
                 out.write(chunk)
     except BaseException:
         _unlink(path)
         raise
     return path
+
+
+def _gunzip(data: bytes, limit: int) -> bytes:
+    """gzip.decompress that stops (413) once the output passes `limit`, before it is all in memory."""
+    d = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)
+    out = d.decompress(data, limit + 1)
+    if len(out) > limit:
+        raise _too_large("The export's contents are", limit)
+    if not d.eof:
+        raise EOFError("truncated gzip stream")
+    return out
 
 
 def read_export_file(path: str, passphrase: str, expected_scope: str) -> dict[str, Any]:
@@ -694,10 +725,10 @@ def read_export_file(path: str, passphrase: str, expected_scope: str) -> dict[st
         raise invalid from exc
     del payload_b64
     try:
-        plaintext = gzip.decompress(compressed)
+        plaintext = _gunzip(compressed, import_limit())
         del compressed
         payload = json.loads(plaintext)
-    except (OSError, EOFError, ValueError) as exc:
+    except (OSError, EOFError, ValueError, zlib.error) as exc:
         raise invalid from exc
     if not isinstance(payload, dict) or payload.get("version") != VERSION or payload.get("scope") != expected_scope:
         raise invalid
