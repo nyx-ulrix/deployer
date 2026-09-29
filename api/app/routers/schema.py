@@ -264,23 +264,9 @@ def create_table(source_id: str, body: TableSpec, access: Developer, db: DbSessi
 
 
 @router.delete("/projects/{project_id}/data-sources/{source_id}/tables/{table}")
-def drop_table(source_id: str, table: str, access: Admin, db: DbSession, request: Request) -> dict:
+def drop_table(source_id: str, table: str, access: Admin, db: DbSession, request: Request, response: Response) -> dict:
     ds = get_source(db, access.project.id, source_id, kind="sql")
-    from app.services import backups  # docs/BACKUPS.md: safety snapshot before a drop (per policy)
-
-    backups.safety_snapshot(db, ds, trigger="pre_drop", user_id=access.user.id)
-    source_ops.drop_table(ds, table)
-    audit.record(
-        db,
-        "schema.table_drop",
-        request=request,
-        user_id=access.user.id,
-        project_id=access.project.id,
-        data_source_id=ds.id,
-        table=table,
-    )
-    db.commit()
-    return {"ok": True}
+    return _drop(db, ds, "table", table, access, request, response)
 
 
 @router.post("/projects/{project_id}/data-sources/{source_id}/collections")
@@ -306,20 +292,42 @@ def create_collection(
 
 
 @router.delete("/projects/{project_id}/data-sources/{source_id}/collections/{name}")
-def drop_collection(source_id: str, name: str, access: Admin, db: DbSession, request: Request) -> dict:
+def drop_collection(
+    source_id: str, name: str, access: Admin, db: DbSession, request: Request, response: Response
+) -> dict:
     ds = get_source(db, access.project.id, source_id, kind="nosql")
-    from app.services import backups  # docs/BACKUPS.md: safety snapshot before a drop (per policy)
+    return _drop(db, ds, "collection", name, access, request, response)
 
-    backups.safety_snapshot(db, ds, trigger="pre_drop", user_id=access.user.id)
-    source_ops.drop_collection(ds, name)
+
+def _drop(
+    db: DbSession,
+    ds: DataSource,
+    entity: Literal["table", "collection"],
+    name: str,
+    access: ProjectAccess,
+    request: Request,
+    response: Response,
+) -> dict:
+    """With a safety snapshot (docs/BACKUPS.md, per policy) the drop runs as a job: 202 `{ok, job}`.
+    Asking again while it runs returns the same job instead of queueing a second drop."""
+    from app.services import backups, jobs
+
+    job = backups.start_drop(db, ds, entity=entity, name=name, user_id=access.user.id)
+    if job is None:
+        (source_ops.drop_table if entity == "table" else source_ops.drop_collection)(ds, name)
     audit.record(
         db,
-        "schema.collection_drop",
+        f"schema.{entity}_drop",
         request=request,
         user_id=access.user.id,
         project_id=access.project.id,
         data_source_id=ds.id,
-        collection=name,
+        **{entity: name},
+        **({"job_id": job.id} if job else {}),
     )
     db.commit()
-    return {"ok": True}
+    if job is None:
+        return {"ok": True}
+    jobs.dispatch(job.id)
+    response.status_code = 202
+    return {"ok": True, "job": jobs.job_out(job)}

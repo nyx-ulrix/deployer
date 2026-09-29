@@ -285,9 +285,9 @@ Full table, shapes and rules in [COHOSTING.md](COHOSTING.md) "API":
 | POST | `/projects/{id}/schema/links` | developer+ | `Omit<SchemaLink,"id"\|"created_at">` | `SchemaLink` |
 | DELETE | `/projects/{id}/schema/links/{link_id}` | developer+ | – | `{ok:true}` |
 | POST | `/projects/{id}/data-sources/{sid}/tables` | developer+ | `TableSpec` | `Entity` |
-| DELETE | `/projects/{id}/data-sources/{sid}/tables/{table}` | admin+ | – | `{ok:true}` |
+| DELETE | `/projects/{id}/data-sources/{sid}/tables/{table}` | admin+ | – | 202 `{ok:true, job:Job}` when the source's backup policy takes a safety snapshot first (the snapshot and the drop run as job `schema.drop`; asking again while it is queued or running returns the same job), else `{ok:true}` |
 | POST | `/projects/{id}/data-sources/{sid}/collections` | developer+ | `{name, validator?:object}` | `Entity` |
-| DELETE | `/projects/{id}/data-sources/{sid}/collections/{name}` | admin+ | – | `{ok:true}` |
+| DELETE | `/projects/{id}/data-sources/{sid}/collections/{name}` | admin+ | – | 202 `{ok:true, job:Job}` when the source's backup policy takes a safety snapshot first (the snapshot and the drop run as job `schema.drop`; asking again while it is queued or running returns the same job), else `{ok:true}` |
 
 ```ts
 type ProjectSchema = {

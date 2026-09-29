@@ -35,6 +35,9 @@ export function TransferPage() {
         recreate them from a SQL dump), backups and their version / point-in-time history, deployment history, query
         runs and the audit log. Imports are unpacked in memory, so one can hold at most a sixth of the API's free memory
         (roughly 80 MB with the default 768 MB API_MEM_LIMIT, never over 1 GB) — move bigger databases with a SQL dump.
+        Through remote access, a request that takes over about 100 seconds fails in the browser while the server keeps
+        working: export or import big projects on the PC itself (localhost), and check the project list before
+        retrying an import.
       </Alert>
       <div className="space-y-5">
         {user.is_instance_owner && <InstanceExportCard />}

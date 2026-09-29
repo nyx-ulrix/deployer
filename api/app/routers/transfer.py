@@ -27,12 +27,23 @@ class ProjectsExportInput(BaseModel):
     passphrase: str = Field(min_length=transfer.MIN_PASSPHRASE)
 
 
-def _download(path: str, filename: str) -> StreamingResponse:
-    return StreamingResponse(
-        transfer.iter_file(path),
-        media_type="application/json",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+class TempFileResponse(StreamingResponse):
+    """Streams a temp file and always deletes it, also when the client is gone before the first byte
+    (A-044: a tunnel that timed out the request; iter_file's own cleanup only runs once it is read)."""
+
+    def __init__(self, path: str, filename: str):
+        super().__init__(
+            transfer.iter_file(path),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+        self.path = path
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            transfer._unlink(self.path)
 
 
 def _save_upload(file: UploadFile) -> str:
@@ -72,7 +83,7 @@ def instance_export(
     path, counts = transfer.build_export_file(db, scope="instance", projects=projects, passphrase=body.passphrase)
     audit.record(db, "instance.export", request=request, user_id=user.id, **counts)
     db.commit()
-    return _download(path, transfer.export_filename("instance"))
+    return TempFileResponse(path, transfer.export_filename("instance"))
 
 
 @router.post("/projects/export")
@@ -92,7 +103,7 @@ def projects_export(body: ProjectsExportInput, user: CurrentUser, db: DbSession,
     for project in projects:
         audit.record(db, "projects.export", request=request, user_id=user.id, project_id=project.id, **counts)
     db.commit()
-    return _download(path, transfer.export_filename("projects"))
+    return TempFileResponse(path, transfer.export_filename("projects"))
 
 
 @router.post("/projects/import")

@@ -35,6 +35,7 @@ import type {
   DeviceEnrollment,
   DeviceUpdate,
   Domain,
+  DropResult,
   EnrollStartResponse,
   GitHubRepo,
   GitHubStatus,
@@ -345,11 +346,11 @@ export const api = {
     createTable: (pid: string, sid: string, spec: TableSpec) =>
       client.post<Entity>(`/projects/${e(pid)}/data-sources/${e(sid)}/tables`, spec),
     dropTable: (pid: string, sid: string, table: string) =>
-      client.del<Ok>(`/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}`),
+      client.del<DropResult>(`/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}`),
     createCollection: (pid: string, sid: string, body: { name: string; validator?: JsonObject }) =>
       client.post<Entity>(`/projects/${e(pid)}/data-sources/${e(sid)}/collections`, body),
     dropCollection: (pid: string, sid: string, name: string) =>
-      client.del<Ok>(`/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(name)}`),
+      client.del<DropResult>(`/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(name)}`),
   },
 
   rows: {

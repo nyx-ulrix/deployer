@@ -2,6 +2,7 @@ import type { JobStatus } from "../../api/types";
 import type { BadgeTone } from "../../components/ui/Badge";
 
 const TYPE_LABELS: [RegExp, string][] = [
+  [/schema\.drop/, "Drop table or collection"],
   [/restore_deleted|deleted.*restore/, "Restore deleted database"],
   [/restore/, "Restore"],
   [/verify/, "Verify version"],

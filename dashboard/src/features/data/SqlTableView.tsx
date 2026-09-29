@@ -13,6 +13,7 @@ import { Alert, EmptyState, ErrorState } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
 import { cellText, formatNumber } from "../../lib/format";
+import { JobProgressPanel } from "../jobs/JobProgress";
 import { useProjectContext } from "../projects/project-context";
 import { RowDialog } from "./RowDialog";
 
@@ -37,6 +38,12 @@ export function SqlTableView({
   const [editing, setEditing] = useState<JsonObject | "new" | null>(null);
   const [deleting, setDeleting] = useState<JsonObject | null>(null);
   const [dropping, setDropping] = useState(false);
+  const [dropJob, setDropJob] = useState<string | null>(null);
+  const dropped = () => {
+    void queryClient.invalidateQueries({ queryKey: qk.schema(project.id) });
+    toast.success(`Table ${entity.name} dropped.`);
+    onDropped();
+  };
 
   const params = { limit, offset, order_by: orderBy, order };
   const rows = useQuery({
@@ -63,11 +70,10 @@ export function SqlTableView({
 
   const drop = useMutation({
     mutationFn: () => api.schema.dropTable(project.id, source.id, entity.name),
-    onSuccess: () => {
+    onSuccess: (res) => {
       setDropping(false);
-      void queryClient.invalidateQueries({ queryKey: qk.schema(project.id) });
-      toast.success(`Table ${entity.name} dropped.`);
-      onDropped();
+      if (res.job) setDropJob(res.job.id);
+      else dropped();
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't drop table"),
   });
@@ -111,6 +117,18 @@ export function SqlTableView({
           </Button>
         )}
       </div>
+
+      {dropJob && (
+        <JobProgressPanel
+          key={dropJob}
+          projectId={project.id}
+          jobId={dropJob}
+          title={`Safety snapshot, then drop table ${entity.name}`}
+          onFinished={(job) => {
+            if (job.status === "succeeded") dropped();
+          }}
+        />
+      )}
 
       {data && pk.length === 0 && (
         <Alert tone="warning" title="Read-only table">

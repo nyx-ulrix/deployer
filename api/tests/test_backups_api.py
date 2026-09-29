@@ -686,17 +686,25 @@ def test_pre_drop_safety_snapshot(client, env, db, monkeypatch):
 
     dropped = []
     monkeypatch.setattr(source_ops, "drop_table", lambda ds, table: dropped.append(table))
+    # A-044: with a safety snapshot the drop is a job, so the request returns before the snapshot runs.
     resp = client.delete(f"{env['base']}/tables/users", headers=env["admin"])
-    assert resp.status_code == 200 and dropped == ["users"]
+    assert resp.status_code == 202 and dropped == []
+    job_id = resp.json()["job"]["id"]
+    # A retry while it is queued gets the same job, not a second drop.
+    assert client.delete(f"{env['base']}/tables/users", headers=env["admin"]).json()["job"]["id"] == job_id
+    assert dict(jobs.run_queued())[job_id] == "succeeded" and dropped == ["users"]
     db.expire_all()
     safety = db.query(Backup).one()
     assert safety.trigger == "pre_drop" and safety.status == "succeeded"
+    assert db.get(Job, job_id).result == {"safety_backup_id": safety.id}
     env["fake"].fail_snapshot = True
-    resp = client.delete(f"{env['base']}/tables/orders", headers=env["admin"])
-    assert resp.status_code == 500 and resp.json()["error"]["code"] == "safety_snapshot_failed"
-    assert dropped == ["users"]
+    job_id = client.delete(f"{env['base']}/tables/orders", headers=env["admin"]).json()["job"]["id"]
+    assert dict(jobs.run_queued())[job_id] == "failed"
+    db.expire_all()
+    assert "safety snapshot failed" in db.get(Job, job_id).error and dropped == ["users"]
     client.put(f"{env['base']}/backup-policy", json={"safety_snapshots": False}, headers=env["admin"])
-    assert client.delete(f"{env['base']}/tables/orders", headers=env["admin"]).status_code == 200
+    resp = client.delete(f"{env['base']}/tables/orders", headers=env["admin"])
+    assert resp.status_code == 200 and resp.json() == {"ok": True} and dropped == ["users", "orders"]
 
 
 def test_project_delete_keeps_backups_then_purges(client, env, db):

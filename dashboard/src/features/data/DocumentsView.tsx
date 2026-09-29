@@ -14,6 +14,7 @@ import { Alert, EmptyState, ErrorState } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
 import { formatNumber } from "../../lib/format";
+import { JobProgressPanel } from "../jobs/JobProgress";
 import { useProjectContext } from "../projects/project-context";
 import { docIdString, parseJsonObject, pretty } from "./json";
 import { JsonEditor } from "./JsonEditor";
@@ -39,6 +40,12 @@ export function DocumentsView({
   const [editing, setEditing] = useState<JsonObject | "new" | null>(null);
   const [deleting, setDeleting] = useState<JsonObject | null>(null);
   const [dropping, setDropping] = useState(false);
+  const [dropJob, setDropJob] = useState<string | null>(null);
+  const dropped = () => {
+    void queryClient.invalidateQueries({ queryKey: qk.schema(project.id) });
+    toast.success(`Collection ${entity.name} dropped.`);
+    onDropped();
+  };
 
   const filterParse = parseJsonObject(filterText, { allowEmpty: true });
   const params = { filter: appliedFilter, limit, skip };
@@ -63,11 +70,10 @@ export function DocumentsView({
 
   const drop = useMutation({
     mutationFn: () => api.schema.dropCollection(project.id, source.id, entity.name),
-    onSuccess: () => {
+    onSuccess: (res) => {
       setDropping(false);
-      void queryClient.invalidateQueries({ queryKey: qk.schema(project.id) });
-      toast.success(`Collection ${entity.name} dropped.`);
-      onDropped();
+      if (res.job) setDropJob(res.job.id);
+      else dropped();
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't drop collection"),
   });
@@ -103,6 +109,18 @@ export function DocumentsView({
           </Button>
         )}
       </div>
+
+      {dropJob && (
+        <JobProgressPanel
+          key={dropJob}
+          projectId={project.id}
+          jobId={dropJob}
+          title={`Safety snapshot, then drop collection ${entity.name}`}
+          onFinished={(job) => {
+            if (job.status === "succeeded") dropped();
+          }}
+        />
+      )}
 
       <form
         className="flex flex-col gap-2 sm:flex-row"

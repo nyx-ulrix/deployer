@@ -125,6 +125,13 @@ unpacked payload (`413 file_too_large` with the current limit in `details.limit_
 `API_MEM_LIMIT` in `deploy/.env` for bigger imports, or move bigger databases with a SQL dump
 (`mariadb-dump` / `mongodump`).
 
+Time: exports and imports run inside the HTTP request, and the file is sent only once it is fully
+built. Through remote access (Cloudflare Tunnel) a request that has not answered within about 100
+seconds fails in the browser while the server keeps working, so export or import big instances from
+the PC itself (`http://localhost:8080`). An import that timed out in the browser may still finish:
+check the project list before trying again. An export's temp file is deleted even when the browser
+has given up.
+
 - `scope: instance` — made by the instance owner; imported by the setup wizard on a fresh install
   ("Restore from export") and restores everything, including all users.
 - `scope: projects` — made by any user for projects they own; imported by any user on another

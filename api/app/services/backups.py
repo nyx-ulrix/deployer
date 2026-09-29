@@ -26,7 +26,7 @@ from collections.abc import Callable, Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 from sqlalchemy import and_, delete, func, not_, or_, select
 from sqlalchemy import inspect as sa_inspect
@@ -573,6 +573,45 @@ def safety_snapshot(db: Session, ds: DataSource, *, trigger: str, user_id: str |
         error = (backup.error if backup else None) or "unknown error"
         raise ApiError(500, "safety_snapshot_failed", f"The safety snapshot failed, nothing was changed: {error}")
     return backup
+
+
+def start_drop(
+    db: Session, ds: DataSource, *, entity: Literal["table", "collection"], name: str, user_id: str
+) -> Job | None:
+    """Queues `schema.drop` (safety snapshot, then the drop) when the policy asks for a snapshot, so the
+    snapshot doesn't run inside the request (A-044: the tunnel cuts requests at ~100 s). Returns the job
+    (the active one when the same drop was already asked for), or None: no snapshot, drop inline."""
+    if not supported(ds) or ds.deleted_at is not None or not ensure_policy(db, ds).safety_snapshots:
+        return None
+    key = f"{entity}:{name}"
+    return jobs.active_job(db, "schema.drop", data_source_id=ds.id, key=key) or jobs.enqueue(
+        db,
+        type="schema.drop",
+        params={"key": key, "entity": entity, "name": name},
+        project_id=ds.project_id,
+        data_source_id=ds.id,
+        created_by_id=user_id,
+    )
+
+
+@jobs.job_handler("schema.drop")
+def _job_drop(ctx: jobs.JobContext) -> dict:
+    from app.services import source_ops
+
+    entity, name = ctx.params["entity"], ctx.params["name"]
+    session = ctx.db()
+    try:
+        ds = session.get(DataSource, ctx.data_source_id)
+        if ds is None or ds.deleted_at is not None:
+            raise jobs.JobError("The database no longer exists")
+        ctx.progress(0.02, "Taking a safety snapshot", force=True)
+        safety = safety_snapshot(session, ds, trigger="pre_drop", user_id=ctx.created_by_id)
+        ctx.check_cancelled()
+        ctx.progress(0.95, f"Dropping {entity} {name}", force=True)
+        (source_ops.drop_table if entity == "table" else source_ops.drop_collection)(ds, name)
+        return {"safety_backup_id": safety.id if safety else None}
+    finally:
+        session.close()
 
 
 # =============================================================================================

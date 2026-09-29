@@ -393,6 +393,8 @@ export type RowsResponse = {
 export type DocumentsResponse = { documents: JsonObject[]; total: number };
 
 export type Ok = { ok: true };
+/** Drops with a safety snapshot run as a job (202); without one they finish in the request. */
+export type DropResult = Ok & { job?: Job };
 
 export type ApiErrorBody = {
   error: { code: string; message: string; details?: Record<string, unknown> };

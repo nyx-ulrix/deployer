@@ -377,3 +377,24 @@ def test_setup_import_route(client, db, populated, tmp_path):
     }
     again = client.post("/v1/setup/import", files={"file": ("x.json", content)}, data={"passphrase": PASS})
     assert again.status_code == 409
+
+
+def test_export_temp_file_deleted_when_client_is_gone(tmp_path):
+    """A-044: the export is built before the first byte; a tunnel that gave up must not leave it behind."""
+    import asyncio
+
+    from app.routers.transfer import TempFileResponse
+
+    path = tmp_path / "export.json"
+    path.write_text("{}")
+
+    async def receive():
+        return {"type": "http.disconnect"}
+
+    async def send(message):
+        raise OSError("client disconnected")
+
+    scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+    with pytest.raises(Exception):  # noqa: B017 - Starlette's ClientDisconnect
+        asyncio.run(TempFileResponse(str(path), "x.json")(scope, receive, send))
+    assert not path.exists()
