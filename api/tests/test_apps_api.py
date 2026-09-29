@@ -88,6 +88,11 @@ def test_validation_and_ports(client, env, monkeypatch):
     err = resp.json()["error"]
     assert err["message"] == "branch: is not a valid branch name"
     assert err["details"]["errors"] and all("input" not in e for e in err["details"]["errors"])
+    bad_json = {**env["dev"], "content-type": "application/json"}
+    resp = client.post(env["base"], content="{bad", headers=bad_json)
+    assert resp.json()["error"]["message"] == "JSON decode error"
+    resp = client.post(env["base"], headers=env["dev"])
+    assert resp.json()["error"]["message"] == "body: Field required"
     create(client, env, preset="dockerfile", container_port=5000, root_dir="/web/")
     monkeypatch.setattr(deployments, "PORT_MAX", 8101)
     create(client, env)

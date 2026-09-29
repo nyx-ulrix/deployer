@@ -67,7 +67,12 @@ def install_error_handlers(app: FastAPI) -> None:
         message = "Invalid request"
         if errors:
             loc = [str(part) for part in errors[0].get("loc", ())]
-            field = ".".join(loc[1:] if loc[:1] == ["body"] else loc)
+            # A missing body stays "body"; a JSON decode error's loc number is a character offset, not a field.
+            field = (
+                ""
+                if errors[0].get("type") == "json_invalid"
+                else ".".join(loc[1:] if loc[:1] == ["body"] and len(loc) > 1 else loc)
+            )
             msg = str(errors[0].get("msg", "")).removeprefix("Value error, ")
             message = f"{field}: {msg}" if field else msg or message
         return JSONResponse(
