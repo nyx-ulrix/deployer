@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from app.crypto import encrypt_secret
 from app.db import get_sessionmaker
@@ -566,7 +566,13 @@ def list_deployments(
     if before:
         anchor = db.get(Deployment, before)
         if anchor is not None and anchor.app_id == app.id:
-            stmt = stmt.where(Deployment.created_at <= anchor.created_at, Deployment.id != anchor.id)
+            # Keyset on (created_at, id), the sort order: same-second rows are neither repeated nor dropped (A-032).
+            stmt = stmt.where(
+                or_(
+                    Deployment.created_at < anchor.created_at,
+                    and_(Deployment.created_at == anchor.created_at, Deployment.id < anchor.id),
+                )
+            )
     rows = list(db.scalars(stmt.limit(limit + 1)))
     return {"deployments": [deployments.deployment_out(d) for d in rows[:limit]], "has_more": len(rows) > limit}
 

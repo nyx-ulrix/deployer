@@ -102,6 +102,7 @@ def list_query_log(
     user: Literal["me", "all"] = "me",
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
     before: datetime | None = None,
+    before_id: Annotated[str | None, Query(max_length=36)] = None,
 ) -> dict:
     if user == "all" and not access.at_least("admin"):
         raise forbidden("Only admins can see other members' query runs")
@@ -111,6 +112,7 @@ def list_query_log(
         user_id=None if user == "all" else access.user.id,
         source_id=source_id,
         before=_naive_utc(before),
+        before_id=before_id,
         limit=limit,
     )
     return {"runs": [query_log.serialize(r, truncate=query_log.LIST_TEXT_LIMIT) for r in runs], "has_more": has_more}

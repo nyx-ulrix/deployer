@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
@@ -128,14 +128,28 @@ def list_runs(
     source_id: str | None,
     before: datetime | None,
     limit: int,
+    before_id: str | None = None,
 ) -> tuple[list[QueryRun], bool]:
-    """Newest first; `user_id=None` means everyone. Returns `(runs, has_more)`."""
+    """Newest first; `user_id=None` means everyone. Returns `(runs, has_more)`.
+
+    `before_id` (the last row of the previous page) is the exact keyset cursor: runs sharing its
+    timestamp are kept (A-032). `before` alone is a plain `created_at <` cutoff and the fallback
+    when that row is gone.
+    """
     stmt = select(QueryRun).where(QueryRun.project_id == project_id)
     if user_id is not None:
         stmt = stmt.where(QueryRun.user_id == user_id)
     if source_id:
         stmt = stmt.where(QueryRun.data_source_id == source_id)
-    if before is not None:
+    anchor = get_run(db, project_id, before_id) if before_id else None
+    if anchor is not None:
+        stmt = stmt.where(
+            or_(
+                QueryRun.created_at < anchor.created_at,
+                and_(QueryRun.created_at == anchor.created_at, QueryRun.id < anchor.id),
+            )
+        )
+    elif before is not None:
         stmt = stmt.where(QueryRun.created_at < before)
     runs = list(db.scalars(stmt.order_by(QueryRun.created_at.desc(), QueryRun.id.desc()).limit(limit + 1)))
     return runs[:limit], len(runs) > limit

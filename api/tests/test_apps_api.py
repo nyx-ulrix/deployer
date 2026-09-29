@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from app.crypto import decrypt_secret
-from app.models import ApiKey, AuditLog, Deployment, Domain, Job, User
+from app.models import ApiKey, AuditLog, Deployment, Domain, Job, User, utcnow
 from app.services import deployments, rate_limit, transfer
 from app.services import remote_access as ra
 from tests.apps_support import make_app, new_token
@@ -246,12 +246,19 @@ def test_deploy_cancel_rollback_and_delete(client, env, db):
     db.commit()
     rb = client.post(f"{url}/deployments/{old.id}/rollback", headers=env["dev"])
     assert rb.status_code == 202 and rb.json()["rollback_of"] == old.id and rb.json()["image_tag"] == "deployer-app/x:y"
-    page = client.get(f"{url}/deployments?limit=1", headers=env["viewer"]).json()
-    assert len(page["deployments"]) == 1 and page["has_more"] is True
-    older = client.get(f"{url}/deployments?limit=5&before={page['deployments'][0]['id']}", headers=env["viewer"]).json()
-    assert (
-        page["deployments"][0]["id"] not in [d["id"] for d in older["deployments"]] and len(older["deployments"]) == 2
-    )
+    # A-032: same-second deployments are paged by (created_at, id), none repeated or dropped.
+    same = utcnow().replace(microsecond=0)
+    for d in db.scalars(select(Deployment).where(Deployment.app_id == app["id"])):
+        d.created_at = same
+    db.commit()
+    seen, before = [], ""
+    for _ in range(5):  # bounded: a broken cursor repeats pages forever
+        page = client.get(f"{url}/deployments?limit=1&before={before}", headers=env["viewer"]).json()
+        seen += [d["id"] for d in page["deployments"]]
+        if not page["has_more"]:
+            break
+        before = page["deployments"][-1]["id"]
+    assert len(seen) == 3 and len(set(seen)) == 3
     assert client.get(f"{url}/logs", headers=env["viewer"]).json() == {"lines": [], "container": None}
 
     assert client.delete(url, headers=env["dev"]).status_code == 403

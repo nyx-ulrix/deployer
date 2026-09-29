@@ -23,7 +23,7 @@ All under `/v1/projects/{project_id}`.
 | Method | Path | Role | Body / Query | Response |
 |---|---|---|---|---|
 | POST | `/data-sources/{sid}/query` | viewer+ (API keys: service only) | as before, plus optional `layout: "terminal" \| "editor"` | as before, plus `run_id` (the log row id). **Every** call is logged — success, error, timeout and viewer refusals (`status: refused`, HTTP 403 still returned). |
-| GET | `/query-log?source_id=&user=me\|all&limit=50&before=<created_at>` | viewer+ (`user=all` needs admin+) | – | `{runs: QueryRun[], has_more}` newest first; `query_text` truncated to 2 000 chars in list responses |
+| GET | `/query-log?source_id=&user=me\|all&limit=50&before=<created_at>&before_id=<id>` | viewer+ (`user=all` needs admin+) | – | `{runs: QueryRun[], has_more}` newest first; `query_text` truncated to 2 000 chars in list responses. Next page: pass the last row's `created_at` and `id` (keyset on both, so same-second runs are not skipped); `before` alone is a plain `created_at <` cutoff |
 | GET | `/query-log/{run_id}` | own run: viewer+; others: admin+ | – | `QueryRun` (full text) |
 | DELETE | `/query-log?before=<iso>` | owner | – | `{deleted: n}` |
 | GET | `/saved-queries` | viewer+ | – | `SavedQuery[]` (all of the project, folder-sorted) |

@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 
 from app.errors import ApiError
 from app.models import AuditLog, QueryRun, utcnow
+from app.serializers import iso
 from app.services import connections, query_log, source_ops
 from tests.test_query_console import add_source, project_setup, sqlite_engine  # noqa: F401 (fixtures)
 
@@ -107,13 +108,22 @@ def test_list_filters_and_permissions(client, db, console):
     by_source = client.get(log_url, params={"user": "all", "source_id": other.id}, headers=console["owner"]).json()
     assert [r["query_text"] for r in by_source["runs"]] == ["SELECT 9"]
 
-    page = client.get(log_url, params={"user": "all", "limit": 2}, headers=console["owner"]).json()
-    assert len(page["runs"]) == 2 and page["has_more"] is True
-    older = client.get(
-        log_url, params={"user": "all", "limit": 10, "before": page["runs"][-1]["created_at"]}, headers=console["owner"]
-    ).json()
-    assert len(older["runs"]) + len(page["runs"]) <= 6 and older["has_more"] is False
-    assert not {r["id"] for r in older["runs"]} & {r["id"] for r in page["runs"]}
+    # A-032: MariaDB keeps whole seconds, so runs share timestamps; paging by (created_at, id) keeps them all.
+    same = utcnow().replace(microsecond=0)
+    for r in runs(db):
+        r.created_at = same
+    db.commit()
+    seen, params = [], {"user": "all", "limit": 2}
+    for _ in range(6):  # bounded: a broken cursor repeats pages forever
+        page = client.get(log_url, params=params, headers=console["owner"]).json()
+        seen += [r["id"] for r in page["runs"]]
+        if not page["has_more"]:
+            break
+        params = {**params, "before": page["runs"][-1]["created_at"], "before_id": page["runs"][-1]["id"]}
+    assert len(seen) == 6 and len(set(seen)) == 6
+    # Without `before_id` the timestamp is a plain cutoff (and still a valid filter).
+    cutoff = client.get(log_url, params={"user": "all", "before": iso(same)}, headers=console["owner"]).json()
+    assert cutoff["runs"] == []
     assert client.get(log_url, params={"before": "yesterday"}, headers=console["owner"]).status_code == 422
     assert client.get(log_url, params={"limit": 0}, headers=console["owner"]).status_code == 422
     assert client.get(log_url, params={"limit": 201}, headers=console["owner"]).status_code == 422

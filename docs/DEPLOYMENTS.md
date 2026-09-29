@@ -272,7 +272,7 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
 | GET | `/apps/{id}/webhook` | developer+ | – | `{url, secret}` — url `<public_url>/v1/hooks/github/{app_id}`; audit `app.webhook.reveal` |
 | POST | `/apps/{id}/webhook/rotate` | developer+ | – | `{url, secret, hook_active, warnings}` (also updates the GitHub hook of a connected app) |
 | POST | `/apps/{id}/deploy` | developer+ | `{branch?}` | `Deployment` (202) |
-| GET | `/apps/{id}/deployments?limit=20&before=` | viewer+ | – | `{deployments: Deployment[] (log omitted), has_more}` |
+| GET | `/apps/{id}/deployments?limit=20&before=<deployment id>` | viewer+ | – | `{deployments: Deployment[] (log omitted), has_more}`; next page: `before` = the last row's id |
 | GET | `/apps/{id}/deployments/{dep}` | viewer+ | `?log=1` includes the log | `Deployment` |
 | POST | `/apps/{id}/deployments/{dep}/cancel` | developer+ | – | `Deployment` |
 | POST | `/apps/{id}/deployments/{dep}/rollback` | developer+ | – | `Deployment` (202, new one) |

@@ -770,7 +770,7 @@ export type QueryRun = {
 
 export type QueryLogPage = { runs: QueryRun[]; has_more: boolean };
 
-export type QueryLogParams = { source_id?: string; user?: "me" | "all"; limit?: number; before?: string };
+export type QueryLogParams = { source_id?: string; user?: "me" | "all"; limit?: number; before?: string; before_id?: string };
 
 // ---- Remote access (docs/REMOTE_ACCESS.md) ----
 

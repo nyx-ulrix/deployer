@@ -69,14 +69,17 @@ export function useSavedQueryVersion(projectId: string, savedId: string, n: numb
 
 const QUERY_LOG_PAGE = 50;
 
-/** Newest-first pages of one source's query log; the next page starts before the last row's `created_at`. */
+/** Newest-first pages of one source's query log; the next page starts after the last row (keyset on created_at + id, A-032). */
 export function useQueryLog(projectId: string, sourceId: string, user: "me" | "all", enabled = true) {
   return useInfiniteQuery({
     queryKey: qk.queryLog(projectId, sourceId, user),
     queryFn: ({ pageParam }) =>
-      api.queryLog.list(projectId, { source_id: sourceId, user, limit: QUERY_LOG_PAGE, before: pageParam }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (last) => (last.has_more && last.runs.length > 0 ? last.runs[last.runs.length - 1].created_at : undefined),
+      api.queryLog.list(projectId, { source_id: sourceId, user, limit: QUERY_LOG_PAGE, ...pageParam }),
+    initialPageParam: undefined as { before: string; before_id: string } | undefined,
+    getNextPageParam: (last) => {
+      const tail = last.has_more ? last.runs[last.runs.length - 1] : undefined;
+      return tail ? { before: tail.created_at, before_id: tail.id } : undefined;
+    },
     enabled,
     staleTime: 10_000,
   });
@@ -140,14 +143,14 @@ export function useApp(projectId: string, appId: string, opts: { poll?: boolean 
 
 const DEPLOYMENTS_PAGE = 20;
 
-/** Newest-first pages; the list refreshes every 5 s so webhook-triggered deploys show up. */
+/** Newest-first pages (the cursor is the last row's id); the list refreshes every 5 s so webhook-triggered deploys show up. */
 export function useDeployments(projectId: string, appId: string) {
   return useInfiniteQuery({
     queryKey: qk.deployments(projectId, appId),
     queryFn: ({ pageParam }) => api.apps.deployments(projectId, appId, { limit: DEPLOYMENTS_PAGE, before: pageParam }),
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (last) =>
-      last.has_more && last.deployments.length > 0 ? last.deployments[last.deployments.length - 1].created_at : undefined,
+      last.has_more && last.deployments.length > 0 ? last.deployments[last.deployments.length - 1].id : undefined,
     refetchInterval: 5000,
   });
 }
