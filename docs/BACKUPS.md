@@ -99,6 +99,10 @@ snapshots, log archiving, pruning and verification.
 
 Job states: `queued → running → succeeded | failed | cancelled`, with `progress` (0–1) and `message`.
 
+The hourly prune deletes finished job rows after 14 days (failed ones after 30), so log archiving
+(one job per database every 1–5 minutes) does not grow the table without bound. A deleted source's
+`source.finalize_delete` job is kept until the source is purged, because undelete reads it.
+
 When a job ends without its handler finishing (the PC slept, rebooted or the worker crashed, so the
 job is failed as "worker stopped"; or it was cancelled while queued), the scheduler marks its `running`
 version as failed (so it can be deleted and pruned) and drops a half-made `new_source` restore target.

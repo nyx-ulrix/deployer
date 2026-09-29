@@ -743,6 +743,33 @@ def test_prune_and_purge_deleted_sources(client, env, db):
     assert db.query(BackupPolicy).count() == 0
 
 
+def test_prune_deletes_old_finished_jobs(env, db):
+    ds_id, now = env["ds"].id, utcnow()
+
+    def job(type_, status, days, ds=None):
+        row = Job(type=type_, status=status, data_source_id=ds, created_at=now - timedelta(days=days))
+        db.add(row)
+        db.flush()
+        return row.id
+
+    keep = {
+        job("backup.archive_logs", "succeeded", 13),
+        job("backup.archive_logs", "failed", 20),
+        job("backup.snapshot", "running", 40),
+        job("source.finalize_delete", "succeeded", 40, ds_id),  # undelete reads it
+    }
+    gone = {
+        job("backup.archive_logs", "succeeded", 15),
+        job("backup.verify", "cancelled", 15),
+        job("backup.snapshot", "failed", 31),
+    }
+    db.commit()
+    summary = backups.prune_all(jobs.get_sessionmaker(), now)
+    db.expire_all()
+    left = {j.id for j in db.query(Job).all()}
+    assert summary["jobs_deleted"] == 3 and keep <= left and not (gone & left)
+
+
 def test_scheduler_tick(env, db, fake_redis):
     factory = jobs.get_sessionmaker()
     first = backups.scheduler_tick(factory)

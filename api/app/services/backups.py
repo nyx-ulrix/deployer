@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, not_, or_, select
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
@@ -60,6 +60,8 @@ SAFETY_KEEP = timedelta(days=30)
 DELETED_KEEP = timedelta(days=30)
 PLATFORM_KEEP = 30
 FAILED_KEEP = timedelta(days=1)
+JOB_KEEP = timedelta(days=14)  # finished job rows; failed ones are kept for FAILED_JOB_KEEP
+FAILED_JOB_KEEP = timedelta(days=30)
 VERIFY_EVERY = timedelta(days=7)
 VERIFY_RETRY = timedelta(days=1)  # after a failed verification
 PRUNE_EVERY = timedelta(hours=1)
@@ -1398,9 +1400,32 @@ def prune_all(factory: jobs.SessionFactory, now: datetime | None = None) -> dict
             if b.status == "failed" and now - b.started_at > FAILED_KEEP:
                 delete_backup(session, b)
         session.commit()
+        summary["jobs_deleted"] = prune_jobs(session, now)
         return summary
     finally:
         session.close()
+
+
+def prune_jobs(session: Session, now: datetime) -> int:
+    """Deletes finished job rows older than JOB_KEEP (failed: FAILED_JOB_KEEP). Log archiving alone adds
+    one per database every 1-5 minutes. A deleted source's finalize job stays until the source is purged:
+    undelete reads it to know whether the database was dropped."""
+    old = and_(
+        Job.status.in_(jobs.FINAL_STATUSES),
+        or_(
+            and_(Job.status != "failed", Job.created_at < now - JOB_KEEP),
+            Job.created_at < now - FAILED_JOB_KEEP,
+        ),
+        not_(and_(Job.type == "source.finalize_delete", Job.data_source_id.is_not(None))),
+    )
+    deleted = 0
+    while True:  # batches keep each MariaDB delete short on a large first prune
+        ids = list(session.scalars(select(Job.id).where(old).limit(5000)))
+        if not ids:
+            return deleted
+        session.execute(delete(Job).where(Job.id.in_(ids)))
+        session.commit()
+        deleted += len(ids)
 
 
 @jobs.job_handler("backup.prune")
