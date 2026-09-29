@@ -16,7 +16,7 @@ from app.crypto import encrypt_secret
 from app.db import get_sessionmaker
 from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import ApiError, conflict, forbidden, not_found
-from app.models import App, AppReplica, Deployment, Domain
+from app.models import App, AppReplica, Deployment, Domain, Project, User
 from app.services import audit, cloud, cloud_deploy, cohost_apps, deployments, device_rpc, github, jobs, rate_limit
 from app.services import remote_access as ra
 
@@ -779,6 +779,11 @@ async def github_webhook(app_id: str, request: Request, db: DbSession) -> Any:
         deployments.webhook_secret(app), body, request.headers.get("X-Hub-Signature-256")
     ):
         raise ApiError(401, "bad_signature", "X-Hub-Signature-256 does not match")
+    project = db.get(Project, app.project_id)
+    owner = db.get(User, project.owner_id) if project else None
+    if owner is None or not owner.is_active:
+        # A-023: a disabled account's pushes must not keep deploying new code on this PC.
+        raise ApiError(403, "account_disabled", "The account that owns this project has been disabled")
     event = request.headers.get("X-GitHub-Event", "")
     if event == "ping":
         return {"ok": True}

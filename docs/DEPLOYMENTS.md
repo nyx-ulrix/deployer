@@ -283,7 +283,8 @@ otherwise), `X-GitHub-Event: ping` → 200 `{ok}`; `push` for `refs/heads/<branc
 `{deployment_id}` (`trigger=webhook`, `commit_sha`, first line of the head commit message); other
 branches/events → 200 `{ignored: true}`. Coalescing: a push while a deployment is still `queued`
 for the same app replaces its commit instead of adding another. Rate limit 6/min per app (every
-delivery counts, including rejected signatures; 429 `rate_limited`). Unknown app → 404. Bodies over
+delivery counts, including rejected signatures; 429 `rate_limited`). Unknown app → 404. When the
+instance owner has disabled the project owner's account → 403 `account_disabled`. Bodies over
 5 MB → 413 `payload_too_large`; an `after` that is not a 40-hex sha deploys the branch head instead.
 
 Runtime logs: the API has no Docker access. `GET /apps/{id}/logs` enqueues nothing; instead the

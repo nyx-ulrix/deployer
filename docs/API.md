@@ -120,7 +120,7 @@ Provider callback URLs (shown in the setup wizard):
 | GET | `/instance/settings` | – | `InstanceSettings` |
 | PUT | `/instance/settings` | `{public_url?, allow_signup?, owner_only_projects?, google_client_id?, google_client_secret?, github_client_id?, github_client_secret?, alert_webhook_url?, api_key_rate_limit?}` (empty string clears) | `InstanceSettings & {warnings}` (a changed `public_url` re-points the apps' GitHub webhooks; `warnings` lists the ones that could not follow) |
 | GET | `/instance/users` | – | `User[]` |
-| PATCH | `/instance/users/{id}` | `{is_active:boolean}` | `User`. Disabling signs the account out everywhere (refresh tokens revoked; access tokens are refused at the next request) and stops the API keys of projects it owns (401 `account_disabled`). 400 `cannot_disable_owner` for the instance owner |
+| PATCH | `/instance/users/{id}` | `{is_active:boolean}` | `User`. Disabling signs the account out everywhere (refresh tokens revoked; access tokens are refused at the next request) and stops the API keys (401 `account_disabled`) and GitHub push deploys (403 `account_disabled`) of projects it owns; apps already running keep running. 400 `cannot_disable_owner` for the instance owner |
 | GET | `/instance/projects` | – | `(Project & {owner_email, member_count})[]`: every project, `my_role` null where the owner isn't a member |
 | POST | `/instance/export` | `{passphrase}` | file download `deployer-instance-YYYYMMDD-HHMM.json` |
 

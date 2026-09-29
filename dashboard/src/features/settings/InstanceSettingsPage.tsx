@@ -222,7 +222,7 @@ function UsersCard() {
           if (disabling) setActive.mutate({ user: disabling, active: false });
         }}
         title={`Disable ${disabling?.email ?? "this account"}?`}
-        description="They are signed out everywhere and can't sign in again, and the API keys of projects they own stop working. Their projects and data are kept; you can enable the account again later."
+        description="They are signed out everywhere and can't sign in again, and the projects they own stop accepting API keys and GitHub push deploys. Their projects, data and running apps are kept; you can enable the account again later."
         confirmLabel="Disable"
         loading={setActive.isPending}
       />

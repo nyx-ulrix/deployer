@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from app.crypto import decrypt_secret
-from app.models import ApiKey, AuditLog, Deployment, Domain, Job
+from app.models import ApiKey, AuditLog, Deployment, Domain, Job, User
 from app.services import deployments, rate_limit, transfer
 from app.services import remote_access as ra
 from tests.apps_support import make_app, new_token
@@ -210,6 +210,13 @@ def test_webhook(client, env, db, fake_redis, set_setting):
     assert push("refs/heads/main", "f" * 40).status_code == 202  # coalesced into that one
     limited = push("refs/heads/main", "g" * 40)
     assert (limited.status_code, limited.json()["error"]["code"]) == (429, "rate_limited")
+
+    # A-023: once the instance owner disables the project's owner, their pushes stop deploying.
+    rate_limit.reset(f"rl:hook:{app['id']}")
+    db.get(User, env["project"].owner_id).is_active = False
+    db.commit()
+    disabled = push("refs/heads/main", "h" * 40)
+    assert (disabled.status_code, disabled.json()["error"]["code"]) == (403, "account_disabled")
 
 
 def test_deploy_cancel_rollback_and_delete(client, env, db):
