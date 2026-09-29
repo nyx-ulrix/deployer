@@ -218,14 +218,27 @@ def test_stream_encryption_matches_one_shot_format():
     assert decrypt_with_passphrase(header, "".join(chunks), PASS) == data
 
 
-def test_import_limit_follows_free_memory(monkeypatch):
+def test_import_limit_follows_free_memory(monkeypatch, tmp_path):
     gib = 1024**3
+    cgroup_free = transfer._cgroup_free
+    monkeypatch.setattr(transfer, "_cgroup_free", lambda: None)
     monkeypatch.setattr(device_host, "_memory", lambda: (1 * gib, 7 * gib))  # 6 GiB free -> 1 GiB
     assert transfer.import_limit() == gib
     monkeypatch.setattr(device_host, "_memory", lambda: (2 * gib, 3 * gib))  # 1 GiB free -> a sixth
     assert transfer.import_limit() == gib // 6
     monkeypatch.setattr(device_host, "_memory", lambda: (None, None))
     assert transfer.import_limit() == transfer.MAX_IMPORT_BYTES
+
+    # The API container's memory limit (768m by default) binds even when the VM has plenty free.
+    (tmp_path / "memory.max").write_text(f"{768 << 20}\n")
+    (tmp_path / "memory.current").write_text(f"{300 << 20}\n")
+    (tmp_path / "memory.stat").write_text(f"anon {200 << 20}\ninactive_file {32 << 20}\n")
+    assert cgroup_free(str(tmp_path)) == (768 - 300 + 32) << 20
+    monkeypatch.setattr(transfer, "_cgroup_free", lambda: 500 << 20)
+    monkeypatch.setattr(device_host, "_memory", lambda: (1 * gib, 7 * gib))
+    assert transfer.import_limit() == (500 << 20) // 6
+    (tmp_path / "memory.max").write_text("max\n")
+    assert cgroup_free(str(tmp_path)) is None
 
 
 def test_import_over_memory_limit_is_413(db, populated, monkeypatch):

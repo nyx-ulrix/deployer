@@ -40,9 +40,10 @@ Streaming & limits
   with server-side cursors, so exporting never holds a whole table or collection in Python objects.
 - The gzip file is then encrypted and base64-encoded in chunks (``encrypt_stream_with_passphrase``).
 - Import decrypts and decompresses in memory and parses the plaintext with ``json.loads``: peak memory
-  is several times the uncompressed payload. ``import_limit()`` (a sixth of the memory available now,
-  at most 1 GiB) caps both the upload and the unpacked payload with a 413 ``file_too_large`` instead
-  of the API being OOM-killed. Larger databases should be moved with native dump tools.
+  is several times the uncompressed payload. ``import_limit()`` (a sixth of the memory available now to
+  the API container or the machine, whichever is less, at most 1 GiB) caps both the upload and the
+  unpacked payload with a 413 ``file_too_large`` instead of the API being OOM-killed.
+  Larger databases should be moved with native dump tools.
 - Views, triggers, stored routines and events of managed MariaDB databases are not exported; MongoDB
   views are. They are counted into the source's ``data`` entry as ``"skipped": {"views": n, ...}`` and
   reported as ``warnings`` in the export counts (audit log) and the import summary. Generated
@@ -637,14 +638,39 @@ def _unlink(path: str) -> None:
 # =============================================================================================
 
 
+def _cgroup_free(root: str = "/sys/fs/cgroup") -> int | None:
+    """Memory left under this container's limit (compose sets API_MEM_LIMIT, while /proc/meminfo shows
+    the whole VM), not counting reclaimable file cache; None when unlimited or not readable."""
+    for limit_f, usage_f, stat_f in (
+        ("memory.max", "memory.current", "memory.stat"),  # cgroup v2
+        ("memory/memory.limit_in_bytes", "memory/memory.usage_in_bytes", "memory/memory.stat"),  # v1
+    ):
+        try:
+            with open(os.path.join(root, limit_f), encoding="ascii") as fh:
+                raw = fh.read().strip()
+            if raw == "max":
+                return None
+            with open(os.path.join(root, usage_f), encoding="ascii") as fh:
+                usage = int(fh.read())
+            with open(os.path.join(root, stat_f), encoding="ascii") as fh:
+                stat = {k: int(v) for k, _, v in (line.partition(" ") for line in fh) if v.strip().isdigit()}
+        except (OSError, ValueError):
+            continue
+        cache = stat.get("total_inactive_file", stat.get("inactive_file", 0))
+        return max(0, int(raw) - (usage - cache))
+    return None
+
+
 def import_limit() -> int:
-    """Most bytes an import may hold: a sixth of the memory available now (the parsed payload takes
-    several times its text), at most MAX_IMPORT_BYTES; MAX_IMPORT_BYTES where memory can't be read."""
+    """Most bytes an import may hold: a sixth of the memory available now, to the API container or the
+    machine, whichever is less (the parsed payload takes several times its text), at most
+    MAX_IMPORT_BYTES; MAX_IMPORT_BYTES where memory can't be read."""
     # ponytail: a heuristic cap; the real fix is a chunked import format (audit A-043, "later").
     used, total = device_host._memory()
-    if used is None or total is None:
-        return MAX_IMPORT_BYTES
-    return min(MAX_IMPORT_BYTES, (total - used) // 6)
+    free = [
+        f for f in ((total - used) if used is not None and total is not None else None, _cgroup_free()) if f is not None
+    ]
+    return min(MAX_IMPORT_BYTES, min(free) // 6) if free else MAX_IMPORT_BYTES
 
 
 def _too_large(what: str, limit: int) -> ApiError:
@@ -652,8 +678,8 @@ def _too_large(what: str, limit: int) -> ApiError:
         413,
         "file_too_large",
         f"{what} too large to import on this machine: imports are unpacked in memory, and with the memory free "
-        f"now the limit is {limit // 2**20} MB. Close other apps and retry, or move large databases with a SQL "
-        "dump (mariadb-dump / mongodump) instead",
+        f"now the limit is {limit // 2**20} MB. Free memory (or raise API_MEM_LIMIT in deploy/.env) and retry, "
+        "or move large databases with a SQL dump (mariadb-dump / mongodump) instead",
         {"limit_bytes": limit},
     )
 

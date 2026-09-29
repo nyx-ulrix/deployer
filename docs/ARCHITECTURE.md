@@ -119,9 +119,11 @@ them from a SQL dump), backup files and versions / point-in-time history, deploy
 audit logs. The dashboard's Export & import page lists these exclusions.
 
 Size: export streams to disk, but import unpacks and parses the whole payload in memory, so the
-importing machine takes at most a sixth of its free memory, capped at 1 GiB, for both the uploaded
-file and the unpacked payload (`413 file_too_large` with the current limit in `details.limit_bytes`).
-Move bigger databases with a SQL dump (`mariadb-dump` / `mongodump`).
+importing API takes at most a sixth of its free memory (the less of the machine's and the container's
+`API_MEM_LIMIT`, 768m by default, so roughly 80 MB), capped at 1 GiB, for both the uploaded file and the
+unpacked payload (`413 file_too_large` with the current limit in `details.limit_bytes`). Raise
+`API_MEM_LIMIT` in `deploy/.env` for bigger imports, or move bigger databases with a SQL dump
+(`mariadb-dump` / `mongodump`).
 
 - `scope: instance` — made by the instance owner; imported by the setup wizard on a fresh install
   ("Restore from export") and restores everything, including all users.

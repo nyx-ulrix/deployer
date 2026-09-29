@@ -6,7 +6,7 @@
 #
 # Sized for old PCs (4 GB RAM total). Default memory limits, all overridable in `.env`:
 #   mariadb 512m (InnoDB buffer pool 128M) | mongodb 512m (WiredTiger cache 0.25 GB)
-#   redis 160m (maxmemory 128mb)           | api 768m (exports/imports stream data)
+#   redis 160m (maxmemory 128mb)           | api 768m (exports stream; imports <= 1/6 free)
 #   dashboard 64m (static nginx)           | caddy 128m
 #   tunnel 128m (cloudflared; idle unless remote access is enabled)
 #   worker 384m (backup jobs stream dumps; never buffers whole databases)
