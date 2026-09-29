@@ -212,9 +212,10 @@ Errors raised **on the device** and re-raised on the primary with the same statu
   the copy on the device" first (`409 device_has_copies`). `?force=true` (instance owner only) detaches
   anyway, marks hosted sources `status=error` ("This database's PC was removed; its data is still on
   that PC.") and, while the device is online, drops its co-host copies. Such a source never falls back
-  to the main server's database of the same name: browsing, connection info, backups, moves, co-host
-  copies and `drop=true` return `409 device_removed`, deploys and exports skip it, and deleting it
-  (without drop) drops nothing. Detaching also stops the device's co-hosted apps and apps tunnel.
+  to the main server's database of the same name: browsing, connection info, new snapshots, in-place
+  restores, moves, co-host copies and `drop=true` return `409 device_removed`, deploys and exports skip
+  it, and deleting it (without drop) drops nothing. Its stored backups stay listed and downloadable, and
+  restoring one as a new source (BACKUPS.md) is how its data comes back. Detaching also stops the device's co-hosted apps and apps tunnel.
 - Moving a database never pauses writes, so nothing may write to the old copy after it is dumped: the
   move is refused (`409 apps_use_database`) while apps with database access are live, and a database
   on the main server is made read-only (its user keeps `SELECT` only, open connections are closed) from

@@ -243,9 +243,13 @@ def test_remove_device(
         client.get(f"{base}/tables/users/rows", headers=h),
         client.post(f"{base}/backups", json={}, headers=h),
         client.post(f"{base}/move", json={"device_id": None}, headers=h),
+        client.post(f"{base}/restore", json={"mode": "in_place"}, headers=h),
         client.delete(f"{base}?drop=true", headers=h),
     ):
         assert resp.status_code == 409 and resp.json()["error"]["code"] == "device_removed", resp.text
+    # ...but its stored backups stay reachable: restoring one as a new source is how the data comes back.
+    assert client.get(f"{base}/backup-policy", headers=h).status_code == 200
+    assert client.get(f"{base}/recovery-window", headers=h).status_code == 200
     resp = client.post(f"{base}/check", headers=h)
     assert resp.json()["status_message"] == connections.DEVICE_REMOVED
     assert all(db.get(Job, j).data_source_id != ds_id for j in backups.scheduler_tick(jobs.get_sessionmaker()))

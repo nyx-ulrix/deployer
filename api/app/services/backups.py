@@ -114,7 +114,6 @@ def require_supported(ds: DataSource) -> None:
             "Backups are only taken for managed MariaDB and MongoDB databases. External databases are backed up "
             "by their provider.",
         )
-    connections.require_host(ds)
 
 
 def snapshot_ref(backup: Backup) -> str:
@@ -449,6 +448,7 @@ def start_snapshot(
 ) -> tuple[Job, Backup]:
     """Adds a running Backup + queued job. Caller commits, then `jobs.dispatch(job.id)`."""
     require_supported(ds)
+    connections.require_host(ds)  # A-047: the main server's namesake is not this database
     if trigger not in TRIGGERS:
         raise ValueError(trigger)
     now = utcnow()
@@ -1025,6 +1025,8 @@ def start_restore(
         raise validation_error("mode must be new_source or in_place")
     if mode == "in_place" and not role_is_owner:
         raise ApiError(403, "forbidden", "Only the project owner can restore in place")
+    if mode == "in_place":
+        connections.require_host(ds)  # A-047; a new source from a stored snapshot is how its data comes back
     plan = plan_restore(db, ds, backup_id=backup_id, point_in_time=point_in_time)
     params: dict[str, Any] = {
         "mode": mode,
