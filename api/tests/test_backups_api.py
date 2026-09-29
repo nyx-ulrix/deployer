@@ -291,10 +291,18 @@ def test_schema_and_diff(client, env):
     assert by_name["users"]["row_count"] == {"before": 2, "after": 5}
     current = client.get(f"{env['base']}/backups/diff", params={"from": second}, headers=env["viewer"]).json()
     assert current["to"]["backup_id"] is None
-    # Same structure; only the live (estimated) row count of users differs from the exact snapshot count.
-    assert [(e["name"], e["fields"], e["row_count"]) for e in current["entities"]] == [
-        ("users", [], {"before": 5, "after": 99})
-    ]
+    # Same structure: the live (estimated) row count of users differs from the exact snapshot count,
+    # but estimates are not compared, so nothing shows as changed.
+    assert current["entities"] == []
+    back = client.get(f"{env['base']}/backups/diff", params={"from": first}, headers=env["viewer"]).json()
+    assert {e["name"]: e["row_count"] for e in back["entities"]} == {
+        "orders": {"before": None, "after": None},
+        "users": {"before": None, "after": None},
+    }
+    # Live database unreachable: an error, not "every table removed".
+    env["state"]["schema"] = {**v2, "status": "error", "error": "connection refused", "entities": []}
+    resp = client.get(f"{env['base']}/backups/diff", params={"from": second}, headers=env["viewer"])
+    assert resp.status_code == 503 and resp.json()["error"]["code"] == "source_unavailable"
 
 
 def _segment(db, ds, seq, start_at, end_at, *, data=True, env=None):

@@ -1787,6 +1787,8 @@ def schema_at(db: Session, ds: DataSource, ref: str) -> tuple[dict | None, str |
         from app.services import source_ops
 
         schema = source_ops.introspect_sources([ds])[0]
+        if schema.get("status") == "error":  # an empty entity list here would read as "every table removed"
+            raise ApiError(503, "source_unavailable", f"Couldn't read the live database: {schema.get('error')}")
         return schema, None, iso(utcnow())
     backup = get_backup(db, ds, ref)
     if backup.status != "succeeded":
@@ -1803,7 +1805,8 @@ def diff(db: Session, ds: DataSource, from_ref: str, to_ref: str) -> dict:
     return {
         "from": {"backup_id": from_id, "at": from_at},
         "to": {"backup_id": to_id, "at": to_at},
-        "entities": schema_diff.diff_schemas(before, after),
+        # Row counts only compare snapshot to snapshot: exact counts on both sides.
+        "entities": schema_diff.diff_schemas(before, after, rows=from_id is not None and to_id is not None),
     }
 
 

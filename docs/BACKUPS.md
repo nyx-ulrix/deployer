@@ -49,7 +49,8 @@ kept for the PITR window plus the age of the oldest snapshot needed to replay in
 - Each snapshot stores a **schema snapshot** (the `SourceSchema` from `GET /schema` for that source)
   so any two versions — or a version vs the live database — can be **diffed**: entities added/removed,
   fields added/removed/type changed/nullability changed, indexes and validators changed, row count
-  deltas.
+  deltas. Row counts are compared only between two versions (both exact); against the live database
+  they are left out (`null`), since the live figure is only the engine's estimate.
 - Actions: **Create version now** (optional label), **Label/pin**, **Compare**, **Restore**,
   **Download** (owner only; decrypted `.sql.gz` or mongodump archive), **Delete** (admin+, not pinned).
 
@@ -157,6 +158,7 @@ Errors (besides the common codes in API.md):
 | `backup_pinned`, `backup_running` | 409 | Deleting a pinned / still running version |
 | `backup_not_ready` | 409 | Restore, schema or diff of a backup that did not succeed |
 | `schema_unavailable` | 409 | No schema was recorded for that version |
+| `source_unavailable` | 503 | Schema or diff against `current` while the live database can't be read |
 | `outside_recovery_window` | 422 | `point_in_time` is not covered by a snapshot + logs (`details.earliest/latest`) |
 | `restore_in_progress`, `delete_in_progress`, `snapshot_in_progress` | 409 | The same operation is already running |
 | `name_taken` | 409 | `new_name` / undelete name already used in the project |

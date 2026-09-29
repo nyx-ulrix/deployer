@@ -89,7 +89,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-026 **[MEDIUM][usability]** Connection dialog is jargon-heavy, repeats itself, and wrongly says every app (and device-hosted DBs) can use the URI - `api/app/services/connections.py:324-331` (also `DatabasesTab.tsx:273-279`, `source_ops.py:327-331`) - one plain hint per case from the API; mention "Database access"; drop the duplicate prefix.
 - [x] A-027 **[MEDIUM][usability]** An external database on the same PC ("localhost") always fails, with no explanation - `api/app/routers/data_sources.py:48-67` - detect localhost in normalize_input and explain; add `host.docker.internal:host-gateway`.
 - [x] A-028 **[MEDIUM][bug]** Soft-deleting a data source permanently deletes its cross-database links - `api/app/routers/data_sources.py:201-204` - delete links only on hard delete or purge; filter deleted ends in project_links().
-- [ ] A-029 **[MEDIUM][bug]** Schema "compare with current" reports false changes, and shows every table as removed when the DB is down - `api/app/services/schema_diff.py:55-66` - 503 on introspection error; don't let estimated row counts mark "changed".
+- [x] A-029 **[MEDIUM][bug]** Schema "compare with current" reports false changes, and shows every table as removed when the DB is down - `api/app/services/schema_diff.py:55-66` - 503 on introspection error; don't let estimated row counts mark "changed".
 - [ ] A-030 **[MEDIUM][usability]** External data sources cannot be edited, only deleted and re-created - `api/app/routers/data_sources.py:83-228` - admin `PATCH` with normalize_input, try_config, invalidate and audit.
 
 **Query console**

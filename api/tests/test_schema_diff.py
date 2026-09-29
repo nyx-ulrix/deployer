@@ -104,6 +104,9 @@ def test_validator_and_row_count_only_changes():
     only_rows = schema(entity("items", [field("_id", "objectId")], validator=v1, row_count=9, type_="collection"))
     [rows] = diff_schemas(before, only_rows)
     assert rows["change"] == "changed" and rows["row_count"] == {"before": 1, "after": 9}
+    # rows=False (comparing with the live estimate): row counts alone don't count, the validator still does.
+    assert diff_schemas(before, only_rows, rows=False) == []
+    assert diff_schemas(before, after, rows=False) == [{**items, "row_count": {"before": None, "after": None}}]
 
 
 def test_apply_row_counts_and_none_inputs():

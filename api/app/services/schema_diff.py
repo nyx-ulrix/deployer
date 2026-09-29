@@ -22,8 +22,9 @@ def _index_view(index: dict) -> tuple:
     return (tuple(index.get("fields") or []), bool(index.get("unique")))
 
 
-def diff_entities(before: dict | None, after: dict | None) -> dict | None:
-    """Returns the entity entry, or None when nothing changed."""
+def diff_entities(before: dict | None, after: dict | None, rows: bool = True) -> dict | None:
+    """Returns the entity entry, or None when nothing changed. `rows=False` leaves row counts out
+    (a live schema only has the engine's estimate, which never matches a snapshot's exact count)."""
     name = (after or before or {}).get("name")
     if before is None and after is None:
         return None
@@ -53,8 +54,8 @@ def diff_entities(before: dict | None, after: dict | None) -> dict | None:
             indexes.append({"name": iname, "change": "changed"})
 
     validator_changed = (before or {}).get("validator") != (after or {}).get("validator")
-    rc_before = before.get("row_count") if before else None
-    rc_after = after.get("row_count") if after else None
+    rc_before = before.get("row_count") if before and rows else None
+    rc_after = after.get("row_count") if after and rows else None
 
     if before is None:
         change = "added"
@@ -88,12 +89,12 @@ def apply_row_counts(schema: dict | None, row_counts: dict[str, Any] | None) -> 
     return out
 
 
-def diff_schemas(before: dict | None, after: dict | None) -> list[dict]:
+def diff_schemas(before: dict | None, after: dict | None, rows: bool = True) -> list[dict]:
     """Entity-level changes from `before` to `after`, sorted by entity name."""
     eb, ea = _by_name((before or {}).get("entities")), _by_name((after or {}).get("entities"))
     out = []
     for name in sorted(set(eb) | set(ea)):
-        entry = diff_entities(eb.get(name), ea.get(name))
+        entry = diff_entities(eb.get(name), ea.get(name), rows)
         if entry is not None:
             out.append(entry)
     return out
