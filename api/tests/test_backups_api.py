@@ -760,19 +760,35 @@ def test_platform_snapshot_download_and_restore(client, env, db, owner_headers, 
         404
     )
 
+    client.post("/v1/instance/backups/platform", headers=owner_headers)
+    jobs.run_queued()
+    newer = client.get("/v1/instance/backups", headers=owner_headers).json()["platform"]["latest_backup_id"]
     fed = []
 
     def fake_client(database, feed):
         fed.append(database)
         feed(lambda chunk: fed.append(chunk))
+        # What loading the older dump does: the newer version is unknown, the loaded one is still
+        # `running` with its job, its copy row does not exist yet, and a job queued back then waits.
+        old = db.get(Backup, snap_id)
+        old.status, old.finished_at = "running", None
+        db.get(Job, old.job_id).status = "running"
+        db.query(BackupCopy).filter(BackupCopy.artifact_id.in_([snap_id, newer])).delete()
+        db.delete(db.get(Backup, newer))
+        db.add(Job(type="backup.prune", status="queued"))
+        db.commit()
 
     monkeypatch.setattr(backup_engine, "_run_mariadb_client", fake_client)
     assert cli.main(["platform", "restore"]) == 2 and not fed  # needs --yes
     capsys.readouterr()
-    assert cli.main(["platform", "restore", "--yes"]) == 0
+    assert cli.main(["platform", "restore", "--yes", "--backup-id", snap_id]) == 0
     out = capsys.readouterr().out
     assert fed[0] == "deployer" and b"".join(fed[2:]).startswith(b"-- dump of deployer")
     db.expire_all()
+    for bid in (snap_id, newer):  # still listed and restorable; nothing left to be failed and pruned
+        assert db.get(Backup, bid).status == "succeeded" and backups.local_copy(db, "backup", bid, None)
+    assert db.get(Job, db.get(Backup, snap_id).job_id).status == "succeeded"
+    assert not db.query(Job).filter(Job.status.not_in(jobs.FINAL_STATUSES)).count()
     safety = db.query(Backup).filter_by(scope="platform", trigger="pre_restore").one()
     assert safety.id in out and safety.status == "succeeded" and safety.label.startswith("Before restoring")
     assert backups.local_copy(db, "backup", safety.id, None) is not None

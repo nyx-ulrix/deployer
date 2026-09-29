@@ -28,7 +28,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
+from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.orm import Session
 
 from app.crypto import decrypt_json
@@ -1513,6 +1514,10 @@ def get_platform_backup(db: Session, backup_id: str) -> Backup:
     return backup
 
 
+def _columns(obj: Any) -> dict:
+    return {a.key: getattr(obj, a.key) for a in sa_inspect(obj).mapper.column_attrs}
+
+
 def restore_platform(session_factory: Callable[[], Session], backup_id: str | None = None) -> dict:
     """Loads a platform snapshot back into the platform database (`python -m app.cli platform restore`).
 
@@ -1533,6 +1538,17 @@ def restore_platform(session_factory: Callable[[], Session], backup_id: str | No
                 raise ApiError(409, "no_backup", "There is no platform snapshot to restore")
         path = executors.local_executor().artifact_path(snapshot_ref(backup))
         restored = {"backup_id": backup.id, "started_at": iso(backup.started_at)}
+        # The dump holds the platform versions as they were then (its own row still `running`), so the
+        # current list and its copies are put back after the load: nothing newer is orphaned or pruned.
+        kept = [_columns(b) for b in session.scalars(select(Backup).where(Backup.scope == "platform"))]
+        kept_copies = [
+            _columns(c)
+            for c in session.scalars(
+                select(BackupCopy).where(
+                    BackupCopy.artifact_type == "backup", BackupCopy.artifact_id.in_([b["id"] for b in kept])
+                )
+            )
+        ]
     finally:
         session.close()
     if not path.is_file():
@@ -1552,11 +1568,13 @@ def restore_platform(session_factory: Callable[[], Session], backup_id: str | No
     safety.size_bytes, safety.sha256 = int(result.get("size_bytes") or 0), result.get("sha256")
     safety.consistent_point, safety.row_counts = result.get("consistent_point"), result.get("row_counts")
 
-    def record_safety() -> None:
-        # The load replaced the backups table, so the safety version is added to the restored data.
+    def settle(loaded: bool) -> None:
         s = session_factory()
         try:
-            s.add(safety)
+            ids = set(s.scalars(select(Backup.id).where(Backup.scope == "platform"))) | {b["id"] for b in kept}
+            s.execute(delete(BackupCopy).where(BackupCopy.artifact_type == "backup", BackupCopy.artifact_id.in_(ids)))
+            s.execute(delete(Backup).where(Backup.id.in_(ids)))
+            s.add_all([Backup(**b) for b in kept] + [BackupCopy(**c) for c in kept_copies] + [safety])
             s.add(
                 BackupCopy(
                     artifact_type="backup",
@@ -1570,6 +1588,13 @@ def restore_platform(session_factory: Callable[[], Session], backup_id: str | No
                     verified_at=utcnow(),
                 )
             )
+            if loaded:
+                # Jobs queued or running when the snapshot was taken must not run again days later.
+                done = {b["job_id"] for b in kept if b["status"] == "succeeded" and b["job_id"]}
+                for job in s.scalars(select(Job).where(Job.status.not_in(jobs.FINAL_STATUSES))):
+                    job.status, job.finished_at = ("succeeded" if job.id in done else "failed"), utcnow()
+                    if job.id not in done:
+                        job.error = "Stopped by a platform restore"
             s.commit()
         finally:
             s.close()
@@ -1578,9 +1603,9 @@ def restore_platform(session_factory: Callable[[], Session], backup_id: str | No
         backup_engine._load_dump(path, get_settings().mariadb_database, source=None, definer_user=None)
     except BaseException:
         with suppress(Exception):
-            record_safety()
+            settle(loaded=False)
         raise
-    record_safety()
+    settle(loaded=True)
     return {"restored": restored, "safety_backup_id": safety.id}
 
 

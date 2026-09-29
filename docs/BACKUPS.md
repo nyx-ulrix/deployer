@@ -84,7 +84,9 @@ deployer restart
 The restore snapshots the current platform data first and keeps it as a version (trigger
 `pre_restore`), so it can be undone with `platform restore --yes --backup-id <that id>`. Everything the
 platform recorded after the chosen snapshot is forgotten: users, projects, settings and database
-versions made since. The managed databases themselves are not changed.
+versions made since. The managed databases themselves are not changed. The list of platform snapshots
+is kept as it is now (so newer ones stay restorable), and jobs that were queued or running when the
+snapshot was taken are marked failed instead of running again.
 
 ## Jobs
 
