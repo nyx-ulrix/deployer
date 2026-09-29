@@ -65,7 +65,6 @@ export function AppPage() {
     return <ErrorState title={missing ? "App not found" : "Couldn't load app"} error={app.error} onRetry={missing ? undefined : () => void app.refetch()} />;
   }
   const a = app.data;
-  const links = [...a.urls, ...(a.local_url ? [a.local_url] : [])];
 
   return (
     <div className="space-y-4">
@@ -93,12 +92,22 @@ export function AppPage() {
         )}
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1">
-        {links.map((u) => (
+        {a.urls.map((u) => (
           <a key={u} href={u} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline">
             {u.replace(/^https?:\/\//, "")}
             <ExternalLink className="size-3" />
           </a>
         ))}
+        {a.local_url && (
+          <span className="text-xs text-muted">
+            On this PC:{" "}
+            <a href={a.local_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 font-mono text-accent hover:underline">
+              {a.local_url.replace(/^https?:\/\//, "")}
+              <ExternalLink className="size-3" />
+            </a>
+            {a.urls.length === 0 && " (add a domain in Settings to reach it from the internet)"}
+          </span>
+        )}
       </div>
 
       {a.cloud && (

@@ -314,7 +314,7 @@ function DomainsCard({ projectId, app, isAdmin }: Props) {
       description={
         cloud
           ? `${reachable ? `Always reachable at ${reachable}. ` : ""}Add your own domain: with Cloudflare linked Deployer creates the DNS records, otherwise it lists them for you to add.`
-          : `Always reachable at ${reachable}. Add a Cloudflare hostname for the public internet.`
+          : `On this PC: ${reachable}. Add a Cloudflare hostname to reach it from the internet.`
       }
     >
       {app.domains.length > 0 && (

@@ -184,8 +184,11 @@ def check_api_key(db: Session, project_id: str, api_key_id: str | None) -> None:
 
 
 def local_url(db: Session, app: App) -> str:
-    host = (urlsplit(public_url(db)).hostname or "localhost").lower()
-    if host == "127.0.0.1":
+    """The app's direct port on this PC. A LAN/local public host is kept (other devices on the network
+    reach the port); a public (Cloudflare) host is not, since the tunnel doesn't carry 81xx ports."""
+    url = public_url(db)
+    host = (urlsplit(url).hostname or "localhost").lower()
+    if host == "127.0.0.1" or github.unreachable_reason(url) is None:
         host = "localhost"
     return f"http://{host}:{app.port}"
 

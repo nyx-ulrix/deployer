@@ -196,7 +196,8 @@ never ask for a token in chat:
    step is automatic.) GitHub can only reach the webhook when the instance has a public URL
    (Cloudflare domain); on `http://localhost` the user deploys with *Deploy now* instead. A connected
    repository's webhook follows the public URL automatically once remote access is set up.
-5. URLs: `local_url` (`http://localhost:81xx`, LAN when enabled) always works. For the internet,
+5. URLs: `local_url` (`http://localhost:81xx`, or the LAN address) only works on this PC or its
+   network, never from the internet, even after remote access is set up. For the internet,
    the user links Cloudflare (Settings → Domains & remote access), then
    `POST .../apps/{app_id}/domains {hostname}` (admin) creates the DNS record, tunnel ingress and
    Caddy route; the app then lists it under `urls`.

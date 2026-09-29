@@ -151,6 +151,19 @@ def test_database_access_is_admin_only(client, env, db):
     assert sorted(a.details["enabled"] for a in audit) == [False, True, True]
 
 
+def test_local_url_ignores_public_host(client, env, set_setting):
+    # A-055: the tunnel doesn't carry 81xx ports, so a public host gives a dead link; a LAN host works.
+    app = create(client, env)
+    for public, expected in [
+        ("https://deployer.example.com", "http://localhost:8100"),
+        ("http://192.168.1.20:8080", "http://192.168.1.20:8100"),
+        ("http://my-pc.local:8080", "http://my-pc.local:8100"),
+    ]:
+        set_setting("public_url", public)
+        got = client.get(f"{env['base']}/{app['id']}", headers=env["viewer"]).json()["local_url"]
+        assert got == expected, public
+
+
 def test_webhook(client, env, db, fake_redis, set_setting):
     set_setting("public_url", "https://deployer.example.com")
     app = create(client, env)

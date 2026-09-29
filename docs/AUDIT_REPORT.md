@@ -123,7 +123,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 
 **Deploys / monitoring / remote access**
 - [x] A-054 **[MEDIUM][bug]** Deployments stay "building"/"deploying" forever after a worker crash or reboot - `api/app/services/deployments.py:359-369, 892-909` - sweep deployments whose job is final or missing; cancel closes them.
-- [ ] A-055 **[MEDIUM][usability]** App link becomes http://<public-hostname>:81xx (unreachable) once remote access is set up - `api/app/services/deployments.py:172-176` (also `DEPLOYMENTS.md:296`, `SKILL.md:189`) - use the public host only when it is LAN or local, else localhost; label it "On this PC".
+- [x] A-055 **[MEDIUM][usability]** App link becomes http://<public-hostname>:81xx (unreachable) once remote access is set up - `api/app/services/deployments.py:172-176` (also `DEPLOYMENTS.md:296`, `SKILL.md:189`) - use the public host only when it is LAN or local, else localhost; label it "On this PC".
 - [ ] A-056 **[MEDIUM][bug]** App hostnames show up on the Remote access page and can be chosen as the dashboard public URL - `api/app/services/remote_access.py:276-281, 841-849` - reject target_type != dashboard; list only dashboard hosts; fix the TS type.
 - [ ] A-057 **[MEDIUM][security]** Static preset serves the repository's .git folder (and the whole repo as a fallback) - `api/app/services/deployments.py:492-516` (also `DEPLOYMENTS.md:158, 193`) - remove .git or add .dockerignore; nginx dotfile deny; warn on the "." fallback.
 - [ ] A-058 **[MEDIUM][usability]** Default install command `npm ci` fails for repos without package-lock.json - `api/app/services/deployments.py:493, 518` - `if [ -f package-lock.json ]; then npm ci; else npm install; fi`.

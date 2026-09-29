@@ -314,8 +314,9 @@ type Deployment = { id; app_id; status; trigger; commit_sha; commit_message; bra
   started_at; finished_at; error; rollback_of; log?: string; job_id; target_url: string|null };
 ```
 
-`local_url` is `http://localhost:<port>` (or the public URL's host with the port when the public URL is
-not localhost); `urls` adds `https://<hostname>` per active app domain.
+`local_url` is `http://localhost:<port>`, or the public URL's host with the port when that host is a
+LAN IP or local name (a public/Cloudflare host is never used: the tunnel doesn't carry app ports). The
+dashboard labels it "On this PC". `urls` adds `https://<hostname>` per active app domain.
 
 Export/import: `apps` (with `env` decrypted, `repo_token` decrypted, `webhook_secret`
 decrypted — re-encrypted on import; `port` and `live_deployment_id` omitted) and `domains` with

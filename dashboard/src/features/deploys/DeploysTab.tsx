@@ -80,6 +80,7 @@ export function DeploysTab() {
                   onClick={(e) => e.stopPropagation()}
                   className="inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline"
                 >
+                  {a.urls[0] ? "" : "On this PC: "}
                   {(a.urls[0] ?? a.local_url ?? "").replace(/^https?:\/\//, "")}
                   <ExternalLink className="size-3" />
                 </a>
