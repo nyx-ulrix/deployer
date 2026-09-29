@@ -13,9 +13,11 @@
 	# 	trusted_proxies static 192.168.1.10/32
 	# }
 
-	# :8081 is only reachable inside the compose network: it is the origin for the Cloudflare
+	# :8081 is only reachable inside the compose networks: it is the origin for the Cloudflare
 	# tunnel sidecar (docs/REMOTE_ACCESS.md). Trust cloudflared's X-Forwarded-Proto (https) and take
-	# the visitor IP from Cf-Connecting-Ip, which Cloudflare's edge always overwrites.
+	# the visitor IP from Cf-Connecting-Ip, which Cloudflare's edge always overwrites. Deployed apps
+	# (on the `apps` network) can reach this port too and set that header themselves, so the API's
+	# sign-in limit counts failures per email from every IP together (SECURITY.md).
 	servers :8081 {
 		trusted_proxies static private_ranges
 		client_ip_headers Cf-Connecting-Ip

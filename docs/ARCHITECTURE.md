@@ -27,7 +27,7 @@ Browser / phone / AI agent
    │      host ports 8100-8199, one per deployed app, from `caddy_apps/<app_id>.caddy`)
    ├── /v1/*  → api        (FastAPI, Python 3.12)
    ├── /*     → dashboard  (React + Vite SPA served by nginx)
-   └── :81xx  → deployer-app-<slug>-<dep>  (app containers on the public network, DEPLOYMENTS.md)
+   └── :81xx  → deployer-app-<slug>-<dep>  (app containers on the `apps` network, DEPLOYMENTS.md)
                  │
    backend network (internal: true)
    ├── mariadb:11   platform metadata DB `deployer` + managed SQL databases `p_<ref>` (binlog on)
@@ -82,8 +82,9 @@ Source of truth: `api/app/models.py`.
   account is refused with `account_exists_link_required`; the user signs in the usual way and links
   from *Settings → Account*. An identity can belong to only one user. A user cannot remove their last
   login method.
-- Login rate limit: 10 attempts / 15 min per IP+email, and 30 password logins + signups / 15 min per IP
-  (Redis); at most two argon2 hashes run at once so floods queue instead of exhausting memory. Project API keys: 600 requests/min per
+- Login rate limit: 10 attempts / 15 min per IP+email, 50 failed attempts / hour per email from any
+  IP (cleared by a successful sign-in or `deployer reset-password`), and 30 password logins + signups
+  / 15 min per IP (Redis); at most two argon2 hashes run at once so floods queue instead of exhausting memory. Project API keys: 600 requests/min per
   key by default (`api_key_rate_limit`), 429 with `Retry-After` ([MONITORING.md](MONITORING.md)).
 - Managed databases get their own DB user restricted to that database only.
 

@@ -455,3 +455,28 @@ def test_run_stops_a_silent_process_when_the_job_is_cancelled():
         assert time.monotonic() - start < 10
     finally:
         app_runner.cancel_check.reset(token)
+
+
+def test_worker_moves_old_app_containers_off_the_api_network(monkeypatch):
+    # A-019: apps used to share deployer_public with the API; the worker moves them to deployer_apps.
+    cli = app_runner.DockerCli()
+    calls = []
+
+    def run(args, **kw):
+        calls.append(args)
+        return "old-app\n" if args[:2] == ["docker", "ps"] and "label=deployer.app" in args else ""
+
+    monkeypatch.setattr(cli, "_run", run)
+    deployments.move_legacy_app_containers(cli)
+    assert ["docker", "network", "connect", "deployer_apps", "old-app"] in calls
+    assert ["docker", "network", "disconnect", "deployer_public", "old-app"] in calls
+    assert any("label=deployer.cohost_app" in c for c in calls)
+
+    def no_apps_network(args, **kw):
+        calls.append(args)
+        raise app_runner.DockerError("no such network")
+
+    calls.clear()
+    monkeypatch.setattr(cli, "_run", no_apps_network)
+    deployments.move_legacy_app_containers(cli)  # an older compose file without `apps`: leave them be
+    assert all(c[:3] == ["docker", "network", "inspect"] for c in calls)

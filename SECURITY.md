@@ -27,11 +27,15 @@ Security fixes are made for the latest release. Update with `deployer update`.
   container has no socket and stays unprivileged; only project developers can create apps, and their
   build commands run inside BuildKit / the app container, never in the worker process. Deployed app
   containers get no volumes, no extra capabilities, `no-new-privileges`, memory / CPU / pid limits and
-  are reachable only through Caddy's per-app port and the app's hostnames.
+  are reachable only through Caddy's per-app port and the app's hostnames. They run on their own
+  `apps` network, shared only with Caddy and the worker, so they cannot call the API directly (only
+  through Caddy, like any other client). They can still reach Caddy's internal `:8081` listener,
+  which takes the client IP from `Cf-Connecting-Ip`, so an app can make its requests appear to come
+  from any IP there: IP-based limits and the IPs in the audit log are not proof of origin.
 - **App database access** ([docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md) "Database access"): by default
   app containers cannot reach the internal `backend` network. A project admin can opt an app in; the
-  worker then connects its container to `backend`, which also carries Redis (password-protected) and
-  the platform MariaDB. The app receives only its project's managed sources' own restricted
+  worker then connects its container to `backend`, which also carries Redis (password-protected),
+  the platform MariaDB and the API itself (so such an app can also call the API directly). The app receives only its project's managed sources' own restricted
   credentials (per-database users, never root), passed through the process environment, never argv
   or the deployment log. Treat enabling it as trusting that app's code with network reach to those
   services; developers can switch it off but not on.
@@ -98,7 +102,10 @@ Security fixes are made for the latest release. Update with `deployer update`.
   credentials of this PC. Build output uploaded to S3 / Hosting skips symlinks, so a build cannot
   publish the worker's own files. Removing a connection deletes the stored key; delete the key
   in AWS / Google too when you no longer need it.
-- **Rate limits:** sign-in 10 attempts / 15 min per IP+email; project API keys 600 requests / min per
+- **Rate limits:** sign-in 10 attempts / 15 min per IP+email and 50 failed attempts / hour per email
+  from any IP (so rotating or forging IPs doesn't buy more guesses; the flip side is that someone
+  guessing can lock an account for up to an hour - `deployer reset-password` clears it), plus 30
+  password sign-ins + sign-ups / 15 min per IP; project API keys 600 requests / min per
   key (instance setting `api_key_rate_limit`); MCP 60 tool calls / min per key; GitHub webhooks per
   app. Over a limit: `429 rate_limited` with a `Retry-After` header.
 - **Alert webhook** ([docs/MONITORING.md](docs/MONITORING.md)): https only, stored encrypted, no

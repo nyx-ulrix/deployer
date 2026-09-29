@@ -200,9 +200,10 @@ services:
     user: "0:0"
     environment:
       <<: *api-environment
-      # App containers: memory limit per container and the compose network Caddy reaches them on.
+      # App containers: memory limit per container and the compose network Caddy reaches them on
+      # (`apps`: only caddy and the worker join it, so apps can't reach the API directly - A-019).
       APP_MEM_LIMIT: ${APP_MEM_LIMIT:-512m}
-      APP_NETWORK: deployer_public
+      APP_NETWORK: deployer_apps
       # Joined only by apps an admin gave database access (docs/DEPLOYMENTS.md "Database access").
       APP_DB_NETWORK: deployer_backend
       CADDY_APPS_DIR: /etc/caddy/apps
@@ -227,6 +228,8 @@ services:
     networks:
       - backend
       - public
+      # Waits for a new app container's port before routing it (DockerCli.wait_tcp).
+      - apps
     healthcheck:
       disable: true
     stop_grace_period: 30s
@@ -263,6 +266,8 @@ services:
       - caddy_config:/config
     networks:
       - public
+      # Deployed app containers (docs/DEPLOYMENTS.md); the API, dashboard and tunnel stay off it.
+      - apps
     mem_limit: ${CADDY_MEM_LIMIT:-128m}
     logging: *default-logging
 
@@ -300,6 +305,9 @@ networks:
   backend:
     internal: true
   public: {}
+  # Deployed apps (A-019): internet access for builds and outbound calls, but nothing of Deployer's
+  # except Caddy (and the worker) is on it.
+  apps: {}
 
 volumes:
   mariadb_data:

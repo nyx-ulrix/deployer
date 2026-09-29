@@ -12,7 +12,7 @@ GitHub push ──webhook──▶ api ──job app.deploy──▶ worker (roo
                                                    │ git clone → docker build → docker run
                                                    ▼
                      caddy :8100-8199 (one port per app, LAN/localhost)      deployer-app-<slug>-<dep>
-                     caddy :8081 host blocks (Cloudflare hostnames)  ──────▶ container on the `public` network
+                     caddy :8081 host blocks (Cloudflare hostnames)  ──────▶ container on the `apps` network
 ```
 
 - The **worker** service mounts the Docker socket and runs as root (`user: "0:0"`) so it can build
@@ -20,8 +20,10 @@ GitHub push ──webhook──▶ api ──job app.deploy──▶ worker (roo
   its trust, documented in SECURITY.md. Build tools in the image: `git`, `docker-ce-cli`,
   `docker-buildx-plugin` (Docker apt repo, key fingerprint checked like MariaDB's).
 - App containers are named `deployer-app-<slug>-<8 chars of deployment id>`, labelled
-  `deployer.app=<app_id>` and `deployer.deployment=<deployment_id>`, attached to the compose `public`
-  network, `--restart unless-stopped`, `--memory <APP_MEM_LIMIT, default 512m>`, `--cpus 1`,
+  `deployer.app=<app_id>` and `deployer.deployment=<deployment_id>`, attached to the compose `apps`
+  network (setting `app_network`, `deployer_apps`: only `caddy` and the worker share it, so an app
+  can't reach the API, dashboard or tunnel directly; on startup the worker moves containers started
+  by older versions off `deployer_public`), `--restart unless-stopped`, `--memory <APP_MEM_LIMIT, default 512m>`, `--cpus 1`,
   `--pids-limit 256`, no privileges, no volumes. Images are tagged
   `deployer-app/<app_id>:<deployment_id>`; the last 5 per app are kept, older ones removed.
 - **Routing** is Caddy only; app containers never publish ports. Caddy publishes the range
@@ -79,7 +81,7 @@ Cloudflare when linked) instead of the tunnel. Details, API and permissions: [CL
 ## Database access
 
 Off by default. An app normally reaches its project's data only through the data API
-(`DEPLOYER_API_KEY`): app containers sit on the compose `public` network, while `mariadb` and
+(`DEPLOYER_API_KEY`): app containers sit on the compose `apps` network, while `mariadb` and
 `mongodb` live on `backend` (`internal: true`). Apps that talk to their managed databases directly
 (e.g. Flask + PyMySQL / PyMongo) need `apps.database_access` (migration `0007_app_database_access`).
 
@@ -91,7 +93,7 @@ Off by default. An app normally reaches its project's data only through the data
   `forbidden` "Only project admins can give an app database access"). Developers may still edit an
   app that has it on (re-sending `true` is fine) and may switch it off. Every change is audited as
   `app.database_access` with `enabled`.
-- **Worker:** on every deploy and rollback of such an app, after `docker run` on the public network,
+- **Worker:** on every deploy and rollback of such an app, after `docker run` on the `apps` network,
   `docker network connect <APP_DB_NETWORK> <container>` (setting `app_db_network`, compose worker env
   `APP_DB_NETWORK=deployer_backend`). The log says "Connected to the project's databases network" and
   lists the injected variable **names**; passwords and URLs are redacted from the log.

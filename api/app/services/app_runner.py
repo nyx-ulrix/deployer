@@ -261,6 +261,22 @@ class DockerCli:
         """Joins a running container to a second network (apps with database access)."""
         self._run(["docker", "network", "connect", network, container])
 
+    def move_network(self, label: str, old: str, new: str) -> list[str]:
+        """Moves every container labelled `label` from network `old` to `new` (A-019: app containers
+        started before the apps-only network existed sit next to the API). Does nothing when `new`
+        doesn't exist, so an older compose file keeps its routing."""
+        try:
+            self._run(["docker", "network", "inspect", new])
+        except DockerError:
+            return []
+        names = self._run(
+            ["docker", "ps", "-a", "--filter", f"network={old}", "--filter", f"label={label}", "--format", "{{.Names}}"]
+        ).split()
+        for name in names:
+            self._run(["docker", "network", "connect", new, name], check=False)  # may already be on it
+            self._run(["docker", "network", "disconnect", old, name], check=False)
+        return names
+
     def remove_container(self, name: str) -> None:
         self._run(["docker", "rm", "-f", name], check=False)
 

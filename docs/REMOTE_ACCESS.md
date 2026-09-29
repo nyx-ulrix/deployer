@@ -70,8 +70,10 @@ https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%
 
    Why port **8081**: Caddy's `:8081` listener is not published on the host and is only used by the
    tunnel. It trusts `X-Forwarded-Proto: https` from cloudflared (so the API sees https) and takes the
-   visitor IP from `Cf-Connecting-Ip` (used for login rate limiting); the LAN-facing `:8080` listener
-   trusts no forwarded headers.
+   visitor IP from `Cf-Connecting-Ip` (per-IP rate limits, audit log); the LAN-facing `:8080` listener
+   trusts no forwarded headers. `:8081` trusts any private address, and deployed app containers can
+   reach it too, so an app can forge that IP: the sign-in limit that matters, 50 failed attempts per
+   email per hour, counts every IP together for that reason (SECURITY.md).
 4. When the connector reports healthy, the owner can click **Use as public URL**: `public_url` changes
    to `https://<hostname>`, and the dashboard lists the new Google/GitHub callback URLs to paste into
    their OAuth apps (both old and new URLs can be registered during the switch). Requires an `active`

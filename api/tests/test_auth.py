@@ -1,8 +1,11 @@
 import jwt
+import pytest
 
 from app.config import get_settings
 from app.crypto import sha256_hex
+from app.errors import ApiError
 from app.models import AuditLog, RefreshToken, User, UserIdentity
+from app.services import rate_limit
 from app.services.tokens import REFRESH_COOKIE
 from tests.conftest import DEFAULT_PASSWORD
 
@@ -62,6 +65,35 @@ def test_login_rate_limited(client, owner):
     # Other emails from the same IP are unaffected.
     resp = client.post("/v1/auth/login", json={"email": "someone@example.com", "password": "wrong-password"})
     assert resp.status_code == 401
+
+
+def test_login_limit_ignores_forged_forwarded_for(client, owner):
+    # A-019: a new X-Forwarded-For per attempt used to give every guess a fresh (ip,email) bucket.
+    for i in range(10):
+        resp = client.post(
+            "/v1/auth/login",
+            json={"email": "owner@example.com", "password": "wrong-password"},
+            headers={"X-Forwarded-For": f"203.0.113.{i}"},
+        )
+        assert resp.status_code == 401
+    resp = client.post(
+        "/v1/auth/login",
+        json={"email": "owner@example.com", "password": DEFAULT_PASSWORD},
+        headers={"X-Forwarded-For": "198.51.100.1"},
+    )
+    assert resp.status_code == 429
+
+
+def test_login_failures_per_email_span_every_ip(client, owner):
+    # A-019: rotating real source IPs doesn't buy more than 50 guesses per email per hour.
+    for i in range(rate_limit.LOGIN_EMAIL_LIMIT):
+        rate_limit.check_login(f"10.0.{i}.1", "owner@example.com")
+    with pytest.raises(ApiError) as exc:
+        rate_limit.check_login("10.9.9.9", "owner@example.com")
+    assert exc.value.code == "rate_limited"
+    rate_limit.check_login("10.9.9.9", "other@example.com")  # other accounts are unaffected
+    rate_limit.clear_login("10.9.9.9", "owner@example.com")  # a successful sign-in starts over
+    rate_limit.check_login("10.9.9.9", "owner@example.com")
 
 
 def test_login_and_signup_share_a_per_ip_limit(client, owner, set_setting):

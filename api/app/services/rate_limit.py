@@ -12,6 +12,10 @@ LOGIN_LIMIT = 10
 LOGIN_WINDOW_SECONDS = 15 * 60
 # Per-IP cap on password logins + signups (each costs an argon2 hash), across all emails.
 LOGIN_IP_LIMIT = 30
+# Per-email cap across every source IP (A-019): source IPs are cheap to rotate, and on :8080 every LAN
+# client arrives with the same one. Cleared by a successful sign-in and by `deployer reset-password`.
+LOGIN_EMAIL_LIMIT = 50
+LOGIN_EMAIL_WINDOW_SECONDS = 3600
 
 
 def hit(key: str, limit: int, window_seconds: int) -> tuple[bool, int]:
@@ -55,11 +59,24 @@ def login_key(ip: str | None, email: str) -> str:
     return "rl:login:" + sha256_hex(f"{ip or '-'}|{email}")
 
 
+def login_email_key(email: str) -> str:
+    return "rl:login-email:" + sha256_hex(email)
+
+
+def clear_login(ip: str | None, email: str) -> None:
+    """After a successful sign-in: the email's attempts no longer count against it."""
+    reset(login_key(ip, email))
+    reset(login_email_key(email))
+
+
 def check_login(ip: str | None, email: str | None = None) -> None:
-    """Per-IP bucket for every attempt, plus a per-(ip,email) bucket when an email is given."""
+    """Per-IP bucket for every attempt; with an email, also a per-(ip,email) bucket and a per-email one
+    (every IP together), both cleared on success so only failures since the last sign-in count."""
     allowed, retry_after = hit(f"rl:login-ip:{ip or '-'}", LOGIN_IP_LIMIT, LOGIN_WINDOW_SECONDS)
     if allowed and email is not None:
         allowed, retry_after = hit(login_key(ip, email), LOGIN_LIMIT, LOGIN_WINDOW_SECONDS)
+    if allowed and email is not None:
+        allowed, retry_after = hit(login_email_key(email), LOGIN_EMAIL_LIMIT, LOGIN_EMAIL_WINDOW_SECONDS)
     if not allowed:
         raise ApiError(
             429,

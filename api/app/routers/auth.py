@@ -92,7 +92,7 @@ def login(body: LoginIn, request: Request, response: Response, db: DbSession) ->
         raise ApiError(401, "invalid_credentials", "Incorrect email or password")
     if needs_rehash(user.password_hash):
         user.password_hash = hash_password(body.password)
-    rate_limit.reset(rate_limit.login_key(ip, email))
+    rate_limit.clear_login(ip, email)
     audit.record(db, "auth.login", request=request, user_id=user.id, method="password")
     payload = tokens.start_session(db, response, user, request)
     db.commit()
