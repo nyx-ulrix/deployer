@@ -183,6 +183,8 @@ never ask for a token in chat:
      (`database_access: true`); the container then gets `DEPLOYER_DB_<SOURCE>_URL` (+ `_HOST`,
      `_PORT`, `_USER`, `_PASSWORD`, `_DATABASE` for SQL). Prefer those names; an app with its own
      names can set them under Environment with host `mariadb` / port `3306` or `mongodb:27017`.
+     Keep a MariaDB connection pool small (about 5): each database user is capped at 20 connections
+     by default, shared with Deployer's own data API.
 3. First deployment: *Deploy now* or `POST /v1/projects/{id}/apps/{app_id}/deploy` → a deployment
    in `queued` → `building` → `deploying` → `live`. Follow the build log with
    `GET .../deployments/{dep_id}?log=1` every few seconds; on `failed`, read `error` + the log tail,

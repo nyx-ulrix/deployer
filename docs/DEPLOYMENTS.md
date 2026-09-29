@@ -112,6 +112,10 @@ Off by default. An app normally reaches its project's data only through the data
 - An existing app with its own variable names (e.g. `HH_SQL_HOST`) can set them under Environment
   with host `mariadb` / port `3306` and `mongodb:27017`, plus the source's credentials from
   `GET /data-sources/{sid}/connection`.
+- **Connection cap:** each managed MariaDB user may hold at most `MANAGED_DB_MAX_USER_CONNECTIONS`
+  (default 20) connections at once, shared by the app (old and new container overlap during a deploy)
+  and Deployer's own data API. Keep the app's pool small (about 5); past the cap MariaDB refuses new
+  connections with "User ... has exceeded the 'max_user_connections' resource".
 
 ## Co-hosted apps (docs/COHOSTING.md "Websites on both PCs")
 
