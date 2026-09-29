@@ -230,7 +230,7 @@ def unreachable_reason(url: str) -> str | None:
         ip = ipaddress.ip_address(host)
         private = private or ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved
     except ValueError:
-        pass
+        private = private or "." not in host  # single-label (NetBIOS/mDNS) names only resolve on the LAN
     if not private:
         return None
     return (

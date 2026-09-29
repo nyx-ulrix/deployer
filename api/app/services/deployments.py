@@ -188,9 +188,9 @@ def local_url(db: Session, app: App) -> str:
     reach the port); a public (Cloudflare) host is not, since the tunnel doesn't carry 81xx ports."""
     url = public_url(db)
     host = (urlsplit(url).hostname or "localhost").lower()
-    if host == "127.0.0.1" or github.unreachable_reason(url) is None:
+    if host in ("127.0.0.1", "::1") or github.unreachable_reason(url) is None:
         host = "localhost"
-    return f"http://{host}:{app.port}"
+    return f"http://{f'[{host}]' if ':' in host else host}:{app.port}"
 
 
 def app_domains(db: Session, app_id: str) -> list[Domain]:

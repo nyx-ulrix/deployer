@@ -158,6 +158,9 @@ def test_local_url_ignores_public_host(client, env, set_setting):
         ("https://deployer.example.com", "http://localhost:8100"),
         ("http://192.168.1.20:8080", "http://192.168.1.20:8100"),
         ("http://my-pc.local:8080", "http://my-pc.local:8100"),
+        ("http://desktop-abc:8080", "http://desktop-abc:8100"),
+        ("http://[fd00::5]:8080", "http://[fd00::5]:8100"),
+        ("http://[::1]:8080", "http://localhost:8100"),
     ]:
         set_setting("public_url", public)
         got = client.get(f"{env['base']}/{app['id']}", headers=env["viewer"]).json()["local_url"]
