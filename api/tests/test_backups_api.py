@@ -743,6 +743,35 @@ def test_prune_and_purge_deleted_sources(client, env, db):
     assert db.query(BackupPolicy).count() == 0
 
 
+def test_purge_drops_a_database_deleted_without_drop(client, env, db, monkeypatch):
+    # A-040: without drop=true the database and its user stayed on the host forever after the purge.
+    ds_id, later = env["ds"].id, utcnow() + timedelta(days=31)
+    client.delete(f"{env['pbase']}/data-sources/{ds_id}", headers=env["admin"])
+    jobs.run_queued()
+    assert env["dropped"] == []
+
+    def offline(db, ds):
+        raise ApiError(503, "device_offline", "The host device is offline")
+
+    monkeypatch.setattr(provisioning, "drop_managed_source", offline)
+    backups.prune_all(jobs.get_sessionmaker(), later)
+    db.expire_all()
+    assert db.get(DataSource, ds_id) is not None  # kept, retried at the next prune
+    monkeypatch.setattr(provisioning, "drop_managed_source", lambda db, ds: env["dropped"].append(ds.database_name))
+    assert backups.prune_all(jobs.get_sessionmaker(), later)["purged_sources"] == 1
+    db.expire_all()
+    assert db.get(DataSource, ds_id) is None and env["dropped"] == ["p_shop_abc123"]
+
+
+def test_purge_does_not_drop_twice(client, env, db):
+    ds_id = env["ds"].id
+    client.delete(f"{env['pbase']}/data-sources/{ds_id}?drop=true", headers=env["owner"])
+    jobs.run_queued()
+    backups.prune_all(jobs.get_sessionmaker(), utcnow() + timedelta(days=31))
+    db.expire_all()
+    assert db.get(DataSource, ds_id) is None and env["dropped"] == ["p_shop_abc123"]
+
+
 def test_prune_deletes_old_finished_jobs(env, db):
     ds_id, now = env["ds"].id, utcnow()
 

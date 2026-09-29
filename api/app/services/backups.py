@@ -1351,6 +1351,16 @@ def purge_source(db: Session, data_source_id: str) -> None:
         db.delete(policy)
 
 
+def _drop_before_purge(db: Session, ds: DataSource) -> None:
+    """A source deleted without drop=true still has its database and user; the purge drops them (A-040).
+    Raises while the host is unreachable (or the delete job still runs), so the next prune retries."""
+    if _was_dropped(db, ds):
+        return
+    if ds.device_id is None and ds.status_message == "device removed":
+        return  # the database lived on a device that is gone; nothing here to drop
+    _provisioning().drop_managed_source(db, ds)
+
+
 def prune_all(factory: jobs.SessionFactory, now: datetime | None = None) -> dict:
     now = now or utcnow()
     session = factory()
@@ -1363,6 +1373,7 @@ def prune_all(factory: jobs.SessionFactory, now: datetime | None = None) -> dict
                 continue
             try:
                 if ds.deleted_at is not None and now - ds.deleted_at >= DELETED_KEEP:
+                    _drop_before_purge(session, ds)
                     purge_source(session, ds.id)
                     session.delete(ds)
                     summary["purged_sources"] += 1

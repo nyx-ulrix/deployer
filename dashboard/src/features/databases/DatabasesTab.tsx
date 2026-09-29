@@ -335,8 +335,9 @@ function DeleteSourceDialog({
       description={
         drop
           ? "The database and all of its data will be dropped. A final version and its recovery logs are kept for 30 days under Recently deleted, then purged."
-          : "The database is detached from this project. Its data is kept" +
-            (source.mode === "external" ? " on the external server." : " on this machine.")
+          : source.mode === "external"
+            ? "The database is detached from this project. Its data is kept on the external server."
+            : "The database is detached from this project and kept under Recently deleted for 30 days, where you can restore it. After that it is dropped with all of its data."
       }
     >
       {canDrop && source.mode === "managed" && (
