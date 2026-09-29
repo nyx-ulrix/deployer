@@ -147,6 +147,8 @@ export type ImportSummary = {
   data_sources?: number;
   rows?: number;
   documents?: number;
+  /** e.g. views/triggers the export did not carry, or a device that was not connected. */
+  warnings?: string[];
 };
 
 export type SetupImportResponse = { ok: true; summary: ImportSummary };

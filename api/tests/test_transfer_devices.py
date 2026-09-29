@@ -186,3 +186,34 @@ def test_projects_import_checks_device_eligibility(db, world, fake_device, fake_
     other = make_user()
     _, summary = transfer.import_projects(db, payload, other)
     assert fake_provision[-1]["device_id"] is None
+
+
+def test_skipped_views_and_triggers_warn_at_export_and_import(db, world, fake_device, fake_provision, monkeypatch):
+    data = {**SQL_DATA, "skipped": {"views": 2, "triggers": 1}}
+
+    def handler(method, params):
+        result = _export_handler(data)(method, params)
+        return {**result, "skipped": data["skipped"]}
+
+    fd = fake_device(world["device"].id, handler)
+    buf = io.StringIO()
+    counts = transfer.write_payload(buf, db, scope="projects", projects=[world["project"]], created_at="x")
+    payload = json.loads(buf.getvalue())
+    fd.stop()
+    expected = "Data source 'main-sql' has 2 views, 1 trigger that exports do not carry"
+    assert counts["warnings"][0].startswith(expected)
+
+    monkeypatch.setattr(transfer, "restore_sql_data", lambda ds, d: 2)
+    _, summary = transfer.import_projects(db, payload, db.get(User, world["owner"].id))
+    assert any(w.startswith(expected) for w in summary["warnings"])
+
+
+def test_skipped_objects_counts_only_nonzero():
+    class Conn:
+        def exec_driver_sql(self, sql):
+            n = 1 if "ROUTINES" in sql else 0
+            return type("R", (), {"scalar": lambda self: n})()
+
+    assert transfer._skipped_objects(Conn()) == {"routines": 1}
+    assert transfer.skipped_warning("db", {"routines": 1}).startswith("Data source 'db' has 1 routine that")
+    assert transfer.skipped_warning("db", {}) is None and transfer.skipped_warning("db", None) is None

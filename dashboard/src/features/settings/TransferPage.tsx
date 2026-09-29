@@ -26,9 +26,14 @@ export function TransferPage() {
         description="Move projects — or this whole installation — to another device."
       />
       <Alert tone="info" className="mb-5" title="Exports include your data">
-        An export file contains everything, <strong>including the data in your managed databases</strong> (tables,
-        rows, collections and documents), plus members, API keys and connection secrets. Importing it on another
-        Deployer sets everything up again. Files are encrypted with the passphrase you choose — keep both safe.
+        An export file contains your projects <strong>and the data in your managed databases</strong> (tables,
+        rows, collections and documents), plus members, API keys, apps and connection secrets. Files are encrypted
+        with the passphrase you choose — keep both safe.
+      </Alert>
+      <Alert tone="warning" className="mb-5" title="Not included">
+        MariaDB views, triggers, stored routines and events (the import summary lists any that were left out —
+        recreate them from a SQL dump), backups and their version / point-in-time history, deployment history, query
+        runs and the audit log.
       </Alert>
       <div className="space-y-5">
         {user.is_instance_owner && <InstanceExportCard />}

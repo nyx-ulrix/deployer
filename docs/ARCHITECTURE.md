@@ -113,6 +113,11 @@ SQL tables as DDL + rows, Mongo collections as options + indexes + documents (ca
 JSON). External databases are reconnected, not copied. A passphrase (min 12 chars) is required
 because the file contains password hashes and secrets.
 
+Not carried: MariaDB views, triggers, stored routines and events (counted per database as
+`"skipped"` and reported as `warnings` in the export's audit entry and the import summary; recreate
+them from a SQL dump), backup files and versions / point-in-time history, deployments, query runs and
+audit logs. The dashboard's Export & import page lists these exclusions.
+
 - `scope: instance` — made by the instance owner; imported by the setup wizard on a fresh install
   ("Restore from export") and restores everything, including all users.
 - `scope: projects` — made by any user for projects they own; imported by any user on another

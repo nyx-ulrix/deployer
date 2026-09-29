@@ -44,7 +44,10 @@ Streaming & limits
   is roughly the uncompressed payload size plus Python object overhead. Very large databases
   (multiple GB) should be moved with native dump tools instead.
 - Views, triggers, stored routines and events of managed MariaDB databases are not exported; MongoDB
-  views are. Generated (virtual/stored) SQL columns are recreated by their DDL, not copied.
+  views are. They are counted into the source's ``data`` entry as ``"skipped": {"views": n, ...}`` and
+  reported as ``warnings`` in the export counts (audit log) and the import summary. Generated
+  (virtual/stored) SQL columns are recreated by their DDL, not copied.
+- Backup files, backup/PITR history, versions, query runs, deployments and audit logs never travel.
 """
 
 from __future__ import annotations
@@ -322,7 +325,36 @@ def _mysql_columns(conn: Any, table: str) -> list[dict]:
     return cols
 
 
-def _write_sql_data(w: _Writer, ds: DataSource) -> tuple[int, int]:
+_SKIPPED_SQL = {
+    "views": "SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'VIEW'",
+    "triggers": "SELECT COUNT(*) FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE()",
+    "routines": "SELECT COUNT(*) FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = DATABASE()",
+    "events": "SELECT COUNT(*) FROM information_schema.EVENTS WHERE EVENT_SCHEMA = DATABASE()",
+}
+
+
+def _skipped_objects(conn: Any) -> dict[str, int]:
+    """Counts the database objects the export does not carry (views, triggers, routines, events)."""
+    counts = {kind: int(conn.exec_driver_sql(sql).scalar() or 0) for kind, sql in _SKIPPED_SQL.items()}
+    return {kind: n for kind, n in counts.items() if n}
+
+
+def skipped_warning(source_name: str, skipped: Any) -> str | None:
+    """ "Data source 'x' has 2 views, 1 trigger that ..." or None when nothing was skipped."""
+    if not isinstance(skipped, dict):
+        return None
+    parts = [
+        f"{n} {kind[:-1] if n == 1 else kind}" for kind in _SKIPPED_SQL if isinstance(n := skipped.get(kind), int) and n
+    ]
+    if not parts:
+        return None
+    return (
+        f"Data source '{source_name}' has {', '.join(parts)} that exports do not carry; recreate them by hand "
+        "(e.g. from a SQL dump of the original database)"
+    )
+
+
+def _write_sql_data(w: _Writer, ds: DataSource) -> tuple[int, int, dict[str, int]]:
     config = decrypt_json(ds.config_encrypted)
     engine = connections.build_sql_engine(ds.engine, config, pooled=False)
     rows_total = 0
@@ -357,9 +389,12 @@ def _write_sql_data(w: _Writer, ds: DataSource) -> tuple[int, int]:
                 w.close("}")
                 tables += 1
             w.close("]")
+            skipped = _skipped_objects(conn)
+            if skipped:
+                w.field("skipped", skipped)
     finally:
         engine.dispose()
-    return tables, rows_total
+    return tables, rows_total, skipped
 
 
 def _write_mongo_data(w: _Writer, ds: DataSource) -> int:
@@ -400,20 +435,20 @@ def _write_mongo_data(w: _Writer, ds: DataSource) -> int:
     return documents
 
 
-def write_source_data(fh: IO[str], ds: DataSource) -> dict[str, int]:
+def write_source_data(fh: IO[str], ds: DataSource) -> dict[str, Any]:
     """Writes one source's `data` entry (a JSON object) to `fh`. Used locally and on host devices."""
     w = _Writer(fh)
     w.open("{")
     if ds.kind == "sql":
-        tables, rows = _write_sql_data(w, ds)
-        counts = {"tables": tables, "rows": rows, "documents": 0}
+        tables, rows, skipped = _write_sql_data(w, ds)
+        counts = {"tables": tables, "rows": rows, "documents": 0, "skipped": skipped}
     else:
         counts = {"tables": 0, "rows": 0, "documents": _write_mongo_data(w, ds)}
     w.close("}")
     return counts
 
 
-def _write_device_data(fh: IO[str], ds: DataSource) -> dict[str, int]:
+def _write_device_data(fh: IO[str], ds: DataSource) -> dict[str, Any]:
     """Has the host device export the source's data and copies it verbatim into `fh`."""
     transfer_id = device_rpc.create_transfer(ds.device_id, "put")
     try:
@@ -446,14 +481,19 @@ def _write_device_data(fh: IO[str], ds: DataSource) -> dict[str, int]:
     finally:
         device_rpc.finish_transfer(transfer_id)
     result = result if isinstance(result, dict) else {}
-    return {"rows": int(result.get("rows") or 0), "documents": int(result.get("documents") or 0)}
+    return {
+        "rows": int(result.get("rows") or 0),
+        "documents": int(result.get("documents") or 0),
+        "skipped": result.get("skipped"),
+    }
 
 
-def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Project], created_at: str) -> dict[str, int]:
-    """Streams the plaintext payload JSON to `fh`. Returns counts."""
+def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Project], created_at: str) -> dict[str, Any]:
+    """Streams the plaintext payload JSON to `fh`. Returns counts (+ `warnings` when objects were skipped)."""
     w = _Writer(fh)
     project_ids = [p.id for p in projects]
-    counts = {"users": 0, "projects": len(projects), "data_sources": 0, "rows": 0, "documents": 0}
+    counts: dict[str, Any] = {"users": 0, "projects": len(projects), "data_sources": 0, "rows": 0, "documents": 0}
+    warnings: list[str] = []
     w.open("{")
     w.field("version", VERSION)
     w.field("scope", scope)
@@ -530,12 +570,16 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
             device_counts = _write_device_data(w.fh, ds)
             counts["rows"] += device_counts["rows"]
             counts["documents"] += device_counts["documents"]
+            if warning := skipped_warning(ds.name, device_counts["skipped"]):
+                warnings.append(warning)
             continue
         w.open("{")
         try:
             if ds.kind == "sql":
-                _, rows = _write_sql_data(w, ds)
+                _, rows, skipped = _write_sql_data(w, ds)
                 counts["rows"] += rows
+                if warning := skipped_warning(ds.name, skipped):
+                    warnings.append(warning)
             else:
                 counts["documents"] += _write_mongo_data(w, ds)
         except ApiError:
@@ -546,6 +590,8 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
         w.close("}")
     w.close("}")
     w.close("}")
+    if warnings:
+        counts["warnings"] = warnings
     return counts
 
 
@@ -851,6 +897,8 @@ def _provision_with_data(
     rows, docs = restore_data(ds, data)
     totals["rows"] += rows
     totals["documents"] += docs
+    if warning := skipped_warning(row["name"], (data or {}).get("skipped")):
+        warnings.append(warning)
     return ds
 
 
