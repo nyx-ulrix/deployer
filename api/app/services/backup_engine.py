@@ -78,6 +78,9 @@ MARIADB_BINLOG = os.environ.get("MARIADB_BINLOG_BIN", "mariadb-binlog")
 MARIADB_CLIENT = os.environ.get("MARIADB_CLIENT_BIN", "mariadb")
 MONGODUMP = os.environ.get("MONGODUMP_BIN", "mongodump")
 MONGORESTORE = os.environ.get("MONGORESTORE_BIN", "mongorestore")
+# A dump/restore tool still running after this long is killed (a hung tool would otherwise keep its job
+# `running` - the job heartbeat does not care - and the scheduler skips a source with an active snapshot).
+TOOL_TIMEOUT_S = float(os.environ.get("BACKUP_TOOL_TIMEOUT_HOURS") or 12) * 3600
 
 _archive_lock = threading.Lock()
 
@@ -185,8 +188,32 @@ def _stderr_text(fh: IO[bytes]) -> str:
     return _redact(fh.read()[-4000:].decode("utf-8", "replace").strip())
 
 
+def _timeout_kill(proc: subprocess.Popen) -> None:
+    proc.timed_out = True  # type: ignore[attr-defined]
+    with suppress(OSError):
+        proc.kill()
+
+
+@contextmanager
+def _run_tool(args: list[str], **kwargs: Any) -> Iterator[subprocess.Popen]:
+    """`Popen` that is killed after TOOL_TIMEOUT_S, or when the block exits early (an exception)."""
+    proc = subprocess.Popen(args, env=_tool_env(), **kwargs)  # noqa: S603 - argv list, no shell
+    timer = threading.Timer(TOOL_TIMEOUT_S, _timeout_kill, (proc,))
+    timer.daemon = True
+    timer.start()
+    try:
+        yield proc
+    finally:
+        timer.cancel()
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+
+
 def _check_exit(proc: subprocess.Popen, stderr: IO[bytes], tool: str) -> None:
     code = proc.wait()
+    if getattr(proc, "timed_out", False):
+        raise BackupEngineError(f"{tool} was stopped after running for {TOOL_TIMEOUT_S / 3600:g} h without finishing")
     if code != 0:
         raise BackupEngineError(f"{tool} failed (exit {code}): {_stderr_text(stderr) or 'no output'}")
 
@@ -526,18 +553,18 @@ def mariadb_snapshot(database: str, path: Path, on_progress: ProgressFn = _noop)
             if log_bin:
                 args += ["--gtid", "--master-data=2"]
             args.append(database)
-            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=err, env=_tool_env())  # noqa: S603
-            assert proc.stdout is not None
-            last = time.monotonic()
-            for line in proc.stdout:
-                scanner.feed(line)
-                writer.write(line)
-                if time.monotonic() - last > 2:
-                    last = time.monotonic()
-                    on_progress(
-                        min(0.9, writer.plain_bytes / (estimate * 1.5)), f"Dumped {writer.plain_bytes >> 20} MiB"
-                    )
-            _check_exit(proc, err, "mariadb-dump")
+            with _run_tool(args, stdout=subprocess.PIPE, stderr=err) as proc:
+                assert proc.stdout is not None
+                last = time.monotonic()
+                for line in proc.stdout:
+                    scanner.feed(line)
+                    writer.write(line)
+                    if time.monotonic() - last > 2:
+                        last = time.monotonic()
+                        on_progress(
+                            min(0.9, writer.plain_bytes / (estimate * 1.5)), f"Dumped {writer.plain_bytes >> 20} MiB"
+                        )
+                _check_exit(proc, err, "mariadb-dump")
         info = writer.commit()
     except BaseException:
         writer.abort()
@@ -583,7 +610,7 @@ def _fetch_binlog(name: str, dest_dir: Path) -> Path:
     if not BINLOG_NAME_RE.fullmatch(name):
         raise ValueError(f"Unexpected binlog file name: {name!r}")
     with mariadb_defaults_file() as cnf, tempfile.TemporaryFile() as err:
-        proc = subprocess.Popen(  # noqa: S603
+        with _run_tool(
             [
                 MARIADB_BINLOG,
                 f"--defaults-extra-file={cnf}",
@@ -594,9 +621,8 @@ def _fetch_binlog(name: str, dest_dir: Path) -> Path:
             ],
             stdout=subprocess.DEVNULL,
             stderr=err,
-            env=_tool_env(),
-        )
-        _check_exit(proc, err, "mariadb-binlog")
+        ) as proc:
+            _check_exit(proc, err, "mariadb-binlog")
     path = dest_dir / name
     if not path.is_file():
         raise BackupEngineError(f"mariadb-binlog did not produce {name}")
@@ -708,20 +734,19 @@ def _managed_user_for(database: str) -> str | None:
 def _run_mariadb_client(database: str, feed: Callable[[Callable[[bytes], None]], None]) -> None:
     """Runs `mariadb <database>` as root and streams SQL into it via `feed(write)`."""
     with mariadb_defaults_file() as cnf, tempfile.TemporaryFile() as err:
-        proc = subprocess.Popen(  # noqa: S603
+        with _run_tool(
             [MARIADB_CLIENT, f"--defaults-extra-file={cnf}", "--binary-mode", "--max-allowed-packet=1G", database],
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=err,
-            env=_tool_env(),
-        )
-        assert proc.stdin is not None
-        try:
-            feed(proc.stdin.write)
-            proc.stdin.close()
-        except BrokenPipeError:
-            pass
-        _check_exit(proc, err, "mariadb")
+        ) as proc:
+            assert proc.stdin is not None
+            try:
+                feed(proc.stdin.write)
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass
+            _check_exit(proc, err, "mariadb")
 
 
 def _load_dump(
@@ -792,22 +817,22 @@ def _replay_binlogs(
             args.append(f"--stop-datetime={stop.strftime('%Y-%m-%d %H:%M:%S')}")
         args += [p.as_posix() for p in paths]
         with tempfile.TemporaryFile() as err:
-            binlog = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=err, env=_tool_env())  # noqa: S603
-            assert binlog.stdout is not None
-            on_progress(None, f"Replaying {len(paths)} binlog file(s)")
+            with _run_tool(args, stdout=subprocess.PIPE, stderr=err) as binlog:
+                assert binlog.stdout is not None
+                on_progress(None, f"Replaying {len(paths)} binlog file(s)")
 
-            def feed(write: Callable[[bytes], None]) -> None:
-                for line in binlog.stdout:  # type: ignore[union-attr]
-                    if b"DEFINER=" in line:
-                        line = _DEFINER_RE.sub(definer, line)
-                    write(rename(line) if rename else line)
+                def feed(write: Callable[[bytes], None]) -> None:
+                    for line in binlog.stdout:  # type: ignore[union-attr]
+                        if b"DEFINER=" in line:
+                            line = _DEFINER_RE.sub(definer, line)
+                        write(rename(line) if rename else line)
 
-            try:
-                _run_mariadb_client(database, feed)
-            finally:
-                with suppress(Exception):
-                    binlog.stdout.close()
-            _check_exit(binlog, err, "mariadb-binlog")
+                try:
+                    _run_mariadb_client(database, feed)
+                finally:
+                    with suppress(Exception):
+                        binlog.stdout.close()
+                _check_exit(binlog, err, "mariadb-binlog")
     return len(paths)
 
 
@@ -1102,20 +1127,19 @@ def mongo_snapshot(database: str, path: Path, on_progress: ProgressFn = _noop) -
     writer = ArtifactWriter(path, compress=False)  # the archive is already gzip-compressed by mongodump
     try:
         with mongo_config_file() as cfg, tempfile.TemporaryFile() as err:
-            proc = subprocess.Popen(  # noqa: S603
+            with _run_tool(
                 [MONGODUMP, f"--config={cfg}", f"--db={database}", "--archive", "--gzip"],
                 stdout=subprocess.PIPE,
                 stderr=err,
-                env=_tool_env(),
-            )
-            assert proc.stdout is not None
-            last = time.monotonic()
-            while chunk := proc.stdout.read(1 << 20):
-                writer.write(chunk)
-                if time.monotonic() - last > 2:
-                    last = time.monotonic()
-                    on_progress(None, f"Dumped {writer.plain_bytes >> 20} MiB")
-            _check_exit(proc, err, "mongodump")
+            ) as proc:
+                assert proc.stdout is not None
+                last = time.monotonic()
+                while chunk := proc.stdout.read(1 << 20):
+                    writer.write(chunk)
+                    if time.monotonic() - last > 2:
+                        last = time.monotonic()
+                        on_progress(None, f"Dumped {writer.plain_bytes >> 20} MiB")
+                _check_exit(proc, err, "mongodump")
             err.seek(0)
             counts = parse_mongodump_counts(err.read().decode("utf-8", "replace"), database)
         info = writer.commit()
@@ -1207,21 +1231,20 @@ def mongo_archive_logs(database: str, since_point: dict | None, prefix: str, roo
 
 def _mongorestore(args: list[str], *, stdin: IO[bytes] | None = None) -> str:
     with mongo_config_file() as cfg, tempfile.TemporaryFile() as err:
-        proc = subprocess.Popen(  # noqa: S603
+        with _run_tool(
             [MONGORESTORE, f"--config={cfg}", *args],
             stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=err,
-            env=_tool_env(),
-        )
-        if stdin is not None:
-            assert proc.stdin is not None
-            try:
-                shutil.copyfileobj(stdin, proc.stdin, 1 << 20)
-                proc.stdin.close()
-            except BrokenPipeError:
-                pass
-        _check_exit(proc, err, "mongorestore")
+        ) as proc:
+            if stdin is not None:
+                assert proc.stdin is not None
+                try:
+                    shutil.copyfileobj(stdin, proc.stdin, 1 << 20)
+                    proc.stdin.close()
+                except BrokenPipeError:
+                    pass
+            _check_exit(proc, err, "mongorestore")
         err.seek(0)
         return err.read().decode("utf-8", "replace")
 

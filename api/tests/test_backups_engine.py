@@ -133,3 +133,26 @@ def test_credentials_never_in_arguments(monkeypatch):
     assert not cfg.exists()
     env = be._tool_env()
     assert not any(k.startswith(("MARIADB_", "MONGO_")) for k in env) and env["TZ"] == "UTC"
+
+
+def test_hung_tool_is_killed_after_the_timeout(monkeypatch, tmp_path):
+    """A-046: a dump/restore tool that never exits must fail its job instead of blocking later backups."""
+    import subprocess
+    import sys
+    import tempfile
+    import time
+
+    monkeypatch.setattr(be, "TOOL_TIMEOUT_S", 0.5)
+    started = time.monotonic()
+    with tempfile.TemporaryFile() as err, pytest.raises(be.BackupEngineError, match="stopped after"):
+        with be._run_tool(
+            [sys.executable, "-c", "import time; time.sleep(60)"], stdout=subprocess.PIPE, stderr=err
+        ) as proc:
+            assert proc.stdout.read() == b""  # unblocks only because the watchdog killed the tool
+            be._check_exit(proc, err, "mariadb-dump")
+    assert time.monotonic() - started < 30
+
+    monkeypatch.setattr(be, "TOOL_TIMEOUT_S", 60)
+    with pytest.raises(RuntimeError), be._run_tool([sys.executable, "-c", "import time; time.sleep(60)"]) as proc:
+        raise RuntimeError("the reader failed")
+    assert proc.poll() is not None  # an abandoned tool is not left running

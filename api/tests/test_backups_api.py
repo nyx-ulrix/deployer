@@ -572,6 +572,34 @@ def test_failed_verify_alerts_shows_in_health_and_retries_next_day(client, env, 
     assert src["last_verify_status"] == "ok"
 
 
+def test_no_successful_backup_for_twice_the_schedule_alerts(client, env, db):
+    """A-046: a hung snapshot job fails nothing, so a database whose backups silently stopped needs its own alert."""
+    from app.services import alerts
+
+    ds = env["ds"]
+    backups.ensure_policy(db, ds)
+    db.commit()
+    out: dict = {}
+    alerts._backup_rules(db, out)
+    assert out == {}  # new database, not overdue yet
+    ds.created_at = utcnow() - timedelta(hours=3)
+    db.commit()
+    alerts._backup_rules(db, out)
+    assert [c.alert for c in out.values()] == ["backup_stale"] and "over 2 hours" in out[
+        f"backup_stale:{ds.id}"
+    ].message
+
+    backup_id = _snapshot(client, env)
+    db.expire_all()
+    out = {}
+    alerts._backup_rules(db, out)
+    assert out == {}
+    db.get(Backup, backup_id).started_at = utcnow() - timedelta(hours=3)
+    db.commit()
+    alerts._backup_rules(db, out)
+    assert list(out) == [f"backup_stale:{ds.id}"]
+
+
 def test_soft_delete_and_restore_deleted_source(client, env, db):
     ds = env["ds"]
     base = env["pbase"]

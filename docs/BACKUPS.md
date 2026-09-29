@@ -108,6 +108,10 @@ The hourly prune deletes finished job rows after 14 days (failed ones after 30),
 When a job ends without its handler finishing (the PC slept, rebooted or the worker crashed, so the
 job is failed as "worker stopped"; or it was cancelled while queued), the scheduler marks its `running`
 version as failed (so it can be deleted and pruned) and drops a half-made `new_source` restore target.
+A dump, log or restore tool (`mariadb-dump`, `mariadb-binlog`, `mariadb`, `mongodump`, `mongorestore`)
+still running after 12 hours (`BACKUP_TOOL_TIMEOUT_HOURS` on the API/worker containers) is killed and
+its job fails, so a hung tool cannot keep a snapshot `running` and block every later one; independently,
+the `backup_stale` alert fires when a database has had no successful snapshot for twice its schedule.
 At start the worker also removes `.partial` artifacts untouched for an hour and any leftover
 `rtmp_*` / `verify_*` / `rtrash_*` temporary databases.
 

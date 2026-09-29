@@ -27,7 +27,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError
-from app.models import AppReplica, Backup, DataSource, Device, Job, SourceReplica, utcnow
+from app.models import AppReplica, Backup, BackupPolicy, DataSource, Device, Job, SourceReplica, utcnow
 from app.redis_client import get_redis
 from app.services import metrics
 from app.services.instance_settings import get_value, public_url
@@ -52,6 +52,11 @@ class Condition:
 
 def _fmt_gb(value: float) -> str:
     return f"{value / GB:.1f} GB"
+
+
+def _fmt_age(age: timedelta) -> str:
+    hours = int(age.total_seconds() // 3600)
+    return f"{hours // 24} days" if hours >= 48 else f"{hours} hours"
 
 
 # --- rules --------------------------------------------------------------------------------------
@@ -134,8 +139,30 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
         out[f"backup:{job.type}:{job.data_source_id or 'platform'}"] = Condition(
             "backup_failed", "critical", f"Backup job {job.type} failed for {target}; see Settings > Backups"
         )
+    # A job that never ends (a hung tool) fails nothing: alert when a scheduled database has had no
+    # successful snapshot for twice its schedule.
+    from app.services.backups import SCHEDULES, last_verification, supported
+
+    now = utcnow()
+    last_ok = (
+        select(func.max(Backup.started_at))
+        .where(Backup.data_source_id == DataSource.id, Backup.status == "succeeded")
+        .scalar_subquery()
+    )
+    for ds, schedule, last in db.execute(
+        select(DataSource, BackupPolicy.schedule, last_ok)
+        .join(BackupPolicy, BackupPolicy.data_source_id == DataSource.id)
+        .where(BackupPolicy.enabled.is_(True), DataSource.mode == "managed", DataSource.deleted_at.is_(None))
+    ).all():
+        every = SCHEDULES.get(schedule, SCHEDULES["hourly"])
+        if supported(ds) and now - (last or ds.created_at) > 2 * every:
+            out[f"backup_stale:{ds.id}"] = Condition(
+                "backup_stale",
+                "critical",
+                f"Database {ds.name} has had no successful backup for over {_fmt_age(2 * every)}; "
+                "see Settings > Backups",
+            )
     # A failed verification is a job result, not a failed job: alert until a later verification passes.
-    from app.services.backups import last_verification
 
     for ds_id in db.scalars(select(Backup.data_source_id).where(Backup.verify_status == "failed").distinct()):
         ds = db.get(DataSource, ds_id) if ds_id else None
