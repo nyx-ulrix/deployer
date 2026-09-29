@@ -268,6 +268,67 @@ def _timeout_statement(engine_name: str, seconds: int) -> str | None:
     return None
 
 
+def _canceller(engine: Engine, conn: Any) -> Any:
+    """A callable that stops the statement running on `conn` from another thread (None = no way to).
+    It backs up the server-side timeouts, which MySQL applies to SELECT only and which are skipped
+    when the `SET` fails (privileges, MySQL-only variable on MariaDB or the other way round)."""
+    raw = conn.connection.dbapi_connection
+    dialect = engine.dialect.name
+    if dialect == "postgresql":
+        return raw.cancel
+    if dialect == "sqlite":
+        return raw.interrupt
+    if dialect != "mysql":
+        return None
+    thread_id = int(raw.thread_id())
+
+    def kill() -> None:
+        # A private pool with the engine's own connect settings: the shared pool may be busy.
+        pool = engine.pool.recreate()
+        try:
+            killer = pool.connect()
+            try:
+                killer.cursor().execute(f"KILL QUERY {thread_id}")
+            finally:
+                killer.invalidate()
+        finally:
+            pool.dispose()
+
+    return kill
+
+
+class _Watchdog:
+    """Calls `cancel` once when a statement outlives `seconds`, unless it finished first."""
+
+    def __init__(self, cancel: Any, seconds: int) -> None:
+        self.cancel = cancel
+        self.fired = False
+        self.done = False
+        self.lock = threading.Lock()
+        self.timer = threading.Timer(seconds, self._fire)
+        self.timer.daemon = True
+
+    def _fire(self) -> None:
+        with self.lock:
+            if self.done:
+                return
+            self.fired = True
+            try:
+                self.cancel()
+            except Exception:  # noqa: BLE001 - the driver's read timeout stays as the last bound
+                pass
+
+    def __enter__(self) -> _Watchdog:
+        if self.cancel:
+            self.timer.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        with self.lock:
+            self.done = True
+        self.timer.cancel()
+
+
 def _first_keyword(statement: str) -> str | None:
     parsed = sqlparse.parse(statement)
     return _leading_keyword(parsed[0]) if parsed else None
@@ -353,19 +414,25 @@ def run_sql(
         if timeout_sql and engine.dialect.name in ("mysql", "postgresql"):
             try:
                 conn.exec_driver_sql(timeout_sql)
-            except Exception:  # noqa: BLE001 - best effort (privileges, older servers)
+            except Exception:  # noqa: BLE001 - the watchdog below enforces the timeout anyway
                 pass
         if read_only:
             _enter_read_only(conn, engine.dialect.name, secret_values)
+        cancel = _canceller(engine, conn)
         for index, statement in enumerate(statements):
-            entry = _run_statement(
-                conn,
-                statement,
-                max_rows=max_rows,
-                streaming=streaming,
-                last=index == len(statements) - 1,
-                secret_values=secret_values,
-            )
+            with _Watchdog(cancel, timeout_seconds) as watchdog:
+                entry = _run_statement(
+                    conn,
+                    statement,
+                    max_rows=max_rows,
+                    streaming=streaming,
+                    last=index == len(statements) - 1,
+                    secret_values=secret_values,
+                )
+            if watchdog.fired:
+                message = f"The statement was stopped after {timeout_seconds} s"
+                error = {"code": "query_timeout", "message": message}
+                entry = {"statement": statement, "type": "error", "error": error, "duration_ms": entry["duration_ms"]}
             results.append(entry)
             if entry["type"] == "error":
                 break

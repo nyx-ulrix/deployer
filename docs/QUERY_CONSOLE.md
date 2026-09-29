@@ -93,11 +93,13 @@ in the `error` field (HTTP 200), so earlier results and printed output are kept.
 - `rows` holds at most `max_rows` rows; `truncated` is true when more existed (`max_rows + 1` are
   fetched). With PyMySQL (MariaDB/MySQL) rows are streamed, so `SELECT * FROM huge` costs
   `max_rows + 1` rows of memory; psycopg (PostgreSQL) fetches the whole result client-side - use `LIMIT`.
-- Timeouts, best effort per engine, set on the connection before the script: MariaDB
-  `SET SESSION max_statement_time`, MySQL `SET SESSION max_execution_time` (ms, SELECT only),
-  PostgreSQL `SET statement_timeout`. A statement stopped by the engine is reported as a per-statement
-  error with `code: "query_timeout"` (MariaDB 1969, MySQL 3024, PostgreSQL 57014); the following
-  statements do not run. Engines without such a setting run the statement to the end.
+- Timeouts, per statement: the engine's own setting is tried first on the connection (MariaDB
+  `SET SESSION max_statement_time`, MySQL `SET SESSION max_execution_time` - ms, SELECT only -,
+  PostgreSQL `SET statement_timeout`), and a watchdog timer backs it up for every statement, also
+  writes and when that `SET` failed: at `timeout_seconds` it sends PostgreSQL a cancel request,
+  MariaDB/MySQL a `KILL QUERY <thread id>` from a separate connection, SQLite an interrupt. Either
+  way the statement is reported as a per-statement error with `code: "query_timeout"` and the
+  following statements do not run.
 - Never interpolate anything into the user's SQL; it runs as given with `exec_driver_sql` and the
   `no_parameters` execution option (so PyMySQL/psycopg treat `%` literally, e.g. `LIKE 'x%'`).
 - The connection is **invalidated after every run** (dropped from the pool), so `SET`, `USE`,

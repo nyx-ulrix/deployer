@@ -118,6 +118,19 @@ def test_mariadb_timeout(mariadb):
     assert run(mariadb, "SELECT SLEEP(0.1)")["results"][0]["type"] == "rows"
 
 
+def test_watchdog_kills_writes_when_the_server_timeout_is_missing(mariadb):
+    # As "mysql" the SET (max_execution_time) fails on MariaDB and DO is not a SELECT anyway:
+    # only the watchdog's KILL QUERY can stop it (A-034).
+    started = time.monotonic()
+    out = query_console.run_sql(
+        "mysql", mariadb, "DO SLEEP(8); SELECT 2", max_rows=5, timeout_seconds=1, read_only=False
+    )
+    assert time.monotonic() - started < 5
+    assert [r["type"] for r in out["results"]] == ["error"]
+    assert out["results"][0]["error"]["code"] == "query_timeout"
+    assert run(mariadb, "SELECT 1")["results"][0]["type"] == "rows"
+
+
 def test_mariadb_session_state_does_not_leak(mariadb):
     assert run(mariadb, "SET @x := 5; SELECT @x")["results"][-1]["rows"] == [[5]]
     assert run(mariadb, "SELECT @x")["results"][0]["rows"] == [[None]]

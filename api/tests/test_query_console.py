@@ -444,6 +444,54 @@ def test_run_sql_database_unavailable():
         engine.dispose()
 
 
+def test_run_sql_watchdog_stops_a_statement_the_server_does_not(sqlite_engine):
+    # sqlite has no statement timeout setting: only the watchdog (A-034) can stop this.
+    endless = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c) SELECT count(*) FROM c"
+    started = time.monotonic()
+    out = query_console.run_sql(
+        "sqlite", sqlite_engine, f"{endless}; SELECT 2", max_rows=5, timeout_seconds=1, read_only=False
+    )
+    assert time.monotonic() - started < 5
+    assert [r["type"] for r in out["results"]] == ["error"]
+    assert out["results"][0]["error"] == {"code": "query_timeout", "message": "The statement was stopped after 1 s"}
+    fast = query_console.run_sql("sqlite", sqlite_engine, "SELECT 1", max_rows=5, timeout_seconds=1, read_only=False)
+    assert fast["results"][0]["type"] == "rows"
+
+
+def test_mysql_canceller_kills_the_query_from_a_private_pool():
+    executed, events = [], []
+
+    class Cursor:
+        def execute(self, sql):
+            executed.append(sql)
+
+    class Killer:
+        def cursor(self):
+            return Cursor()
+
+        def invalidate(self):
+            events.append("invalidate")
+
+    class Pool:
+        def recreate(self):
+            return self
+
+        def connect(self):
+            return Killer()
+
+        def dispose(self):
+            events.append("dispose")
+
+    class Raw:
+        def thread_id(self):
+            return 42
+
+    engine = type("E", (), {"dialect": type("D", (), {"name": "mysql"})(), "pool": Pool()})()
+    conn = type("C", (), {"connection": type("F", (), {"dbapi_connection": Raw()})()})()
+    query_console._canceller(engine, conn)()
+    assert executed == ["KILL QUERY 42"] and events == ["invalidate", "dispose"]
+
+
 def test_statement_error_classification():
     class Timeout(Exception):
         pass
