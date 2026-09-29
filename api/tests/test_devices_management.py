@@ -214,7 +214,7 @@ def test_routing_for_device_hosted_sources(client, db, owner, owner_headers, mak
     resp = client.post(f"{base}/{sql.id}/check", headers=owner_headers)
     assert resp.json()["status"] == "ok"
     info = client.get(f"{base}/{sql.id}/connection", headers=owner_headers).json()
-    assert info["password"] == "pw" and "host device" in info["external_hint"] and info["device_id"] == device.id
+    assert info["password"] == "pw" and "Data API" in info["external_hint"] and info["device_id"] == device.id
 
 
 def test_remove_device(client, db, owner, owner_headers, make_user, make_project, auth_headers, make_device):

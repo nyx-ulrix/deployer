@@ -235,7 +235,7 @@ elsewhere they get 401 `api_key_not_allowed`. See [DATA_API.md](DATA_API.md).
 | POST | `/projects/{id}/data-sources/test` | admin+ | `DataSourceInput` | `{ok:boolean, message, server_version:string\|null}` |
 | POST | `/projects/{id}/data-sources` | admin+ | `DataSourceInput` | `DataSource` (external sources are tested first; 400 `connection_failed`) |
 | POST | `/projects/{id}/data-sources/{sid}/check` | viewer+ | – | `DataSource` (refreshes status) |
-| GET | `/projects/{id}/data-sources/{sid}/connection` | developer+ | – | `{uri, host, port, username, password, database}` for use in apps (from inside the Docker network for managed sources; `external_hint` explains host access) |
+| GET | `/projects/{id}/data-sources/{sid}/connection` | developer+ | – | `{uri, host, port, username, password, database}` for use in apps; `external_hint` says where they work (managed: only apps with Database access on this server; device-hosted: only on that PC, use the Data API elsewhere) |
 | DELETE | `/projects/{id}/data-sources/{sid}?drop=false` | admin+ (`drop=true`: owner) | – | `{ok:true, job?: Job}` — managed sources are soft-deleted ("Recently deleted", [BACKUPS.md](BACKUPS.md)) with a final snapshot job; 400 `cannot_drop_external` |
 
 ```ts

@@ -324,10 +324,10 @@ def connection_info(ds: DataSource) -> dict:
     info = run(ds, "connection_info", {})
     if not isinstance(info, dict):
         raise ApiError(502, "device_error", "Malformed connection info from host device")
+    # Deployed apps never get device-hosted sources (deployments.database_env skips them).
     info["external_hint"] = (
-        "This database runs on a host device. The host above is only valid on that device's Docker "
-        f"network (host '{info.get('host')}'); from other machines use the device's LAN or Tailscale "
-        "address, which Deployer does not know. The database port is not published by default."
+        "This database runs on another PC and is only reachable on that PC. "
+        "From your app, use the Data API with an API key instead."
     )
     info["device_id"] = ds.device_id
     return info

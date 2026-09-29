@@ -10,7 +10,7 @@ import zipfile
 import pytest
 from sqlalchemy import create_engine, select
 
-from app.crypto import decrypt_json
+from app.crypto import decrypt_json, encrypt_json
 from app.models import AuditLog, DataSource, SchemaLink
 from app.services import connections
 
@@ -318,3 +318,12 @@ def test_drop_table_route(client, project_setup, fake_connect, sqlite_engine):
         headers=s["dev"],
     )
     assert bad.status_code == 422
+
+
+def test_managed_connection_hint_says_database_access_is_needed():
+    # A-026: only apps with Database access can reach a managed database; it is not reachable from other computers.
+    config = {"host": "mariadb", "port": 3306, "username": "u", "password": "pw", "database": "shop"}
+    ds = DataSource(kind="sql", mode="managed", engine="mariadb", config_encrypted=encrypt_json(config))
+    hint = connections.connection_info(ds)["external_hint"]
+    assert "Database access" in hint and "other computers" in hint
+    assert "Docker" not in hint and "directly" not in hint

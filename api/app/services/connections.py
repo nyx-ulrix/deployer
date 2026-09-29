@@ -322,13 +322,13 @@ def connection_info(ds: DataSource) -> dict[str, Any]:
             "database": config.get("database"),
         }
     if ds.mode == "managed":
+        # Only apps with database_access join the databases network (deployments.database_env).
         info["external_hint"] = (
-            f"Managed databases are reachable only from containers on the Deployer Docker network "
-            f"(host '{info['host']}'). They are not published on the host machine; apps deployed by "
-            f"Deployer can use this URI directly."
+            "Use this from apps you deploy here; turn on Database access (\"Connect to this project's "
+            "databases\") in the app's settings first. It does not work from other computers."
         )
     else:
-        info["external_hint"] = "External database: use these credentials from anywhere that can reach the server."
+        info["external_hint"] = "Use these from any app or computer that can reach this database's server."
     return info
 
 

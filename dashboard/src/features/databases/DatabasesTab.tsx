@@ -270,13 +270,7 @@ function ConnectionDialog({
         <ErrorState error={conn.error} onRetry={() => void conn.refetch()} />
       ) : (
         <div className="space-y-3">
-          {source.mode === "managed" && (
-            <Alert tone="info">
-              These values work from inside the Deployer Docker network (e.g. apps deployed by Deployer).
-              {conn.data.external_hint ? ` ${conn.data.external_hint}` : ""}
-            </Alert>
-          )}
-          {source.mode === "external" && conn.data.external_hint && <Alert tone="info">{conn.data.external_hint}</Alert>}
+          {conn.data.external_hint && <Alert tone="info">{conn.data.external_hint}</Alert>}
           <CopyField label="Connection URI" value={conn.data.uri} secret />
           <div className="grid gap-3 sm:grid-cols-2">
             <CopyField label="Host" value={conn.data.host} />
