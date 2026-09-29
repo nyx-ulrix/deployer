@@ -205,6 +205,19 @@ def test_refresh_expired(client, owner, login, db):
     assert _refresh(client, raw).status_code == 401
 
 
+def test_refresh_cookie_secure_follows_request_scheme(client, owner, set_setting):
+    # A-021: with an https public URL, LAN users on http://<ip>:8080 still need a non-Secure cookie.
+    set_setting("public_url", "https://deployer.example.com")
+    body = {"email": "owner@example.com", "password": DEFAULT_PASSWORD}
+    lan = client.post("/v1/auth/login", json=body)
+    assert lan.status_code == 200
+    assert "secure" not in lan.headers["set-cookie"].lower()
+    assert _refresh(client).status_code == 200  # the cookie comes back over http
+    tunnel = client.post("https://testserver/v1/auth/login", json=body)
+    assert tunnel.status_code == 200
+    assert "secure" in tunnel.headers["set-cookie"].lower()
+
+
 def test_logout_revokes(client, owner, login, db):
     login("owner@example.com")
     raw = client.cookies.get(REFRESH_COOKIE)

@@ -16,12 +16,12 @@ def github_status(user: CurrentUser, db: DbSession) -> dict:
 
 
 @router.post("/integrations/github/connect")
-def github_connect(response: Response, user: CurrentUser, db: DbSession) -> dict:
+def github_connect(request: Request, response: Response, user: CurrentUser, db: DbSession) -> dict:
     url, nonce = oauth.begin(
         db, "github", intent="github_connect", redirect=None, user_id=user.id, scope=github.CONNECT_SCOPE
     )
     # Sent with this same-origin fetch; the browser presents it on GitHub's redirect back.
-    oauth.set_browser_cookie(response, db, nonce)
+    oauth.set_browser_cookie(response, request, nonce)
     return {"url": url}
 
 

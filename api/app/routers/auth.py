@@ -99,9 +99,9 @@ def login(body: LoginIn, request: Request, response: Response, db: DbSession) ->
     return payload
 
 
-def _unauthorized_clearing_cookie(db, message: str) -> JSONResponse:
+def _unauthorized_clearing_cookie(request: Request, message: str) -> JSONResponse:
     resp = JSONResponse(status_code=401, content={"error": {"code": "unauthorized", "message": message, "details": {}}})
-    tokens.clear_refresh_cookie(resp, db)
+    tokens.clear_refresh_cookie(resp, request)
     return resp
 
 
@@ -112,8 +112,8 @@ def refresh(request: Request, response: Response, db: DbSession):
         user, new_raw = tokens.rotate_refresh_token(db, raw, request)
     except ApiError as exc:
         db.rollback()
-        return _unauthorized_clearing_cookie(db, exc.message)
-    tokens.set_refresh_cookie(response, db, new_raw)
+        return _unauthorized_clearing_cookie(request, exc.message)
+    tokens.set_refresh_cookie(response, request, new_raw)
     payload = tokens.auth_payload(user)
     db.commit()
     return payload
@@ -125,7 +125,7 @@ def logout(request: Request, response: Response, db: DbSession) -> dict:
     if row is not None:
         tokens.revoke_family(db, row.family_id)
         audit.record(db, "auth.logout", request=request, user_id=row.user_id)
-    tokens.clear_refresh_cookie(response, db)
+    tokens.clear_refresh_cookie(response, request)
     db.commit()
     return {"ok": True}
 
@@ -177,7 +177,7 @@ def change_password(body: PasswordChange, request: Request, user: CurrentUser, d
 
 @router.get("/auth/oauth/{provider}/start")
 def oauth_start(
-    provider: str, db: DbSession, redirect: str | None = None, invite_token: str | None = None
+    provider: str, request: Request, db: DbSession, redirect: str | None = None, invite_token: str | None = None
 ) -> RedirectResponse:
     oauth.get_provider(provider)
     if db.scalar(select(User.id).limit(1)) is None:
@@ -189,7 +189,7 @@ def oauth_start(
             return RedirectResponse(oauth.login_error_url(db, exc.code), status_code=302)
         raise
     resp = RedirectResponse(url, status_code=302)
-    oauth.set_browser_cookie(resp, db, nonce)
+    oauth.set_browser_cookie(resp, request, nonce)
     return resp
 
 
@@ -198,11 +198,13 @@ class LinkIn(BaseModel):
 
 
 @router.post("/auth/oauth/{provider}/link")
-def oauth_link(provider: str, response: Response, user: CurrentUser, db: DbSession, body: LinkIn | None = None) -> dict:
+def oauth_link(
+    provider: str, request: Request, response: Response, user: CurrentUser, db: DbSession, body: LinkIn | None = None
+) -> dict:
     redirect = body.redirect if body else None
     url, nonce = oauth.begin(db, provider, intent="link", redirect=redirect, user_id=user.id)
     # Sent with this same-origin fetch; the browser presents it on the provider's redirect back.
-    oauth.set_browser_cookie(response, db, nonce)
+    oauth.set_browser_cookie(response, request, nonce)
     return {"authorize_url": url}
 
 
@@ -225,10 +227,10 @@ def oauth_callback(
         browser_nonce=request.cookies.get(oauth.BROWSER_COOKIE),
     )
     resp = RedirectResponse(result.redirect_url, status_code=302)
-    oauth.clear_browser_cookie(resp, db)
+    oauth.clear_browser_cookie(resp, request)
     if result.login_user is not None:
         raw, _ = tokens.issue_refresh_token(db, result.login_user, request)
-        tokens.set_refresh_cookie(resp, db, raw)
+        tokens.set_refresh_cookie(resp, request, raw)
     db.commit()
     return resp
 

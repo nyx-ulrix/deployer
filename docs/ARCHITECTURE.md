@@ -73,8 +73,8 @@ Source of truth: `api/app/models.py`.
 
 - Passwords: argon2id. Access tokens: HS256 JWT, 15 min, sent as `Authorization: Bearer`.
 - Refresh tokens: 256-bit random, stored as SHA-256 hash, rotated on every use, HttpOnly cookie
-  `deployer_rt` (`Path=/v1/auth`, `SameSite=Lax`, `Secure` when public URL is https). Reusing a
-  rotated token revokes the whole family.
+  `deployer_rt` (`Path=/v1/auth`, `SameSite=Lax`, `Secure` when the request came over https, so
+  LAN http sessions keep working after remote access). Reusing a rotated token revokes the whole family.
 - Secrets at rest (OAuth client secrets, external DB passwords): AES-256-GCM with `MASTER_KEY`
   from `.env` (`app/crypto.py`).
 - OAuth: authorization-code flow with `state` + PKCE, state kept in Redis for 10 minutes.

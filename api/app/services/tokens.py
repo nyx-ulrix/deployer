@@ -20,7 +20,6 @@ from app.deps import client_ip
 from app.errors import unauthorized
 from app.models import RefreshToken, User, new_id, utcnow
 from app.serializers import user_out
-from app.services.instance_settings import public_url
 
 REFRESH_COOKIE = "deployer_rt"
 REFRESH_COOKIE_PATH = "/v1/auth"
@@ -153,11 +152,14 @@ def rotate_refresh_token(db: Session, raw: str | None, request: Request | None =
 # --- cookie --------------------------------------------------------------------------------------
 
 
-def cookie_secure(db: Session) -> bool:
-    return public_url(db).lower().startswith("https://")
+def cookie_secure(request: Request) -> bool:
+    """Secure only when this request came over https (uvicorn --proxy-headers applies Caddy's
+    X-Forwarded-Proto), not from public_url: after remote access is turned on, LAN users still
+    open http://<ip>:8080 and a Secure cookie would never be sent back to them (A-021)."""
+    return request.url.scheme == "https"
 
 
-def set_refresh_cookie(response: Response, db: Session, raw: str) -> None:
+def set_refresh_cookie(response: Response, request: Request, raw: str) -> None:
     response.set_cookie(
         REFRESH_COOKIE,
         raw,
@@ -165,25 +167,25 @@ def set_refresh_cookie(response: Response, db: Session, raw: str) -> None:
         path=REFRESH_COOKIE_PATH,
         httponly=True,
         samesite="lax",
-        secure=cookie_secure(db),
+        secure=cookie_secure(request),
     )
 
 
-def clear_refresh_cookie(response: Response, db: Session) -> None:
+def clear_refresh_cookie(response: Response, request: Request) -> None:
     response.delete_cookie(
         REFRESH_COOKIE,
         path=REFRESH_COOKIE_PATH,
         httponly=True,
         samesite="lax",
-        secure=cookie_secure(db),
+        secure=cookie_secure(request),
     )
 
 
-def start_session(db: Session, response: Response, user: User, request: Request | None = None) -> dict:
+def start_session(db: Session, response: Response, user: User, request: Request) -> dict:
     """Issues a new refresh token family, sets the cookie and returns the AuthResponse body.
 
     Caller commits.
     """
     raw, _ = issue_refresh_token(db, user, request)
-    set_refresh_cookie(response, db, raw)
+    set_refresh_cookie(response, request, raw)
     return auth_payload(user)

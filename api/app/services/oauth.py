@@ -185,7 +185,7 @@ def begin(
     return f"{spec.authorize_url}?{urlencode(params)}", browser_nonce
 
 
-def set_browser_cookie(response: Response, db: Session, nonce: str) -> None:
+def set_browser_cookie(response: Response, request: Request, nonce: str) -> None:
     response.set_cookie(
         BROWSER_COOKIE,
         nonce,
@@ -193,13 +193,13 @@ def set_browser_cookie(response: Response, db: Session, nonce: str) -> None:
         path=BROWSER_COOKIE_PATH,
         httponly=True,
         samesite="lax",
-        secure=cookie_secure(db),
+        secure=cookie_secure(request),
     )
 
 
-def clear_browser_cookie(response: Response, db: Session) -> None:
+def clear_browser_cookie(response: Response, request: Request) -> None:
     response.delete_cookie(
-        BROWSER_COOKIE, path=BROWSER_COOKIE_PATH, httponly=True, samesite="lax", secure=cookie_secure(db)
+        BROWSER_COOKIE, path=BROWSER_COOKIE_PATH, httponly=True, samesite="lax", secure=cookie_secure(request)
     )
 
 

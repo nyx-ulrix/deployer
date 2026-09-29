@@ -72,9 +72,10 @@ def test_create_owner_validates_email(client):
     assert resp.status_code == 422
 
 
-def test_secure_cookie_when_public_url_https(client, set_setting):
-    set_setting("public_url", "https://deployer.example.com")
-    resp = client.post("/v1/setup/owner", json={"email": "boss@example.com", "password": DEFAULT_PASSWORD})
+def test_secure_cookie_when_request_is_https(client):
+    resp = client.post(
+        "https://testserver/v1/setup/owner", json={"email": "boss@example.com", "password": DEFAULT_PASSWORD}
+    )
     assert resp.status_code == 200
     assert "Secure" in resp.headers["set-cookie"]
 

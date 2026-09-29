@@ -233,9 +233,6 @@ No endpoint ever returns the API token or the connector token.
   its account and zone resources include the account and zone you picked.
 - **`dns_record_exists`**: an existing record (e.g. an old A record) would be replaced. Make sure it
   isn't in use, then retry with *Overwrite*.
-- **Signed out or login loop after switching the public URL**: cookies become `Secure` when `public_url`
-  is https, so use the dashboard at the new `https://` address. To go back, open
-  `http://localhost:<port>` and choose *Use local URL* (`{local:true}`).
 - **Google/GitHub sign-in fails after the switch**: add the new callback URLs shown by the dashboard to
   your OAuth apps. Quick tunnel URLs change on every restart, so don't use them for OAuth.
 - **Quick tunnel never shows a URL**: `trycloudflare.com` is rate limited; the reason is in
