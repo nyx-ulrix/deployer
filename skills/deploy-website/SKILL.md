@@ -109,7 +109,7 @@ instead of raw HTTP: API keys tab → *Show usage* → **AI agents (MCP)** has t
 claude mcp add --transport http deployer <url>/v1/projects/<project_id>/mcp --header "Authorization: Bearer <key>"
 ```
 
-Tools: `list_data_sources`, `get_schema`, `run_query`, `list_rows`, `list_documents` (any key) plus
+Tools: `list_data_sources`, `get_schema`, `list_rows`, `list_documents` (any key) plus `run_query`,
 `insert_/update_/delete_row`, `insert_/update_/delete_document`, `list_apps`, `get_app`,
 `deploy_app`, `deployment_status`, `app_logs`, `list_cloud_connections` and `list_cloud_targets`
 (service key only; app tools report each app's `target` and cloud URL). Ask the user for an `anon` key

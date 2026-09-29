@@ -206,7 +206,7 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     "run_query": (
         "viewer",
         "Run SQL (a script, several statements allowed) or MongoDB shell code (`db` is the database) "
-        f"against a data source. Returns up to {MAX_ROWS} rows per statement. Read-only keys may only read.",
+        f"against a data source. Returns up to {MAX_ROWS} rows per statement. Viewer sessions may only read.",
         _schema(
             ["source_id", "query"],
             source_id=SOURCE,
