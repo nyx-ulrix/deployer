@@ -77,12 +77,6 @@ export function PublicUrlResultDialog({ result, onClose }: { result: PublicUrlRe
           Host devices should use the new URL — re-enroll a device if it was attached with the old address. New invite
           links use the new URL too.
         </Alert>
-        {!onNewAddress && url.startsWith("https://") && (
-          <Alert tone="warning" title="Sign in at the new address">
-            With an https public URL, sign-in cookies are marked Secure. If you get signed out here, open the dashboard
-            at {url}. To go back, open <code>http://localhost</code> on this PC and choose <em>Use local URL</em>.
-          </Alert>
-        )}
       </div>
     </Dialog>
   );

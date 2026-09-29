@@ -669,8 +669,7 @@ function PublicUrlStep({
       {candidates.length === 0 && !publicDomain && <p className="text-muted">Add a hostname in step 4 first.</p>}
       <Alert tone="info" title="What changes for host devices">
         Devices attached to this Deployer talk to the public URL. Re-enroll a device if it was attached with the old
-        address; new invite links use the new URL too. Your sign-in cookie becomes <em>Secure</em> with an https URL, so
-        use the dashboard at the new address from now on.
+        address; new invite links use the new URL too. Password sign-in keeps working at the local and LAN addresses.
       </Alert>
     </div>
   );
