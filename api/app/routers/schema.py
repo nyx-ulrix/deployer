@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import ApiError, not_found
-from app.models import SchemaLink, utcnow
+from app.models import DataSource, SchemaLink, utcnow
 from app.serializers import iso
 from app.services import audit, ddl_export, introspection, source_ops
 from app.services.conventions import check_conventions
@@ -44,8 +44,18 @@ def link_out(link: SchemaLink) -> dict:
 
 
 def project_links(db: DbSession, project_id: str) -> list[SchemaLink]:
+    # Links touching a soft-deleted source stay stored (restored on undelete) but are hidden.
+    live = select(DataSource.id).where(DataSource.project_id == project_id, DataSource.deleted_at.is_(None))
     return list(
-        db.scalars(select(SchemaLink).where(SchemaLink.project_id == project_id).order_by(SchemaLink.created_at))
+        db.scalars(
+            select(SchemaLink)
+            .where(
+                SchemaLink.project_id == project_id,
+                SchemaLink.from_source_id.in_(live),
+                SchemaLink.to_source_id.in_(live),
+            )
+            .order_by(SchemaLink.created_at)
+        )
     )
 
 

@@ -7,12 +7,12 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from app.crypto import encrypt_json
 from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import ApiError, forbidden, validation_error
-from app.models import DataSource, SchemaLink, utcnow
+from app.models import DataSource, utcnow
 from app.services import audit, connections, devices, provisioning, source_ops
 from app.services.sources import data_source_out, get_source, project_sources
 
@@ -221,10 +221,8 @@ def delete_data_source(source_id: str, access: Admin, db: DbSession, request: Re
     from app.services import backups, jobs
 
     connections.invalidate(ds.id)
-    for link in db.scalars(
-        select(SchemaLink).where(or_(SchemaLink.from_source_id == ds.id, SchemaLink.to_source_id == ds.id))
-    ):
-        db.delete(link)
+    # Schema links survive a soft delete (hidden by project_links, back on undelete); a hard delete or
+    # the 30-day purge removes them through the schema_links FKs (ON DELETE CASCADE).
     audit.record(
         db,
         "data_source.delete",

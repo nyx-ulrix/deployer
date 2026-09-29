@@ -13,7 +13,7 @@ import pytest
 
 from app.crypto import encrypt_json
 from app.errors import ApiError
-from app.models import Backup, BackupCopy, BackupLogSegment, BackupPolicy, DataSource, Job, utcnow
+from app.models import Backup, BackupCopy, BackupLogSegment, BackupPolicy, DataSource, Job, SchemaLink, utcnow
 from app.services import backup_engine, backups, executors, jobs, provisioning
 
 
@@ -484,6 +484,34 @@ def test_soft_delete_and_restore_deleted_source(client, env, db):
     assert env["created"] == [("p_shop_abc123", "u_0123456789ab")]  # same database name and user
     restore = [c[1] for c in env["fake"].calls if c[0] == "restore"][-1]
     assert restore["target_database_name"] == "p_shop_abc123"
+
+
+def test_schema_links_survive_soft_delete_and_go_on_purge(client, env, db):
+    # A-028: a soft delete hides the source's links; restoring brings them back; the purge removes them.
+    ds, base = env["ds"], env["pbase"]
+    ds_id = ds.id
+    body = {
+        "from_source_id": ds.id,
+        "from_entity": "orders",
+        "from_field": "user_id",
+        "to_source_id": ds.id,
+        "to_entity": "users",
+        "to_field": "id",
+        "cardinality": "many_to_one",
+    }
+    link = client.post(f"{base}/schema/links", json=body, headers=env["admin"]).json()
+    client.delete(f"{base}/data-sources/{ds.id}", headers=env["admin"])
+    jobs.run_queued()
+    assert client.get(f"{base}/schema/links", headers=env["viewer"]).json() == []
+    assert client.post(f"{base}/deleted-sources/{ds.id}/restore", json={}, headers=env["admin"]).status_code == 200
+    jobs.run_queued()
+    assert client.get(f"{base}/schema/links", headers=env["viewer"]).json() == [link]
+
+    client.delete(f"{base}/data-sources/{ds.id}", headers=env["admin"])
+    jobs.run_queued()
+    backups.prune_all(jobs.get_sessionmaker(), utcnow() + timedelta(days=31))
+    db.expire_all()
+    assert db.get(DataSource, ds_id) is None and db.query(SchemaLink).count() == 0
 
 
 def test_restore_deleted_source_can_be_retried_after_a_failure(client, env, db, monkeypatch):

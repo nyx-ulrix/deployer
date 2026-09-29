@@ -84,7 +84,8 @@ Job states: `queued → running → succeeded | failed | cancelled`, with `progr
 | `backup_log_segments` | `id, data_source_id, kind ("binlog"/"oplog"), start_at, end_at, start_point (JSON), end_point (JSON), size_bytes, sha256, created_at` |
 | `backup_copies` | `id, artifact_type ("backup"/"segment"), artifact_id, location ("local"/"device"/"primary"), device_id, ref, size_bytes, sha256, status ("ok"/"missing"/"pending"), verified_at, created_at` |
 
-`data_sources` gains `deleted_at` (soft delete for "Recently deleted").
+`data_sources` gains `deleted_at` (soft delete for "Recently deleted"). Cross-database schema links of a
+soft-deleted source are kept but hidden, come back when it is restored, and are removed with the purge.
 
 ## API
 
