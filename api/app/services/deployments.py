@@ -748,12 +748,33 @@ def _prune_images(db: Session, cli: DockerCli, app: App, log_: _DeployLog) -> No
             .order_by(Deployment.created_at.desc())
         )
     )
-    keep = {d.image_tag for d in deps[:KEEP_IMAGES]}
-    for dep in deps[KEEP_IMAGES:]:
+    # Only rollback targets hold a slot (A-059): the newest live/superseded ones, plus a queued
+    # rollback that still needs its image. Failed and cancelled rows never do.
+    kept = [d for d in deps if d.status in ("live", "superseded")][:KEEP_IMAGES]
+    kept += [d for d in deps if d.status not in FINAL_STATUSES]
+    keep = {d.image_tag for d in kept}
+    for dep in deps:
+        if dep in kept:
+            continue
         if dep.image_tag not in keep:
             log_.write(f"Removing old image {dep.image_tag}")
             cli.remove_image(dep.image_tag)
         dep.image_tag = None
+
+
+def _drop_build(factory: jobs.SessionFactory, cli: DockerCli, deployment_id: str, tag: str, log_: _DeployLog) -> None:
+    """The image a failed or cancelled deployment built: nothing can roll back to it (A-059)."""
+    log_.write(f"Removing image {tag}")
+    try:
+        cli.remove_image(tag)
+    except DockerError:  # the tag stays on the row, so the next successful deploy's prune retries
+        log.exception("could not remove image %s", tag)
+        return
+    with factory() as db:
+        dep = db.get(Deployment, deployment_id)
+        if dep is not None and dep.image_tag == tag:  # a cloud deploy may have stored its artifact already
+            dep.image_tag = None
+            db.commit()
 
 
 @jobs.job_handler("app.deploy")
@@ -774,6 +795,7 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
     log_ = _DeployLog(factory, dep.id, secrets)
     workdir = tempfile.mkdtemp(prefix="deployer-build-", dir=get_settings().app_build_dir or None)
     new_container: str | None = None
+    built: str | None = None  # the image this run builds, removed again if it never goes live
     cancel_token = cancel_check.set(ctx.cancelled)  # a cancel stops the running clone/build/push too
     try:
         try:
@@ -785,6 +807,7 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
                 checkout = _checkout(ctx, cli, app, dep, workdir, log_)
                 ctx.check_cancelled()
                 ctx.progress(0.2, "Building", force=True)
+                built = image_tag(app.id, dep.id)
                 tag = _build(ctx, cli, app, dep, workdir, checkout, log_)
             ctx.check_cancelled()
             if app.target != "local":  # docs/CLOUD.md: publish on the cloud target instead of running here
@@ -835,7 +858,7 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
                     previous.status = "superseded"
                 old_container = previous.container_name if previous is not None else None
                 db.commit()
-            new_container = None  # live now: no longer ours to clean up on failure
+            new_container = built = None  # live now: no longer ours to clean up on failure
             ctx.progress(0.95, "Cleaning up", force=True)
             log_.step("Cleaning up")
             if old_container and old_container != name:
@@ -856,9 +879,12 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
             raise jobs.JobError(_docker_failure(exc, secrets)) from exc
     except jobs.JobCancelled:
         log_.write("Cancelled")
+        cancel_check.set(None)  # the cleanup below must not be killed by the same cancel
         if new_container:
             cli.remove_container(new_container)
         _update(factory, dep.id, status="cancelled", finished_at=utcnow())
+        if built:
+            _drop_build(factory, cli, dep.id, built, log_)
         raise
     except Exception as exc:
         message = redact(jobs._error_text(exc), secrets, limit=2000)
@@ -866,6 +892,8 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
         if new_container:
             cli.remove_container(new_container)
         _update(factory, dep.id, status="failed", error=message, finished_at=utcnow())
+        if built:
+            _drop_build(factory, cli, dep.id, built, log_)
         raise jobs.JobError(message) from exc
     finally:
         cancel_check.reset(cancel_token)

@@ -25,7 +25,9 @@ GitHub push ──webhook──▶ api ──job app.deploy──▶ worker (roo
   can't reach the API, dashboard or tunnel directly; on startup the worker moves containers started
   by older versions off `deployer_public`), `--restart unless-stopped`, `--memory <APP_MEM_LIMIT, default 512m>`, `--cpus 1`,
   `--pids-limit 256`, no privileges, no volumes. Images are tagged
-  `deployer-app/<app_id>:<deployment_id>`; the last 5 per app are kept, older ones removed.
+  `deployer-app/<app_id>:<deployment_id>`; the images of the last 5 live/superseded deployments
+  per app are kept (the rollback targets), older ones removed. A failed or cancelled deployment's own
+  image is removed when it ends (a failed rollback keeps the image it reused).
 - **Routing** is Caddy only; app containers never publish ports. Caddy publishes the range
   `8100-8199` (compose `ports: "8100-8199:8100-8199"`, bound to `${DEPLOYER_BIND:-127.0.0.1}` like
   8080) and imports `/etc/caddy/apps/*.caddy` from the shared `caddy_apps` volume, one file per app:

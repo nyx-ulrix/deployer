@@ -110,7 +110,8 @@ def test_second_deploy_supersedes_and_failed_start_keeps_previous(db, docker, pr
     assert third.status == "failed" and "did not accept connections on port 3000" in third.error
     assert second.status == "live" and app.live_deployment_id == second.id
     assert third.container_name not in docker.containers and second.container_name in docker.containers
-    assert docker.steps() == ["clone", "build", "rm", "run", "health", "logs", "rm"]
+    assert docker.steps() == ["clone", "build", "rm", "run", "health", "logs", "rm", "rmi"]
+    assert third.image_tag is None and docker.images == {first.image_tag, second.image_tag}  # A-059
     assert "reload" not in docker.steps() and second.container_name in caddy_file(app)
     assert "hello from the app" in third.log
 
@@ -137,6 +138,7 @@ def test_cancel_between_steps(db, docker, fake_redis, project):
     db.expire_all()
     assert db.get(Deployment, dep.id).status == "cancelled"
     assert "run" not in docker.steps() and docker.containers == {}
+    assert db.get(Deployment, dep.id).image_tag is None and docker.images == set()  # A-059
 
 
 def test_rollback_reuses_the_image(db, docker, project):
@@ -229,6 +231,39 @@ def test_image_pruning_keeps_five(db, docker, project):
         ("rmi", f"deployer-app/{app.id}:{ids[0]}"),
         ("rmi", f"deployer-app/{app.id}:{ids[1]}"),
     ]
+
+
+def test_failed_deploys_neither_leak_images_nor_hold_rollback_slots(db, docker, project):
+    """A-059: a failed or cancelled deployment's image was kept, and its row took one of the
+    KEEP_IMAGES slots, pushing real rollback targets out."""
+    app = make_app(db, project)
+    good = []
+    for _ in range(deployments.KEEP_IMAGES):
+        dep, _ = deploy(db, app)
+        jobs.run_queued()
+        good.append(dep.id)
+    # A rollback that fails keeps the image it reused: the deployment it came from still needs it.
+    db.expire_all()
+    rb, _ = deployments.rollback(db, db.get(App, app.id), db.get(Deployment, good[0]), user_id=None)
+    db.commit()
+    docker.fail_at = "health"
+    jobs.run_queued()
+    db.expire_all()
+    assert db.get(Deployment, rb.id).status == "failed"
+    assert db.get(Deployment, good[0]).image_tag in docker.images
+    # A failed row from before the fix (tag still set, image still there) is cleared by the next prune.
+    stale = Deployment(app_id=app.id, status="failed", trigger="manual", branch="main", log="")
+    stale.image_tag = deployments.image_tag(app.id, "stale")
+    db.add(stale)
+    db.commit()
+    docker.images.add(stale.image_tag)
+    docker.fail_at = None
+    last, _ = deploy(db, app)
+    jobs.run_queued()
+    db.expire_all()
+    kept = [db.get(Deployment, i).image_tag for i in [*good[1:], last.id]]
+    assert all(kept) and docker.images == set(kept)
+    assert db.get(Deployment, stale.id).image_tag is None and db.get(Deployment, rb.id).image_tag is None
 
 
 def test_caddy_rendering_with_hostnames(db, docker, project):
