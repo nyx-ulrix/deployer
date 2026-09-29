@@ -39,6 +39,18 @@ def reset(key: str) -> None:
         log.warning("Rate limit reset skipped: Redis unavailable", exc_info=True)
 
 
+def reset_logins() -> None:
+    """Clears every sign-in bucket. Run after a password reset on the Deployer PC: whoever forgot
+    their password has usually used up their attempts, and would otherwise wait out the window."""
+    try:
+        redis = get_redis()
+        keys = list(redis.scan_iter("rl:login*"))
+        if keys:
+            redis.delete(*keys)
+    except Exception:  # noqa: BLE001
+        log.warning("Rate limit reset skipped: Redis unavailable", exc_info=True)
+
+
 def login_key(ip: str | None, email: str) -> str:
     return "rl:login:" + sha256_hex(f"{ip or '-'}|{email}")
 

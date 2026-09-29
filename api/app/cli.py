@@ -12,7 +12,8 @@ detach keeps the hosted databases and their credentials on this machine (nothing
 main Deployer will show the device as offline until its owner removes it there.
 
 `user reset-password` is the forgotten-password recovery: only someone with access to this PC can run
-it. It signs that account out everywhere.
+it. It signs that account out everywhere and clears the sign-in rate limits (a locked-out user can sign
+in at once).
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ from sqlalchemy import func, select
 from app.db import get_sessionmaker
 from app.errors import ApiError
 from app.models import User
-from app.services import audit, device_agent, device_host, instance_settings, tokens
+from app.services import audit, device_agent, device_host, instance_settings, rate_limit, tokens
 from app.services.instance_settings import validate_oauth_value
 from app.services.passwords import hash_password, normalize_email, validate_password
 
@@ -128,6 +129,7 @@ def _reset_password(email: str | None) -> int:
         tokens.revoke_user_tokens(session, user.id)
         audit.record(session, "auth.password_change", user_id=user.id, kind="reset", source="cli")
         session.commit()
+        rate_limit.reset_logins()
         print(f"Password reset for {user.email}. Sign in with the new password; other sessions were signed out.")
     finally:
         session.close()

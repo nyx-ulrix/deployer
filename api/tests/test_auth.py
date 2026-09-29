@@ -332,6 +332,14 @@ def test_reset_password_cli(client, owner, make_user, login, db, capsys, monkeyp
     code, out = run("--email", "nobody@example.com", stdin=json.dumps({"password": "a-new-password-1"}))
     assert code == 2 and "No account" in out
 
+    # Locked out by failed attempts: the reset clears the sign-in rate limit too.
+    for _ in range(10):
+        client.post("/v1/auth/login", json={"email": "owner@example.com", "password": "wrong-password-0"})
+    assert (
+        client.post("/v1/auth/login", json={"email": "owner@example.com", "password": DEFAULT_PASSWORD}).status_code
+        == 429
+    )
+
     # No --email resets the owner and signs them out everywhere.
     code, out = run(stdin=json.dumps({"password": "a-new-password-1"}))
     assert code == 0 and "owner@example.com" in out and "a-new-password-1" not in out
