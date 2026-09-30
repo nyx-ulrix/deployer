@@ -62,30 +62,36 @@ export function DeploysTab() {
       ) : (
         <ul className="divide-y divide-border rounded-xl border border-border bg-surface">
           {apps.data.map((a) => (
-            <li key={a.id}>
-              <Link to={`${base}/${a.id}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-surface-2">
-                <AppStatusDot app={a} />
-                <span className="min-w-0 flex-1 basis-40 truncate font-medium">{a.name}</span>
-                <Badge>{PRESETS[a.preset].label}</Badge>
-                {a.target !== "local" && <Badge tone="info">{TARGET_SHORT[a.target]}</Badge>}
-                <span className="truncate font-mono text-xs text-muted">{a.branch}</span>
-                <span className="basis-full text-xs text-muted sm:basis-auto sm:ml-auto">
-                  {a.live_deployment ? `Deployed ${relativeTime(a.live_deployment.finished_at ?? a.live_deployment.created_at)}` : "Never deployed"}
-                </span>
-                {(a.urls[0] ?? a.local_url) && (
+            <li
+              key={a.id}
+              className="relative flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 hover:bg-surface-2"
+            >
+              <AppStatusDot app={a} />
+              {/* The whole row opens the app via a stretched ::after, so the site link below is a sibling, not nested (A-179). */}
+              <Link
+                to={`${base}/${a.id}`}
+                className="min-w-0 flex-1 basis-40 truncate font-medium after:absolute after:inset-0"
+              >
+                {a.name}
+              </Link>
+              <Badge>{PRESETS[a.preset].label}</Badge>
+              {a.target !== "local" && <Badge tone="info">{TARGET_SHORT[a.target]}</Badge>}
+              <span className="truncate font-mono text-xs text-muted">{a.branch}</span>
+              <span className="basis-full text-xs text-muted sm:basis-auto sm:ml-auto">
+                {a.live_deployment ? `Deployed ${relativeTime(a.live_deployment.finished_at ?? a.live_deployment.created_at)}` : "Never deployed"}
+              </span>
+              {(a.urls[0] ?? a.local_url) && (
                 <a
                   href={a.urls[0] ?? a.local_url ?? undefined}
                   target="_blank"
                   rel="noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                  className="inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline"
+                  className="relative z-10 inline-flex items-center gap-1 font-mono text-xs text-accent hover:underline"
                 >
                   {a.urls[0] ? "" : "On this PC: "}
                   {(a.urls[0] ?? a.local_url ?? "").replace(/^https?:\/\//, "")}
                   <ExternalLink className="size-3" />
                 </a>
-                )}
-              </Link>
+              )}
             </li>
           ))}
         </ul>
