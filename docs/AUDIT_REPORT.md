@@ -208,7 +208,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-117 **[LOW][usability]** Small friction in the create-source input (kind+engine, unstripped username, Mongo database) - `api/app/routers/data_sources.py:25-28, 63, 68-74` - derive kind; strip; default the DB from the URI. (not verified)
 
 **Query console**
-- [ ] A-118 **[LOW][usability]** Connection-pool exhaustion is reported as "Database unavailable" - `api/app/services/query_console.py:292-297` - catch the pool TimeoutError and return 429 too_many_queries.
+- [x] A-118 **[LOW][usability]** Connection-pool exhaustion is reported as "Database unavailable" - `api/app/services/query_console.py:292-297` - catch the pool TimeoutError and return 429 too_many_queries.
 - [ ] A-119 **[LOW][usability]** Query log keeps typed passwords for 90 days; there is no Clear button - `api/app/services/query_log.py:18, 52-86` - owner "Clear query history"; optionally redact.
 - [ ] A-120 **[LOW][bug]** PATCH saved query with explicit null name/kind crashes with 500 - `api/app/routers/saved_queries.py:63-70, 197-202` - reject null for those fields. (not verified)
 - [ ] A-121 **[LOW][usability]** mongosh output over 8 MiB discards everything with no hint - `api/app/services/query_console.py:656-661` - suggest .limit()/a projection. (not verified)

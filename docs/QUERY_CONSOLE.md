@@ -62,7 +62,7 @@ real boundary (use an external source with a read-only user for strict enforceme
 Errors: `404 not_found`, `403 forbidden` / `read_only_role` / `shell_code_refused`, `422 validation_error` (also for a SQL
 script without any statement), `503 device_offline`, `503 database_unavailable` (cannot connect /
 authenticate), `503 read_only_unavailable` (viewer SQL run, read-only mode could not be set), `504 query_timeout` (MongoDB script killed), `501 mongosh_unavailable`,
-`429 too_many_queries` (MongoDB, more than 4 shells at once). Query errors are **not** HTTP errors:
+`429 too_many_queries` (MongoDB: more than 4 shells at once; SQL: the source's connection pool, 2+3 connections shared with the data browser, stayed full for 10 s). Query errors are **not** HTTP errors:
 a SQL syntax/runtime error is reported per statement (`type: "error"`, HTTP 200) and a MongoDB error
 in the `error` field (HTTP 200), so earlier results and printed output are kept.
 

@@ -12,6 +12,7 @@ import time
 
 import pytest
 from sqlalchemy import create_engine, select
+from sqlalchemy.pool import QueuePool
 
 from app.crypto import encrypt_json
 from app.errors import ApiError
@@ -839,3 +840,15 @@ def test_summarize():
     assert query_console.summarize({"kind": "sql", "results": [{"type": "count"}]}) == (True, 1)
     assert query_console.summarize({"kind": "nosql", "error": None}) == (True, 1)
     assert query_console.summarize({"kind": "nosql", "error": {"code": "query_failed"}}) == (False, 1)
+
+
+def test_run_sql_pool_exhausted_is_too_many_queries():
+    engine = create_engine("sqlite://", pool_size=1, max_overflow=0, pool_timeout=0.1, poolclass=QueuePool)
+    held = engine.connect()
+    try:
+        with pytest.raises(ApiError) as err:
+            query_console.run_sql("mariadb", engine, "SELECT 1", max_rows=5, timeout_seconds=5, read_only=False)
+        assert err.value.status_code == 429 and err.value.code == "too_many_queries"
+    finally:
+        held.close()
+        engine.dispose()

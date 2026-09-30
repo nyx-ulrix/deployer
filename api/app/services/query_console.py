@@ -38,6 +38,7 @@ from typing import Any
 
 import sqlparse
 from sqlalchemy import Engine
+from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlparse import sql as sqltree
 from sqlparse import tokens as T
 
@@ -403,6 +404,11 @@ def run_sql(
     started = time.monotonic()
     try:
         conn = engine.connect()
+    except PoolTimeoutError as exc:
+        # The source's pool (shared with the data browser) is full of running queries: busy, not down.
+        raise ApiError(
+            429, "too_many_queries", "Too many queries are running on this database; try again in a moment"
+        ) from exc
     except Exception as exc:  # noqa: BLE001 - driver connect errors vary widely
         orig = getattr(exc, "orig", None) or exc
         message = connections.redact(_error_text(orig), secret_values)
