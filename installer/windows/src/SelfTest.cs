@@ -146,6 +146,13 @@ namespace DeployerSetup
             using (ControlForm checking = ControlSample(1f, 5), failed = ControlSample(1f, 4))
                 Check(checking.State == RunState.Checking && failed.State == RunState.NotResponding && !failed.updateButton.Enabled,
                       "a failed status run shows advice instead of Checking forever (A-099)");
+            using (ControlForm noScripts = new ControlForm(@"C:\Deployer-selftest-missing", false, 1f, true))
+            {
+                noScripts.extractedRoot = "bad|root"; // an invalid path makes ScriptFor throw
+                bool threw = false;
+                try { noScripts.ShowDevice(); } catch (Exception) { threw = true; }
+                Check(!threw && !noScripts.deviceBusy, "Host device isn't stuck \"Checking\" when the scripts can't be prepared (A-159)");
+            }
             using (ControlForm stopped = ControlSample(1f, 1))
             using (WizardForm done = Wizard(1f, false))
             {

@@ -179,7 +179,7 @@ namespace DeployerSetup
         internal string transient = "";
         ScriptRunner runner;
         readonly Queue<string[]> pending = new Queue<string[]>();
-        string extractedRoot;
+        internal string extractedRoot;
         readonly bool trayMode;
         readonly bool selfTest;
         NotifyIcon tray;
@@ -199,7 +199,7 @@ namespace DeployerSetup
         IconBadge activityIcon;
         internal FlatButton updateButton;
         FlatButton startButton, stopButton, restartButton, backupButton, settingsButton, uninstallButton, openButton, deviceButton;
-        bool deviceBusy;
+        internal bool deviceBusy;
         readonly Dictionary<string, ServiceTile> tiles = new Dictionary<string, ServiceTile>();
 
         // Every compose service (deploy/docker-compose.yml). "tunnel" idles until remote access is enabled,
@@ -640,8 +640,20 @@ namespace DeployerSetup
         void RefreshStatus()
         {
             if (statusBusy || selfTest) return;
+            string script;
+            try
+            {
+                script = DeployerCli.ScriptFor(installDir, ref extractedRoot);
+            }
+            catch (Exception ex)
+            {
+                // Never leave the status "Checking" forever (A-159): show the failure like a failed status run.
+                statusFailed = true;
+                statusOutput = "Couldn't prepare the Deployer scripts: " + ex.Message;
+                UpdateView();
+                return;
+            }
             statusBusy = true;
-            string script = DeployerCli.ScriptFor(installDir, ref extractedRoot);
             string args = ProcessUtil.JoinArgs(ScriptRunner.ScriptArgs(script, new[] { "status", "-Json", "-InstallDir", installDir }));
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -964,13 +976,23 @@ namespace DeployerSetup
 
         // ------------------------------------------------------------------ host device
 
-        void ShowDevice()
+        internal void ShowDevice()
         {
             if (IsBusy || deviceBusy) return;
+            string script;
+            try
+            {
+                script = DeployerCli.ScriptFor(installDir, ref extractedRoot);
+            }
+            catch (Exception ex)
+            {
+                // Resolve the script before marking the button busy, so a failure can't leave it "Checking…" (A-159).
+                ErrorDialog.Show(this, "Couldn't read the device status", "Couldn't prepare the Deployer scripts.", ex.ToString());
+                return;
+            }
             deviceBusy = true;
             deviceButton.Text = "Checking…";
             UpdateView();
-            string script = DeployerCli.ScriptFor(installDir, ref extractedRoot);
             string args = ProcessUtil.JoinArgs(ScriptRunner.ScriptArgs(script, new[] { "device", "status", "-InstallDir", installDir }));
             ThreadPool.QueueUserWorkItem(delegate
             {
