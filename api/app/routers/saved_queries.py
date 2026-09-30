@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends
-from pydantic import AfterValidator, BaseModel, Field
+from pydantic import AfterValidator, BaseModel, Field, field_validator
 from pydantic_core import PydanticCustomError
 from sqlalchemy import and_, select
 
@@ -68,6 +68,14 @@ class SavedQueryUpdate(BaseModel):
     kind: Kind | None = None
     message: Message = None
     version: int
+
+    # Omitting name/kind leaves them alone; an explicit null would hit the NOT NULL columns (500).
+    @field_validator("name", "kind")
+    @classmethod
+    def _not_null(cls, value: str | None) -> str | None:
+        if value is None:
+            raise PydanticCustomError("value_error", "Must not be null; omit the field to keep it")
+        return value
 
 
 class RestoreBody(BaseModel):

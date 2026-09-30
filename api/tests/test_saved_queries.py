@@ -91,6 +91,10 @@ def test_crud_and_validation(client, db, project_setup):  # noqa: F811
         == 422
     )
     assert client.patch(f"{url}/nope", json={"name": "z", **v1}, headers=project_setup["dev"]).status_code == 404
+    # A-120: explicit null for a NOT NULL field is a 422, not an IntegrityError 500.
+    for field in ("name", "kind"):
+        nulled = client.patch(f"{url}/{body['id']}", json={field: None, **v1}, headers=project_setup["dev"])
+        assert nulled.status_code == 422, nulled.text
 
     # Deleting the source clears the reference (ON DELETE SET NULL) instead of dropping the snippet.
     relinked = client.patch(f"{url}/{body['id']}", json={"data_source_id": ds.id, **v1}, headers=project_setup["dev"])
