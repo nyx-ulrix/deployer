@@ -9,7 +9,8 @@ developers, so reliability, low resource use and clear error messages matter as 
   passwords. Everything secret is generated at install time or entered by the person installing.
 - Nothing phones home.
 - The dashboard, webhooks and AI agents all go through the HTTP API (`docs/API.md`). Keep the API
-  contract and the docs in sync in the same pull request.
+  contract and the docs in sync in the same pull request (`api/tests/test_api_docs_routes.py` fails
+  when a `| METHOD | path |` row in `docs/*.md` names a route that does not exist).
 
 ## Layout
 
