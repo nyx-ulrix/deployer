@@ -138,6 +138,8 @@ namespace DeployerSetup
         bool portEditedByUser;
         internal string installedDir;
         internal int installedPort = -1;
+        internal bool updating; // A-156: this run updates an install that had finished, so the owner account already exists
+        internal string finishOpenUrl;
         internal string otherAccount; // A-079: set when Setup runs as a different account than the one signed in
 
         internal int step;
@@ -182,6 +184,8 @@ namespace DeployerSetup
             MaximizeBox = false;
             if (!selfTest) otherAccount = SystemChecks.OtherAccountWarning();
             installedDir = InstallLocator.Find();
+            // Checked before this run writes setup-options.json, which marks the install unfinished again (A-073).
+            updating = InstallLocator.IsFinished(installedDir);
             if (installedDir != null)
             {
                 options.InstallDir = installedDir;
@@ -1321,11 +1325,12 @@ namespace DeployerSetup
         void BuildFinish(Panel footer)
         {
             string url = string.IsNullOrEmpty(doneUrl) ? "http://localhost:" + options.Port : doneUrl;
+            bool updated = updating && !dryRun;
             int y = BigIcon(ui.S(40), IconKind.Check, Theme.Success);
-            y = Paragraph(y, dryRun ? "Test run complete" : "Deployer is ready", ui.SemiBold(19f), Theme.Text, ui.S(8));
+            y = Paragraph(y, dryRun ? "Test run complete" : updated ? "Deployer was updated to " + AppInfo.Version : "Deployer is ready", ui.SemiBold(19f), Theme.Text, ui.S(8));
             y = Paragraph(y, dryRun
                     ? "Every step checked out. Nothing was changed on this PC. Run DeployerSetup.exe without /dryrun to install."
-                    : "Deployer is running on this PC at " + url + ".",
+                    : (updated ? "Your projects, data and settings were kept. " : "") + "Deployer is running on this PC at " + url + ".",
                 ui.Font(11f), Theme.TextMuted, ui.S(20));
             if (!dryRun && donePublicNetworks > 0)
             {
@@ -1349,7 +1354,9 @@ namespace DeployerSetup
                 open = new FlatButton(ui, "Open Deployer", ButtonStyle.Primary);
                 open.FontPoints = 11f;
                 open.Bounds = new Rectangle(ContentLeft, y, open.PreferredWidth(ui.S(200)), ui.S(46));
-                open.Click += delegate { Shell.OpenUrl(url.TrimEnd('/') + "/setup"); };
+                // An update opens the dashboard as usual; it still sends an instance with no owner yet to /setup.
+                finishOpenUrl = url.TrimEnd('/') + (updated ? "/" : "/setup");
+                open.Click += delegate { Shell.OpenUrl(finishOpenUrl); };
                 pageHost.Controls.Add(open);
                 y += ui.S(46) + ui.S(28);
             }
@@ -1358,11 +1365,14 @@ namespace DeployerSetup
                 y += ui.S(6);
             }
 
-            y = Paragraph(y, "Next steps", ui.SemiBold(10.5f), Theme.Text, ui.S(12));
-            y = NextStep(y, 1, "Create your owner account", "Or restore everything from an export file made on another Deployer.");
-            y = NextStep(y, 2, "Add Google or GitHub sign-in (optional)", "Use your own free OAuth apps \u2014 the setup page walks you through it.");
-            y = NextStep(y, 3, "Already have a Deployer?", "Make this PC a host device for it from Settings \u2192 Devices in the dashboard.");
-            y += ui.S(4);
+            if (!updated)
+            {
+                y = Paragraph(y, "Next steps", ui.SemiBold(10.5f), Theme.Text, ui.S(12));
+                y = NextStep(y, 1, "Create your owner account", "Or restore everything from an export file made on another Deployer.");
+                y = NextStep(y, 2, "Add Google or GitHub sign-in (optional)", "Use your own free OAuth apps \u2014 the setup page walks you through it.");
+                y = NextStep(y, 3, "Already have a Deployer?", "Make this PC a host device for it from Settings \u2192 Devices in the dashboard.");
+                y += ui.S(4);
+            }
             y = Paragraph(y, "Manage Deployer anytime from Deployer Control in the Start menu" + (options.Autostart ? " or next to the clock." : "."),
                 ui.Font(9.5f), Theme.TextSubtle, 0);
             AddBottomSpacer(y);

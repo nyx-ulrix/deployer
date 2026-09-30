@@ -183,6 +183,21 @@ namespace DeployerSetup
                       "the runtime note says to export and restore when switching, not to keep the data (A-095)");
             }
 
+            using (WizardForm fresh = Wizard(1f, false), up = Wizard(1f, false))
+            {
+                fresh.page = up.page = WizardPage.Finish;
+                fresh.doneUrl = up.doneUrl = "http://localhost:8080";
+                up.installedDir = @"C:\ProgramData\Deployer";
+                up.updating = true;
+                fresh.Rebuild();
+                up.Rebuild();
+                string freshText = AllText(fresh), upText = AllText(up);
+                Check(freshText.Contains("Create your owner account") && fresh.finishOpenUrl == "http://localhost:8080/setup"
+                      && upText.Contains("updated to " + AppInfo.Version) && upText.Contains("were kept")
+                      && !upText.Contains("owner account") && up.finishOpenUrl == "http://localhost:8080/",
+                      "the Finish page after an update says so and opens the dashboard, not the first-run setup (A-156)");
+            }
+
             string half = Path.Combine(Path.GetTempPath(), "DeployerSelfTest-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(half);
             try
@@ -319,6 +334,7 @@ namespace DeployerSetup
             WizardForm w = new WizardForm(dryRun, false, scale, true);
             w.installedDir = null;
             w.installedPort = -1;
+            w.updating = false;
             w.options = new SetupOptions();
             w.options.Port = Ports.IsFree(8080) ? 8080 : Ports.SuggestFree(8080);
             return w;
@@ -502,6 +518,14 @@ namespace DeployerSetup
             w.doneLan = "http://192.168.1.20:8080";
             w.Rebuild();
             Save(w, dir, "wizard-6-finish-lan");
+
+            w = Wizard(scale, false);
+            w.installedDir = @"C:\ProgramData\Deployer";
+            w.updating = true;
+            w.page = WizardPage.Finish;
+            w.doneUrl = "http://localhost:8080";
+            w.Rebuild();
+            Save(w, dir, "wizard-6-finish-update");
 
             w = Wizard(scale, false);
             w.page = WizardPage.Finish;

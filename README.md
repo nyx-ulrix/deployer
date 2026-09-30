@@ -89,7 +89,8 @@ on WSL, setup tells you and continues automatically after you sign in again. Run
 *Deployer Control -> Settings -> Run setup again* (or `/setup`) repairs an installation. An update or
 repair keeps the folder, runtime, port, network access, keep-awake and sign-in choices; change those in
 *Deployer Control -> Settings* (the runtime cannot be changed there: see
-[Switching runtime](#switching-runtime)).
+[Switching runtime](#switching-runtime)). Its Finish page says which version you now run and opens the
+dashboard as usual, not the first-run setup.
 
 ### Install with PowerShell (alternative)
 
