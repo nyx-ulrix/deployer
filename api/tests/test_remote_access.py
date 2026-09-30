@@ -612,3 +612,16 @@ def test_desired_write_failure_is_reported(client, owner_headers, tmp_path, monk
     body = client.post(f"{BASE}/quick", json={"enabled": True}, headers=owner_headers).json()
     assert body["mode"] == "quick"
     assert body["connector"]["last_error"].startswith("Could not write")
+
+
+def test_worker_gives_a_root_owned_state_volume_back_to_uid_10001(state_dir, monkeypatch):
+    # A-082: "Could not write /tunnel/desired.json" heals with a restart instead of a docker one-liner.
+    (state_dir / "desired.json").write_text("{}")
+    calls = []
+    monkeypatch.setattr(ra.os, "chown", lambda p, u, g, **kw: calls.append((str(p), u, g)), raising=False)
+    monkeypatch.setattr(ra.os, "geteuid", lambda: 1000, raising=False)
+    assert ra.fix_state_ownership() == 0 and calls == []
+    monkeypatch.setattr(ra.os, "geteuid", lambda: 0, raising=False)
+    monkeypatch.setattr(ra.Path, "lstat", lambda p: os.stat_result((0,) * 10))
+    assert ra.fix_state_ownership() == 2
+    assert calls == [(str(state_dir), 10001, 10001), (str(state_dir / "desired.json"), 10001, 10001)]

@@ -56,7 +56,7 @@ export function connectorHint(data: RemoteAccess): { title: string; body: string
   if (!data.connector.running && !err)
     return {
       title: "The tunnel container isn't running",
-      body: "Its status is older than 45 seconds. On the Deployer PC run `docker compose ps tunnel`, then `docker compose up -d tunnel`.",
+      body: "Its status is older than 45 seconds. On the Deployer PC open Deployer Control and click Restart (or run `deployer restart`). `deployer logs tunnel` shows why it stopped.",
     };
   if (/invalid token|unauthori[sz]ed/i.test(err))
     return {
@@ -66,11 +66,11 @@ export function connectorHint(data: RemoteAccess): { title: string; body: string
   if (/desired\.json/i.test(err))
     return {
       title: "Deployer can't write the shared tunnel volume",
-      body: "Run `docker compose run --rm --no-deps --user 0 --cap-add CHOWN --entrypoint sh tunnel -c \"chown -R 10001:10001 /tunnel\"`, then reload this page.",
+      body: "Restart Deployer (Deployer Control > Restart, or `deployer restart`): it fixes the volume's permissions when it starts. Then reload this page.",
     };
   if (!data.connector.running) return { title: "The connector stopped", body: err };
   return {
     title: "Connecting to Cloudflare…",
-    body: "This usually takes under a minute. If it stays at 0 connections, this PC can't reach Cloudflare outbound on port 7844 (UDP or TCP). Firewalls often block QUIC; cloudflared falls back to HTTP/2 by itself.",
+    body: "This usually takes under a minute. If it stays at 0 connections, something on this PC's network is blocking Cloudflare: your router, antivirus, firewall or VPN. Try another network, or check `deployer logs tunnel`.",
   };
 }

@@ -259,7 +259,10 @@ def main() -> None:
             log.warning("marked %d interrupted job(s) as failed", failed)
     except Exception:  # noqa: BLE001 - the database may still be starting; the scheduler retries
         log.warning("could not check for interrupted jobs yet", exc_info=True)
-    from app.services import backup_engine, executors
+    from app.services import backup_engine, executors, remote_access
+
+    if remote_access.fix_state_ownership():
+        log.info("gave the tunnel state volume back to uid 10001")
 
     swept = backup_engine.sweep_leftovers(executors.backup_root())
     if any(swept.values()):

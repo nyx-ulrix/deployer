@@ -216,19 +216,18 @@ No endpoint ever returns the API token or the connector token.
   outbound UDP 7844 is blocked (router, ISP, VPN or the WSL NAT after a network change). The sidecar
   uses HTTP/2 over TCP 443 by default (`TUNNEL_PROTOCOL=http2` in `.env`, passed to cloudflared as
   `TUNNEL_TRANSPORT_PROTOCOL`); if an older `.env`/compose file still lets it use QUIC, update, or set
-  the variable and run `docker compose up -d tunnel`.
+  the variable and restart Deployer (Deployer Control > Restart, or `deployer restart`).
 - **`connector.last_error` says the sidecar hasn't reported / isn't running**: the `tunnel` container
-  isn't running. Check `docker compose ps tunnel` and `docker compose logs tunnel`, then
-  `docker compose up -d tunnel`.
+  isn't running. Restart Deployer (Deployer Control > Restart, or `deployer restart`); `deployer logs tunnel`
+  shows why it stopped.
 - **"Could not write /tunnel/desired.json"**: the API can't write the shared volume (for example a
-  volume first created by an image without `/tunnel`, so it is owned by root). Fix it with
-  `docker compose run --rm --no-deps --user 0 --cap-add CHOWN --entrypoint sh tunnel -c "chown -R 10001:10001 /tunnel"`,
-  then reload the settings page.
+  volume first created by an image without `/tunnel`, so it is owned by root). Restart Deployer: the
+  worker (root) gives the volume back to uid 10001 whenever it starts. Then reload the settings page.
 - **"cloudflared exited with code 1" mentioning an invalid token or unauthorized**: the tunnel was
   deleted or its token rotated in the Cloudflare dashboard. Link again (same account) to fetch a fresh
   token.
-- **Tunnel status `inactive`/`down` with 0 connections**: the PC can't reach Cloudflare outbound
-  (port 7844 UDP/TCP). Firewalls often block QUIC; cloudflared falls back to HTTP/2 by itself.
+- **Tunnel status `inactive`/`down` with 0 connections**: the PC can't reach Cloudflare outbound; a
+  router, antivirus, firewall or VPN may be blocking it. Try another network, and check `deployer logs tunnel`.
 - **Browser shows Cloudflare error 1033**: DNS points at the tunnel but no connector is running (see
   above). **Error 502/504**: cloudflared can't reach `caddy:8081`; make sure the `caddy` container is
   running with the current `deploy/Caddyfile`.
@@ -239,4 +238,4 @@ No endpoint ever returns the API token or the connector token.
 - **Google/GitHub sign-in fails after the switch**: add the new callback URLs shown by the dashboard to
   your OAuth apps. Quick tunnel URLs change on every restart, so don't use them for OAuth.
 - **Quick tunnel never shows a URL**: `trycloudflare.com` is rate limited; the reason is in
-  `docker compose logs tunnel`.
+  `deployer logs tunnel`.

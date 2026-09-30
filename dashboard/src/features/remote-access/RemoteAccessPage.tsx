@@ -138,7 +138,7 @@ function RemoteAccessContent({
               ) : (
                 <p className="flex items-center gap-2 text-muted">
                   <RefreshCw className="size-4 animate-spin" /> Waiting for Cloudflare to assign a URL… If it never
-                  appears, trycloudflare.com is rate limited; see <code>docker compose logs tunnel</code>.
+                  appears, trycloudflare.com is rate limited; see <code>deployer logs tunnel</code>.
                 </p>
               )}
               <div className="flex flex-wrap gap-2">
@@ -299,8 +299,8 @@ function StatusBanner({
       </div>
       {connectorExpected && !data.connector.running && !data.connector.last_error && (
         <Alert tone="warning" className="mt-3" title="The tunnel connector hasn't reported recently">
-          Its status is older than 45 seconds, so the tunnel container may not be running. On the Deployer PC check{" "}
-          <code>docker compose ps tunnel</code> and start it with <code>docker compose up -d tunnel</code>.
+          Its status is older than 45 seconds, so the tunnel container may not be running. On the Deployer PC open Deployer
+          Control and click Restart (or run <code>deployer restart</code>).
         </Alert>
       )}
       {connectorExpected && data.connector.last_error && (
@@ -308,7 +308,7 @@ function StatusBanner({
           <span className="font-mono text-xs break-words">{data.connector.last_error}</span>
           {!data.connector.running && (
             <p className="mt-1 text-xs">
-              If the tunnel container isn't running, start it with <code>docker compose up -d tunnel</code>.
+              If the tunnel container isn't running, open Deployer Control on the Deployer PC and click Restart (or run <code>deployer restart</code>).
             </p>
           )}
         </Alert>

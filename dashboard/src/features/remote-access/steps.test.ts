@@ -70,13 +70,23 @@ describe("tunnel health and hints", () => {
     expect(tunnelHealthy(linked)).toBe(true);
     const zero = { ...linked, cloudflare: { ...linked.cloudflare, tunnel: { ...linked.cloudflare.tunnel!, status: "down", connections: 0 } } };
     expect(tunnelHealthy(zero)).toBe(false);
-    expect(connectorHint(zero)?.body).toMatch(/7844/);
+    expect(connectorHint(zero)?.body).toMatch(/antivirus/);
+  });
+
+  it("never tells Windows users to run docker commands (A-082)", () => {
+    const errors = [null, "Unauthorized", "Could not write /tunnel/desired.json", "exited"];
+    for (const running of [true, false])
+      for (const last_error of errors) {
+        const zero = { ...linked.cloudflare, tunnel: { ...linked.cloudflare.tunnel!, status: "down", connections: 0 } };
+        const hint = connectorHint({ ...linked, cloudflare: zero, connector: { running, started_at: null, last_error } });
+        expect(hint?.body ?? "").not.toMatch(/docker|chown/);
+      }
   });
 
   it("names the container, token and volume problems", () => {
-    expect(connectorHint({ ...linked, connector: { running: false, started_at: null, last_error: null } })?.body).toMatch(/docker compose up/);
+    expect(connectorHint({ ...linked, connector: { running: false, started_at: null, last_error: null } })?.body).toMatch(/Deployer Control and click Restart/);
     expect(connectorHint({ ...linked, connector: { running: false, started_at: null, last_error: "cloudflared exited with code 1: Unauthorized" } })?.title).toMatch(/token/);
-    expect(connectorHint({ ...linked, connector: { running: false, started_at: null, last_error: "Could not write /tunnel/desired.json" } })?.body).toMatch(/chown/);
+    expect(connectorHint({ ...linked, connector: { running: false, started_at: null, last_error: "Could not write /tunnel/desired.json" } })?.body).toMatch(/deployer restart/);
     expect(connectorHint({ ...linked, mode: "quick" })?.title).toMatch(/quick tunnel/);
     expect(connectorHint(linked)).toBeNull();
   });

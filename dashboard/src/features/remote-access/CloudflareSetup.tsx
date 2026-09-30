@@ -616,7 +616,7 @@ function TunnelStep({ data, onTurnOffQuick }: { data: RemoteAccess; onTurnOffQui
       )}
       <p className="text-xs text-muted">
         Browser shows Cloudflare error 1033? DNS is fine but no connector is running (see above). Error 502/504? The
-        connector can't reach Deployer's web server — make sure the <code>caddy</code> container is running.
+        connector can't reach Deployer's web server — restart Deployer (Deployer Control &gt; Restart).
       </p>
     </div>
   );

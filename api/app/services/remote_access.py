@@ -173,6 +173,27 @@ def write_desired(desired: dict) -> bool:
     return True
 
 
+def fix_state_ownership() -> int:
+    """A-082: hands the shared volume back to uid 10001 (the API and the sidecar) when something left it
+    root-owned, e.g. a volume first created by an image without `/tunnel`. Run by the worker (root) at
+    start, so "Could not write /tunnel/desired.json" heals with a restart. Returns the entries fixed."""
+    if not (hasattr(os, "geteuid") and os.geteuid() == 0):
+        return 0
+    directory = state_dir()
+    if not directory.is_dir():
+        return 0
+    fixed = 0
+    for path in [directory, *directory.iterdir()]:
+        try:
+            st = path.lstat()
+            if (st.st_uid, st.st_gid) != (10001, 10001):
+                os.chown(path, 10001, 10001, follow_symlinks=False)
+                fixed += 1
+        except OSError:
+            log.warning("Could not fix the owner of %s", path, exc_info=True)
+    return fixed
+
+
 def _read_json(path: Path) -> dict | None:
     try:
         with open(path, encoding="utf-8") as fh:
