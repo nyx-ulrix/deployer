@@ -74,7 +74,15 @@ export function MonitoringPage() {
         }
       />
       <div className="space-y-5">
-        <AlertsCard alerts={alerts.data ?? []} loading={alerts.isPending} />
+        {alerts.isError ? (
+          <ErrorState
+            title="Couldn't load alerts"
+            error={alerts.error}
+            onRetry={() => void alerts.refetch()}
+          />
+        ) : (
+          <AlertsCard alerts={alerts.data ?? []} loading={alerts.isPending} />
+        )}
         {metrics.isPending ? (
           <PageSpinner />
         ) : metrics.isError ? (
@@ -518,6 +526,14 @@ function AlertsCard({
 
 function AlertSettingsCard() {
   const settings = useInstanceSettings();
+  if (settings.isError)
+    return (
+      <ErrorState
+        title="Couldn't load alert settings"
+        error={settings.error}
+        onRetry={() => void settings.refetch()}
+      />
+    );
   if (!settings.data) return null;
   return (
     <AlertSettingsForm
