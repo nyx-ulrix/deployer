@@ -110,6 +110,22 @@ namespace DeployerSetup
                   && ResetPasswordDialog.Check("long-enough-1", "long-enough-1") == null, "reset password checks");
             Check(SystemChecks.MemoryCheck(4).Title.Contains("about 2 GB is available to Deployer; expect 1-2 small apps")
                   && SystemChecks.MemoryCheck(3).Detail.Contains("exit code 137"), "memory check says how much WSL gives Deployer (A-070)");
+
+            string half = Path.Combine(Path.GetTempPath(), "DeployerSelfTest-" + Guid.NewGuid().ToString("N").Substring(0, 8));
+            Directory.CreateDirectory(half);
+            try
+            {
+                File.WriteAllText(Path.Combine(half, AppInfo.OptionsFileName), "{}");
+                File.WriteAllText(Path.Combine(half, "runtime.json"), "{}");
+                bool unfinished = !InstallLocator.IsFinished(half);
+                File.Delete(Path.Combine(half, AppInfo.OptionsFileName));
+                Check(unfinished && InstallLocator.IsFinished(half) && !InstallLocator.IsFinished(null),
+                      "a half-finished install reopens the wizard, not Control (A-073)");
+            }
+            finally
+            {
+                Directory.Delete(half, true);
+            }
         }
 
         /// <summary>Renders a form that is never shown: handles are created, nothing appears on screen.</summary>

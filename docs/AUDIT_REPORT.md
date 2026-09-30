@@ -145,7 +145,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-072 **[MEDIUM][test]** The .env merge that must never rotate secrets has no automated test - `installer/lib/common.ps1:255-289, 925-995` - Pester test: Initialize-DeployerEnv twice leaves secrets unchanged; also test ConvertTo-DeployerArgument.
 
 **Windows setup / Deployer Control**
-- [ ] A-073 **[MEDIUM][bug]** A failed first install makes the next double-click open Deployer Control, not the wizard - `installer/windows/src/Program.cs:60` - treat setup-options.json as "unfinished" and route to the wizard.
+- [x] A-073 **[MEDIUM][bug]** A failed first install makes the next double-click open Deployer Control, not the wizard - `installer/windows/src/Program.cs:60` - treat setup-options.json as "unfinished" and route to the wizard.
 - [ ] A-074 **[MEDIUM][usability]** Once installed, the wizard is reachable only via /setup, and Update never updates the Control app itself - `installer/windows/src/Program.cs:60` - offer "Update to vX" when a newer exe is run; add "Run setup again"; update DisplayVersion.
 - [ ] A-075 **[MEDIUM][usability]** "Let other devices open Deployer" never shows the address to use or checks for a Private network - `installer/windows/src/WizardForm.cs:683-685, 1276` - return lanUrls and the profile in status/done markers; show them, and warn on Public.
 - [ ] A-076 **[MEDIUM][bug]** The Update button is enabled while Deployer is stopped, and the update then fails in its backup step - `installer/windows/src/ControlForm.cs:478, 1032` - enable only when Running, or queue start before update.

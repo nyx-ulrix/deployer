@@ -167,6 +167,24 @@ namespace DeployerSetup
             return null;
         }
 
+        /// <summary>
+        /// True when setup ran to the end in this folder. install.ps1 writes runtime.json halfway through,
+        /// and the wizard deletes setup-options.json only after shortcuts and the Apps &amp; Features entry,
+        /// so a leftover setup-options.json means a failed or interrupted install (A-073).
+        /// </summary>
+        public static bool IsFinished(string dir)
+        {
+            try
+            {
+                return dir != null && File.Exists(Path.Combine(dir, "runtime.json")) &&
+                       !File.Exists(Path.Combine(dir, AppInfo.OptionsFileName));
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
         public static string RegisteredInstallDir()
         {
             try

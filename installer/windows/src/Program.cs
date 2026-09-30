@@ -57,7 +57,8 @@ namespace DeployerSetup
                         "Without options it opens the setup wizard, or Deployer Control if Deployer is already installed.");
                     return 0;
                 }
-                return InstallLocator.Find() != null ? RunControl(false) : RunWizard(false, false);
+                // A half-finished install goes back to the wizard, not Control (A-073).
+                return InstallLocator.IsFinished(InstallLocator.Find()) ? RunControl(false) : RunWizard(false, false);
             }
             catch (Exception ex)
             {
