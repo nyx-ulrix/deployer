@@ -142,7 +142,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-069 **[MEDIUM][bug]** Uninstall leaves the "never sleep" power settings in place - `installer/deployer.ps1:658-723` - restore the saved timeouts when keepAwake was enabled.
 - [x] A-070 **[MEDIUM][usability]** 4 GB PCs are told Deployer "works", but WSL2 gives the VM only half the RAM - `installer/install.ps1:245-251` - make the message honest; optionally lower mem_limits.
 - [x] A-071 **[MEDIUM][usability]** LAN access fails silently when Windows marks the network as Public - `installer/lib/common.ps1:1077-1079` - check Get-NetConnectionProfile and name the network and the settings path.
-- [ ] A-072 **[MEDIUM][test]** The .env merge that must never rotate secrets has no automated test - `installer/lib/common.ps1:255-289, 925-995` - Pester test: Initialize-DeployerEnv twice leaves secrets unchanged; also test ConvertTo-DeployerArgument.
+- [x] A-072 **[MEDIUM][test]** The .env merge that must never rotate secrets has no automated test - `installer/lib/common.ps1:255-289, 925-995` - Pester test: Initialize-DeployerEnv twice leaves secrets unchanged; also test ConvertTo-DeployerArgument.
 
 **Windows setup / Deployer Control**
 - [ ] A-073 **[MEDIUM][bug]** A failed first install makes the next double-click open Deployer Control, not the wizard - `installer/windows/src/Program.cs:60` - treat setup-options.json as "unfinished" and route to the wizard.
