@@ -605,6 +605,11 @@ def start_drop(
     (the active one when the same drop was already asked for), or None: no snapshot, drop inline."""
     if not supported(ds) or ds.deleted_at is not None or not ensure_policy(db, ds).safety_snapshots:
         return None
+    from app.services import source_ops
+
+    # A-107: a typo or stale UI must 404 here, not after a whole-database snapshot nobody needs.
+    if (source_ops.sql_entity if entity == "table" else source_ops.mongo_entity)(ds, name) is None:
+        raise not_found(f"{entity.capitalize()} '{name}'")
     key = f"{entity}:{name}"
     return jobs.active_job(db, "schema.drop", data_source_id=ds.id, key=key) or jobs.enqueue(
         db,

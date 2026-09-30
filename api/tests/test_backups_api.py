@@ -777,6 +777,11 @@ def test_pre_drop_safety_snapshot(client, env, db, monkeypatch):
 
     dropped = []
     monkeypatch.setattr(source_ops, "drop_table", lambda ds, table: dropped.append(table))
+    monkeypatch.setattr(source_ops, "sql_entity", lambda ds, table: None if table == "typo" else {"name": table})
+    # A-107: a missing table is a 404 before any snapshot or job, not after a whole-database dump.
+    resp = client.delete(f"{env['base']}/tables/typo", headers=env["admin"])
+    assert resp.status_code == 404 and resp.json()["error"]["code"] == "not_found"
+    assert db.query(Backup).count() == 0 and db.query(Job).count() == 0
     # A-044: with a safety snapshot the drop is a job, so the request returns before the snapshot runs.
     resp = client.delete(f"{env['base']}/tables/users", headers=env["admin"])
     assert resp.status_code == 202 and dropped == []
