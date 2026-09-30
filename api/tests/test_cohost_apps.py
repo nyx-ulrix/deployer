@@ -261,6 +261,29 @@ def test_failed_device_build_is_reported_and_not_retried_every_tick(db, docker, 
     assert len([m for m, _ in fd.calls if m == "apps.deploy"]) == 1
 
 
+def test_device_build_progress_reaches_the_replicate_job(db, docker, team, fake_device, monkeypatch):  # noqa: F811
+    """A-130: the socket publishes device progress on `{device_id}:{job_id}`; the job listens there."""
+    from app.services import device_rpc
+
+    app = make_app(db, team["project"], cohost=True)
+    device_id = team["device"].id
+    seen = []
+    real = jobs.JobContext.progress
+    monkeypatch.setattr(
+        jobs.JobContext, "progress", lambda self, f, m=None, **kw: (seen.append(m), real(self, f, m, **kw))[1]
+    )
+
+    def handler(method, params):
+        if method == "apps.deploy":
+            device_rpc.publish_progress(f"{device_id}:{params['job_id']}", 0.5, "Building on the device")
+        return handler_for()(method, params)
+
+    fake_device(device_id, handler)
+    deploy(db, app)
+    assert [status for _, status in jobs.run_queued()] == ["succeeded", "succeeded"]
+    assert "Building on the device" in seen
+
+
 def test_sweep_token_only_to_cohost_devices_and_cleanup(db, team, fake_device, make_device, set_setting):
     t = team
     apps_token = secrets.token_urlsafe(24)

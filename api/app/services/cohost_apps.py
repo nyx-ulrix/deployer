@@ -315,7 +315,7 @@ def run_replicate(ctx: jobs.JobContext) -> dict:
             "apps.deploy",
             params,
             timeout=DEPLOY_TIMEOUT,
-            progress_id=ctx.job_id,
+            progress_id=f"{device_id}:{ctx.job_id}",  # the socket publishes device progress per device
             on_progress=lambda fraction, message: ctx.progress(fraction, message),
         )
     except ApiError as exc:
