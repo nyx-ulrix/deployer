@@ -146,23 +146,27 @@ def pitr_base_ok(backup: Backup) -> bool:
 def ensure_policy(db: Session, ds: DataSource) -> BackupPolicy:
     policy = db.get(BackupPolicy, ds.id)
     if policy is None:
-        policy = BackupPolicy(
-            data_source_id=ds.id,
-            enabled=True,
-            schedule="hourly",
-            keep_hourly=24,
-            keep_daily=7,
-            keep_weekly=4,
-            keep_monthly=12,
-            pitr_enabled=True,
-            pitr_window_days=7,
-            copy_to_primary=False,
-            copy_to_device_id=None,
-            safety_snapshots=True,
-        )
+        policy = _default_policy(ds.id)
         db.add(policy)
         db.flush()
     return policy
+
+
+def _default_policy(data_source_id: str) -> BackupPolicy:
+    return BackupPolicy(
+        data_source_id=data_source_id,
+        enabled=True,
+        schedule="hourly",
+        keep_hourly=24,
+        keep_daily=7,
+        keep_weekly=4,
+        keep_monthly=12,
+        pitr_enabled=True,
+        pitr_window_days=7,
+        copy_to_primary=False,
+        copy_to_device_id=None,
+        safety_snapshots=True,
+    )
 
 
 def policy_out(policy: BackupPolicy) -> dict:
@@ -289,9 +293,8 @@ def _kept_as(db: Session, source_ids: set[str]) -> dict[str, str]:
     keep: dict[str, str] = {}
     now = utcnow()
     for sid in source_ids:
-        policy = db.get(BackupPolicy, sid)
-        if policy is None:
-            continue
+        # No policy row yet: the prune job would create the default one (ensure_policy), so use it too.
+        policy = db.get(BackupPolicy, sid) or _default_policy(sid)
         snaps = list(db.scalars(select(Backup).where(Backup.data_source_id == sid, Backup.scope == "source")))
         keep.update(gfs_keep(snaps, policy, now))
     return keep

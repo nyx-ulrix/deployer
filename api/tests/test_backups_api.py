@@ -291,6 +291,21 @@ def test_list_reports_the_servers_retention_reason(client, env, db):
     assert {b.id for b in db.query(Backup).all()} == {v for v in ids.values() if listed[v]}
 
 
+def test_list_without_policy_row_uses_the_default_policy(client, env, db):
+    """No policy row yet: the prune job would use the default policy, so kept_as must too (A-084)."""
+    ds = env["ds"]
+    db.query(BackupPolicy).delete()
+    now = utcnow()
+    safety = Backup(data_source_id=ds.id, scope="source", engine="mariadb", trigger="pre_move", status="succeeded")
+    newest = Backup(data_source_id=ds.id, scope="source", engine="mariadb", trigger="manual", status="succeeded")
+    safety.started_at, newest.started_at = now - timedelta(minutes=5), now - timedelta(minutes=10)
+    db.add_all([safety, newest])
+    db.commit()
+    listed = {b["id"]: b["kept_as"] for b in client.get(f"{env['base']}/backups", headers=env["viewer"]).json()}
+    assert listed == {safety.id: "safety", newest.id: "hourly"}
+    assert db.query(BackupPolicy).count() == 0
+
+
 def test_failed_snapshot_is_recorded(client, env, db):
     env["fake"].fail_snapshot = True
     backup_id = _snapshot(client, env)
