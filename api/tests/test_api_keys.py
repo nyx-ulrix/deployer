@@ -1,5 +1,11 @@
+import json
 import os
 import re
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
 
 from app.crypto import sha256_hex
 from app.models import ApiKey, AuditLog
@@ -85,7 +91,7 @@ def test_reveal(client, owner, make_user, make_project, auth_headers, db):
     assert resp.status_code == 409 and resp.json()["error"]["code"] == "api_key_revoked"
 
 
-def test_config_download(client, owner, make_project, auth_headers, set_setting, db):
+def test_config_download(client, owner, make_project, auth_headers, set_setting, db, tmp_path):
     from app.crypto import encrypt_json
     from app.models import DataSource
 
@@ -129,6 +135,27 @@ def test_config_download(client, owner, make_project, auth_headers, set_setting,
     assert cfg["generated_at"]
     other = make_project(owner, "Other")
     assert client.get(f"/v1/projects/{other.id}/api-keys/{key['id']}/config", headers=h).status_code == 404
+
+    # A-089: the agent skill's JavaScript example must run against this exact file.
+    main_id = next(s["id"] for s in cfg["data_sources"] if s["name"] == "main")
+    skill = (Path(__file__).resolve().parents[2] / "skills/deploy-website/SKILL.md").read_text(encoding="utf-8")
+    snippet = re.search(r"```js\n(.*?)```", skill, re.S).group(1)
+    assert "default: { deployer: cfg }" in snippet and "SOURCE_ID" not in snippet
+    if not shutil.which("node"):
+        pytest.skip("node not installed")
+    (tmp_path / "deployer-myshop-anon.json").write_text(json.dumps(resp.json()), encoding="utf-8")
+    stub = (
+        "globalThis.fetch = async (url, opts) => {"
+        " console.log(JSON.stringify({url, auth: opts.headers.Authorization}));"
+        " return {json: async () => ({rows: [], total: 0})}; };\n"
+    )
+    (tmp_path / "example.mjs").write_text(stub + snippet, encoding="utf-8")
+    run = subprocess.run(["node", "example.mjs"], cwd=tmp_path, capture_output=True, text=True, timeout=30)
+    assert run.returncode == 0, run.stderr
+    assert json.loads(run.stdout) == {
+        "url": f"https://deployer.example.com/v1/projects/{project.id}/data-sources/{main_id}/tables/products/rows?limit=50",
+        "auth": f"Bearer {secret}",
+    }
 
 
 def test_secret_survives_export_import(client, owner, make_user, make_project, auth_headers, db):

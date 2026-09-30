@@ -75,8 +75,9 @@ The dashboard is at the instance's public URL (default `http://localhost:8080`; 
      repo unless everything in the project is public;
    - `service` = read/write, **server-side only** (never ship it to a browser or phone).
    Admins can *Reveal* a key later and *Download config JSON*
-   (`deployer-<project>-<role>.json` with `url`, `project_id`, `api_key`, `data_sources`,
-   `endpoints`). Full API tutorial: `docs/DATA_API.md`.
+   (`deployer-<project>-<role>.json`: one top-level `deployer` object holding `url` (already ends
+   in `/v1`), `project_id`, `project`, `role`, `api_key`, `data_sources` (`[{id, name, kind,
+   engine}]`) and `endpoints` (path templates)). Full API tutorial: `docs/DATA_API.md`.
 5. **Reachability**: a site hosted elsewhere must reach the instance. Localhost is not enough:
    turn on LAN access or, for the internet, link the user's own Cloudflare account under
    Settings → Domains & remote access (docs/REMOTE_ACCESS.md). Never expose the plain `:8080`
@@ -86,16 +87,19 @@ Using the key from the site's server side (a backend, or a serverless / edge fun
 hosting platform; example, JavaScript):
 
 ```js
-const cfg = await import("./deployer-myshop-anon.json", { with: { type: "json" } });
-const res = await fetch(`${cfg.deployer.url}/projects/${cfg.deployer.project_id}` +
-  `/data-sources/${SOURCE_ID}/tables/products/rows?limit=50`, {
-  headers: { Authorization: `Bearer ${cfg.deployer.api_key}` },
+// A dynamic JSON import resolves to a module namespace: the file's content is under `default`.
+const { default: { deployer: cfg } } = await import("./deployer-myshop-anon.json", { with: { type: "json" } });
+const source = cfg.data_sources.find((s) => s.name === "main"); // the database holding `products`
+const res = await fetch(`${cfg.url}/projects/${cfg.project_id}` +
+  `/data-sources/${source.id}/tables/products/rows?limit=50`, {
+  headers: { Authorization: `Bearer ${cfg.api_key}` },
 });
-const { rows } = await res.json();
+const { rows, total } = await res.json();
 ```
 
-Put the config's `url` and the key in the platform's environment variables (`DEPLOYER_URL`,
-`DEPLOYER_API_KEY`) and read them only in server-side code; never commit a key. The function returns
+In production put the config's `url` and the key in the platform's environment variables
+(`DEPLOYER_URL`, `DEPLOYER_API_KEY`) and read them only in server-side code; never commit a key
+(keep the config file out of git, e.g. in `.gitignore`). The function returns
 only the fields the page needs. Ship the `anon` key to the browser only if the user confirms that
 every table and collection in the project is public data. The data, query and schema endpoints allow
 cross-origin `fetch` (CORS, no cookies); an `https` page needs the instance's `https` remote-access URL.
