@@ -44,7 +44,7 @@ export function JobsButton({ project }: { project: Project }) {
         onClose={() => setOpen(false)}
         placement="right"
         title="Activity"
-        description={`Backups, restores and moves for ${project.name}. Times in ${localTimeZone()}.`}
+        description={`Deploys, backups, restores and moves for ${project.name}. Times in ${localTimeZone()}.`}
         footer={<Button onClick={() => setOpen(false)}>Close</Button>}
       >
         <JobsList project={project} query={jobs} />
@@ -68,7 +68,7 @@ function JobsList({
       <EmptyState
         icon={<Activity className="size-5" />}
         title="No activity yet"
-        description="Versions, restores and database moves show up here while they run."
+        description="Deploys, versions, restores and database moves show up here while they run."
       />
     );
   }
