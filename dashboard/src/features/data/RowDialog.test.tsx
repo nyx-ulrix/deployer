@@ -1,10 +1,15 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { DataSource, Entity, JsonObject } from "../../api/types";
 import { ToastContext } from "../../components/ui/toast-context";
+import { api } from "../../api/endpoints";
 import { RowDialog } from "./RowDialog";
+
+vi.mock("../../api/endpoints", () => ({
+  api: { rows: { insert: vi.fn(async () => ({ row: {} })), update: vi.fn(async () => ({ row: {} })) } },
+}));
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -16,10 +21,12 @@ const entity = {
     { name: "id", data_type: "int", nullable: false },
     { name: "name", data_type: "varchar(255)", nullable: true },
     { name: "bio", data_type: "varchar(255)", nullable: true },
+    { name: "active", data_type: "tinyint(1)", nullable: false },
   ],
 } as unknown as Entity;
 
 async function render(row: JsonObject | null) {
+  document.body.innerHTML = "";
   const el = document.createElement("div");
   document.body.appendChild(el);
   const qc = new QueryClient();
@@ -31,7 +38,7 @@ async function render(row: JsonObject | null) {
             projectId="p1"
             source={{ id: "s1" } as DataSource}
             entity={entity}
-            columns={["id", "name", "bio"]}
+            columns={["id", "name", "bio", "active"]}
             primaryKey={["id"]}
             row={row}
             onClose={noop}
@@ -61,5 +68,16 @@ describe("RowDialog", () => {
     expect(document.activeElement).toBe(before);
     // A value that was already long opens as a textarea.
     expect(document.getElementById("row-bio")!.tagName).toBe("TEXTAREA");
+  });
+
+  it("edits a yes/no (TINYINT(1)) column with a checkbox and sends a boolean", async () => {
+    await render({ id: 2, name: "Bo", bio: "", active: 0 });
+    const box = document.getElementById("row-active") as HTMLInputElement;
+    expect(box.type).toBe("checkbox");
+    expect(box.checked).toBe(false);
+    await act(async () => box.click());
+    expect(box.checked).toBe(true);
+    await act(async () => (document.getElementById("row-form") as HTMLFormElement).requestSubmit());
+    expect(api.rows.update).toHaveBeenCalledWith("p1", "s1", "people", { id: 2 }, { active: true });
   });
 });

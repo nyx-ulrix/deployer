@@ -371,3 +371,8 @@ MongoDB (`kind = nosql`):
 
 `doc_id` is the string form of `_id` (tried as ObjectId hex, then as a 64-bit integer, then as the raw string).
 Binary SQL values are returned as `{"$base64": "..."}`, decimals as strings, datetimes as ISO strings.
+For yes/no columns (BOOLEAN, or TINYINT(1), which is how MariaDB stores BOOLEAN) the strings
+`true/false`, `yes/no`, `on/off` and `1/0` are accepted and stored as 1/0. Common database errors
+(wrong type 1366, duplicate 1062, missing linked row 1452, row still referenced 1451, required column
+empty 1048, and their PostgreSQL equivalents) come back as `400 query_failed` with a plain message;
+the driver's own text is in `details.detail` and the MariaDB error number in `details.errno`.

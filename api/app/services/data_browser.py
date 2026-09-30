@@ -20,6 +20,7 @@ from bson.errors import InvalidId
 from pymongo import ReturnDocument
 from pymongo.errors import PyMongoError
 from sqlalchemy import Engine, MetaData, Table, and_, asc, desc, func, select
+from sqlalchemy.dialects import mysql
 from sqlalchemy.exc import NoSuchTableError, SQLAlchemyError
 
 from app.errors import ApiError
@@ -68,10 +69,25 @@ def decode_input(value: Any) -> Any:
     return value
 
 
+_BOOL_TEXT = {"true": True, "yes": True, "on": True, "1": True, "false": False, "no": False, "off": False, "0": False}
+
+
+def _is_bool_column(column: Any) -> bool:
+    """BOOLEAN, or MariaDB/MySQL BOOLEAN, which is stored and reflected as TINYINT(1)."""
+    if isinstance(column.type, mysql.TINYINT):
+        return column.type.display_width == 1
+    try:
+        return column.type.python_type is bool
+    except (NotImplementedError, AttributeError):
+        return False
+
+
 def _coerce_for_column(column: Any, value: Any) -> Any:
     value = decode_input(value)
     if not isinstance(value, str):
         return value
+    if _is_bool_column(column) and value.strip().lower() in _BOOL_TEXT:
+        return _BOOL_TEXT[value.strip().lower()]
     try:
         py = column.type.python_type
     except (NotImplementedError, AttributeError):
@@ -102,9 +118,34 @@ def reflect_table(engine: Engine, name: str) -> Table:
         raise ApiError(404, "not_found", f"Table '{name}' not found") from exc
 
 
+# MariaDB/MySQL errno (PostgreSQL SQLSTATE) -> a sentence for people who do not read driver errors.
+_PLAIN_ERRORS = {
+    1366: "A value does not match its column's type (for example text in a number or yes/no column)",
+    1062: "Another row already has this value in a column that must be unique",
+    1452: "A value points to a row that does not exist in the linked table",
+    1451: "Other rows still point to this row, so it cannot be changed or deleted",
+    1048: "A required column was left empty",
+}
+_SQLSTATE_ERRNO = {"22P02": 1366, "23505": 1062, "23503": 1452, "23502": 1048}
+_COLUMN_RE = re.compile(r"column\s+((?:[`'\"][^`'\"]+[`'\"]\.?)+)", re.IGNORECASE)
+_QUOTED_RE = re.compile(r"[`'\"]([^`'\"]+)")
+
+
 def _db_error(exc: SQLAlchemyError) -> ApiError:
     orig = getattr(exc, "orig", None) or exc
-    return ApiError(400, "query_failed", str(orig)[:1000])
+    args = getattr(orig, "args", ())
+    if len(args) == 2 and isinstance(args[0], int) and isinstance(args[1], str):  # PyMySQL (errno, message)
+        errno, raw = args[0], f"{args[1]} (error {args[0]})"
+    else:
+        errno, raw = _SQLSTATE_ERRNO.get(getattr(orig, "sqlstate", None)), str(orig)
+    raw = raw[:1000]
+    if errno not in _PLAIN_ERRORS:
+        return ApiError(400, "query_failed", raw)
+    message = _PLAIN_ERRORS[errno]
+    col = _COLUMN_RE.search(raw)
+    if col and errno in (1366, 1048):
+        message += f" (column {_QUOTED_RE.findall(col.group(1))[-1]})"
+    return ApiError(400, "query_failed", message + ".", {"errno": errno, "detail": raw})
 
 
 def _row_out(row: Any) -> dict:

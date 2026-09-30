@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { errorMessage } from "../../api/client";
+import { errorMessage, isApiError } from "../../api/client";
 import { api } from "../../api/endpoints";
 import type { DataSource, Entity, Field as SchemaField, JsonObject, JsonValue } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
@@ -12,6 +12,8 @@ import { useToast } from "../../components/ui/toast-context";
 
 type CellState = { text: string; isNull: boolean; touched: boolean };
 
+// BOOLEAN on MariaDB/MySQL is stored (and reported) as TINYINT(1).
+const BOOLEAN = /^(bool|boolean|tinyint\(1\)( unsigned)?|bit\(1\))$/i;
 const NUMERIC = /^(tinyint|smallint|mediumint|int|integer|bigint|float|double|real|serial|bigserial|smallserial)\b/i;
 
 function toText(v: JsonValue | undefined): string {
@@ -30,7 +32,7 @@ function fromText(text: string, field: SchemaField | undefined, original: JsonVa
       return text;
     }
   }
-  if (typeof original === "boolean" || /^(bool|boolean)$/i.test(type)) {
+  if (typeof original === "boolean" || BOOLEAN.test(type)) {
     if (/^(true|1)$/i.test(text)) return true;
     if (/^(false|0)$/i.test(text)) return false;
   }
@@ -129,6 +131,7 @@ export function RowDialog({
           // Input for Textarea mid-typing and drop focus at the 81st character.
           const long = /text|json|blob/i.test(f?.data_type ?? "") || toText(row?.[c]).length > 80;
           const Control = long ? Textarea : Input;
+          const yesNo = typeof row?.[c] === "boolean" || BOOLEAN.test(f?.data_type ?? "");
           return (
             <div key={c} className="space-y-1">
               <div className="flex flex-wrap items-center gap-1.5">
@@ -150,18 +153,45 @@ export function RowDialog({
                   </label>
                 )}
               </div>
-              <Control
-                id={`row-${c}`}
-                value={cell.isNull ? "" : cell.text}
-                disabled={cell.isNull}
-                placeholder={cell.isNull ? "NULL" : isNew ? (f?.default ? `default: ${f.default}` : "") : ""}
-                className={long ? "min-h-20 font-mono" : "font-mono"}
-                onChange={(e: { target: { value: string } }) => update(c, { text: e.target.value })}
-              />
+              {yesNo ? (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    id={`row-${c}`}
+                    type="checkbox"
+                    checked={!cell.isNull && /^(true|1)$/i.test(cell.text)}
+                    disabled={cell.isNull}
+                    onChange={(e) => update(c, { text: e.target.checked ? "true" : "false" })}
+                    className="accent-[var(--accent)]"
+                  />
+                  {cell.isNull ? "NULL" : "Yes"}
+                  {isNew && !cell.touched && f?.default && (
+                    <span className="text-xs text-muted">(default: {f.default})</span>
+                  )}
+                </label>
+              ) : (
+                <Control
+                  id={`row-${c}`}
+                  value={cell.isNull ? "" : cell.text}
+                  disabled={cell.isNull}
+                  placeholder={cell.isNull ? "NULL" : isNew ? (f?.default ? `default: ${f.default}` : "") : ""}
+                  className={long ? "min-h-20 font-mono" : "font-mono"}
+                  onChange={(e: { target: { value: string } }) => update(c, { text: e.target.value })}
+                />
+              )}
             </div>
           );
         })}
-        {save.error && <Alert tone="danger">{errorMessage(save.error)}</Alert>}
+        {save.error && (
+          <Alert tone="danger">
+            {errorMessage(save.error)}
+            {isApiError(save.error) && typeof save.error.details.detail === "string" && (
+              <details className="mt-1 text-xs">
+                <summary className="cursor-pointer">Database message</summary>
+                <code className="break-words">{save.error.details.detail}</code>
+              </details>
+            )}
+          </Alert>
+        )}
       </form>
     </Dialog>
   );

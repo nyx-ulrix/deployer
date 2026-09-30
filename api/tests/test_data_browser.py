@@ -1,9 +1,12 @@
 import datetime as dt
 import decimal
 
+import pymysql
 import pytest
 from bson import ObjectId
-from sqlalchemy import create_engine
+from sqlalchemy import Boolean, Column, MetaData, Table, create_engine
+from sqlalchemy.dialects import mysql
+from sqlalchemy.exc import IntegrityError
 
 from app.errors import ApiError
 from app.services import data_browser as b
@@ -127,3 +130,35 @@ def test_parse_ejson_relaxed_and_ids():
     relaxed = b.to_relaxed({"_id": oid, "d": dt.datetime(2024, 1, 1)})
     assert relaxed["_id"] == {"$oid": str(oid)}
     assert "$date" in relaxed["d"]
+
+
+def test_yes_no_text_is_coerced_for_boolean_columns(engine):
+    # MariaDB BOOLEAN reflects as TINYINT(1); "true" used to reach the server as a string (error 1366).
+    t = Table("t", MetaData(), Column("flag", mysql.TINYINT(1)), Column("b", Boolean), Column("n", mysql.TINYINT(4)))
+    for text, want in (("true", True), ("Yes", True), ("on", True), ("1", True), ("false", False), (" no ", False)):
+        assert b._coerce_for_column(t.c.flag, text) is want
+        assert b._coerce_for_column(t.c.b, text) is want
+    assert b._coerce_for_column(t.c.n, "true") == "true"  # a real TINYINT keeps the database's own check
+    assert b._coerce_for_column(t.c.flag, "maybe") == "maybe"
+
+    with engine.begin() as conn:
+        conn.exec_driver_sql("CREATE TABLE flags (id INTEGER PRIMARY KEY, active BOOLEAN NOT NULL)")
+    assert b.insert_row(engine, "flags", {"id": 1, "active": "true"})["row"]["active"] in (True, 1)
+
+
+@pytest.mark.parametrize(
+    ("errno", "text", "expected"),
+    [
+        (1366, "Incorrect integer value: 'true' for column `db`.`t`.`active` at row 1", "(column active)"),
+        (1048, "Column 'name' cannot be null", "left empty (column name)"),
+        (1062, "Duplicate entry 'a@b.c' for key 'email'", "must be unique"),
+        (1452, "Cannot add or update a child row: a foreign key constraint fails", "does not exist"),
+    ],
+)
+def test_driver_errors_become_plain_messages(errno, text, expected):
+    err = b._db_error(IntegrityError("INSERT ...", {}, pymysql.err.IntegrityError(errno, text)))
+    assert err.code == "query_failed" and expected in err.message and str(errno) not in err.message
+    assert err.details == {"errno": errno, "detail": f"{text} (error {errno})"}
+
+    unknown = b._db_error(IntegrityError("INSERT ...", {}, pymysql.err.OperationalError(1205, "Lock wait timeout")))
+    assert unknown.message == "Lock wait timeout (error 1205)" and unknown.details == {}
