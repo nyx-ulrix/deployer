@@ -419,6 +419,23 @@ def test_connection_errors_get_a_plain_hint_and_keep_the_driver_text():
     assert not ok and message.startswith(f"Could not reach the server at 127.0.0.1:{port}.") and "pw-x" not in message
 
 
+def test_try_sql_gives_up_quickly_on_a_silent_server(monkeypatch):
+    # A-113: a port that accepts TCP but never sends a MySQL greeting must not hang for the 300 s
+    # read_timeout meant for real queries.
+    import socket
+    import time
+
+    monkeypatch.setattr(connections, "TEST_IO_TIMEOUT_S", 1)
+    with socket.socket() as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen()  # the kernel completes the handshake; nothing ever answers
+        port = server.getsockname()[1]
+        started = time.monotonic()
+        ok, message, _ = connections.try_sql("mysql", {"host": "127.0.0.1", "port": port, "username": "u"})
+    assert time.monotonic() - started < 4
+    assert not ok and message.startswith(f"The server at 127.0.0.1:{port} accepted the connection")
+
+
 def test_managed_create_drops_database_when_commit_fails(client, db, project_setup, fake_provisioning, monkeypatch):
     # A-110: a failure after provisioning (audit or commit) must not leave an orphaned database and user.
     from app.routers import data_sources as router

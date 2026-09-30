@@ -201,7 +201,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-110 **[LOW][bug]** Orphaned database and user if the request fails after provisioning - `api/app/routers/data_sources.py:136-158` - wrap provision through commit in try and drop on failure. (not verified)
 - [x] A-111 **[LOW][bug]** MySQL expression defaults are not parenthesized; dead quote escaping; no non-ASCII defaults - `api/app/services/schema_ops.py:73-91` - `(UUID())`/`(CURRENT_DATE)`; a Unicode allowlist. (not verified)
 - [x] A-112 **[LOW][bug]** `timestamps: true` on PostgreSQL creates an updated_at that never updates - `api/app/services/schema_ops.py:156-158` - add a trigger or document it. (not verified)
-- [ ] A-113 **[LOW][bug]** Connection test can hang for up to 5 minutes on MySQL/MariaDB - `api/app/services/connections.py:84, 166-169` - short read/write timeouts in try_sql. (not verified)
+- [x] A-113 **[LOW][bug]** Connection test can hang for up to 5 minutes on MySQL/MariaDB - `api/app/services/connections.py:84, 166-169` - short read/write timeouts in try_sql. (not verified)
 - [ ] A-114 **[LOW][security]** Connection test lets project admins probe the internal network and LAN - `api/app/routers/data_sources.py:88-106` - refuse internal names and private ranges for non-owners. (not verified)
 - [ ] A-115 **[LOW][security]** No denylist before dropping a managed DB on the shared MariaDB - `api/app/services/provisioning.py:170-175, 389-391` - reject platform and system DB names. (not verified)
 - [ ] A-116 **[LOW][docs]** DDL export silently omits views, triggers and routines - `api/app/services/ddl_export.py:216-224, 250-251` - a header listing what was skipped; fix the README and docstring. (not verified)

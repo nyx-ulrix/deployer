@@ -32,6 +32,7 @@ from app.errors import ApiError
 from app.models import DataSource, utcnow
 
 CONNECT_TIMEOUT_S = 5
+TEST_IO_TIMEOUT_S = 10  # A-113: a connection test's MySQL handshake/query read, not the 300 s of real work
 SQL_ENGINES = ("mariadb", "mysql", "postgresql")
 DEFAULT_PORTS = {"mariadb": 3306, "mysql": 3306, "postgresql": 5432, "mongodb": 27017}
 
@@ -103,17 +104,22 @@ def sql_url(engine_name: str, config: dict[str, Any]) -> URL:
     )
 
 
-def _connect_args(engine_name: str, config: dict[str, Any]) -> dict[str, Any]:
-    if engine_name == "postgresql":
+def _connect_args(engine_name: str, config: dict[str, Any], io_timeout: int = 300) -> dict[str, Any]:
+    if engine_name == "postgresql":  # libpq's connect_timeout already covers the handshake
         return {"connect_timeout": CONNECT_TIMEOUT_S, "sslmode": "require" if config.get("tls") else "prefer"}
-    args: dict[str, Any] = {"connect_timeout": CONNECT_TIMEOUT_S, "read_timeout": 300, "write_timeout": 300}
+    # PyMySQL's connect_timeout covers only the TCP connect; the greeting/auth reads use read_timeout.
+    args: dict[str, Any] = {
+        "connect_timeout": CONNECT_TIMEOUT_S,
+        "read_timeout": io_timeout,
+        "write_timeout": io_timeout,
+    }
     if config.get("tls"):
         args["ssl"] = ssl.create_default_context()
     return args
 
 
-def build_sql_engine(engine_name: str, config: dict[str, Any], *, pooled: bool = True) -> Engine:
-    kwargs: dict[str, Any] = {"connect_args": _connect_args(engine_name, config)}
+def build_sql_engine(engine_name: str, config: dict[str, Any], *, pooled: bool = True, io_timeout: int = 300) -> Engine:
+    kwargs: dict[str, Any] = {"connect_args": _connect_args(engine_name, config, io_timeout)}
     if pooled:
         kwargs.update(pool_size=2, max_overflow=3, pool_pre_ping=True, pool_recycle=1800, pool_timeout=10)
     else:
@@ -205,6 +211,10 @@ _MYSQL_HINTS = {
     1130: "The server does not allow connections from Deployer's address. Allow the user from host '%'.",
     2003: _UNREACHABLE,
     2005: _BAD_HOST,
+    2013: (  # A-113: something listens on that port but did not answer like MySQL/MariaDB in time
+        "The server at {where} accepted the connection but did not answer like a MySQL/MariaDB server. "
+        "Check the port (usually 3306) and the TLS setting."
+    ),
 }
 # lowercase PostgreSQL / libpq message fragment -> hint (first match wins)
 _PG_HINTS = (
@@ -263,7 +273,7 @@ def friendly_error(kind: str, exc: BaseException, config: dict[str, Any], secret
 
 
 def try_sql(engine_name: str, config: dict[str, Any]) -> tuple[bool, str, str | None]:
-    engine = build_sql_engine(engine_name, config, pooled=False)
+    engine = build_sql_engine(engine_name, config, pooled=False, io_timeout=TEST_IO_TIMEOUT_S)
     try:
         with engine.connect() as conn:
             if engine_name == "postgresql":
