@@ -65,8 +65,8 @@ RUN printf 'mongosh:\n  forceDisableTelemetry: true\n  disableLogging: true\n  u
     && chmod 0644 /etc/mongosh.conf
 
 # Backup store (the `backups` volume). Owned by the non-root user so a fresh volume is writable.
+# BACKUP_DIR (default /backups) and the healthcheck are set in deploy/docker-compose.yml only.
 RUN mkdir -p /backups && chown deployer:deployer /backups && chmod 0700 /backups
-ENV BACKUP_DIR=/backups
 
 COPY requirements.txt ./
 RUN pip install -r requirements.txt
@@ -86,9 +86,6 @@ RUN mkdir -p /tunnel && chown deployer:deployer /tunnel && chmod 0700 /tunnel
 USER deployer
 
 EXPOSE 8000
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD python -c "import urllib.request,sys; urllib.request.urlopen('http://127.0.0.1:8000/v1/health', timeout=4); sys.exit(0)" || exit 1
 
 ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips=*"]
