@@ -385,15 +385,21 @@ function PublicUrlForm({ current, onDone }: { current: string; onDone: () => voi
     <>
       <StepHeader icon={<Globe className="size-5" />} title="Public URL">
         <p>
-          This must be the address <strong>other people and devices</strong> use to reach this Deployer — for example
-          a Tailscale (<code>https://my-pc.tailnet-name.ts.net</code>) or Cloudflare Tunnel address, not{" "}
-          <code>localhost</code> if you'll use it from your phone.
-        </p>
-        <p>
-          Invite links and the <strong>OAuth callback URLs</strong> for Google/GitHub sign-in are built from it, so if
-          you change it later you'll need to update your OAuth apps too.
+          <strong>Leave this as it is for now.</strong> When you want people on other devices or the internet to reach
+          Deployer, go to <strong>Settings &gt; Domains &amp; remote access</strong>; it sets this for you.
         </p>
       </StepHeader>
+      <details className="mb-4 text-sm text-muted">
+        <summary className="cursor-pointer font-medium text-accent hover:underline">Advanced</summary>
+        <p className="mt-2">
+          This is the address other people and devices use to reach this Deployer. If you already run your own
+          Tailscale or Cloudflare Tunnel, you can enter that address here instead.
+        </p>
+        <p className="mt-2">
+          Invite links and the OAuth callback URLs for Google/GitHub sign-in are built from it, so if you change it
+          after setting up an OAuth app, update the app's callback URL too.
+        </p>
+      </details>
       <form
         className="space-y-4"
         onSubmit={(e) => {

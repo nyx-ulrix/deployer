@@ -101,7 +101,7 @@ function GeneralCard({ settings }: { settings: InstanceSettings }) {
       <form className="space-y-4" onSubmit={onSubmit}>
         <Field
           label="Public URL"
-          hint="The address others use to reach this Deployer (e.g. a Tailscale or Cloudflare Tunnel URL). Invite links and OAuth callbacks are built from it."
+          hint="The address others use to reach this Deployer. Settings > Domains & remote access sets it for you. Invite links and OAuth callbacks are built from it."
           error={url && !valid ? "Enter a full URL starting with http:// or https://" : undefined}
         >
           {(id) => (

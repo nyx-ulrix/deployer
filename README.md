@@ -144,6 +144,8 @@ installation keeps the runtime it was installed with unless you run setup again 
 1. Open `http://localhost:8080/setup` (the installer opens it for you).
 2. Create the **instance owner** account - or choose *Restore from export* to bring over a whole
    installation from another device.
+   On the *Public URL* step, leave the address as it is; *Settings -> Domains & remote access* sets
+   it for you later.
 3. Optionally configure Google and GitHub sign-in (below) and whether people can sign up without an
    invite.
 4. Create projects, add SQL/NoSQL data sources and invite collaborators. Invite links use the public
