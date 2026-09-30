@@ -91,7 +91,7 @@ def run_local(ds: DataSource, op: str, args: dict | None = None) -> Any:
             return introspection.sql_entity(ds, name)
         return introspection.mongo_entity(ds, name)
     if op == "ddl_export":
-        return ddl_export.export_sql_source(ds) if ds.kind == "sql" else ddl_export.export_mongo_source(ds)
+        return ddl_export.export_source(ds)
     if op == "connection_info":
         return connections.connection_info(ds)
     if op == "query":
@@ -177,7 +177,9 @@ def run(ds: DataSource, op: str, args: dict | None = None, *, timeout: float = R
 # --- schema --------------------------------------------------------------------------------------
 
 
-def _remote_introspect(ds: DataSource, sample: int) -> dict:
+def _introspect_one(ds: DataSource, sample: int) -> dict:
+    if not is_remote(ds):
+        return introspection.introspect_source(ds, sample)
     try:
         out = run(ds, "introspect", {"sample": sample})
         if not isinstance(out, dict):
@@ -189,50 +191,29 @@ def _remote_introspect(ds: DataSource, sample: int) -> dict:
 
 
 def introspect_sources(sources: list[DataSource], sample: int = introspection.DEFAULT_SAMPLE) -> list[dict]:
-    if not any(is_remote(s) for s in sources):
-        return introspection.introspect_sources(sources, sample)
-    from concurrent.futures import ThreadPoolExecutor
-
-    def one(ds: DataSource) -> dict:
-        return _remote_introspect(ds, sample) if is_remote(ds) else introspection.introspect_source(ds, sample)
-
-    with ThreadPoolExecutor(max_workers=min(4, len(sources))) as pool:
-        return list(pool.map(one, sources))
+    return introspection.introspect_sources(sources, sample, _introspect_one)
 
 
 def sql_entity(ds: DataSource, table: str) -> dict | None:
-    return run(ds, "entity", {"name": table}) if is_remote(ds) else introspection.sql_entity(ds, table)
+    return run(ds, "entity", {"name": table})
 
 
 def mongo_entity(ds: DataSource, name: str) -> dict | None:
-    return run(ds, "entity", {"name": name}) if is_remote(ds) else introspection.mongo_entity(ds, name)
+    return run(ds, "entity", {"name": name})
+
+
+def _export_one(ds: DataSource, now: datetime | None) -> str:
+    if not is_remote(ds):
+        return ddl_export.export_source(ds, now)
+    text = run(ds, "ddl_export", {})
+    if not isinstance(text, str):
+        raise ApiError(502, "device_error", "Malformed export from host device")
+    return text
 
 
 def export_sources(sources: list[DataSource], kind: str, now: datetime | None = None) -> str:
-    """Like `ddl_export.export_sources`, fetching scripts of device-hosted sources from the device."""
-    if not any(is_remote(s) for s in sources):
-        return ddl_export.export_sources(sources, kind, now)
-    chunks = []
-    for ds in sources:
-        if ds.kind != kind:
-            continue
-        if not is_remote(ds):
-            chunks.append(ddl_export.export_sources([ds], kind, now))
-            continue
-        try:
-            text = run(ds, "ddl_export", {})
-            if not isinstance(text, str):
-                raise ApiError(502, "device_error", "Malformed export from host device")
-            chunks.append(text)
-        except ApiError as exc:
-            prefix = "--" if kind == "sql" else "//"
-            chunks.append(
-                f"{prefix} Source {ddl_export._comment_safe(ds.name)} could not be exported: "
-                f"{ddl_export._comment_safe(exc.message)}\n"
-            )
-    if not chunks:
-        return ("-- " if kind == "sql" else "// ") + "No " + ("SQL" if kind == "sql" else "MongoDB") + " data sources\n"
-    return "\n".join(chunks)
+    """`ddl_export.export_sources`, fetching scripts of device-hosted sources from the device."""
+    return ddl_export.export_sources(sources, kind, now, _export_one)
 
 
 def _to_copies(ds: DataSource, op: str, args: dict) -> None:
@@ -336,51 +317,36 @@ def connection_info(ds: DataSource) -> dict:
 # --- data browser -------------------------------------------------------------------------------
 
 
+# One-liners: `run` sends device-hosted sources to their device, `run_local` serves the rest.
+
+
 def list_rows(ds: DataSource, table: str, **kwargs: Any) -> dict:
-    if is_remote(ds):
-        return run(ds, "rows.list", {"table": table, **kwargs})
-    return data_browser.list_rows(connections.get_sql_engine(ds), table, **kwargs)
+    return run(ds, "rows.list", {"table": table, **kwargs})
 
 
 def insert_row(ds: DataSource, table: str, values: dict) -> dict:
-    if is_remote(ds):
-        return run(ds, "rows.insert", {"table": table, "values": values})
-    return data_browser.insert_row(connections.get_sql_engine(ds), table, values)
+    return run(ds, "rows.insert", {"table": table, "values": values})
 
 
 def update_row(ds: DataSource, table: str, pk: dict, values: dict) -> dict:
-    if is_remote(ds):
-        return run(ds, "rows.update", {"table": table, "pk": pk, "values": values})
-    return data_browser.update_row(connections.get_sql_engine(ds), table, pk, values)
+    return run(ds, "rows.update", {"table": table, "pk": pk, "values": values})
 
 
 def delete_row(ds: DataSource, table: str, pk: dict) -> dict:
-    if is_remote(ds):
-        return run(ds, "rows.delete", {"table": table, "pk": pk})
-    return data_browser.delete_row(connections.get_sql_engine(ds), table, pk)
+    return run(ds, "rows.delete", {"table": table, "pk": pk})
 
 
 def list_documents(ds: DataSource, name: str, *, filter_json: str | None, limit: int = 50, skip: int = 0) -> dict:
-    if is_remote(ds):
-        return run(ds, "documents.list", {"name": name, "filter": filter_json, "limit": limit, "skip": skip})
-    return data_browser.list_documents(
-        connections.get_mongo_db(ds), name, filter_json=filter_json, limit=limit, skip=skip
-    )
+    return run(ds, "documents.list", {"name": name, "filter": filter_json, "limit": limit, "skip": skip})
 
 
 def insert_document(ds: DataSource, name: str, document: Any) -> dict:
-    if is_remote(ds):
-        return run(ds, "documents.insert", {"name": name, "document": document})
-    return data_browser.insert_document(connections.get_mongo_db(ds), name, document)
+    return run(ds, "documents.insert", {"name": name, "document": document})
 
 
 def update_document(ds: DataSource, name: str, doc_id: str, set_values: Any, unset: list[str] | None) -> dict:
-    if is_remote(ds):
-        return run(ds, "documents.update", {"name": name, "doc_id": doc_id, "set": set_values, "unset": unset})
-    return data_browser.update_document(connections.get_mongo_db(ds), name, doc_id, set_values, unset)
+    return run(ds, "documents.update", {"name": name, "doc_id": doc_id, "set": set_values, "unset": unset})
 
 
 def delete_document(ds: DataSource, name: str, doc_id: str) -> dict:
-    if is_remote(ds):
-        return run(ds, "documents.delete", {"name": name, "doc_id": doc_id})
-    return data_browser.delete_document(connections.get_mongo_db(ds), name, doc_id)
+    return run(ds, "documents.delete", {"name": name, "doc_id": doc_id})

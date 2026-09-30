@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import zipfile
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -330,14 +331,24 @@ def export_mongo_source(ds: DataSource, now: datetime | None = None) -> str:
     )
 
 
-def export_sources(sources: list[DataSource], kind: str, now: datetime | None = None) -> str:
-    """Concatenates scripts for every source of `kind`; failing sources become comments."""
+def export_source(ds: DataSource, now: datetime | None = None) -> str:
+    return export_sql_source(ds, now) if ds.kind == "sql" else export_mongo_source(ds, now)
+
+
+def export_sources(
+    sources: list[DataSource],
+    kind: str,
+    now: datetime | None = None,
+    export: Callable[[DataSource, datetime | None], str] = export_source,
+) -> str:
+    """Concatenates scripts for every source of `kind`; failing sources become comments.
+    `export` scripts one source (source_ops passes one that asks host devices for theirs)."""
     chunks = []
     for ds in sources:
         if ds.kind != kind:
             continue
         try:
-            chunks.append(export_sql_source(ds, now) if kind == "sql" else export_mongo_source(ds, now))
+            chunks.append(export(ds, now))
         except Exception as exc:  # noqa: BLE001
             prefix = "--" if kind == "sql" else "//"
             msg = connections.redact(str(getattr(exc, "orig", None) or exc))

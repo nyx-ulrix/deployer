@@ -17,7 +17,7 @@ import decimal
 import json
 import re
 import uuid
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -577,11 +577,16 @@ def introspect_source(ds: DataSource, sample: int = DEFAULT_SAMPLE) -> dict:
     return out
 
 
-def introspect_sources(sources: list[DataSource], sample: int = DEFAULT_SAMPLE) -> list[dict]:
+def introspect_sources(
+    sources: list[DataSource],
+    sample: int = DEFAULT_SAMPLE,
+    introspect: Callable[[DataSource, int], dict] = introspect_source,
+) -> list[dict]:
+    """`introspect` reads one source (source_ops passes one that asks host devices for theirs)."""
     if len(sources) <= 1:
-        return [introspect_source(s, sample) for s in sources]
+        return [introspect(s, sample) for s in sources]
     with ThreadPoolExecutor(max_workers=min(4, len(sources))) as pool:
-        return list(pool.map(lambda s: introspect_source(s, sample), sources))
+        return list(pool.map(lambda s: introspect(s, sample), sources))
 
 
 def sql_entity(ds: DataSource, table: str) -> dict | None:
