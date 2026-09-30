@@ -118,6 +118,27 @@ export function parseCommand(text: string): ConsoleCommand | null {
   }
 }
 
+// ---- History browsing ----
+
+/** Where ↑/↓ browsing is: an index into the history (newest first) and the input from before browsing. */
+export type HistoryBrowse = { index: number; stash: string };
+
+/**
+ * One shell-style ↑ (older, -1) / ↓ (newer, +1) step through `queries` (newest first): the next
+ * browse state and the text to put in the prompt, or null when nothing changes.
+ */
+export function stepHistory(
+  queries: readonly string[],
+  browse: HistoryBrowse | null,
+  direction: -1 | 1,
+  text: string,
+): { browse: HistoryBrowse | null; input: string } | null {
+  const next = (browse ? browse.index : -1) - direction;
+  if (next >= queries.length) return null;
+  if (next < 0) return browse ? { browse: null, input: browse.stash } : null;
+  return { browse: { index: next, stash: browse ? browse.stash : text }, input: queries[next] };
+}
+
 // ---- Enter rule ----
 
 /** True when every `(`, `[`, `{` is closed and no string or block comment is left open (JS-aware). */

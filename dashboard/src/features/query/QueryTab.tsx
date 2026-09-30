@@ -8,7 +8,7 @@ import { useQueryConsoleMode } from "../../lib/consoleMode";
 import { useProjectContext } from "../projects/project-context";
 import { NotebookConsole } from "./NotebookConsole";
 import { TerminalConsole } from "./TerminalConsole";
-import { useQueryConsole } from "./useQueryConsole";
+import { useTerminalConsole } from "./useTerminalConsole";
 
 /** Project tab **Query** (QUERY_CONSOLE.md): SQL / MongoDB shell against one of the project's databases. */
 export default function QueryTab() {
@@ -43,6 +43,6 @@ export default function QueryTab() {
 
 /** Owns the terminal's transcript state so the layout component stays thin. */
 function TerminalQueryConsole({ project, sources, readOnly }: { project: Project; sources: DataSource[]; readOnly: boolean }) {
-  const console = useQueryConsole(project, sources, readOnly);
+  const console = useTerminalConsole(project, sources, readOnly);
   return <TerminalConsole console={console} />;
 }

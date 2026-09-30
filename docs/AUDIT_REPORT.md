@@ -276,7 +276,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 
 **Dashboard data features**
 - [x] A-171 **[LOW][security]** Developers can attach an admin-only API key to an app and read its secret - `api/app/routers/apps.py:274-277, 377-380` - require admin to set or change api_key_id (and repo_url on keyed apps).
-- [ ] A-172 **[LOW][cleanup]** useQueryConsole is half-used: the notebook duplicates it and several returned members are dead - `dashboard/src/features/query/useQueryConsole.ts:81-85, 248-256, 350, 357-367` - rename it and delete the dead members. (not verified)
+- [x] A-172 **[LOW][cleanup]** useQueryConsole is half-used: the notebook duplicates it and several returned members are dead - `dashboard/src/features/query/useQueryConsole.ts:81-85, 248-256, 350, 357-367` - rename it and delete the dead members. (not verified)
 - [ ] A-173 **[LOW][bug]** Clicking a conflict row pushes two identical history entries - `dashboard/src/features/cohosting/SyncPage.tsx:418, 442` - stopPropagation. (not verified)
 - [ ] A-174 **[LOW][bug]** Notebook output shows the current max-rows setting, not the one the run used - `dashboard/src/features/query/NotebookConsole.tsx:597, 866-868` - use run.request.max_rows. (not verified)
 - [ ] A-175 **[LOW][bug]** Data browser shows an empty page with "51-50 of 50" after deleting the last row on a page - `dashboard/src/features/data/SqlTableView.tsx:265-266, 301, 383-387` - step back a page. (not verified)

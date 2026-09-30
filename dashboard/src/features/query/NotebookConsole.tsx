@@ -67,9 +67,9 @@ import { SnippetDialog } from "./SnippetDialog";
 import { SourceSelect } from "./SourceSelect";
 import { SqlResults } from "./SqlResults";
 import type { RunState } from "./terminal";
-import { isDesktop } from "./useQueryConsole";
 
 const NO_ENTITIES: Entity[] = [];
+const isDesktop = () => typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1024px)").matches;
 
 /** Output of one cell: session state only, never persisted or saved. */
 type CellResult = { run: RunState; at: string; /** The text that was run, for the "edited since" hint. */ text: string; collapsed: boolean };

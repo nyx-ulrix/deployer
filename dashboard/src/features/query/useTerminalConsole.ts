@@ -6,7 +6,7 @@ import type { DataSource, Entity, Project, QueryRequest } from "../../api/types"
 import { useToast } from "../../components/ui/toast-context";
 import { engineLabel } from "../../lib/format";
 import { useDeviceNames } from "../devices/useDeviceNames";
-import { addHistoryEntry, clearHistory, loadHistory, type HistoryEntry } from "./history";
+import { addHistoryEntry, loadHistory, type HistoryEntry } from "./history";
 import {
   loadDraft,
   loadPrefs,
@@ -19,22 +19,29 @@ import {
 import type { QueryEditorHandle } from "./QueryEditor";
 import { checkReadOnly } from "./readOnly";
 import { describeQueryError, firstError, starterQuery } from "./results";
-import { findSource, parseCommand, promptLabel, type ConsoleCommand, type ConsoleEntry, type RunEntry } from "./terminal";
+import {
+  findSource,
+  parseCommand,
+  promptLabel,
+  stepHistory,
+  type ConsoleCommand,
+  type ConsoleEntry,
+  type HistoryBrowse,
+  type RunEntry,
+} from "./terminal";
 
 const NO_ENTITIES: Entity[] = [];
-const DESKTOP = "(min-width: 1024px)";
-
-export const isDesktop = () => typeof window.matchMedia === "function" && window.matchMedia(DESKTOP).matches;
 
 type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
 
-export type PendingWrite = { text: string; reason: string };
+type PendingWrite = { text: string; reason: string };
 
 /**
- * Everything both console layouts share: the selected source, per-source drafts and history, the
- * transcript of runs, preferences, the viewer guard and the in-flight requests. Layouts stay thin.
+ * State of the terminal console (the notebook keeps its own in NotebookConsole): the selected
+ * source, per-source drafts and local history, the transcript of runs, preferences, the viewer
+ * guard and the in-flight requests. TerminalConsole stays a thin layout.
  */
-export function useQueryConsole(project: Project, sources: DataSource[], readOnly: boolean) {
+export function useTerminalConsole(project: Project, sources: DataSource[], readOnly: boolean) {
   const toast = useToast();
   const deviceName = useDeviceNames(
     project.id,
@@ -46,13 +53,10 @@ export function useQueryConsole(project: Project, sources: DataSource[], readOnl
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [histories, setHistories] = useState<Record<string, HistoryEntry[]>>({});
   const [entries, setEntries] = useState<ConsoleEntry[]>(() => [{ id: 0, kind: "help" }]);
-  /** Latest run per source (the terminal's `current`). */
-  const [lastRun, setLastRun] = useState<Record<string, number | null>>({});
   const [prefs, setPrefsState] = useState<QueryPrefs>(loadPrefs);
-  const [sidebarOpen, setSidebarOpen] = useState(isDesktop);
   const [pendingWrite, setPendingWrite] = useState<PendingWrite | null>(null);
   /** Shell-style ↑/↓ browsing: index into `history` and the input as it was before browsing. */
-  const [browse, setBrowse] = useState<{ index: number; stash: string } | null>(null);
+  const [browse, setBrowse] = useState<HistoryBrowse | null>(null);
 
   const editorRef = useRef<QueryEditorHandle | null>(null);
   /** For the layout's `<QueryEditor onHandle>`; the handle stays private to this hook. */
@@ -71,11 +75,6 @@ export function useQueryConsole(project: Project, sources: DataSource[], readOnl
   const history = useMemo(
     () => histories[source.id] ?? loadHistory(project.id, source.id),
     [histories, project.id, source.id],
-  );
-  const currentId = lastRun[source.id] ?? null;
-  const current = useMemo(
-    () => (currentId === null ? null : (entries.find((e): e is RunEntry => e.kind === "run" && e.id === currentId) ?? null)),
-    [entries, currentId],
   );
   const running = entries.some((e) => e.kind === "run" && e.sourceId === source.id && e.run.status === "running");
 
@@ -152,7 +151,6 @@ export function useQueryConsole(project: Project, sources: DataSource[], readOnl
       at,
       run: { status: "running", request },
     });
-    setLastRun((m) => ({ ...m, [target.id]: id }));
     try {
       const response = await api.query.run(project.id, target.id, request, controller.signal);
       if (controller.signal.aborted) return;
@@ -197,16 +195,6 @@ export function useQueryConsole(project: Project, sources: DataSource[], readOnl
     return false;
   };
 
-  /** Editor layout: run the selection if there is one, else the whole editor. */
-  const runEditor = () => {
-    if (running) return;
-    const queryText = editorRef.current?.runnable() ?? text;
-    if (!queryText.trim()) return;
-    setPendingWrite(null);
-    if (!guard(queryText)) return;
-    void execute(source, queryText);
-  };
-
   const say = (tone: "info" | "error", body: string, echo: string) =>
     addEntry({ kind: "message", tone, text: body, input: { prompt: promptLabel(source), text: echo } });
 
@@ -241,7 +229,6 @@ export function useQueryConsole(project: Project, sources: DataSource[], readOnl
       }
       case "clear":
         setEntries([]);
-        setLastRun({});
         return;
       case "rows":
         if (cmd.value === null) {
@@ -265,7 +252,7 @@ export function useQueryConsole(project: Project, sources: DataSource[], readOnl
     }
   };
 
-  /** Terminal layout: run (or execute a built-in command for) the whole prompt, then clear it. */
+  /** Run (or execute a built-in command for) the whole prompt, then clear it. */
   const submitPrompt = () => {
     const queryText = (editorRef.current?.doc() ?? text).trim();
     if (!queryText) return;
@@ -288,51 +275,25 @@ export function useQueryConsole(project: Project, sources: DataSource[], readOnl
     editorRef.current?.focus();
   };
 
-  const confirmPendingWrite = ({ clearInput = false }: { clearInput?: boolean } = {}) => {
+  const confirmPendingWrite = () => {
     const pending = pendingWrite;
     if (!pending) return;
     setPendingWrite(null);
     void execute(source, pending.text);
-    if (clearInput) replaceInput("");
+    replaceInput("");
     editorRef.current?.focus();
   };
 
   const cancelPendingWrite = () => setPendingWrite(null);
 
-  const clearResults = () => setLastRun((m) => ({ ...m, [source.id]: null }));
-
-  const clearTranscript = () => {
-    setEntries([]);
-    setLastRun({});
-  };
-
-  const clearHistoryFor = () => {
-    clearHistory(project.id, source.id);
-    setHistories((h) => ({ ...h, [source.id]: [] }));
-    setBrowse(null);
-  };
-
-  const loadFromHistory = (query: string) => {
-    setBrowse(null);
-    replaceInput(query);
-    editorRef.current?.focus();
-  };
+  const clearTranscript = () => setEntries([]);
 
   /** ↑ (older, -1) / ↓ (newer, +1) through this source's history, like a shell. */
   const browseHistory = (direction: -1 | 1) => {
-    if (history.length === 0) return;
-    const index = browse ? browse.index : -1;
-    const next = direction === -1 ? index + 1 : index - 1;
-    if (next >= history.length) return;
-    if (next < 0) {
-      if (browse) {
-        replaceInput(browse.stash);
-        setBrowse(null);
-      }
-      return;
-    }
-    setBrowse({ index: next, stash: browse ? browse.stash : text });
-    replaceInput(history[next].query);
+    const step = stepHistory(history.map((h) => h.query), browse, direction, text);
+    if (!step) return;
+    setBrowse(step.browse);
+    replaceInput(step.input);
   };
 
   const insertStarter = (entityName: string) => {
@@ -340,7 +301,6 @@ export function useQueryConsole(project: Project, sources: DataSource[], readOnl
   };
 
   return {
-    project,
     sources,
     source,
     selectSource,
@@ -352,27 +312,19 @@ export function useQueryConsole(project: Project, sources: DataSource[], readOnl
     text,
     setText,
     registerEditor,
-    history,
-    clearHistoryFor,
-    loadFromHistory,
     browseHistory,
     prefs,
     setPrefs,
     entries,
-    current,
     running,
-    runEditor,
     submitPrompt,
     cancel,
     pendingWrite,
     confirmPendingWrite,
     cancelPendingWrite,
-    clearResults,
     clearTranscript,
-    sidebarOpen,
-    setSidebarOpen,
     insertStarter,
   };
 }
 
-export type ConsoleApi = ReturnType<typeof useQueryConsole>;
+export type TerminalConsoleApi = ReturnType<typeof useTerminalConsole>;

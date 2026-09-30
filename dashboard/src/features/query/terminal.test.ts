@@ -11,6 +11,7 @@ import {
   runOutputText,
   shouldSubmitOnEnter,
   sqlStatementFooter,
+  stepHistory,
   transcriptText,
 } from "./terminal";
 
@@ -92,6 +93,27 @@ describe("bracketsBalanced", () => {
     expect(bracketsBalanced("`multi\nline`")).toBe(true);
     expect(bracketsBalanced("( ]")).toBe(false);
     expect(bracketsBalanced("")).toBe(true);
+  });
+});
+
+describe("stepHistory", () => {
+  const queries = ["SELECT 3;", "SELECT 2;", "SELECT 1;"]; // newest first
+
+  it("walks older with up and back to the stashed input with down", () => {
+    const up1 = stepHistory(queries, null, -1, "draft");
+    expect(up1).toEqual({ browse: { index: 0, stash: "draft" }, input: "SELECT 3;" });
+    const up2 = stepHistory(queries, up1!.browse, -1, "SELECT 3;");
+    expect(up2).toEqual({ browse: { index: 1, stash: "draft" }, input: "SELECT 2;" });
+    const down = stepHistory(queries, up2!.browse, 1, "SELECT 2;");
+    expect(down).toEqual({ browse: { index: 0, stash: "draft" }, input: "SELECT 3;" });
+    expect(stepHistory(queries, down!.browse, 1, "SELECT 3;")).toEqual({ browse: null, input: "draft" });
+  });
+
+  it("does nothing past either end or with no history", () => {
+    expect(stepHistory(queries, { index: 2, stash: "" }, -1, "SELECT 1;")).toBeNull();
+    expect(stepHistory(queries, null, 1, "draft")).toBeNull();
+    expect(stepHistory([], null, -1, "draft")).toBeNull();
+    expect(stepHistory([], null, 1, "draft")).toBeNull();
   });
 });
 

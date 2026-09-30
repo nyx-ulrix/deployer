@@ -11,10 +11,10 @@ import { QueryEditor, type ConsoleAction } from "./QueryEditor";
 import { SourceSelect } from "./SourceSelect";
 import { transcriptText } from "./terminal";
 import { Transcript } from "./Transcript";
-import type { ConsoleApi } from "./useQueryConsole";
+import type { TerminalConsoleApi } from "./useTerminalConsole";
 
 /** Shell-style layout: a dark panel with the transcript and the prompt pinned at the bottom. */
-export function TerminalConsole({ console: c }: { console: ConsoleApi }) {
+export function TerminalConsole({ console: c }: { console: TerminalConsoleApi }) {
   const toast = useToast();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -108,7 +108,7 @@ export function TerminalConsole({ console: c }: { console: ConsoleApi }) {
             <PendingWriteAlert
               reason={c.pendingWrite.reason}
               onCancel={c.cancelPendingWrite}
-              onConfirm={() => c.confirmPendingWrite({ clearInput: true })}
+              onConfirm={c.confirmPendingWrite}
             />
           </div>
         )}
