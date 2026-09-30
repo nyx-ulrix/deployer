@@ -351,7 +351,9 @@ type TableSpec = {
   columns: { name: string; type: string; nullable?: boolean; default?: string | null;
              primary_key?: boolean; unique?: boolean; auto_increment?: boolean;
              references?: { table: string; column: string; on_delete?: "cascade" | "set null" | "restrict" } }[];
-  timestamps?: boolean;                 // adds created_at / updated_at
+  timestamps?: boolean;                 // adds created_at / updated_at; updated_at refreshes on every UPDATE
+                                        // (MySQL: ON UPDATE; Postgres: a BEFORE UPDATE trigger calling
+                                        // the shared function deployer_set_updated_at())
 };
 ```
 

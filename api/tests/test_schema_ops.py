@@ -56,6 +56,13 @@ def test_build_create_table_postgres():
     assert '"created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP' in ddl
     assert "ENGINE" not in ddl
     assert statements[1] == 'CREATE INDEX "ix_orders_user_id" ON "orders" ("user_id")'
+    # updated_at has no ON UPDATE on Postgres: a trigger keeps it current (A-112).
+    assert statements[2] == schema_ops.PG_TOUCH_FUNCTION
+    assert statements[3] == (
+        'CREATE TRIGGER "trg_orders_updated_at" BEFORE UPDATE ON "orders" '
+        "FOR EACH ROW EXECUTE PROCEDURE deployer_set_updated_at()"
+    )
+    assert len(schema_ops.build_create_table(spec(timestamps=False, columns=s["columns"][:1]), PG)) == 1
 
 
 @pytest.mark.parametrize(

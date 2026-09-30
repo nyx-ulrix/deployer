@@ -51,6 +51,24 @@ _DEFAULT_STRING = re.compile(r"^(?:[A-Za-z0-9 _.,:;@/+#=()\[\]{}!?*&%<>|~^$-]|[^
 
 ON_DELETE = {"cascade": "CASCADE", "set null": "SET NULL", "restrict": "RESTRICT"}
 
+# Shared trigger function for `timestamps: true` on Postgres. Created only when missing (not
+# CREATE OR REPLACE) so a copy owned by another role doesn't block table creation. Like MySQL's
+# ON UPDATE, an explicit new updated_at in the UPDATE is kept. EXECUTE PROCEDURE works on PG 9.x+.
+PG_TOUCH_FUNCTION = """DO $$
+BEGIN
+  IF to_regprocedure('deployer_set_updated_at()') IS NULL THEN
+    CREATE FUNCTION deployer_set_updated_at() RETURNS trigger LANGUAGE plpgsql AS $f$
+    BEGIN
+      IF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+        NEW.updated_at := CURRENT_TIMESTAMP;
+      END IF;
+      RETURN NEW;
+    END
+    $f$;
+  END IF;
+END
+$$"""
+
 
 def check_identifier(name: Any, what: str = "name") -> str:
     if not isinstance(name, str) or not IDENTIFIER_RE.fullmatch(name):
@@ -163,6 +181,13 @@ def build_create_table(spec: dict, dialect: Any) -> list[str]:
         if pg:
             lines.append(f"{q('created_at')} TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP")
             lines.append(f"{q('updated_at')} TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP")
+            # Postgres has no ON UPDATE: a BEFORE UPDATE trigger does the same job (runs in the
+            # same transaction as the CREATE TABLE, so a failure leaves nothing behind).
+            extra_statements += [
+                PG_TOUCH_FUNCTION,
+                f"CREATE TRIGGER {q(_constraint_name('trg', table, 'updated_at'))} BEFORE UPDATE ON {q(table)} "
+                "FOR EACH ROW EXECUTE PROCEDURE deployer_set_updated_at()",
+            ]
         else:
             lines.append(f"{q('created_at')} DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP")
             lines.append(f"{q('updated_at')} DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
