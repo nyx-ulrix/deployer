@@ -24,7 +24,11 @@ export function EnvEditor({
   const [shown, setShown] = useState<Set<number>>(new Set());
 
   const update = (i: number, patch: Partial<EnvRow>) => onChange(rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
-  const remove = (i: number) => onChange(rows.filter((_, j) => j !== i));
+  const remove = (i: number) => {
+    onChange(rows.filter((_, j) => j !== i));
+    // Reveals are tracked by index: shift the ones below the removed row up so no other secret is revealed.
+    setShown((s) => new Set([...s].filter((j) => j !== i).map((j) => (j > i ? j - 1 : j))));
+  };
   const toggle = (i: number) =>
     setShown((s) => {
       const next = new Set(s);
