@@ -200,7 +200,13 @@ function ConflictList({ source, status, onOpen }: { source: DataSource; status: 
                 </>
               )}
               <Td className="text-right">
-                <Button size="sm" onClick={() => onOpen(c)}>
+                <Button
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation(); // the row opens it too; one click, one history entry
+                    onOpen(c);
+                  }}
+                >
                   {status === "open" ? "Resolve" : "View"}
                 </Button>
               </Td>
