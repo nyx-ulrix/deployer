@@ -6,7 +6,8 @@
   includes the encrypted config so credential changes produce a fresh connection. Call
   `invalidate(data_source_id)` when a source is deleted.
 - Connection tests (`try_sql`, `try_mongo`) never raise; they return `(ok, message, version)`
-  with passwords redacted from driver messages.
+  with passwords redacted from driver messages and, when the cause is recognisable, a plain hint first
+  (`friendly_error`: wrong password, unknown database, unreachable host, Atlas Network Access, ...).
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from urllib.parse import quote, unquote, urlsplit
 
 from pymongo import MongoClient
 from pymongo.database import Database
+from pymongo.errors import ConfigurationError, ConnectionFailure, OperationFailure
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session
@@ -186,6 +188,80 @@ def dispose_all() -> None:
 # ---------------------------------------------------------------------------------------------
 
 
+_UNREACHABLE = (
+    "Could not reach the server at {where}. Check the host and port, that the server is running and accepts "
+    "remote connections, and that a firewall allows that port."
+)
+_BAD_HOST = "The host name {host} could not be found. Check its spelling."
+_ATLAS = " For MongoDB Atlas, add this PC's public IP address under Network Access."
+# PyMySQL error codes -> hint
+_MYSQL_HINTS = {
+    1044: "This user has no access to database '{database}'. Grant it privileges on that database.",
+    1045: (
+        "Wrong username or password, or this user may not connect from Deployer's address "
+        "(MySQL users are per host; allow the user from '%')."
+    ),
+    1049: "Database '{database}' does not exist on that server. Check the database name.",
+    1130: "The server does not allow connections from Deployer's address. Allow the user from host '%'.",
+    2003: _UNREACHABLE,
+    2005: _BAD_HOST,
+}
+# lowercase PostgreSQL / libpq message fragment -> hint (first match wins)
+_PG_HINTS = (
+    ("password authentication failed", "Wrong username or password."),
+    ('role "', "User '{username}' does not exist on that server."),
+    ('database "', "Database '{database}' does not exist on that server. Check the database name."),
+    ("no pg_hba.conf entry", "The server does not allow connections from Deployer's address (pg_hba.conf)."),
+    ("server does not support ssl", "The server does not support TLS. Turn TLS off for this connection."),
+    ("could not translate host name", _BAD_HOST),
+    ("name or service not known", _BAD_HOST),
+    ("timeout expired", _UNREACHABLE),
+    ("connection refused", _UNREACHABLE),
+    ("could not connect", _UNREACHABLE),
+)
+
+
+def _hint(kind: str, exc: BaseException, config: dict[str, Any]) -> str | None:
+    """A-106: one plain sentence on the likely cause of a connection error, or None when unknown."""
+    if kind == "nosql":
+        if isinstance(exc, OperationFailure):
+            if exc.code == 13:
+                return f"This user has no access to database '{config.get('database')}'."
+            if exc.code == 18 or "authentication failed" in str(exc).lower():
+                return "Wrong username or password in the connection URI (check the authSource too)."
+            return None
+        if isinstance(exc, ConnectionFailure):  # includes ServerSelectionTimeoutError
+            return (
+                "Could not reach the MongoDB server. Check the host in the URI and that the server is running." + _ATLAS
+            )
+        if isinstance(exc, ConfigurationError):
+            return "The connection URI is invalid or its host name could not be found. Check the URI."
+        return None
+    host = config.get("host") or "?"
+    fields = {
+        "host": host,
+        "where": f"{host}:{config.get('port') or ''}".rstrip(":"),
+        "database": config.get("database"),
+        "username": config.get("username"),
+    }
+    args = getattr(exc, "args", ())
+    if args and isinstance(args[0], int):  # PyMySQL: (code, message)
+        hint = _MYSQL_HINTS.get(args[0])
+        return hint.format(**fields) if hint else None
+    text_ = str(exc).lower()
+    for fragment, hint in _PG_HINTS:
+        if fragment in text_ and (not fragment.endswith('"') or "does not exist" in text_):
+            return hint.format(**fields)
+    return None
+
+
+def friendly_error(kind: str, exc: BaseException, config: dict[str, Any], secrets: list[str | None]) -> str:
+    """A-106: a connection error as a plain hint followed by the (redacted) driver text."""
+    raw = redact(str(exc), secrets, limit=400)
+    hint = _hint(kind, exc, config)
+    return f"{hint} Details: {raw}" if hint else raw
+
+
 def try_sql(engine_name: str, config: dict[str, Any]) -> tuple[bool, str, str | None]:
     engine = build_sql_engine(engine_name, config, pooled=False)
     try:
@@ -197,7 +273,7 @@ def try_sql(engine_name: str, config: dict[str, Any]) -> tuple[bool, str, str | 
         return True, "Connected", str(version) if version is not None else None
     except Exception as exc:  # noqa: BLE001 - driver errors vary widely
         orig = getattr(exc, "orig", None) or exc
-        return False, redact(str(orig), [config.get("password")]), None
+        return False, friendly_error("sql", orig, config, [config.get("password")]), None
     finally:
         engine.dispose()
 
@@ -213,7 +289,8 @@ def try_mongo(config: dict[str, Any]) -> tuple[bool, str, str | None]:
             version = None
         return True, "Connected", version
     except Exception as exc:  # noqa: BLE001
-        return False, redact(str(exc), [config.get("password"), mongo_uri_password(config.get("uri", ""))]), None
+        secrets = [config.get("password"), mongo_uri_password(config.get("uri", ""))]
+        return False, friendly_error("nosql", exc, config, secrets), None
     finally:
         if client is not None:
             client.close()

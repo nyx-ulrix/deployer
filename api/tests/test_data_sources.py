@@ -380,3 +380,40 @@ def test_managed_connection_hint_says_database_access_is_needed():
     hint = connections.connection_info(ds)["external_hint"]
     assert "Database access" in hint and "other computers" in hint
     assert "Docker" not in hint and "directly" not in hint
+
+
+def test_connection_errors_get_a_plain_hint_and_keep_the_driver_text():
+    # A-106: a wrong password, a missing database, an unreachable host and the Atlas allowlist read differently.
+    import socket
+
+    import psycopg
+    import pymysql
+    from pymongo.errors import OperationFailure, ServerSelectionTimeoutError
+
+    sql = {"host": "db.example.invalid", "port": 3306, "username": "app", "password": "pw-x", "database": "shop"}
+    denied = pymysql.err.OperationalError(1045, "Access denied for user 'app'@'172.18.0.5' (using password: YES)")
+    msg = connections.friendly_error("sql", denied, sql, ["pw-x"])
+    assert msg.startswith("Wrong username or password") and "Details: " in msg and "172.18.0.5" in msg
+    missing = pymysql.err.OperationalError(1049, "Unknown database 'shop'")
+    assert connections.friendly_error("sql", missing, sql, []).startswith("Database 'shop' does not exist")
+    pg = psycopg.OperationalError('connection failed: FATAL:  password authentication failed for user "app"')
+    assert connections.friendly_error("sql", pg, sql, []).startswith("Wrong username or password.")
+    pg_db = psycopg.OperationalError('connection failed: FATAL:  database "shop" does not exist')
+    assert connections.friendly_error("sql", pg_db, sql, []).startswith("Database 'shop' does not exist")
+    odd = pymysql.err.OperationalError(9999, "something new")
+    assert connections.friendly_error("sql", odd, sql, []) == "(9999, 'something new')"
+
+    mongo = {"uri": "mongodb+srv://cluster0.example.invalid/", "database": "app"}
+    auth = OperationFailure("Authentication failed.", code=18)
+    assert connections.friendly_error("nosql", auth, mongo, []).startswith("Wrong username or password")
+    denied_db = OperationFailure("not authorized on app to execute command", code=13)
+    assert connections.friendly_error("nosql", denied_db, mongo, []).startswith("This user has no access")
+    timeout = ServerSelectionTimeoutError("cluster0.example.invalid:27017: timed out, Topology Description: ...")
+    assert "Network Access" in connections.friendly_error("nosql", timeout, mongo, [])
+
+    # End to end through try_sql: a closed local port is "could not reach", with the port named.
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    ok, message, _ = connections.try_sql("mysql", {**sql, "host": "127.0.0.1", "port": port})
+    assert not ok and message.startswith(f"Could not reach the server at 127.0.0.1:{port}.") and "pw-x" not in message

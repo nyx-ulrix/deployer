@@ -194,7 +194,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-105 **[LOW][cleanup]** The "is the instance set up?" check is copy-pasted in five places - `api/app/routers/auth.py:45, 182` - one shared is_initialized. (not verified)
 
 **Data**
-- [ ] A-106 **[LOW][usability]** Connection test and create return raw driver errors with no guidance - `api/app/services/connections.py:166-196` - `friendly_error(kind, exc)` plus details.
+- [x] A-106 **[LOW][usability]** Connection test and create return raw driver errors with no guidance - `api/app/services/connections.py:166-196` - `friendly_error(kind, exc)` plus details.
 - [ ] A-107 **[LOW][bug]** drop_table/drop_collection take a full safety snapshot before checking the table exists - `api/app/routers/schema.py:256-262, 298-304` - check existence first.
 - [ ] A-108 **[LOW][cleanup]** source_ops re-implements its own run_local dispatcher, export and introspect helpers - `api/app/services/source_ops.py:191-235, 339-386` - one-liner wrappers around run(). (not verified)
 - [ ] A-109 **[LOW][cleanup]** Dead or duplicate data helpers - `api/app/services/introspection.py:475-476, 597-598` - delete them; see also A-191. (not verified)

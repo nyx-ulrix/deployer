@@ -239,7 +239,7 @@ elsewhere they get 401 `api_key_not_allowed`. See [DATA_API.md](DATA_API.md).
 | Method | Path | Role | Body | Response |
 |---|---|---|---|---|
 | GET | `/projects/{id}/data-sources` | viewer+ | – | `DataSource[]` |
-| POST | `/projects/{id}/data-sources/test` | admin+ | `DataSourceInput` | `{ok:boolean, message, server_version:string\|null}` |
+| POST | `/projects/{id}/data-sources/test` | admin+ | `DataSourceInput` | `{ok:boolean, message, server_version:string\|null}` — a failed `message` (also in `connection_failed` below and the stored status) starts with a plain hint when the cause is recognisable (wrong password, unknown database, unreachable host, Atlas Network Access), then `Details:` and the redacted driver text |
 | POST | `/projects/{id}/data-sources` | admin+ | `DataSourceInput` | `DataSource` (external sources are tested first; 400 `connection_failed`) |
 | PATCH | `/projects/{id}/data-sources/{sid}` | admin+ | `{name?, config?}` | `DataSource` — edits in place, keeping the id (links, API key configs, saved queries). `config` (external only) is merged over the stored one, so `{config:{password}}` rotates just the password; a changed connection is tested first (400 `connection_failed`); 422 for `config` on a managed source; 409 `name_taken`. Renaming a managed source renames its `DEPLOYER_DB_<NAME>_*` variables from the apps' next deploy ([DEPLOYMENTS.md](DEPLOYMENTS.md)) |
 | POST | `/projects/{id}/data-sources/{sid}/check` | viewer+ | – | `DataSource` (refreshes status) |
