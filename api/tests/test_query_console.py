@@ -586,6 +586,7 @@ def test_mongosh_timeout_kills_the_shell(fake_mongosh):
 def test_mongosh_output_cap(fake_mongosh):
     out = run_fake("flood")
     assert out["error"]["code"] == "query_failed" and "8 MiB" in out["error"]["message"]
+    assert ".limit(" in out["error"]["message"] and "projection" in out["error"]["message"]
     assert out["result"] is None and len(out["output"]) <= query_console.MAX_SHELL_STDOUT
 
 

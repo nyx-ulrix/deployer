@@ -157,7 +157,8 @@ the real binary (`tests/integration/test_query_console.py`):
   was printed before. A connection or authentication failure is `503 database_unavailable`.
 - Kill the process at `timeout_seconds` → `504 query_timeout`. At most 4 concurrent shells per API
   process (semaphore); more → `429 too_many_queries`. Output is capped at 8 MiB (1 MiB stderr): the
-  shell is killed and the result is an in-band `query_failed` error.
+  shell is killed and the result is an in-band `query_failed` error whose message suggests
+  `.limit(20)`, a projection or fewer rows.
 - The shell's stderr is appended to `output`. Output, error messages **and the result** are redacted
   with `connections.redact` (the source's password and any `scheme://user:password@` become `***`).
 

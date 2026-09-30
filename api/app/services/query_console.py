@@ -867,7 +867,10 @@ def run_mongosh(
     value: Any = None
     if report is None:
         if outcome.output_capped:
-            detail = "The shell printed more than 8 MiB and was stopped"
+            detail = (
+                "The shell printed more than 8 MiB and was stopped. Add .limit(20) or a projection "
+                "to the query, or pick fewer rows"
+            )
         else:
             detail = _first_line(stderr) or f"The shell exited with status {outcome.returncode} without a result"
         error = {"code": "query_failed", "message": connections.redact(detail, secret_values)}
