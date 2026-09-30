@@ -40,7 +40,7 @@ from sqlalchemy.orm import Session
 from app.crypto import decrypt_json, encrypt_json
 from app.db import get_sessionmaker
 from app.errors import ApiError
-from app.models import DataSource, Job, Project, User, new_id, utcnow
+from app.models import DataSource, Device, Job, Project, User, new_id, utcnow
 from app.redis_client import get_redis
 from app.serializers import iso
 from app.services import backups, connections, device_rpc, jobs, provisioning
@@ -414,8 +414,19 @@ def release_stale_locks() -> int:
     return released
 
 
+def _device_removed(device_id: str | None) -> bool:
+    if not device_id:
+        return False
+    session = get_sessionmaker()()
+    try:
+        return session.get(Device, device_id) is None
+    finally:
+        session.close()
+
+
 def run_due_cleanups(now: float | None = None, limit: int = 20) -> int:
-    """Drops old copies whose keep period ended. Offline devices are retried an hour later."""
+    """Drops old copies whose keep period ended. Offline devices are retried an hour later; entries of
+    removed devices are forgotten."""
     now = time.time() if now is None else now
     r = get_redis()
     dropped = 0
@@ -428,7 +439,11 @@ def run_due_cleanups(now: float | None = None, limit: int = 20) -> int:
             dropped += 1
         except ApiError as exc:
             if exc.code in ("device_offline", "device_timeout"):
-                r.zadd(CLEANUP_KEY, {member: now + 3600})
+                if _device_removed(entry.get("device_id")):
+                    # A-129: a removed device never comes back; its copy went with it (or its owner wiped it).
+                    log.info("forgetting old copy %s: its device was removed", entry.get("database_name"))
+                else:
+                    r.zadd(CLEANUP_KEY, {member: now + 3600})
             else:
                 log.warning("dropping old copy failed: %s", exc.message)
         except Exception:  # noqa: BLE001

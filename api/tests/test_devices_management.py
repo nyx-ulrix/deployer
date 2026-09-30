@@ -386,6 +386,29 @@ def test_move_job_runs(db, owner, make_project, make_device, fake_device, monkey
     assert dropped == [("sql", device.id, "p_test_abc123", None)]
 
 
+def test_due_cleanup_forgets_copies_of_removed_devices(db, owner, make_device):
+    """A-129: an offline device is retried an hour later, a removed one is forgotten, not retried forever."""
+    import json
+    import time
+
+    from app.redis_client import get_redis
+
+    kept, _ = make_device(owner)
+    gone, _ = make_device(owner, name="gone")
+    gone_id = gone.id
+    db.delete(db.get(Device, gone_id))
+    db.commit()
+    now = time.time()
+    for device_id in (kept.id, gone_id):
+        device_moves.schedule_cleanup(
+            {"device_id": device_id, "kind": "sql", "database_name": f"p_{device_id[:6]}", "config_encrypted": None},
+            due=now - 1,
+        )
+    assert device_moves.run_due_cleanups(now=now) == 0  # both devices are offline
+    left = get_redis().zrange(device_moves.CLEANUP_KEY, 0, -1, withscores=True)
+    assert [(json.loads(m)["device_id"], s) for m, s in left] == [(kept.id, now + 3600)]
+
+
 def test_hosted_count_ignores_soft_deleted_sources(client, db, owner, owner_headers, make_project, make_device):
     from app.models import utcnow
 

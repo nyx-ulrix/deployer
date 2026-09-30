@@ -223,7 +223,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 **Devices / co-hosting**
 - [x] A-127 **[LOW][security]** Unsharing a project or removing the database_host role doesn't stop co-host sync - `api/app/services/source_sync.py:972-988` - pause on placement_problem; exclude paused replicas from fan-out; cap warnings.
 - [x] A-128 **[LOW][usability]** Device status shows raw exception text and "Reconnecting automatically" even when it can never succeed - `api/app/services/device_agent.py:269-273` - plain messages plus a `rejected` flag. (not verified)
-- [ ] A-129 **[LOW][bug]** Cleanup of old moved copies retries hourly forever once the device is gone - `api/app/services/device_moves.py:342-358` - drop entries for missing devices. (not verified)
+- [x] A-129 **[LOW][bug]** Cleanup of old moved copies retries hourly forever once the device is gone - `api/app/services/device_moves.py:342-358` - drop entries for missing devices. (not verified)
 - [ ] A-130 **[LOW][bug]** The app.replicate progress callback is never called (wrong channel id) - `api/app/services/cohost_apps.py:293-300` - `progress_id=f"{device_id}:{job_id}"` or remove it. (not verified)
 - [ ] A-131 **[LOW][cleanup]** Unused remote-job machinery and unused, over-powerful device RPC methods (storage.delete) - `api/app/services/device_host.py:609-613, 724-750, 763-766` - delete them. (not verified)
 - [ ] A-132 **[LOW][cleanup]** Small dead parameters and duplicate routes/helpers in the device code - `api/app/routers/device_local.py:114, 123` - remove them. (not verified)
