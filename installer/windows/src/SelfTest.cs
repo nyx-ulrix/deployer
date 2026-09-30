@@ -243,6 +243,44 @@ namespace DeployerSetup
                 Directory.Delete(half, true);
             }
 
+            Check(Program.Has(new[] { "-UNINSTALL" }, "/uninstall") && !Program.Has(new[] { "/setupx" }, "/setup")
+                  && Program.After(new[] { "/uninstall", @"C:\Deployer" }, "/uninstall") == @"C:\Deployer"
+                  && Program.After(new[] { "/uninstall", "/tray" }, "/uninstall") == null && Program.After(new[] { "/uninstall" }, "/uninstall") == null,
+                  "command-line switches match either prefix and /uninstall takes an optional folder (A-163)");
+
+            List<string> lines = new List<string>(), progress = new List<string>();
+            ScriptRunner reader = new ScriptRunner();
+            reader.OutputLine += lines.Add;
+            reader.TransientLine += progress.Add;
+            reader.ReadLoop(new StreamReader(new MemoryStream(Encoding.UTF8.GetBytes("a\r\n10%\r20%\r\nc\n\0d"))));
+            Check(string.Join("|", lines) == "a|20%|c|d" && string.Join("|", progress) == "10%",
+                  "script output splits CRLF/LF lines, turns bare-CR updates into progress and keeps the unterminated last line (A-163)");
+
+            using (WizardForm blocked = Wizard(1f, false), notes = Wizard(1f, false))
+            {
+                blocked.page = notes.page = WizardPage.Checks;
+                blocked.ApplyReport(SampleReport(2));
+                notes.ApplyReport(SampleReport(1));
+                blocked.Rebuild();
+                notes.Rebuild();
+                Check(!blocked.nextButton.Enabled && AllText(blocked).Contains("Check again") && notes.nextButton.Enabled,
+                      "a blocking check disables Next but offers Check again; warnings alone don't block (A-163)");
+            }
+
+            using (WizardForm opts = Wizard(1f, false))
+            {
+                opts.page = WizardPage.Options;
+                opts.Rebuild();
+                string okDir = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory), "ProgramData", "Deployer");
+                Func<string, int, bool> valid = (d, p) => { opts.options.InstallDir = d; opts.options.Port = p; return opts.ValidateOptions(); };
+                int port = opts.options.Port;
+                Check(valid(okDir, port) && opts.nextButton.Enabled
+                      && !valid(@"Deployer", port) && !opts.nextButton.Enabled && !valid(@"\\server\share\Deployer", port)
+                      && !valid(@"C:\Deploy|er", port) && !valid(@"C:\a:b", port)
+                      && !valid(okDir, 80) && !valid(okDir, 70000) && !valid(okDir, 8150) && valid(okDir, port),
+                      "the Options page accepts a local folder and free port and rejects bad paths, low ports and the app port range (A-163)");
+            }
+
             Directory.CreateDirectory(Path.Combine(half, "wsl"));
             try
             {

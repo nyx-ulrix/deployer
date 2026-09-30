@@ -168,7 +168,7 @@ namespace DeployerSetup
         TextBlock stepLabel, stepCount, transientLabel;
         TextBox logBox;
         List<CheckRow> stepRows;
-        FlatButton nextButton;
+        internal FlatButton nextButton;
         TextBlock portHint, dirHint;
         InputBox dirInput;
         internal InputBox portInput;

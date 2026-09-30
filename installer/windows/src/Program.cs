@@ -76,13 +76,13 @@ namespace DeployerSetup
             }
         }
 
-        static bool Has(string[] args, string name)
+        internal static bool Has(string[] args, string name)
         {
             return args.Any(a => string.Equals(a, name, StringComparison.OrdinalIgnoreCase) ||
                                  string.Equals(a, "-" + name.TrimStart('/'), StringComparison.OrdinalIgnoreCase));
         }
 
-        static string After(string[] args, string name)
+        internal static string After(string[] args, string name)
         {
             for (int i = 0; i < args.Length - 1; i++)
             {

@@ -1069,7 +1069,7 @@ namespace DeployerSetup
             t.Start();
         }
 
-        void ReadLoop(StreamReader reader)
+        internal void ReadLoop(StreamReader reader)
         {
             StringBuilder line = new StringBuilder();
             bool pendingCr = false;
