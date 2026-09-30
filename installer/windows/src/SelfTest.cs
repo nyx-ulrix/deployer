@@ -132,6 +132,12 @@ namespace DeployerSetup
             using (WizardForm up = UpdateOptionsSample(1f))
                 Check(up.portInput.Box.ReadOnly && CountToggles(up) == 1,
                       "an update locks the port and leaves only the shortcut toggle; the rest is in Control Settings (A-077)");
+            using (WizardForm up = UpdateOptionsSample(1f))
+            {
+                up.installedPort = up.options.Port = 8150;
+                up.Rebuild();
+                Check(!up.portInput.Box.ReadOnly, "an update from an app-range port (before A-064) can still move the port (A-077)");
+            }
 
             string half = Path.Combine(Path.GetTempPath(), "DeployerSelfTest-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(half);

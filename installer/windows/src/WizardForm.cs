@@ -213,6 +213,15 @@ namespace DeployerSetup
             if (!IsForcedScale) FitToScreen();
         }
 
+        /// <summary>
+        /// An update keeps the installed port, unless it is one the update cannot keep (an app port from before A-064,
+        /// or out of range): locking that one would leave the Update button disabled with no way to fix it.
+        /// </summary>
+        internal bool PortLocked()
+        {
+            return installedDir != null && installedPort >= 1024 && installedPort <= 65535 && !Ports.IsAppPort(installedPort);
+        }
+
         /// <summary>An update keeps the runtime and the choices made at install time (from runtime.json).</summary>
         void LoadInstalledOptions()
         {
@@ -571,7 +580,7 @@ namespace DeployerSetup
                 // conditions, and it keeps working after sleep/wake (Docker Desktop's socket files do not).
                 options.Runtime = "wsl-engine";
             }
-            if (!portEditedByUser && installedDir == null) options.Port = r.SuggestedPort;
+            if (!portEditedByUser && !PortLocked()) options.Port = r.SuggestedPort;
             if (page == WizardPage.Checks) Rebuild();
         }
 
@@ -666,7 +675,7 @@ namespace DeployerSetup
             portInput.Bounds = new Rectangle(ContentLeft, y, ui.S(96), inputH);
             portInput.Box.MaxLength = 5;
             // An update keeps the port: moving it also needs the LAN port proxy and OAuth redirect changes Control Settings makes (A-077).
-            portInput.Box.ReadOnly = installedDir != null;
+            portInput.Box.ReadOnly = PortLocked();
             portInput.Box.TextChanged += delegate
             {
                 int p;
@@ -703,7 +712,7 @@ namespace DeployerSetup
             {
                 // The update keeps these as installed; Control Settings applies them fully (A-077).
                 y = Note(y + ui.S(10), IconKind.Info, Theme.Accent, Theme.AccentSoft,
-                    "This update keeps your port, network access, keep-awake and sign-in settings. Change them in Deployer Control > Settings.");
+                    "This update keeps your " + (PortLocked() ? "port, " : "") + "network access, keep-awake and sign-in settings. Change them in Deployer Control > Settings.");
             }
             AddBottomSpacer(y);
 
