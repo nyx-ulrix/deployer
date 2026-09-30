@@ -173,7 +173,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 
 **Tests / CI**
 - [x] A-092 **[MEDIUM][test]** Integration tests for core DB features never run in CI, and CI never builds the Dockerfiles - `.github/workflows/ci.yml:16-34, 125-137` - a job with mariadb/mongo services and a buildx build of api/dashboard/tunnel; `-rs`.
-- [ ] A-093 **[MEDIUM][test]** No test enforces that migrations match the models - `api/tests/conftest.py:86-91` - upgrade head then compare_metadata == []; share an alembic fixture.
+- [x] A-093 **[MEDIUM][test]** No test enforces that migrations match the models - `api/tests/conftest.py:86-91` - upgrade head then compare_metadata == []; share an alembic fixture.
 - [ ] A-094 **[MEDIUM][test]** No unit test covers the real DockerCli argv (hardening flags, secrets out of argv) - `api/app/services/app_runner.py:59-68, 185-223` - monkeypatch `_run` and assert the flags and env.
 
 **Non-expert usability**

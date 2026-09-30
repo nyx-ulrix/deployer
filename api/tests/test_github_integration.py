@@ -5,12 +5,10 @@ automatic webhook), hook removal and the "connection removed" deploy failure. Gi
 import base64
 import secrets
 import sqlite3
-from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from alembic import command
-from alembic.config import Config
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -20,8 +18,6 @@ from app.services import app_runner, deployments, github, jobs, oauth
 from app.services.tokens import REFRESH_COOKIE
 from tests.apps_support import FakeDockerCli
 from tests.test_oauth import BASE, providers  # noqa: F401 (fixture)
-
-API_DIR = Path(__file__).resolve().parents[1]
 
 
 class FakeGitHub:
@@ -382,11 +378,8 @@ def test_removed_connection_fails_the_deploy(db, docker, env):
     )
 
 
-def test_migration_0009(tmp_path):
-    db_file = tmp_path / "scratch.db"
-    cfg = Config(str(API_DIR / "alembic.ini"))
-    cfg.set_main_option("script_location", str(API_DIR / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_file.as_posix()}")
+def test_migration_0009(migration_db):
+    cfg, db_file = migration_db
     command.upgrade(cfg, "head")
     conn = sqlite3.connect(db_file)
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}

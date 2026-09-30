@@ -15,7 +15,6 @@ import httpx
 import jwt
 import pytest
 from alembic import command
-from alembic.config import Config
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
@@ -26,7 +25,6 @@ from app.services import cloud_aws, cloud_deploy, cloud_gcp, deployments, jobs
 from app.services.app_runner import DockerCli
 from tests.apps_support import make_app
 from tests.test_deployments import docker  # noqa: F401 - fixture
-from tests.test_github_integration import API_DIR
 from tests.test_remote_access import fake_cf, link, state_dir  # noqa: F401 - fixtures
 
 CLOUD = "/v1/instance/cloud"
@@ -568,11 +566,8 @@ def test_mcp_cloud_tools(client, db, docker, aws, team):  # noqa: F811
     assert call("get_app", app_id=app.id)["cloud"]["url"] == "https://abc.eu-west-1.awsapprunner.com"
 
 
-def test_migration_0011(tmp_path):
-    db_file = tmp_path / "m.db"
-    cfg = Config(str(API_DIR / "alembic.ini"))
-    cfg.set_main_option("script_location", str(API_DIR / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_file.as_posix()}")
+def test_migration_0011(migration_db):
+    cfg, db_file = migration_db
     command.upgrade(cfg, "head")
     conn = sqlite3.connect(db_file)
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}

@@ -27,6 +27,8 @@ Fixtures:
 - `fake_provisioning`    – replaces `app.services.provisioning` with a fake whose
                            `provision_managed_source` inserts a DataSource row and records calls in
                            `.calls`; set `.fail_kind = "sql" | "nosql"` to make that kind raise ApiError.
+- `migration_db`         – `(alembic Config, db_file)` for a scratch SQLite file in tmp_path, not yet
+                           upgraded: `command.upgrade(cfg, "head")`, then inspect `db_file` with sqlite3.
 """
 
 import base64
@@ -89,6 +91,18 @@ def _schema():
     Base.metadata.create_all(engine)
     yield
     engine.dispose()
+
+
+@pytest.fixture
+def migration_db(tmp_path):
+    from alembic.config import Config
+
+    api_dir = Path(__file__).resolve().parents[1]
+    db_file = tmp_path / "migrations.db"
+    cfg = Config(str(api_dir / "alembic.ini"))
+    cfg.set_main_option("script_location", str(api_dir / "migrations"))
+    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_file.as_posix()}")
+    return cfg, db_file
 
 
 @pytest.fixture(scope="session")

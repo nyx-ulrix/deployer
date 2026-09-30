@@ -9,7 +9,6 @@ import uuid
 
 import pytest
 from alembic import command
-from alembic.config import Config
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -32,7 +31,6 @@ from app.services import cohost_apps, deployments, device_apps, device_host, job
 from tests import devices_support
 from tests.apps_support import FAKE_SHA, make_app, new_token
 from tests.test_deployments import docker  # noqa: F401 - fixture
-from tests.test_github_integration import API_DIR
 from tests.test_remote_access import desired, fake_cf, link, state_dir  # noqa: F401 - fixtures
 
 make_device = devices_support.make_device
@@ -547,11 +545,8 @@ def test_device_detach_stops_cohost_apps_and_tunnel(db, docker, hosted, state_di
 # --- migration ------------------------------------------------------------------------------------
 
 
-def test_migration_0010(tmp_path):
-    db_file = tmp_path / "scratch.db"
-    cfg = Config(str(API_DIR / "alembic.ini"))
-    cfg.set_main_option("script_location", str(API_DIR / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_file.as_posix()}")
+def test_migration_0010(migration_db):
+    cfg, db_file = migration_db
     command.upgrade(cfg, "head")
     conn = sqlite3.connect(db_file)
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}

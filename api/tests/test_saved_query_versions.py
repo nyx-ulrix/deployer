@@ -2,10 +2,8 @@
 
 import os
 import sqlite3
-from pathlib import Path
 
 from alembic import command
-from alembic.config import Config
 from sqlalchemy import select
 
 from app.db import Base, get_engine
@@ -14,7 +12,6 @@ from app.services import transfer
 from tests.test_query_console import project_setup  # noqa: F401 (fixture)
 
 PASS = "correct horse battery staple"
-API_DIR = Path(__file__).resolve().parents[1]
 
 
 def _create(client, project_setup, text="SELECT 1", **extra):  # noqa: F811
@@ -182,12 +179,9 @@ def test_export_and_import_carry_versions(client, db, project_setup, make_user, 
     )
 
 
-def test_migration_backfills_version_one(tmp_path):
+def test_migration_backfills_version_one(migration_db):
     """Upgrade a pre-0004 database: every saved query gets a version-1 row authored by its owner."""
-    db_file = tmp_path / "scratch.db"
-    cfg = Config(str(API_DIR / "alembic.ini"))
-    cfg.set_main_option("script_location", str(API_DIR / "migrations"))
-    cfg.set_main_option("sqlalchemy.url", f"sqlite:///{db_file.as_posix()}")
+    cfg, db_file = migration_db
     command.upgrade(cfg, "0003")
 
     conn = sqlite3.connect(db_file)
