@@ -142,5 +142,8 @@ describe("devices", () => {
     expect(normalizeDeployerUrl("HTTP://deployer.example.com/app/")).toBe("http://deployer.example.com/app");
     expect(normalizeDeployerUrl("ftp://deployer.example.com")).toBeNull();
     expect(normalizeDeployerUrl("  ")).toBeNull();
+    // The API refuses plain http for mDNS/.lan names (not IP-checked), so don't default them to it.
+    expect(normalizeDeployerUrl("my-pc.local:8080")).toBe("https://my-pc.local:8080");
+    expect(reachabilityWarning("http://my-pc.lan:8080")).toMatch(/https/);
   });
 });
