@@ -423,8 +423,8 @@ namespace DeployerSetup
                     "Everything else works. Projects can still use an external MongoDB, such as a free MongoDB Atlas cluster.")
                     .Link("About MongoDB Atlas", AtlasUrl));
             if (arm)
-                report.Items.Add(new CheckResult("arch", CheckStatus.Warn, "ARM processor detected",
-                    "Deployer's ready-made images are for Intel/AMD PCs, so setup builds them itself. This can take 30 minutes or more."));
+                report.Items.Add(new CheckResult("arch", CheckStatus.Fail, "ARM processor detected",
+                    "Deployer currently supports Intel/AMD 64-bit PCs only."));
 
             // Port
             report.SuggestedPort = port;

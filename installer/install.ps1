@@ -53,7 +53,7 @@
 .PARAMETER LocalDeployDir
     Use the deploy files (docker-compose.yml, Caddyfile, .env.example) from this folder instead of
     downloading them; the installer scripts next to this file are used as they are. Images are still
-    pulled. If they must be built (-FromSource, ARM64, or pulling fails) the source archive for -Ref
+    pulled. If they must be built (-FromSource, or pulling fails) the source archive for -Ref
     is downloaded. Used by DeployerSetup.exe.
 
 .PARAMETER EnableLan
@@ -266,9 +266,9 @@ function Invoke-Preflight {
         Write-DeployerInfo 'attach an external MongoDB such as a free MongoDB Atlas cluster (https://www.mongodb.com/atlas).'
     }
 
+    # The api image, cloudflared and managed MongoDB are amd64-only, so a local ARM64 build can never succeed.
     if ($Facts.IsArm64) {
-        Write-CheckResult 'arch' 'warn' 'ARM64 Windows detected: prebuilt images are amd64 only, so images will be built locally.'
-        $script:ForceFromSource = $true
+        Write-CheckResult 'arch' 'fail' 'Deployer currently supports Intel/AMD 64-bit PCs only. This PC has an ARM processor.'
     }
 
     $appRange = "$($script:DeployerAppPortFirst)-$($script:DeployerAppPortLast)"
@@ -412,8 +412,7 @@ function Initialize-WslPlatform {
 }
 
 function Get-UbuntuWslImage {
-    param([bool]$Arm64)
-    $arch = if ($Arm64) { 'arm64' } else { 'amd64' }
+    $arch = 'amd64'
     $cache = Join-Path $InstallDir 'cache'
 
     $candidates = @()
@@ -484,7 +483,7 @@ function Install-WslEngine {
     if (Test-DeployerWslDistro) {
         Write-DeployerOk "WSL distro '$($script:DeployerDistro)' already exists"
     } else {
-        $image = Get-UbuntuWslImage -Arm64 $Facts.IsArm64
+        $image = Get-UbuntuWslImage
         $diskDir = Join-Path $InstallDir 'wsl'
         New-Item -ItemType Directory -Path $diskDir -Force | Out-Null
         Write-DeployerInfo "Creating WSL distro '$($script:DeployerDistro)' in $diskDir"
@@ -701,7 +700,7 @@ function Invoke-DryRun {
     $n++
     Write-InstallStep $n 'Downloading container images'
     $version = if ($Ref) { Get-DeployerImageVersion -Ref $Ref } else { '<version of the release>' }
-    if ($FromSource -or $script:ForceFromSource) {
+    if ($FromSource) {
         Write-DryRunAction 'build the api, dashboard and tunnel images locally (docker compose build)'
     } else {
         Write-DryRunAction "pull $(Get-DeployerImagePrefix -Repo $Repo)-api:$version, -dashboard:$version, -tunnel:$version, mariadb, mongo, redis and caddy"
@@ -827,7 +826,6 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
 
         # 2. Preflight ----------------------------------------------------------------------------
         $script:VirtualizationMissing = $false
-        $script:ForceFromSource = $false
         Write-InstallStep 1 'Checking this PC'
         $facts = Get-SystemFacts
         Invoke-Preflight -Facts $facts -IsUpgrade $isUpgrade
@@ -924,7 +922,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
 
             # 7. Images + start ----------------------------------------------------------------------------
             Write-InstallStep 5 'Downloading container images'
-            $buildLocally = ($FromSource -or $script:ForceFromSource)
+            $buildLocally = [bool]$FromSource
             # A src\ left by an earlier local build must be refreshed before images are (re)built,
             # otherwise an update quietly rebuilds the previous version.
             if ($LocalDeployDir -and ($buildLocally -or (Test-Path -LiteralPath (Join-Path $InstallDir 'src\api')))) { Get-BuildSource }

@@ -64,7 +64,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/API.md](docs/API.md) 
 | | |
 |---|---|
 | Windows | 64-bit Windows 10 version 2004 (build 19041) or newer, or Windows 11 |
-| CPU | Hardware virtualization enabled in BIOS/UEFI (Intel VT-x / AMD SVM) |
+| CPU | Intel or AMD 64-bit (ARM PCs are not supported yet) with hardware virtualization enabled in BIOS/UEFI (Intel VT-x / AMD SVM) |
 | Memory | 4 GB RAM minimum, 8 GB recommended |
 | Disk | 10 GB free |
 | MongoDB | Managed MongoDB 5.0 needs a CPU with **AVX** (most CPUs since ~2011). Without AVX the installer turns managed MongoDB off; projects can still use an external MongoDB such as a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster. |
