@@ -165,8 +165,23 @@ def create_data_source(body: DataSourceInput, access: Admin, db: DbSession, requ
             last_checked_at=utcnow(),
         )
         db.add(ds)
+    # A-110: until the commit lands, a new managed database and user have no row pointing at them,
+    # so any failure up to and including the commit drops them again.
     try:
         db.flush()
+        audit.record(
+            db,
+            "data_source.create",
+            request=request,
+            user_id=access.user.id,
+            project_id=project.id,
+            data_source_id=ds.id,
+            name=ds.name,
+            kind=ds.kind,
+            engine=ds.engine,
+            mode=ds.mode,
+        )
+        db.commit()
     except Exception:
         if body.mode == "managed":
             try:
@@ -175,19 +190,6 @@ def create_data_source(body: DataSourceInput, access: Admin, db: DbSession, requ
                 pass
         db.rollback()
         raise
-    audit.record(
-        db,
-        "data_source.create",
-        request=request,
-        user_id=access.user.id,
-        project_id=project.id,
-        data_source_id=ds.id,
-        name=ds.name,
-        kind=ds.kind,
-        engine=ds.engine,
-        mode=ds.mode,
-    )
-    db.commit()
     return data_source_out(ds)
 
 

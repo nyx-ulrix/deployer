@@ -198,7 +198,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-107 **[LOW][bug]** drop_table/drop_collection take a full safety snapshot before checking the table exists - `api/app/routers/schema.py:256-262, 298-304` - check existence first.
 - [x] A-108 **[LOW][cleanup]** source_ops re-implements its own run_local dispatcher, export and introspect helpers - `api/app/services/source_ops.py:191-235, 339-386` - one-liner wrappers around run(). (not verified)
 - [x] A-109 **[LOW][cleanup]** Dead or duplicate data helpers - `api/app/services/introspection.py:475-476, 597-598` - delete them; see also A-191. (not verified)
-- [ ] A-110 **[LOW][bug]** Orphaned database and user if the request fails after provisioning - `api/app/routers/data_sources.py:136-158` - wrap provision through commit in try and drop on failure. (not verified)
+- [x] A-110 **[LOW][bug]** Orphaned database and user if the request fails after provisioning - `api/app/routers/data_sources.py:136-158` - wrap provision through commit in try and drop on failure. (not verified)
 - [ ] A-111 **[LOW][bug]** MySQL expression defaults are not parenthesized; dead quote escaping; no non-ASCII defaults - `api/app/services/schema_ops.py:73-91` - `(UUID())`/`(CURRENT_DATE)`; a Unicode allowlist. (not verified)
 - [ ] A-112 **[LOW][bug]** `timestamps: true` on PostgreSQL creates an updated_at that never updates - `api/app/services/schema_ops.py:156-158` - add a trigger or document it. (not verified)
 - [ ] A-113 **[LOW][bug]** Connection test can hang for up to 5 minutes on MySQL/MariaDB - `api/app/services/connections.py:84, 166-169` - short read/write timeouts in try_sql. (not verified)

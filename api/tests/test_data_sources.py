@@ -417,3 +417,21 @@ def test_connection_errors_get_a_plain_hint_and_keep_the_driver_text():
         port = s.getsockname()[1]
     ok, message, _ = connections.try_sql("mysql", {**sql, "host": "127.0.0.1", "port": port})
     assert not ok and message.startswith(f"Could not reach the server at 127.0.0.1:{port}.") and "pw-x" not in message
+
+
+def test_managed_create_drops_database_when_commit_fails(client, db, project_setup, fake_provisioning, monkeypatch):
+    # A-110: a failure after provisioning (audit or commit) must not leave an orphaned database and user.
+    from app.routers import data_sources as router
+
+    monkeypatch.setattr(router, "provisioning", fake_provisioning)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("audit failed")
+
+    monkeypatch.setattr(router.audit, "record", boom)
+    s = project_setup
+    body = {"kind": "sql", "mode": "managed", "engine": "mariadb", "name": "main"}
+    with pytest.raises(RuntimeError):
+        client.post(f"{s['base']}/data-sources", json=body, headers=s["admin"])
+    assert fake_provisioning.dropped == [(s["project"].id, "sql", "main")]
+    assert db.scalar(select(DataSource).where(DataSource.name == "main")) is None
