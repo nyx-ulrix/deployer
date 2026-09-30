@@ -1278,6 +1278,14 @@ function Set-DeployerKeepAwake {
     return @{ enabled = $false }
 }
 
+function Restore-DeployerKeepAwake {
+    # Uninstall (A-069): undo "keep awake" if Deployer turned it on, so the PC can sleep again.
+    param($State)
+    $previous = Get-DeployerStateValue $State 'keepAwake'
+    if (-not [bool](Get-DeployerStateValue $previous 'enabled' $false)) { return }
+    [void](Set-DeployerKeepAwake -Enabled $false -Previous $previous)
+}
+
 # ------------------------------------------------------------------------------------------------
 # Autostart + PATH
 # ------------------------------------------------------------------------------------------------

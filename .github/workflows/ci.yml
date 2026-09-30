@@ -109,6 +109,9 @@ jobs:
       - name: deployer restore commands (runtime paths, no PowerShell-expanded passwords)
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/restore.tests.ps1; exit $LASTEXITCODE
+      - name: Uninstall restores sleep settings
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/keepawake.tests.ps1; exit $LASTEXITCODE
       - name: install.ps1 -DryRun (read-only, prints progress markers)
         shell: powershell
         run: |

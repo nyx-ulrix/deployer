@@ -274,7 +274,7 @@ Open a new terminal after installing:
 | `deployer open` | Open the dashboard |
 | `deployer config` | Show settings (secrets hidden) |
 | `deployer compose -- <args>` | Any `docker compose` command, e.g. `deployer compose -- ps -a` |
-| `deployer uninstall [-KeepData]` | Remove Deployer (asks you to confirm) |
+| `deployer uninstall [-KeepData]` | Remove Deployer (asks you to confirm; restores your sleep settings if keep awake was on) |
 | `deployer set-port 8090` | Change the local port (not 8100-8199: those are the deployed apps' ports) |
 | `deployer lan on\|off` | Allow / block other devices on your private network |
 | `deployer autostart on\|off` | Start Deployer (and the tray icon) when you sign in |

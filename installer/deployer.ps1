@@ -752,6 +752,11 @@ function Invoke-Uninstall {
     Set-Location -LiteralPath $env:TEMP
     Unregister-DeployerTask
     Write-DeployerOk 'Scheduled task removed'
+    try {
+        Restore-DeployerKeepAwake -State $ctx.State
+    } catch {
+        Write-DeployerWarn "Could not restore your sleep settings: $($_.Exception.Message). Set them in Settings > System > Power."
+    }
 
     if (Test-DeployerDockerEngine -Runtime $ctx.Runtime) {
         $downArgs = @('--profile', 'mongodb', 'down', '--remove-orphans')

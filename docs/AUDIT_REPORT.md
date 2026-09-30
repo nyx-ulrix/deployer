@@ -139,7 +139,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-066 **[MEDIUM][bug]** The ARM64 "build images locally" path can never succeed - `installer/install.ps1:269-272` - fail ARM64 in preflight with a clear message.
 - [x] A-067 **[MEDIUM][security]** The WSL disk (all databases) inherits read access for every local user - `installer/install.ps1:477-480, 878` - Set-DeployerPrivateAcl on the wsl dir before `wsl --import`.
 - [x] A-068 **[MEDIUM][docs]** Backup README restore commands don't work on the default runtime or in PowerShell - `installer/deployer.ps1:616-630` - add `deployer restore <folder>`; at minimum fix the quoting and paths.
-- [ ] A-069 **[MEDIUM][bug]** Uninstall leaves the "never sleep" power settings in place - `installer/deployer.ps1:658-723` - restore the saved timeouts when keepAwake was enabled.
+- [x] A-069 **[MEDIUM][bug]** Uninstall leaves the "never sleep" power settings in place - `installer/deployer.ps1:658-723` - restore the saved timeouts when keepAwake was enabled.
 - [ ] A-070 **[MEDIUM][usability]** 4 GB PCs are told Deployer "works", but WSL2 gives the VM only half the RAM - `installer/install.ps1:245-251` - make the message honest; optionally lower mem_limits.
 - [ ] A-071 **[MEDIUM][usability]** LAN access fails silently when Windows marks the network as Public - `installer/lib/common.ps1:1077-1079` - check Get-NetConnectionProfile and name the network and the settings path.
 - [ ] A-072 **[MEDIUM][test]** The .env merge that must never rotate secrets has no automated test - `installer/lib/common.ps1:255-289, 925-995` - Pester test: Initialize-DeployerEnv twice leaves secrets unchanged; also test ConvertTo-DeployerArgument.
