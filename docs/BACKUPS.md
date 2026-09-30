@@ -19,6 +19,26 @@ responsibility; the dashboard says so.
 MongoDB PITR needs an oplog, so the managed MongoDB runs as a **single-node replica set** (`rs0`,
 keyfile auth). MariaDB runs with `log_bin`, `binlog_format=ROW`, `server_id=1`, binlog expiry 8 days.
 
+### MongoDB versions
+
+The managed MongoDB is `mongo:8.0` (supported upstream until 2029). Installs made before audit A-143
+ran 5.0, which is end-of-life, and MongoDB only opens data whose feature-compatibility version (FCV)
+is its own major or the one before. So `deployer update` (and setup over a folder kept by
+`uninstall -KeepData`) upgrades the data before starting the new version: it takes the usual backup,
+stops `mongodb` cleanly, then runs `deploy/mongodb/upgrade.sh` in one-off containers of MongoDB 6.0,
+7.0 and 8.0 (compose services `mongodb-upgrade-6/7/8`, no network). Each step starts `mongod`
+standalone on the volume, runs `setFeatureCompatibilityVersion`, shuts down cleanly and records the
+new FCV in `/data/db/deployer-fcv`; a step that is already done does nothing, so a failed or
+interrupted update resumes where it stopped when run again. New or already-upgraded data only runs
+the 8.0 step, which returns at once. The upgrade downloads the 6.0 and 7.0 images once (several
+hundred MB each); after a successful update they can be removed with `docker image rm mongo:6.0
+mongo:7.0` (in the WSL runtime: `wsl -d deployer -u root docker image rm mongo:6.0 mongo:7.0`).
+
+If an upgrade step fails, the update stops before starting the new containers and names the step
+(its output is in the update window); the backup it offered first is in `backups\<timestamp>`.
+Starting 8.0 on data that was never upgraded (for example `docker compose up` after copying new
+deploy files by hand) fails, and the `mongodb` log says to run `deployer update`.
+
 ## Retention (grandfather-father-son)
 
 Default policy per data source: keep **24 hourly, 7 daily, 4 weekly, 12 monthly** snapshots.

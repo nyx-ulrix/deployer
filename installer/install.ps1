@@ -262,9 +262,9 @@ function Invoke-Preflight {
     }
 
     if ($Facts.Avx) {
-        Write-CheckResult 'avx' 'ok' 'CPU supports AVX: managed MongoDB 5.0 will be enabled'
+        Write-CheckResult 'avx' 'ok' 'CPU supports AVX: managed MongoDB 8.0 will be enabled'
     } else {
-        Write-CheckResult 'avx' 'warn' 'This CPU has no AVX instructions, which MongoDB 5.0 requires.'
+        Write-CheckResult 'avx' 'warn' 'This CPU has no AVX instructions, which MongoDB 8.0 requires.'
         Write-DeployerInfo 'Managed MongoDB will be turned off. Everything else works, and projects can still'
         Write-DeployerInfo 'attach an external MongoDB such as a free MongoDB Atlas cluster (https://www.mongodb.com/atlas).'
     }
@@ -946,6 +946,8 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
                 Get-BuildSource
                 $imageMode = Invoke-DeployerImages -InstallDir $InstallDir -Runtime $chosen -FromSource
             }
+            # A folder kept by `uninstall -KeepData` can still hold MongoDB 5.0 data (A-143).
+            if ($facts.Avx) { Update-DeployerMongo -InstallDir $InstallDir -Runtime $chosen }
             Write-InstallStep 6 'Starting Deployer'
             $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $chosen -Arguments @('up', '-d', '--remove-orphans')
             if ($code -ne 0) {
@@ -1023,7 +1025,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
             Write-Host "    Runtime        $chosen"
             Write-Host "    Install dir    $InstallDir"
             Write-Host "    Version        $($source.Ref)"
-            $mongoText = if ($facts.Avx) { 'managed MongoDB 5.0 enabled' } else { 'managed MongoDB disabled (no AVX) - use an external MongoDB such as Atlas' }
+            $mongoText = if ($facts.Avx) { 'managed MongoDB 8.0 enabled' } else { 'managed MongoDB disabled (no AVX) - use an external MongoDB such as Atlas' }
             Write-Host "    NoSQL          $mongoText"
             if ($wantLan) {
                 foreach ($lanUrl in @(Get-DeployerLanUrls -Port $Port)) { Write-Host "    On your LAN    $lanUrl" }

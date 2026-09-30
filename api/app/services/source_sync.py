@@ -12,7 +12,7 @@ Every 2 s the worker's scheduler leader runs `sync_round(replica_id)` for each `
 
 Merge model (like Git): a change is applied only when the target still holds the version the change
 started from (SQL: the binlog before-image; MongoDB: the last synced version kept in `sync_versions`,
-since MongoDB 5.0 has no pre-images). Otherwise the key is in **conflict**: nothing is applied to it on
+as change-stream pre-images are not enabled). Otherwise the key is in **conflict**: nothing is applied to it on
 either side, both versions are stored in `sync_conflicts`, later changes to that key update the open
 conflict, and every other key keeps syncing. Re-applying an already applied change is a no-op (the
 target already holds that change's - or a later change's - after-version), so a crash between apply

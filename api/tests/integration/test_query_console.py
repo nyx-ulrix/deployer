@@ -3,7 +3,7 @@
 - SQL: a throwaway MariaDB 11, e.g. `docker run -d --rm -p 127.0.0.1:33071:3306 -e MARIADB_ROOT_PASSWORD=... mariadb:11`
   and `DEPLOYER_IT_MARIADB_URL=mysql://root:<password>@127.0.0.1:33071` (runs from the venv).
 - MongoDB: needs `mongosh` on PATH, so it normally runs inside the API image on a network shared with
-  a `mongo:5.0` container: `DEPLOYER_IT_MONGO_URI=mongodb://admin:<password>@mongo-host:27017/?authSource=admin`.
+  a `mongo:8.0` container: `DEPLOYER_IT_MONGO_URI=mongodb://admin:<password>@mongo-host:27017/?authSource=admin`.
 
 Each part is skipped unless its URL is set. The tests create and drop their own database.
 """

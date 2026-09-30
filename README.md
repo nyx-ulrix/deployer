@@ -68,7 +68,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/API.md](docs/API.md) 
 | CPU | Intel or AMD 64-bit (ARM PCs are not supported yet) with hardware virtualization enabled in BIOS/UEFI (Intel VT-x / AMD SVM) |
 | Memory | 4 GB RAM minimum, 8 GB recommended. WSL2 gives Deployer about half the PC's RAM, so a 4 GB PC has about 2 GB: expect 1-2 small apps. |
 | Disk | 10 GB free |
-| MongoDB | Managed MongoDB 5.0 needs a CPU with **AVX** (most CPUs since ~2011). Without AVX the installer turns managed MongoDB off; projects can still use an external MongoDB such as a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster. |
+| MongoDB | Managed MongoDB 8.0 needs a CPU with **AVX** (most CPUs since ~2011). Without AVX the installer turns managed MongoDB off; projects can still use an external MongoDB such as a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster. |
 
 ## Install
 
@@ -312,7 +312,7 @@ Open a new terminal after installing:
 | `deployer status` | Runtime, containers, health |
 | `deployer start` / `stop` / `restart [service]` | Control the stack |
 | `deployer logs [service] [-Follow]` | Container logs (`api`, `worker`, `dashboard`, `caddy`, `mariadb`, `mongodb`, `redis`, `tunnel`) |
-| `deployer update [-Ref v0.2.0]` | Offers a backup, downloads new deploy files (keeps `.env`), pulls images, restarts |
+| `deployer update [-Ref v0.2.0]` | Offers a backup, downloads new deploy files (keeps `.env`), pulls images, upgrades managed MongoDB data if needed ([BACKUPS.md](docs/BACKUPS.md#mongodb-versions)), restarts |
 | `deployer backup` | `mariadb-dump` + `mongodump` + a copy of `.env` into `backups\<timestamp>` |
 | `deployer restore <folder>` | Loads a `deployer backup` folder (or just its `<timestamp>` name) back in, replacing the current databases; asks first and offers a backup of the current data. Only onto the install that made it: refuses other database passwords, and a different `MASTER_KEY` unless `-Force` |
 | `deployer open` | Open the dashboard |
@@ -399,7 +399,7 @@ pytest -rs                               # tests/integration is skipped without 
 ```
 
 `tests/integration` (provisioning, backups/PITR, the query console, co-hosting, device hosting,
-push-to-deploy) needs real MariaDB 11 / MongoDB 5.0 servers and the tools in the API image; each
+push-to-deploy) needs real MariaDB 11 / MongoDB 8.0 servers and the tools in the API image; each
 file's docstring says how to run it. CI (`.github/workflows/ci.yml`, job "integration") builds the
 API image and runs them there, and fails if any is skipped. It also runs the unit suite on MariaDB
 (reported only for now: about 40 tests still fail there).

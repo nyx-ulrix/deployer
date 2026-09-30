@@ -1,4 +1,4 @@
-"""Co-hosting sync against real MariaDB 11 (row binlog, GTID) and MongoDB 5.0 (replica set rs0).
+"""Co-hosting sync against real MariaDB 11 (row binlog, GTID) and MongoDB 8.0 (replica set rs0).
 
 Skipped unless both servers are configured (see test_managed_databases.py for docker commands; the
 MariaDB container needs `--log-bin --binlog-format=ROW --server-id=1`, MongoDB `--replSet rs0`)::

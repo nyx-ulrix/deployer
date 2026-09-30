@@ -13,8 +13,10 @@
 # Roughly 2.6 GB worst case; typical idle usage is well under 1 GB. Deployed apps
 # (docs/DEPLOYMENTS.md) run as extra containers, APP_MEM_LIMIT (512m) each, on top of that.
 #
-# MongoDB 5.0 needs a CPU with AVX. It only starts when COMPOSE_PROFILES contains `mongodb`
+# MongoDB 8.0 needs a CPU with AVX. It only starts when COMPOSE_PROFILES contains `mongodb`
 # (the installer omits it on CPUs without AVX and sets MANAGED_MONGODB_ENABLED=false).
+# Installs made before A-143 have MongoDB 5.0 data: `deployer update` lifts it one version at a time
+# with the `mongodb-upgrade-*` one-off services below before starting mongo:8.0 (docs/BACKUPS.md).
 
 name: deployer
 
@@ -23,6 +25,20 @@ x-logging: &default-logging
   options:
     max-size: "10m"
     max-file: "3"
+
+# deploy/mongodb/upgrade.sh (A-143): each run lifts the stopped managed MongoDB's data one
+# feature-compatibility version, to the version of its image. Never started by `up` (own profile);
+# installer/lib/common.ps1 Update-DeployerMongo runs them with `docker compose run --rm`.
+x-mongodb-upgrade: &mongodb-upgrade
+  profiles: ["mongodb-upgrade"]
+  entrypoint: ["bash", "-c", "exec bash <(tr -d '\r' < /deployer-mongo/upgrade.sh)"]
+  network_mode: none
+  volumes:
+    - mongodb_data:/data/db
+    - ./mongodb:/deployer-mongo:ro
+    - ./mongodb/mongosh.conf:/etc/mongosh.conf:ro
+  mem_limit: ${MONGODB_MEM_LIMIT:-512m}
+  logging: *default-logging
 
 services:
   mariadb:
@@ -69,7 +85,9 @@ services:
     logging: *default-logging
 
   mongodb:
-    image: mongo:5.0
+    # A new major also needs a `mongodb-upgrade-<major>` step below (MongoDB opens data only from its
+    # own or the previous major).
+    image: &mongodb-image mongo:8.0
     profiles: ["mongodb"]
     restart: unless-stopped
     # Single-node replica set `rs0` (the oplog enables point-in-time recovery, docs/BACKUPS.md). The
@@ -84,19 +102,32 @@ services:
       - mongodb_data:/data/db
       - mongodb_config:/data/configdb
       - ./mongodb:/deployer-mongo:ro
+      # No telemetry, update checks or log files for the healthcheck's mongosh.
+      - ./mongodb/mongosh.conf:/etc/mongosh.conf:ro
     networks:
       - backend
+    # Time for a clean shutdown (a killed mongod replays its journal on the next start).
+    stop_grace_period: 60s
     healthcheck:
-      # mongo:5.0 ships both the legacy `mongo` shell and `mongosh`; `mongo` starts far faster and
-      # uses less memory than the Node.js-based mongosh, which matters on old PCs.
-      # `ping` needs no authentication.
-      test: ["CMD", "mongo", "--quiet", "--norc", "--eval", "db.adminCommand({ ping: 1 }).ok"]
-      interval: 10s
-      timeout: 5s
+      # Images since 6.0 only have mongosh (Node.js): slower to start than the old `mongo` shell, so
+      # a longer interval and timeout on old PCs. `ping` needs no authentication.
+      test: ["CMD", "mongosh", "--quiet", "--norc", "--eval", "db.adminCommand({ ping: 1 }).ok"]
+      interval: 30s
+      timeout: 20s
       retries: 10
-      start_period: 40s
+      start_period: 60s
     mem_limit: ${MONGODB_MEM_LIMIT:-512m}
     logging: *default-logging
+
+  mongodb-upgrade-6:
+    <<: *mongodb-upgrade
+    image: mongo:6.0
+  mongodb-upgrade-7:
+    <<: *mongodb-upgrade
+    image: mongo:7.0
+  mongodb-upgrade-8:
+    <<: *mongodb-upgrade
+    image: *mongodb-image
 
   redis:
     image: redis:7-alpine

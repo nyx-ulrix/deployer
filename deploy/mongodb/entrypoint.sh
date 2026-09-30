@@ -24,4 +24,13 @@ mv -f "${keyfile}.tmp" "$keyfile"
 chown mongodb:mongodb "$keyfile"
 chmod 0400 "$keyfile"
 
+# Feature-compatibility marker for deploy/mongodb/upgrade.sh (A-143): a new volume starts at this
+# image's version. Data without the marker is from MongoDB 5.0 and needs `deployer update` first.
+if [ ! -e /data/db/WiredTiger ]; then
+    mongod --version | sed -n 's/^db version v\([0-9]*\)\..*/\1.0/p' > /data/db/deployer-fcv
+    chown mongodb:mongodb /data/db/deployer-fcv
+elif [ ! -e /data/db/deployer-fcv ]; then
+    echo "deployer: this MongoDB data is from MongoDB 5.0; run 'deployer update' to upgrade it (docs/BACKUPS.md)" >&2
+fi
+
 exec /usr/local/bin/docker-entrypoint.sh "$@"

@@ -1,4 +1,4 @@
-"""Point-in-time recovery against real MariaDB 11 (ROW binlog) and MongoDB 5.0 (replica set) servers.
+"""Point-in-time recovery against real MariaDB 11 (ROW binlog) and MongoDB 8.0 (replica set) servers.
 
 Needs the dump tools (`mariadb-dump`, `mariadb-binlog`, `mariadb`, `mongodump`, `mongorestore`), so it
 normally runs inside the API image on the compose `backend` network, e.g.::

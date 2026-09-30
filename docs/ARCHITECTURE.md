@@ -31,7 +31,7 @@ Browser / phone / AI agent
                  │
    backend network (internal: true)
    ├── mariadb:11   platform metadata DB `deployer` + managed SQL databases `p_<ref>` (binlog on)
-   ├── mongo:5.0    managed NoSQL databases `p_<ref>` (single-node replica set for the oplog)
+   ├── mongo:8.0    managed NoSQL databases `p_<ref>` (single-node replica set for the oplog)
    ├── redis:7      OAuth state, rate limits, job queue, device RPC routing, app runtime logs, metrics
    └── worker       jobs + scheduler: backups, log archiving, pruning, verification; app builds and
                     containers (root + /var/run/docker.sock, writes the Caddy app files); on a host

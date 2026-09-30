@@ -241,7 +241,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 
 **Infrastructure / installer**
 - [x] A-142 **[LOW][usability]** Commands that self-elevate close their window before the result or error can be read - `installer/deployer.ps1:125-139` - pause on error; the parent prints the exit code and log path.
-- [ ] A-143 **[LOW][security]** Managed MongoDB is pinned to end-of-life 5.0 - `deploy/docker-compose.yml:69, 87-90` - move to 7.0/8.0 with an FCV step path.
+- [x] A-143 **[LOW][security]** Managed MongoDB is pinned to end-of-life 5.0 - `deploy/docker-compose.yml:69, 87-90` - move to 7.0/8.0 with an FCV step path.
 - [ ] A-144 **[LOW][security]** Compose defaults DEPLOYER_BIND to 0.0.0.0, contradicting the docs and .env.example - `deploy/docker-compose.yml:248, 250` (also `DEPLOYMENTS.md:28, 46-47`) - default to 127.0.0.1; fix the comments and the stale "follow-up" note. (not verified)
 - [ ] A-145 **[LOW][security]** All LAN/localhost clients reach Caddy with the same source IP, so per-IP limits on :8080 are meaningless - `deploy/Caddyfile:25, 63` - document it; a per-email limit (A-019). (not verified)
 - [ ] A-146 **[LOW][usability]** "Prevent sleep" does not cover closing a laptop lid - `installer/lib/common.ps1:1189-1212` - set LIDACTION or say so. (not verified)

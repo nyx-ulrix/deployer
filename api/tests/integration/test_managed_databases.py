@@ -1,10 +1,10 @@
-"""End-to-end checks against real MariaDB 11 and MongoDB 5.0 servers.
+"""End-to-end checks against real MariaDB 11 and MongoDB 8.0 servers.
 
 Skipped unless both are configured, e.g.::
 
     docker run -d --name dpl-it-mariadb -e MARIADB_ROOT_PASSWORD=test -p 13306:3306 mariadb:11
     docker run -d --name dpl-it-mongo -e MONGO_INITDB_ROOT_USERNAME=admin \
-        -e MONGO_INITDB_ROOT_PASSWORD=test -p 37017:27017 mongo:5.0
+        -e MONGO_INITDB_ROOT_PASSWORD=test -p 37017:27017 mongo:8.0
     DEPLOYER_IT_MARIADB_URL=mysql://root:<password>@127.0.0.1:13306 \
     DEPLOYER_IT_MONGO_URI=mongodb://admin:<password>@127.0.0.1:37017 pytest tests/integration
 """

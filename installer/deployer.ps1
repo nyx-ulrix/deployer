@@ -634,6 +634,7 @@ function Invoke-Update {
 
     Initialize-Engine -Ctx $ctx
     $mode = Invoke-DeployerImages -InstallDir $InstallDir -Runtime $ctx.Runtime -FromSource:$FromSource
+    if ($mongo) { Update-DeployerMongo -InstallDir $InstallDir -Runtime $ctx.Runtime }
     $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--remove-orphans')
     if ($code -ne 0) {
         Show-DeployerDiagnostics -InstallDir $InstallDir -Runtime $ctx.Runtime

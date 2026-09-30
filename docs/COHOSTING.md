@@ -128,7 +128,7 @@ error, warnings, created_by_id, created_at, updated_at`, unique `(data_source_id
 ### Merge model (conflicts)
 
 Like a Git merge: a change is applied to the other copy only when that copy still holds the version
-the change started from - MariaDB: the binlog before-image; MongoDB (5.0 has no pre-images): the last
+the change started from - MariaDB: the binlog before-image; MongoDB (pre-images are not enabled): the last
 synced version in `sync_versions` (without one, a document changed on both sides in the same round is
 a conflict). Otherwise:
 

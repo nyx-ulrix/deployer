@@ -1,4 +1,4 @@
-"""Host device end-to-end against real MariaDB 11 and MongoDB 5.0 (device side + primary routing).
+"""Host device end-to-end against real MariaDB 11 and MongoDB 8.0 (device side + primary routing).
 
 Skipped unless both servers are configured (see test_managed_databases.py for docker commands)::
 

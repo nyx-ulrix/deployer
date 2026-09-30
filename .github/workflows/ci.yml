@@ -60,7 +60,7 @@ jobs:
 
   # A-092: builds the api image, then runs inside it (it has the backup tools, mongosh, git and the
   # Docker CLI) the unit suite on MariaDB and tests/integration against MariaDB 11 (row binlog, like
-  # deploy/docker-compose.yml) and MongoDB 5.0 (replica set rs0, the real deploy/mongodb wrapper).
+  # deploy/docker-compose.yml) and MongoDB 8.0 (replica set rs0, the real deploy/mongodb wrapper).
   integration:
     name: API image + integration tests (MariaDB, MongoDB, Docker)
     runs-on: ubuntu-latest
@@ -76,7 +76,7 @@ jobs:
           tags: deployer-api:ci
           cache-from: type=gha,scope=api
           cache-to: type=gha,mode=max,scope=api
-      - name: Start MariaDB 11 and MongoDB 5.0
+      - name: Start MariaDB 11 and MongoDB 8.0
         run: |
           set -eu
           pw="$(openssl rand -hex 16)"
@@ -87,21 +87,21 @@ jobs:
             mariadb:11 --log-bin=mysql-bin --binlog-format=ROW --server-id=1 --log-slave-updates \
             --binlog-row-metadata=FULL --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
           docker run -d --name mongodb --network it -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD="$pw" \
-            -v "$PWD/deploy/mongodb:/deployer-mongo:ro" --entrypoint bash mongo:5.0 \
+            -v "$PWD/deploy/mongodb:/deployer-mongo:ro" --entrypoint bash mongo:8.0 \
             /deployer-mongo/entrypoint.sh --replSet rs0 --keyFile /tmp/deployer-mongo-keyfile --bind_ip_all
           for i in $(seq 1 60); do
             if docker exec mariadb healthcheck.sh --connect --innodb_initialized >/dev/null 2>&1 \
-               && docker exec mongodb mongo --quiet --norc -u admin -p "$pw" --authenticationDatabase admin \
+               && docker exec mongodb mongosh --quiet --norc -u admin -p "$pw" --authenticationDatabase admin \
                     --eval 'db.adminCommand({ ping: 1 }).ok' >/dev/null 2>&1; then
               break
             fi
             if [ "$i" = 60 ]; then docker logs mariadb; docker logs mongodb; exit 1; fi
             sleep 2
           done
-          docker exec mongodb mongo --quiet --norc -u admin -p "$pw" --authenticationDatabase admin \
+          docker exec mongodb mongosh --quiet --norc -u admin -p "$pw" --authenticationDatabase admin \
             --eval 'rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongodb:27017" }] })'
           for i in $(seq 1 30); do
-            if [ "$(docker exec mongodb mongo --quiet --norc -u admin -p "$pw" --authenticationDatabase admin \
+            if [ "$(docker exec mongodb mongosh --quiet --norc -u admin -p "$pw" --authenticationDatabase admin \
                      --eval 'db.hello().isWritablePrimary')" = "true" ]; then exit 0; fi
             sleep 1
           done
@@ -216,6 +216,9 @@ jobs:
       - name: An update never switches the runtime in place
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/runtime.tests.ps1; exit $LASTEXITCODE
+      - name: deployer update lifts MongoDB 5.0 data one version at a time
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/mongo.tests.ps1; exit $LASTEXITCODE
       - name: The administrator window waits on an error and logs it
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/elevated.tests.ps1; exit $LASTEXITCODE
@@ -263,3 +266,51 @@ jobs:
         run: docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml --env-file deploy/.env.example config --quiet
       - name: Validate Caddyfile
         run: docker run --rm -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+      # A-143: the real deploy/mongodb scripts take a 5.0 replica set (as installed before A-143) to 8.0
+      # the way Update-DeployerMongo does, then the 8.0 service starts on it with the data intact.
+      - name: MongoDB 5.0 -> 8.0 upgrade path
+        run: |
+          set -eu
+          pw="$(openssl rand -hex 16)"
+          echo "::add-mask::$pw"
+          scripts="$PWD/deploy/mongodb"
+          docker network create up
+          docker volume create mdata
+          start() {  # start <image>: the compose `mongodb` service
+            docker run -d --name mongodb --network up -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD="$pw" \
+              -v mdata:/data/db -v "$scripts:/deployer-mongo:ro" --entrypoint bash "$1" \
+              /deployer-mongo/entrypoint.sh --replSet rs0 --keyFile /tmp/deployer-mongo-keyfile --bind_ip_all
+          }
+          shell() {  # shell <mongo|mongosh> <code>
+            docker exec mongodb "$1" --quiet --norc -u admin -p "$pw" --authenticationDatabase admin --eval "$2"
+          }
+          wait_primary() {
+            for i in $(seq 1 60); do
+              if [ "$(shell "$1" 'db.hello().isWritablePrimary' 2>/dev/null)" = "true" ]; then return 0; fi
+              sleep 2
+            done
+            docker logs mongodb; exit 1
+          }
+          step() {  # step <image>: one compose `mongodb-upgrade-*` run; prints its exit code
+            set +e
+            docker run --rm --network none -v mdata:/data/db -v "$scripts:/deployer-mongo:ro" \
+              -v "$scripts/mongosh.conf:/etc/mongosh.conf:ro" --entrypoint bash "$1" /deployer-mongo/upgrade.sh >&2
+            echo $?
+            set -e
+          }
+          start mongo:5.0
+          for i in $(seq 1 60); do shell mongo 'db.adminCommand({ ping: 1 }).ok' >/dev/null 2>&1 && break; sleep 2; done
+          shell mongo 'rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongodb:27017" }] })'
+          wait_primary mongo
+          shell mongo 'db.getSiblingDB("app").items.insertOne({ _id: 1, v: "kept" })'
+          docker stop -t 60 mongodb && docker rm mongodb
+          # Volumes made before A-143 have no marker file.
+          docker run --rm -v mdata:/data/db --entrypoint rm mongo:5.0 -f /data/db/deployer-fcv
+          test "$(step mongo:8.0)" = 3
+          # 6.0 -> 7.0 -> 8.0, then 8.0 and 6.0 again are no-ops on 8.0 data.
+          for image in mongo:6.0 mongo:7.0 mongo:8.0 mongo:8.0 mongo:6.0; do test "$(step "$image")" = 0; done
+          start mongo:8.0
+          wait_primary mongosh
+          test "$(shell mongosh 'db.adminCommand({ getParameter: 1, featureCompatibilityVersion: 1 }).featureCompatibilityVersion.version')" = 8.0
+          test "$(shell mongosh 'db.getSiblingDB("app").items.findOne({ _id: 1 }).v')" = kept
+          docker exec mongodb mongosh --quiet --norc --eval 'db.adminCommand({ ping: 1 }).ok'

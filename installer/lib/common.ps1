@@ -881,6 +881,30 @@ function Invoke-DeployerImages {
     return 'built'
 }
 
+function Update-DeployerMongo {
+    # A-143: MongoDB only opens data from its own major or the one before, and installs made before
+    # 8.0 have 5.0 data. Before `up`, with the managed MongoDB stopped, deploy/mongodb/upgrade.sh runs
+    # in one-off containers: first with the compose image (nothing to do for new or current data,
+    # 8.0 is one step away from 7.0), else 6.0 -> 7.0 -> 8.0. Each step is a no-op once done, so an
+    # interrupted upgrade resumes where it stopped. docs/BACKUPS.md "MongoDB versions".
+    param([string]$InstallDir, [string]$Runtime)
+    [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('stop', '-t', '60', 'mongodb'))
+    $steps = @('8')
+    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('--profile', 'mongodb-upgrade', 'run', '--rm', '-T', 'mongodb-upgrade-8')
+    if ($code -eq 3) {
+        Write-DeployerInfo 'Upgrading the managed MongoDB data from 5.0 to 8.0, one version at a time (downloads MongoDB 6.0 and 7.0 once)...'
+        foreach ($major in '6', '7', '8') {
+            $steps += $major
+            $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('--profile', 'mongodb-upgrade', 'run', '--rm', '-T', "mongodb-upgrade-$major")
+            if ($code -ne 0) { break }
+        }
+    }
+    if ($code -ne 0) {
+        throw "Upgrading the managed MongoDB data failed at step mongodb-upgrade-$($steps[-1]) (exit code $code). Its data is unchanged since the last finished step; run the update again, or see docs/BACKUPS.md `"MongoDB versions`"."
+    }
+    Write-DeployerOk 'Managed MongoDB data is ready for MongoDB 8.0'
+}
+
 # ------------------------------------------------------------------------------------------------
 # Downloads and files
 # ------------------------------------------------------------------------------------------------
