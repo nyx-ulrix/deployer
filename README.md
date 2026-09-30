@@ -60,6 +60,29 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/API.md](docs/API.md) for details.
 
+## Documentation
+
+The full index of the specs in `docs/` (ARCHITECTURE and CONTRIBUTING link here instead of keeping their own lists):
+
+| Document | What it covers |
+|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Services, repository layout, platform data model |
+| [API.md](docs/API.md) | The HTTP API contract used by the dashboard, webhooks and AI agents |
+| [CONVENTIONS.md](docs/CONVENTIONS.md) | Database schema planning conventions |
+| [DATA_API.md](docs/DATA_API.md) | The project data API authenticated by API keys |
+| [MCP.md](docs/MCP.md) | The MCP server for AI agents |
+| [QUERY_CONSOLE.md](docs/QUERY_CONSOLE.md) | The Query Console (Terminal mode) |
+| [QUERY_EDITOR.md](docs/QUERY_EDITOR.md) | The Query Notebook, saved queries and the query log |
+| [DEVICES.md](docs/DEVICES.md) | Host devices (other PCs that run databases and apps) |
+| [COHOSTING.md](docs/COHOSTING.md) | Co-hosting: live two-way database copies and failover websites |
+| [BACKUPS.md](docs/BACKUPS.md) | Backups, versions and recovery |
+| [REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md) | Cloudflare remote access and custom domains |
+| [DEPLOYMENTS.md](docs/DEPLOYMENTS.md) | Push-to-deploy apps |
+| [CLOUD.md](docs/CLOUD.md) | Hosting apps and databases on your own AWS / Firebase accounts |
+| [MONITORING.md](docs/MONITORING.md) | Metrics and alerts |
+| [SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md) | Security review findings |
+| [AUDIT_REPORT.md](docs/AUDIT_REPORT.md) | Full audit checklist |
+
 ## Requirements
 
 | | |

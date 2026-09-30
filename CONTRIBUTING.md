@@ -19,7 +19,7 @@ developers, so reliability, low resource use and clear error messages matter as 
 | `dashboard/` | React + TypeScript + Vite SPA |
 | `deploy/` | `docker-compose.yml`, `docker-compose.dev.yml`, `Caddyfile`, `.env.example`, `mongodb/` (replica-set entrypoint), `tunnel/` (cloudflared sidecar image) |
 | `installer/` | `install.ps1`, `deployer.ps1`, `lib/common.ps1`, `wsl/setup-engine.sh`, `windows/` (`DeployerSetup.exe` sources + `build.ps1`) |
-| `docs/` | Architecture, API contract, schema conventions, host devices, backups, remote access |
+| `docs/` | Specs for every feature - see the [documentation index](README.md#documentation) |
 
 ## Development setup
 

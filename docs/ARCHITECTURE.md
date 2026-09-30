@@ -46,7 +46,7 @@ Browser / phone / AI agent
 | `dashboard/` | React + TypeScript + Vite SPA, Dockerfile (nginx) |
 | `deploy/` | `docker-compose.yml`, `docker-compose.dev.yml` (API hot reload for checkouts), `Caddyfile`, `.env.example`, `mongodb/` (replica-set entrypoint), `tunnel/` (cloudflared sidecar image) |
 | `installer/` | `install.ps1` (Windows bootstrap), `deployer.ps1` (manage CLI), WSL engine scripts, `windows/` (`DeployerSetup.exe`: setup wizard + Deployer Control, C# WinForms on .NET Framework 4.8) |
-| `docs/` | This file, `API.md` (HTTP contract), `CONVENTIONS.md` (schema conventions), `DEVICES.md` (host devices), `BACKUPS.md` (backups & recovery), `REMOTE_ACCESS.md` (Cloudflare domains), `DEPLOYMENTS.md` (push-to-deploy), `MONITORING.md` (metrics & alerts), `SECURITY_REVIEW.md` |
+| `docs/` | This file and the other specs: see the [documentation index](../README.md#documentation) |
 
 ## Data model (platform DB, MariaDB `deployer`)
 
