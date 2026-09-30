@@ -50,16 +50,12 @@ class Condition:
     for_s: int = 0
 
 
-# Plain words for the backup job types, so an alert never shows "backup.archive_logs". "{}" is the database;
-# prune and copy run for every database at once (no data_source_id), so they name none.
+# The job types that alert when they fail, in plain words ("{}" is the database). A-137: restore shows its
+# own error where it was started, verify has backup_verify_failed, and prune / copy retry on their own.
 BACKUP_JOB_LABELS = {
     "backup.snapshot": "A backup of {}",
     "backup.platform_snapshot": "The backup of the platform data (users, projects, settings)",
     "backup.archive_logs": "Saving changes for point-in-time restore of {}",
-    "backup.restore": "A restore of {}",
-    "backup.verify": "A restore test of {}",
-    "backup.prune": "Removing old backups",
-    "backup.copy": "Copying backups off this PC",
 }
 
 
@@ -124,7 +120,7 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
     since = utcnow() - timedelta(hours=24)
     failed = db.scalars(
         select(Job)
-        .where(Job.type.like("backup.%"), Job.status == "failed", Job.finished_at >= since)
+        .where(Job.type.in_(BACKUP_JOB_LABELS), Job.status == "failed", Job.finished_at >= since)
         .order_by(Job.finished_at.desc())
     ).all()
     seen: set[tuple[str, str | None]] = set()
@@ -133,11 +129,13 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
         if key in seen:
             continue
         seen.add(key)
+        # Any later snapshot of the same database clears it (a fresh full backup covers a failed log save).
+        cleared_by = {job.type} if job.type == "backup.platform_snapshot" else {job.type, "backup.snapshot"}
         recovered = db.scalar(
             select(func.count())
             .select_from(Job)
             .where(
-                Job.type == job.type,
+                Job.type.in_(cleared_by),
                 Job.data_source_id.is_(None)
                 if job.data_source_id is None
                 else Job.data_source_id == job.data_source_id,
@@ -150,11 +148,12 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
         ds = db.get(DataSource, job.data_source_id) if job.data_source_id else None
         # A hard delete nulls the job's data_source_id (ON DELETE SET NULL).
         target = f"database {ds.name}" if ds is not None and ds.deleted_at is None else "a deleted database"
-        what = BACKUP_JOB_LABELS.get(job.type, "A backup task for {}").format(target)
+        what = BACKUP_JOB_LABELS[job.type].format(target)
         out[f"backup:{job.type}:{job.data_source_id or 'platform'}"] = Condition(
             "backup_failed",
             "critical",
-            f"{what} failed. Open Settings > Backups for the reason; this alert clears once it next succeeds",
+            f"{what} failed. Open Settings > Backups for the reason; "
+            "this alert clears after the next successful backup",
         )
     # A job that never ends (a hung tool) fails nothing: alert when a scheduled database has had no
     # successful snapshot for twice its schedule. Held for an hour first, so a PC that just woke from
