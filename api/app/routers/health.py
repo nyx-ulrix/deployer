@@ -1,7 +1,7 @@
 import logging
 from functools import lru_cache
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 from sqlalchemy import text
 
 from app import __version__
@@ -30,9 +30,10 @@ def _check_mariadb() -> bool:
         return False
 
 
-def _check_mongodb() -> bool:
+def _check_mongodb() -> bool | None:
+    """None when MongoDB is switched off (no AVX CPU): not running is expected, not a failure."""
     if not get_settings().managed_mongodb_enabled:
-        return False
+        return None
     try:
         _mongo_client().admin.command("ping")
         return True
@@ -50,9 +51,10 @@ def _check_redis() -> bool:
 
 
 @router.get("/health")
-def health() -> dict:
-    return {
-        "status": "ok",
-        "version": __version__,
-        "services": {"mariadb": _check_mariadb(), "mongodb": _check_mongodb(), "redis": _check_redis()},
-    }
+def health(response: Response) -> dict:
+    # MariaDB and Redis are required; MongoDB only backs MongoDB projects, so it does not degrade the API.
+    services = {"mariadb": _check_mariadb(), "mongodb": _check_mongodb(), "redis": _check_redis()}
+    ok = services["mariadb"] and services["redis"]
+    if not ok:
+        response.status_code = 503
+    return {"status": "ok" if ok else "degraded", "version": __version__, "services": services}

@@ -573,8 +573,8 @@ function Invoke-Status {
     }
     Write-DeployerOk 'Docker engine reachable'
     [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('ps'))
-    $health = Get-DeployerHealth -Port $ctx.Port
-    if ($health) { Write-DeployerOk "Health: $health" } else { Write-DeployerWarn "Health endpoint http://localhost:$($ctx.Port)/v1/health is not answering." }
+    $health = Get-DeployerHealth -Port $ctx.Port -AnyStatus
+    if ($health) { Write-DeployerHealth $health } else { Write-DeployerWarn "Health endpoint http://localhost:$($ctx.Port)/v1/health is not answering." }
 }
 
 function Invoke-Logs {

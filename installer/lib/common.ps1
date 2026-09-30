@@ -778,16 +778,33 @@ function Invoke-DeployerRestore {
 }
 
 function Get-DeployerHealth {
-    param([int]$Port)
+    # The /v1/health body when the API answers 200. -AnyStatus also returns the 503 "degraded" body
+    # (the API is up but MariaDB or Redis is not), so "deployer status" can say which one.
+    param([int]$Port, [switch]$AnyStatus)
     foreach ($hostName in @('127.0.0.1', 'localhost')) {
         try {
             $resp = Invoke-WebRequest -UseBasicParsing -Uri "http://${hostName}:$Port/v1/health" -TimeoutSec 5
             if ($resp.StatusCode -eq 200) { return $resp.Content }
         } catch {
+            if ($AnyStatus -and $_.ErrorDetails -and $_.ErrorDetails.Message -match '"services"') { return $_.ErrorDetails.Message }
             Write-Verbose "Health check via ${hostName}: $_"
         }
     }
     return $null
+}
+
+function Write-DeployerHealth {
+    # One line per service instead of the raw /v1/health JSON.
+    param([string]$Body)
+    $h = $null
+    try { $h = $Body | ConvertFrom-Json } catch { Write-Verbose "Health body is not JSON: $_" }
+    if (-not $h -or -not $h.services) { Write-DeployerInfo "Health: $Body"; return }
+    $line = "Health: $($h.status) (version $($h.version))"
+    if ($h.status -eq 'ok') { Write-DeployerOk $line } else { Write-DeployerWarn $line }
+    foreach ($svc in $h.services.PSObject.Properties) {
+        $state = if ($null -eq $svc.Value) { 'switched off (this CPU has no AVX)' } elseif ($svc.Value) { 'up' } else { 'DOWN' }
+        Write-DeployerInfo ('  {0,-8}: {1}' -f $svc.Name, $state)
+    }
 }
 
 function Wait-DeployerHealth {

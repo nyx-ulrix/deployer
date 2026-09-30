@@ -121,10 +121,11 @@ export type ApiKeyConfig = {
 
 // ---- Health & setup ----
 
+/** HTTP 503 with status "degraded" while MariaDB or Redis is down. mongodb is null when switched off. */
 export type Health = {
-  status: "ok";
+  status: "ok" | "degraded";
   version: string;
-  services: { mariadb: boolean; mongodb: boolean; redis: boolean };
+  services: { mariadb: boolean; mongodb: boolean | null; redis: boolean };
 };
 
 export type SetupStatus = {

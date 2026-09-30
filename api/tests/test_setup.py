@@ -82,12 +82,13 @@ def test_secure_cookie_when_request_is_https(client):
     assert "Secure" in resp.headers["set-cookie"]
 
 
-def test_health_never_fails(client, monkeypatch):
+def test_health_reports_degraded_when_a_required_service_is_down(client, monkeypatch):
     resp = client.get("/v1/health")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["services"] == {"mariadb": True, "mongodb": False, "redis": True}
+    # MongoDB is switched off in tests (as on a CPU without AVX): null, not a failure.
+    assert body["services"] == {"mariadb": True, "mongodb": None, "redis": True}
 
     from app.redis_client import get_redis
 
@@ -96,7 +97,8 @@ def test_health_never_fails(client, monkeypatch):
 
     monkeypatch.setattr(get_redis(), "ping", boom)
     resp = client.get("/v1/health")
-    assert resp.status_code == 200
+    assert resp.status_code == 503
+    assert resp.json()["status"] == "degraded"
     assert resp.json()["services"]["redis"] is False
 
 

@@ -960,7 +960,8 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
                 Show-DeployerDiagnostics -InstallDir $InstallDir -Runtime $chosen
                 throw "Deployer did not become healthy within $([int]($timeout / 60)) minutes. The logs above usually explain why; run 'deployer logs api' for more."
             }
-            Write-DeployerOk "Deployer is up: $health"
+            Write-DeployerOk 'Deployer is up'
+            Write-DeployerHealth $health
 
             # 8. Autostart ---------------------------------------------------------------------------------
             Write-InstallStep 8 'Starting Deployer when you sign in'
