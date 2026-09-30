@@ -12,14 +12,13 @@ from alembic import command
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.crypto import encrypt_json, encrypt_secret, sha256_hex
+from app.crypto import encrypt_secret, sha256_hex
 from app.errors import ApiError
 from app.models import (
     ApiKey,
     App,
     AppReplica,
     AuditLog,
-    DataSource,
     Deployment,
     DeviceProjectGrant,
     Domain,
@@ -28,13 +27,9 @@ from app.models import (
     SourceReplica,
 )
 from app.services import cohost_apps, deployments, device_apps, device_host, jobs
-from tests import devices_support
 from tests.apps_support import FAKE_SHA, make_app, new_token
-from tests.test_deployments import docker  # noqa: F401 - fixture
-from tests.test_remote_access import desired, fake_cf, link, state_dir  # noqa: F401 - fixtures
-
-make_device = devices_support.make_device
-fake_device = devices_support.fake_device
+from tests.shared_fixtures import add_source
+from tests.test_remote_access import desired, link
 
 
 @pytest.fixture
@@ -90,25 +85,13 @@ def replicas(db, app_id):
 
 def managed_source(db, project, password):
     config = {"host": "mariadb", "port": 3306, "username": "u_main", "password": password, "database": "p_shop_abc123"}
-    ds = DataSource(
-        project_id=project.id,
-        name="main",
-        kind="sql",
-        engine="mariadb",
-        mode="managed",
-        database_name="p_shop_abc123",
-        config_encrypted=encrypt_json(config),
-        status="ok",
-    )
-    db.add(ds)
-    db.commit()
-    return ds
+    return add_source(db, project, name="main", mode="managed", database_name="p_shop_abc123", config=config)
 
 
 # --- main server: orchestration ------------------------------------------------------------------
 
 
-def test_replicate_on_live_and_rollback(client, db, docker, team, fake_device, auth_headers):  # noqa: F811
+def test_replicate_on_live_and_rollback(client, db, docker, team, fake_device, auth_headers):
     t = team
     project, device = t["project"], t["device"]
     key = ApiKey(
@@ -182,7 +165,7 @@ def test_replicate_on_live_and_rollback(client, db, docker, team, fake_device, a
     assert replicas(db, app.id)[device.id].deployment_id == rollback.id
 
 
-def test_repo_token_only_when_the_owner_allows_it(db, docker, team, fake_device):  # noqa: F811
+def test_repo_token_only_when_the_owner_allows_it(db, docker, team, fake_device):
     token = new_token()
     app = make_app(db, team["project"], token=token, cohost=True, cohost_share_repo_access=True)
     fd = fake_device(team["device"].id, handler_for())
@@ -198,7 +181,7 @@ def test_repo_token_only_when_the_owner_allows_it(db, docker, team, fake_device)
     assert params["repo_token"] is None and params["repo_access_withheld"] is False
 
 
-def test_eligibility(db, docker, team, fake_device, make_device):  # noqa: F811
+def test_eligibility(db, docker, team, fake_device, make_device):
     t = team
     project, device = t["project"], t["device"]
     make_device(t["users"]["dev"], "Dev laptop")  # member without can_cohost
@@ -241,7 +224,7 @@ def test_eligibility(db, docker, team, fake_device, make_device):  # noqa: F811
     assert replicas(db, app.id)[device.id].status == "stopped"
 
 
-def test_failed_device_build_is_reported_and_not_retried_every_tick(db, docker, team, fake_device):  # noqa: F811
+def test_failed_device_build_is_reported_and_not_retried_every_tick(db, docker, team, fake_device):
     app = make_app(db, team["project"], token=new_token(), cohost=True)
 
     def handler(method, params):
@@ -261,7 +244,7 @@ def test_failed_device_build_is_reported_and_not_retried_every_tick(db, docker, 
     assert len([m for m, _ in fd.calls if m == "apps.deploy"]) == 1
 
 
-def test_device_build_progress_reaches_the_replicate_job(db, docker, team, fake_device, monkeypatch):  # noqa: F811
+def test_device_build_progress_reaches_the_replicate_job(db, docker, team, fake_device, monkeypatch):
     """A-130: the socket publishes device progress on `{device_id}:{job_id}`; the job listens there."""
     from app.services import device_rpc
 
@@ -362,8 +345,8 @@ def test_apps_tunnel_created_once_cname_moves_and_ingress(
     team,
     auth_headers,
     owner_headers,
-    fake_cf,  # noqa: F811
-    state_dir,  # noqa: F811
+    fake_cf,
+    state_dir,
 ):
     t = team
     dashboard_id = link(client, owner_headers)["cloudflare"]["tunnel"]["id"]
@@ -448,7 +431,7 @@ def deploy_params(app_id=None, dep_id=None, **extra):
     }
 
 
-def test_device_deploy_route_status_logs_remove(db, docker, hosted):  # noqa: F811
+def test_device_deploy_route_status_logs_remove(db, docker, hosted):
     progress = []
     ctx = device_host.CallContext(progress=lambda job_id, fraction, message: progress.append((job_id, message)))
     params = deploy_params()
@@ -493,7 +476,7 @@ def test_device_deploy_route_status_logs_remove(db, docker, hosted):  # noqa: F8
     assert device_host.dispatch("apps.status", {}, ctx)["apps"] == []
 
 
-def test_device_refuses_what_it_must_not_run(db, docker, hosted):  # noqa: F811
+def test_device_refuses_what_it_must_not_run(db, docker, hosted):
     ctx = device_host.CallContext()
     for bad, code in (
         ({"env": {"DEPLOYER_API_KEY": "x"}}, "validation_error"),
@@ -511,7 +494,7 @@ def test_device_refuses_what_it_must_not_run(db, docker, hosted):  # noqa: F811
     assert docker.calls == []
 
 
-def test_device_private_repo_withheld_or_shared(db, docker, hosted, monkeypatch):  # noqa: F811
+def test_device_private_repo_withheld_or_shared(db, docker, hosted, monkeypatch):
     ctx = device_host.CallContext()
     docker.fail_at = "clone"
     with pytest.raises(ApiError) as exc:
@@ -540,7 +523,7 @@ def test_device_private_repo_withheld_or_shared(db, docker, hosted, monkeypatch)
     assert seen == [token]
 
 
-def test_device_apps_tunnel_token(db, state_dir):  # noqa: F811
+def test_device_apps_tunnel_token(db, state_dir):
     ctx = device_host.CallContext()
     token = secrets.token_urlsafe(24)
     assert device_host.dispatch("apps.tunnel", {"token": token}, ctx) == {"tunnel": device_apps.fingerprint(token)}
@@ -552,7 +535,7 @@ def test_device_apps_tunnel_token(db, state_dir):  # noqa: F811
     assert desired(state_dir) == {"mode": "off"}
 
 
-def test_device_detach_stops_cohost_apps_and_tunnel(db, docker, hosted, state_dir, set_setting):  # noqa: F811
+def test_device_detach_stops_cohost_apps_and_tunnel(db, docker, hosted, state_dir, set_setting):
     # A-009: a removed PC must not keep serving a stale copy of the app through the apps tunnel.
     ctx = device_host.CallContext(detach=lambda: None)
     device_host.dispatch("apps.deploy", deploy_params(), ctx)

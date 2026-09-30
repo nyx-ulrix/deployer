@@ -91,24 +91,10 @@ def test_reveal(client, owner, make_user, make_project, auth_headers, db):
     assert resp.status_code == 409 and resp.json()["error"]["code"] == "api_key_revoked"
 
 
-def test_config_download(client, owner, make_project, auth_headers, set_setting, db, tmp_path):
-    from app.crypto import encrypt_json
-    from app.models import DataSource
-
+def test_config_download(client, owner, make_project, auth_headers, set_setting, db, tmp_path, make_source):
     project = make_project(owner)
     for name, kind in [("main", "sql"), ("docs", "nosql")]:
-        db.add(
-            DataSource(
-                project_id=project.id,
-                name=name,
-                kind=kind,
-                engine="mariadb" if kind == "sql" else "mongodb",
-                mode="external",
-                database_name="app",
-                config_encrypted=encrypt_json({}),
-            )
-        )
-    db.commit()
+        make_source(project, kind, name=name, config={})
     set_setting("public_url", "https://deployer.example.com/")
     h = auth_headers(owner)
     key, secret = _create(client, project, h, role="service")

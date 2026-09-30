@@ -9,14 +9,13 @@ from sqlalchemy import select
 
 from app.models import ApiKey, AuditLog, QueryRun, User, utcnow
 from app.services import connections
-from tests.test_query_console import add_source, project_setup, sqlite_engine  # noqa: F401 (fixtures)
 
 
 @pytest.fixture
-def setup(client, db, project_setup, sqlite_engine, monkeypatch):  # noqa: F811
+def setup(client, db, project_setup, sqlite_engine, monkeypatch, make_source):
     monkeypatch.setattr(connections, "get_sql_engine", lambda ds: sqlite_engine)
     project = project_setup["project"]
-    ds = add_source(db, project)
+    ds = make_source(project)
 
     def make_key(role: str, headers=None) -> tuple[dict, dict]:
         resp = client.post(

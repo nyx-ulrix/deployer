@@ -11,12 +11,9 @@ from app.crypto import encrypt_json
 from app.db import Base, get_engine
 from app.models import BackupPolicy, DataSource, Device, DeviceProjectGrant, Domain, User
 from app.services import device_rpc, provisioning, transfer
-from tests import devices_support
 from tests.devices_support import device_source
 
 # Shared fixtures (assigned, not imported, so fixture parameters don't shadow an import).
-fake_device = devices_support.fake_device
-make_device = devices_support.make_device
 
 SQL_DATA = {
     "kind": "sql",

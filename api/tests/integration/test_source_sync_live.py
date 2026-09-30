@@ -22,9 +22,6 @@ from app.config import get_settings
 from app.crypto import encrypt_json
 from app.models import DataSource, SourceReplica, SyncConflict
 from app.services import device_rpc, provisioning, source_sync
-from tests import devices_support
-
-make_device = devices_support.make_device  # shared fixture
 
 MARIADB_URL = os.environ.get("DEPLOYER_IT_MARIADB_URL")
 MONGO_URI = os.environ.get("DEPLOYER_IT_MONGO_URI")

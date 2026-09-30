@@ -9,12 +9,11 @@ from sqlalchemy import select
 from app.db import Base, get_engine
 from app.models import ProjectMember, SavedQuery, SavedQueryVersion
 from app.services import transfer
-from tests.test_query_console import project_setup  # noqa: F401 (fixture)
 
 PASS = "correct horse battery staple"
 
 
-def _create(client, project_setup, text="SELECT 1", **extra):  # noqa: F811
+def _create(client, project_setup, text="SELECT 1", **extra):
     url = f"/v1/projects/{project_setup['project'].id}/saved-queries"
     resp = client.post(
         url, json={"name": "n", "query_text": text, "kind": "sql", **extra}, headers=project_setup["dev"]
@@ -23,7 +22,7 @@ def _create(client, project_setup, text="SELECT 1", **extra):  # noqa: F811
     return url, resp.json()
 
 
-def test_create_patch_and_conflicts(client, db, project_setup):  # noqa: F811
+def test_create_patch_and_conflicts(client, db, project_setup):
     url, sq = _create(client, project_setup, message="first")
     assert sq["version"] == 1 and sq["updated_by_email"] == sq["owner_email"]
     versions = client.get(f"{url}/{sq['id']}/versions", headers=project_setup["viewer"]).json()["versions"]
@@ -68,7 +67,7 @@ def test_create_patch_and_conflicts(client, db, project_setup):  # noqa: F811
     assert set(versions[0]) == {"id", "version", "author_id", "author_email", "message", "created_at", "chars"}
 
 
-def test_two_developers_editing(client, db, project_setup, make_user, auth_headers):  # noqa: F811
+def test_two_developers_editing(client, db, project_setup, make_user, auth_headers):
     url, sq = _create(client, project_setup)
     other = make_user()
     db.add(ProjectMember(project_id=project_setup["project"].id, user_id=other.id, role="developer"))
@@ -85,7 +84,7 @@ def test_two_developers_editing(client, db, project_setup, make_user, auth_heade
     assert merged.json()["updated_by_email"] == other.email
 
 
-def test_restore_and_permissions(client, db, project_setup):  # noqa: F811
+def test_restore_and_permissions(client, db, project_setup):
     url, sq = _create(client, project_setup, text="v1 text")
     assert (
         client.patch(
@@ -128,7 +127,7 @@ def test_restore_and_permissions(client, db, project_setup):  # noqa: F811
     assert client.get(f"{url}/{sq['id']}/versions", headers=viewer).status_code == 404
 
 
-def test_export_and_import_carry_versions(client, db, project_setup, make_user, auth_headers, set_setting):  # noqa: F811
+def test_export_and_import_carry_versions(client, db, project_setup, make_user, auth_headers, set_setting):
     project = project_setup["project"]
     url, sq = _create(client, project_setup, text="one")
     client.patch(f"{url}/{sq['id']}", json={"query_text": "two", "version": 1}, headers=project_setup["dev"])

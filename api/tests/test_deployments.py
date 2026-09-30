@@ -9,16 +9,7 @@ from app.crypto import encrypt_secret, sha256_hex
 from app.models import ApiKey, App, Deployment, Job
 from app.services import app_runner, deployments, jobs
 from tests.apps_support import FAKE_SHA, FakeDockerCli, make_app, new_token
-
-
-@pytest.fixture
-def docker(tmp_path, monkeypatch):
-    fake = FakeDockerCli()
-    app_runner.set_docker(fake)
-    monkeypatch.setattr(get_settings(), "caddy_apps_dir", str(tmp_path / "apps"))
-    monkeypatch.setattr(get_settings(), "app_build_dir", str(tmp_path))
-    yield fake
-    app_runner.set_docker(None)
+from tests.shared_fixtures import add_source
 
 
 @pytest.fixture
@@ -475,22 +466,9 @@ def test_static_preset_never_publishes_dotfiles(db, project):
 
 
 def _source(db, project, name, kind, config, **fields):
-    from app.crypto import encrypt_json
-    from app.models import DataSource
 
-    ds = DataSource(
-        project_id=project.id,
-        name=name,
-        kind=kind,
-        engine="mariadb" if kind == "sql" else "mongodb",
-        mode=fields.pop("mode", "managed"),
-        database_name=config.get("database", "x"),
-        config_encrypted=encrypt_json(config),
-        **fields,
-    )
-    db.add(ds)
-    db.commit()
-    return ds
+    fields.setdefault("mode", "managed")
+    return add_source(db, project, kind, name=name, database_name=config.get("database", "x"), config=config, **fields)
 
 
 def test_database_env_and_network(db, docker, project):

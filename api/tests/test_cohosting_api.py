@@ -11,11 +11,9 @@ import pytest
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.crypto import encrypt_json
 from app.errors import ApiError
 from app.models import (
     AuditLog,
-    DataSource,
     DeviceProjectGrant,
     ProjectMember,
     SourceReplica,
@@ -24,12 +22,9 @@ from app.models import (
 )
 from app.services import device_moves, device_rpc, jobs, source_sync
 from app.services.source_sync import key_hash
-from tests import devices_support
 from tests.devices_support import device_source
+from tests.shared_fixtures import add_source
 from tests.test_source_sync import FakeSide
-
-fake_device = devices_support.fake_device  # shared fixtures
-make_device = devices_support.make_device
 
 
 @pytest.fixture
@@ -55,18 +50,8 @@ def team(db, owner, make_user, make_project, make_device):
     member.can_cohost = True
     device, _ = make_device(users["cohost"], "Home PC", sharing_mode="selected")
     db.add(DeviceProjectGrant(device_id=device.id, project_id=project.id))
-    ds = DataSource(
-        project_id=project.id,
-        name="main",
-        kind="sql",
-        engine="mariadb",
-        mode="managed",
-        database_name="p_shop_abc123",
-        config_encrypted=encrypt_json({"username": "u_0123456789ab", "password": "p" * 32}),
-        status="ok",
-    )
-    db.add(ds)
-    db.commit()
+    config = {"username": "u_0123456789ab", "password": "p" * 32}
+    ds = add_source(db, project, name="main", mode="managed", database_name="p_shop_abc123", config=config)
     return {"project": project, "users": users, "device": device, "ds": ds}
 
 

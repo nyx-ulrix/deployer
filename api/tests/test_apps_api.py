@@ -13,7 +13,7 @@ from app.models import ApiKey, AuditLog, Deployment, Domain, Job, User, utcnow
 from app.services import deployments, rate_limit, transfer
 from app.services import remote_access as ra
 from tests.apps_support import make_app, new_token
-from tests.test_remote_access import fake_cf, link, state_dir  # noqa: F401 (fixtures)
+from tests.test_remote_access import link
 
 BODY = {"name": "My Shop", "repo_url": "https://github.com/acme/shop", "preset": "node"}
 
@@ -299,7 +299,7 @@ def test_deploy_cancel_rollback_and_delete(client, env, db):
     assert db.get(Deployment, dep["id"]) is None
 
 
-def test_app_hostnames(client, env, db, owner_headers, fake_cf):  # noqa: F811
+def test_app_hostnames(client, env, db, owner_headers, fake_cf):
     app = create(client, env)
     url = f"{env['base']}/{app['id']}"
     missing = client.post(f"{url}/domains", json={"hostname": "shop.example.com"}, headers=env["admin"])
@@ -334,7 +334,7 @@ def test_app_hostnames(client, env, db, owner_headers, fake_cf):  # noqa: F811
 
 
 @pytest.mark.parametrize("failure", ["unreachable", "revoked"])
-def test_delete_app_when_cloudflare_fails(client, env, db, owner_headers, fake_cf, failure):  # noqa: F811
+def test_delete_app_when_cloudflare_fails(client, env, db, owner_headers, fake_cf, failure):
     # A-061: the app still goes, all in one commit, with a "remove the DNS record by hand" warning per host.
     app = create(client, env)
     url = f"{env['base']}/{app['id']}"

@@ -30,6 +30,12 @@ Fixtures:
                            `.calls`; set `.fail_kind = "sql" | "nosql"` to make that kind raise ApiError.
 - `migration_db`         – `(alembic Config, db_file)` for a scratch SQLite file in tmp_path, not yet
                            upgraded: `command.upgrade(cfg, "head")`, then inspect `db_file` with sqlite3.
+
+More shared fixtures live in plugin modules (see `pytest_plugins` below), never in test modules: import a
+fixture from a test module and renaming it there breaks unrelated tests.
+- tests/shared_fixtures.py – `make_source` (the one DataSource factory), `project_setup`, `sqlite_engine`,
+                           `fake_mongosh`, `docker`, `state_dir`, `fake_cf`, `providers`.
+- tests/devices_support.py – `make_device`, `fake_device`.
 """
 
 import base64
@@ -72,6 +78,8 @@ get_sessionmaker.cache_clear()
 
 import app.models  # noqa: E402,F401  (register tables)
 from app.models import Project, ProjectMember, User  # noqa: E402
+
+pytest_plugins = ["tests.shared_fixtures", "tests.devices_support"]
 
 DEFAULT_PASSWORD = "correct-horse-battery"
 

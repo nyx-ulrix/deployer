@@ -1,6 +1,6 @@
 """Cloudflare API v4 client against an in-memory fake (httpx.MockTransport). No network access.
 
-`FakeCloudflare` is also used by tests/test_remote_access.py.
+`FakeCloudflare` also backs the `fake_cf` fixture (tests/shared_fixtures.py).
 """
 
 import json

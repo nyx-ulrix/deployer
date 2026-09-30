@@ -7,12 +7,10 @@ from sqlalchemy import select
 
 from app.models import BackupPolicy, DataSource, Device, DeviceProjectGrant, Job, SourceReplica
 from app.services import backups, connections, device_moves, device_rpc, devices, jobs, provisioning
-from tests import devices_support
 from tests.devices_support import device_source
+from tests.shared_fixtures import add_source
 
 # Shared fixtures (assigned, not imported, so fixture parameters don't shadow an import).
-fake_device = devices_support.fake_device
-make_device = devices_support.make_device
 
 
 def test_list_and_visibility(client, owner, owner_headers, make_user, auth_headers, make_device):
@@ -459,21 +457,9 @@ def test_move_job_heartbeats_while_running(db, owner, make_project, make_device,
 
 
 def _main_source(db, project):
-    from app.crypto import encrypt_json
 
-    ds = DataSource(
-        project_id=project.id,
-        name="main",
-        kind="sql",
-        engine="mariadb",
-        mode="managed",
-        database_name="p_shop_main",
-        config_encrypted=encrypt_json({"host": "mariadb", "username": "u_main0123456", "database": "p_shop_main"}),
-        status="ok",
-    )
-    db.add(ds)
-    db.commit()
-    return ds
+    config = {"host": "mariadb", "username": "u_main0123456", "database": "p_shop_main"}
+    return add_source(db, project, name="main", mode="managed", database_name="p_shop_main", config=config)
 
 
 def test_move_refused_while_db_access_apps_are_live(client, db, owner, owner_headers, make_project, make_device):

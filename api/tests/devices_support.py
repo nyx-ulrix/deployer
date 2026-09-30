@@ -1,14 +1,14 @@
-"""Shared helpers for host-device tests (import the fixtures into a test module to use them)."""
+"""Shared helpers for host-device tests; the fixtures are registered for every test by conftest.py."""
 
 import json
 import threading
 
 import pytest
 
-from app.crypto import encrypt_json
 from app.errors import ApiError
-from app.models import DataSource, Device
+from app.models import Device
 from app.services import device_rpc, devices, provisioning
+from tests.shared_fixtures import add_source
 
 
 @pytest.fixture
@@ -81,17 +81,13 @@ def fake_device():
 
 
 def device_source(db, project, device, kind="sql", name=None, database_name="p_test_abc123"):
-    ds = DataSource(
-        project_id=project.id,
+    return add_source(
+        db,
+        project,
+        kind,
         name=name or f"main-{kind}",
-        kind=kind,
-        engine="mariadb" if kind == "sql" else "mongodb",
         mode="managed",
         database_name=database_name,
-        config_encrypted=encrypt_json(provisioning.device_source_config(kind, database_name, "u_0123456789ab")),
-        status="ok",
+        config=provisioning.device_source_config(kind, database_name, "u_0123456789ab"),
         device_id=device.id,
     )
-    db.add(ds)
-    db.commit()
-    return ds

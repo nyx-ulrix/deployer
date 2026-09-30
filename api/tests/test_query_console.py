@@ -14,152 +14,11 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.pool import QueuePool
 
-from app.crypto import encrypt_json
 from app.errors import ApiError
-from app.models import AuditLog, DataSource
+from app.models import AuditLog
 from app.services import connections, device_rpc, query_console, source_ops
-from tests import devices_support
 from tests.devices_support import device_source
-
-make_device = devices_support.make_device
-fake_device = devices_support.fake_device
-
-
-# --- fixtures ------------------------------------------------------------------------------------
-
-
-@pytest.fixture
-def sqlite_engine(tmp_path):
-    engine = create_engine(f"sqlite:///{(tmp_path / 'console.db').as_posix()}")
-    with engine.begin() as conn:
-        conn.exec_driver_sql(
-            "CREATE TABLE items "
-            "(id INTEGER PRIMARY KEY, name VARCHAR(50), price NUMERIC(10,2), blob BLOB, seen DATETIME)"
-        )
-        for i in range(1, 8):
-            conn.exec_driver_sql("INSERT INTO items (id, name) VALUES (?, ?)", (i, f"item {i}"))
-    yield engine
-    engine.dispose()
-
-
-FAKE_MONGOSH = textwrap.dedent(
-    r'''
-    """A stand-in for mongosh: speaks the wrapper protocol of app/services/query_console.py."""
-    import json, os, sys, time
-
-    env = os.environ
-    marker = env.get("DEPLOYER_QUERY_MARKER", "")
-    uri = env.get("DEPLOYER_QUERY_URI", "")
-    with open(env["DEPLOYER_QUERY_FILE"], encoding="utf-8") as fh:
-        code = fh.read()
-    out = sys.stdout.buffer
-
-
-    def emit(obj):
-        out.write((marker + json.dumps(obj) + "\n").encode("utf-8"))
-        out.flush()
-
-
-    if "unreachable" in uri:
-        emit({"phase": "connect", "error": {"name": "MongoNetworkError", "message": "getaddrinfo ENOTFOUND unreachable",
-                                            "code": None, "codeName": None}})
-        sys.exit(0)
-    if code.startswith("sleep"):
-        time.sleep(30)
-    if code.startswith("flood"):
-        chunk = b"x" * 65536
-        for _ in range(200):
-            out.write(chunk)
-        out.flush()
-        emit({"phase": "done", "value": 1})
-        sys.exit(0)
-    if code.startswith("throw"):
-        emit({"phase": "error", "error": {"name": "SyntaxError", "message": "Unexpected token (1:15)",
-                                          "code": "BABEL_PARSE_ERROR", "codeName": None}})
-        sys.exit(0)
-    if code.startswith("servererror"):
-        emit({"phase": "error", "error": {"name": "MongoServerError", "message": "unknown top level operator: $bad",
-                                          "code": 2, "codeName": "BadValue"}})
-        sys.exit(0)
-    if code.startswith("print"):
-        out.write(b"hello\n42\n")
-        out.flush()
-        sys.stderr.write("DeprecationWarning: something\n")
-        sys.stderr.flush()
-        emit({"phase": "done", "value": {"n": 7}})
-        sys.exit(0)
-    if code.startswith("secret"):
-        out.write(("connected to " + uri + "\n").encode("utf-8"))
-        emit({"phase": "done", "value": {"uri": uri}})
-        sys.exit(0)
-    if code.startswith("argv"):
-        emit({"phase": "done", "value": {"argv": sys.argv, "env": dict(env), "cwd": os.getcwd()}})
-        sys.exit(0)
-    if code.startswith("crash"):
-        sys.stderr.write("boom\n")
-        sys.exit(2)
-    if code.startswith("scalar"):
-        emit({"phase": "done", "value": "str"})
-        sys.exit(0)
-    if code.startswith("nothing"):
-        emit({"phase": "done", "value": None})
-        sys.exit(0)
-    batch = int(env.get("DEPLOYER_QUERY_BATCH", "0"))
-    if code.startswith("exact"):
-        batch -= 1
-    emit({"phase": "done", "value": [{"_id": {"$oid": "%024x" % i}, "n": i} for i in range(batch)]})
-    '''
-)
-
-
-@pytest.fixture
-def fake_mongosh(tmp_path, monkeypatch):
-    script = tmp_path / "fake_mongosh.py"
-    script.write_text(FAKE_MONGOSH, encoding="utf-8")
-    monkeypatch.setattr(query_console, "mongosh_command", lambda: [sys.executable, str(script)])
-    return script
-
-
-def mongo_config() -> dict:
-    # Built at runtime so no connection string with a password appears in the source (gitleaks).
-    return {"uri": "mongodb://" + "app:s3cret-pw" + "@mongo.example:27017/app?authSource=app", "database": "app"}
-
-
-def sql_config() -> dict:
-    return {"host": "db.example", "port": 3306, "username": "app", "password": "pw-" + "x" * 8, "database": "app"}
-
-
-def add_source(db, project, kind="sql", **overrides) -> DataSource:
-    config = sql_config() if kind == "sql" else mongo_config()
-    ds = DataSource(
-        project_id=project.id,
-        name=overrides.pop("name", f"main-{kind}"),
-        kind=kind,
-        engine="mariadb" if kind == "sql" else "mongodb",
-        mode="external",
-        database_name="app",
-        config_encrypted=encrypt_json(config),
-        status="ok",
-        **overrides,
-    )
-    db.add(ds)
-    db.commit()
-    return ds
-
-
-@pytest.fixture
-def project_setup(make_user, make_project, auth_headers):
-    owner = make_user()
-    dev, viewer = make_user(), make_user()
-    project = make_project(owner, "Shop", members={dev: "developer", viewer: "viewer"})
-    return {
-        "project": project,
-        "owner": auth_headers(owner),
-        "dev": auth_headers(dev),
-        "viewer": auth_headers(viewer),
-        "base": f"/v1/projects/{project.id}/data-sources",
-    }
-
+from tests.shared_fixtures import mongo_config
 
 # --- statement splitting & classification --------------------------------------------------------
 
@@ -688,9 +547,9 @@ def test_parse_shell_output():
 # --- route, audit, devices -----------------------------------------------------------------------
 
 
-def test_query_route_roles_and_audit(client, db, project_setup, sqlite_engine, monkeypatch):
+def test_query_route_roles_and_audit(client, db, project_setup, sqlite_engine, monkeypatch, make_source):
     monkeypatch.setattr(connections, "get_sql_engine", lambda ds: sqlite_engine)
-    ds = add_source(db, project_setup["project"])
+    ds = make_source(project_setup["project"])
     url = f"{project_setup['base']}/{ds.id}/query"
 
     resp = client.post(url, json={"query": "INSERT INTO items (name) VALUES ('x')"}, headers=project_setup["viewer"])
@@ -717,8 +576,10 @@ def test_query_route_roles_and_audit(client, db, project_setup, sqlite_engine, m
     assert "INSERT" not in json.dumps(rows[2].details) and "items" not in json.dumps(rows[2].details)
 
 
-def test_query_route_validation_and_not_found(client, db, project_setup, make_user, make_project, auth_headers):
-    ds = add_source(db, project_setup["project"])
+def test_query_route_validation_and_not_found(
+    client, db, project_setup, make_user, make_project, auth_headers, make_source
+):
+    ds = make_source(project_setup["project"])
     url = f"{project_setup['base']}/{ds.id}/query"
     for bad in ({"query": ""}, {"query": "SELECT 1", "max_rows": 0}, {"query": "SELECT 1", "timeout_seconds": 121}, {}):
         resp = client.post(url, json=bad, headers=project_setup["owner"])
@@ -735,16 +596,16 @@ def test_query_route_validation_and_not_found(client, db, project_setup, make_us
     assert resp.status_code == 401
 
 
-def test_query_route_mongo_without_mongosh(client, db, project_setup, monkeypatch):
+def test_query_route_mongo_without_mongosh(client, db, project_setup, monkeypatch, make_source):
     monkeypatch.setattr(query_console, "mongosh_command", lambda: None)
-    ds = add_source(db, project_setup["project"], kind="nosql")
+    ds = make_source(project_setup["project"], kind="nosql")
     url = f"{project_setup['base']}/{ds.id}/query"
     resp = client.post(url, json={"query": "db.x.find()"}, headers=project_setup["dev"])
     assert resp.status_code == 501 and resp.json()["error"]["code"] == "mongosh_unavailable"
 
 
-def test_query_route_mongo_with_fake_shell(client, db, project_setup, fake_mongosh):
-    ds = add_source(db, project_setup["project"], kind="nosql")
+def test_query_route_mongo_with_fake_shell(client, db, project_setup, fake_mongosh, make_source):
+    ds = make_source(project_setup["project"], kind="nosql")
     url = f"{project_setup['base']}/{ds.id}/query"
     resp = client.post(url, json={"query": "db.items.find()", "max_rows": 2}, headers=project_setup["viewer"])
     assert resp.status_code == 200, resp.text
@@ -804,9 +665,9 @@ def test_query_route_device_hosted_source(client, db, owner, owner_headers, make
     assert params["args"] == {"query": "SELECT 1", "max_rows": 100, "timeout_seconds": 10, "read_only": False}
 
 
-def test_source_ops_query_routing(db, owner, make_project, make_device, sqlite_engine, monkeypatch):
+def test_source_ops_query_routing(db, owner, make_project, make_device, sqlite_engine, monkeypatch, make_source):
     project = make_project(owner, "Ops")
-    ds = add_source(db, project)
+    ds = make_source(project)
     monkeypatch.setattr(connections, "get_sql_engine", lambda ds: sqlite_engine)
     assert "query" in source_ops.OPS
     out = source_ops.run_local(ds, "query", {"query": "SELECT 1 AS one", "max_rows": 10, "timeout_seconds": 5})

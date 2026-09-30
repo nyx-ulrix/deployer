@@ -10,13 +10,12 @@ from app.errors import ApiError
 from app.models import AuditLog, QueryRun, utcnow
 from app.serializers import iso
 from app.services import connections, query_log, source_ops
-from tests.test_query_console import add_source, project_setup, sqlite_engine  # noqa: F401 (fixtures)
 
 
 @pytest.fixture
-def console(client, db, project_setup, sqlite_engine, monkeypatch):  # noqa: F811
+def console(client, db, project_setup, sqlite_engine, monkeypatch, make_source):
     monkeypatch.setattr(connections, "get_sql_engine", lambda ds: sqlite_engine)
-    ds = add_source(db, project_setup["project"])
+    ds = make_source(project_setup["project"])
     return {**project_setup, "ds": ds, "url": f"{project_setup['base']}/{ds.id}/query"}
 
 
@@ -76,9 +75,9 @@ def test_runs_are_logged_with_outcome(client, db, console, monkeypatch):
     assert resp.status_code == 200 and [r["status"] for r in resp.json()["runs"]] == ["refused"]
 
 
-def test_list_filters_and_permissions(client, db, console):
+def test_list_filters_and_permissions(client, db, console, make_source):
     url, log_url = console["url"], f"/v1/projects/{console['project'].id}/query-log"
-    other = add_source(db, console["project"], name="second")
+    other = make_source(console["project"], name="second")
     for i in range(3):
         assert client.post(url, json={"query": f"SELECT {i}"}, headers=console["dev"]).status_code == 200
     assert client.post(url, json={"query": "SELECT 'v'"}, headers=console["viewer"]).status_code == 200

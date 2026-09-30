@@ -12,25 +12,9 @@ from app.config import get_settings
 from app.models import AuditLog, Domain, InstanceSetting
 from app.services import cloudflare as cf
 from app.services import remote_access as ra
-from tests.test_cloudflare_client import API_TOKEN, FakeCloudflare
+from tests.test_cloudflare_client import API_TOKEN
 
 BASE = "/v1/instance/remote-access"
-
-
-@pytest.fixture
-def state_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr(get_settings(), "tunnel_state_dir", str(tmp_path))
-    monkeypatch.setattr(get_settings(), "deployer_http_port", 0)
-    monkeypatch.setattr(ra, "_last_write_error", None)
-    return tmp_path
-
-
-@pytest.fixture
-def fake_cf(state_dir):
-    fake = FakeCloudflare()
-    cf.set_transport(fake.transport())
-    yield fake
-    cf.set_transport(None)
 
 
 def desired(state_dir):

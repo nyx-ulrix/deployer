@@ -19,10 +19,7 @@ import pytest
 from app.config import get_settings
 from app.errors import ApiError
 from app.services import device_host, device_rpc, provisioning, source_ops, transfer
-from tests import devices_support
 from tests.devices_support import FakeDevice
-
-make_device = devices_support.make_device  # shared fixture
 
 MARIADB_URL = os.environ.get("DEPLOYER_IT_MARIADB_URL")
 MONGO_URI = os.environ.get("DEPLOYER_IT_MONGO_URI")

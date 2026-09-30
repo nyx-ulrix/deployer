@@ -17,7 +17,7 @@ from app.models import App, Deployment, GitHubConnection, User, UserIdentity
 from app.services import app_runner, deployments, github, jobs, oauth
 from app.services.tokens import REFRESH_COOKIE
 from tests.apps_support import FakeDockerCli
-from tests.test_oauth import BASE, providers  # noqa: F401 (fixture)
+from tests.test_oauth import BASE
 
 
 class FakeGitHub:
@@ -89,7 +89,7 @@ def b64(text: str) -> dict:
 # --- connect / disconnect ------------------------------------------------------------------------
 
 
-def test_connect_stores_encrypted_token_and_never_signs_in(client, owner, owner_headers, providers, login, db):  # noqa: F811
+def test_connect_stores_encrypted_token_and_never_signs_in(client, owner, owner_headers, providers, login, db):
     login(owner.email)  # the browser's refresh cookie: the signed-in user who starts the flow
     status = client.get("/v1/integrations/github", headers=owner_headers).json()
     assert status == {"connected": False, "login": None, "scopes": [], "configured": True}
@@ -130,7 +130,7 @@ def test_connect_stores_encrypted_token_and_never_signs_in(client, owner, owner_
     assert client.get("/v1/integrations/github", headers=owner_headers).json()["connected"] is False
 
 
-def test_connect_requires_the_same_signed_in_user(client, owner, providers, login, make_user, auth_headers, db):  # noqa: F811
+def test_connect_requires_the_same_signed_in_user(client, owner, providers, login, make_user, auth_headers, db):
     other = make_user()
     login(owner.email)  # this browser is signed in as the owner...
     url = client.post("/v1/integrations/github/connect", headers=auth_headers(other)).json()["url"]

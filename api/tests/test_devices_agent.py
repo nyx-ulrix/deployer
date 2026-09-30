@@ -10,9 +10,6 @@ import pytest
 import uvicorn
 
 from app.services import device_agent, device_host, device_rpc, executors
-from tests import devices_support
-
-make_device = devices_support.make_device  # shared fixture
 
 
 @pytest.fixture

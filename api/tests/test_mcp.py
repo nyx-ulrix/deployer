@@ -9,7 +9,6 @@ from app.models import AuditLog, Deployment, QueryRun
 from app.routers import mcp
 from app.services import connections, deployments, source_ops
 from tests.apps_support import make_app
-from tests.test_query_console import add_source, fake_mongosh, project_setup, sqlite_engine  # noqa: F401 (fixtures)
 
 READ_TOOLS = {
     "list_data_sources",
@@ -32,10 +31,10 @@ WRITE_TOOLS = {"insert_row", "update_row", "delete_row", "insert_document", "upd
 
 
 @pytest.fixture
-def env(client, db, project_setup, sqlite_engine, monkeypatch):  # noqa: F811
+def env(client, db, project_setup, sqlite_engine, monkeypatch, make_source):
     monkeypatch.setattr(connections, "get_sql_engine", lambda ds: sqlite_engine)
     project = project_setup["project"]
-    ds = add_source(db, project)
+    ds = make_source(project)
 
     def make_key(role: str) -> dict:
         resp = client.post(
@@ -141,8 +140,8 @@ def test_data_tools(env, db):
     assert all("renamed" not in json.dumps(a.details) and "SELECT" not in json.dumps(a.details) for a in audits)
 
 
-def test_document_tools(env, db, monkeypatch):
-    ds = add_source(db, env["project"], kind="nosql")
+def test_document_tools(env, db, monkeypatch, make_source):
+    ds = make_source(env["project"], kind="nosql")
     calls = []
 
     def recorder(name):
@@ -172,8 +171,8 @@ def test_document_tools(env, db, monkeypatch):
     assert is_error and wrong["error"]["code"] == "wrong_source_kind"
 
 
-def test_mongo_query_through_fake_shell(env, db, fake_mongosh):  # noqa: F811
-    ds = add_source(db, env["project"], kind="nosql")
+def test_mongo_query_through_fake_shell(env, db, fake_mongosh, make_source):
+    ds = make_source(env["project"], kind="nosql")
     is_error, out = env["call"](env["service"], "run_query", source_id=ds.id, query="db.items.find()", max_rows=2)
     assert not is_error and out["kind"] == "nosql" and len(out["result_docs"]) == 2 and out["truncated"] is True
 
@@ -205,7 +204,7 @@ def test_app_tools(env, db, fake_redis):
     assert call(env["service"], "app_logs", app_id=app.id, tail=2)[1] == {"lines": ["b", "c"], "container": None}
 
 
-def test_truncation(env, sqlite_engine, monkeypatch):  # noqa: F811
+def test_truncation(env, sqlite_engine, monkeypatch):
     with sqlite_engine.begin() as conn:
         for i in range(8, 300):
             conn.exec_driver_sql("INSERT INTO items (id, name) VALUES (?, ?)", (i, f"item {i}"))

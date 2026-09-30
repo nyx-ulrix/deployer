@@ -19,15 +19,14 @@ from app.models import (
     utcnow,
 )
 from app.services import transfer
-from tests.test_query_console import add_source, project_setup  # noqa: F401 (fixtures)
 
 PASS = "correct horse battery staple"
 
 
-def test_crud_and_validation(client, db, project_setup):  # noqa: F811
+def test_crud_and_validation(client, db, project_setup, make_source):
     url = f"/v1/projects/{project_setup['project'].id}/saved-queries"
-    ds = add_source(db, project_setup["project"])
-    gone = add_source(db, project_setup["project"], name="gone", deleted_at=utcnow())
+    ds = make_source(project_setup["project"])
+    gone = make_source(project_setup["project"], name="gone", deleted_at=utcnow())
     doc = '{"cells":[{"id":"c1","text":"SELECT 1"}]}'
 
     created = client.post(
@@ -115,7 +114,7 @@ def test_crud_and_validation(client, db, project_setup):  # noqa: F811
     assert len(client.get(url, headers=project_setup["viewer"]).json()) == 2
 
 
-def test_permissions(client, db, project_setup, make_user, make_project, auth_headers):  # noqa: F811
+def test_permissions(client, db, project_setup, make_user, make_project, auth_headers):
     project = project_setup["project"]
     url = f"/v1/projects/{project.id}/saved-queries"
     snippet = {"name": "n", "query_text": "SELECT 1", "kind": "sql"}
@@ -149,9 +148,11 @@ def test_permissions(client, db, project_setup, make_user, make_project, auth_he
     assert client.delete(f"{url}/{mine['id']}", headers=project_setup["owner"]).status_code == 200
 
 
-def test_export_and_imports_carry_saved_queries(client, db, project_setup, make_user, auth_headers, set_setting):  # noqa: F811
+def test_export_and_imports_carry_saved_queries(
+    client, db, project_setup, make_user, auth_headers, set_setting, make_source
+):
     project = project_setup["project"]
-    ds = add_source(db, project)
+    ds = make_source(project)
     dev = db.scalar(
         select(User).join(ProjectMember, ProjectMember.user_id == User.id).where(ProjectMember.role == "developer")
     )

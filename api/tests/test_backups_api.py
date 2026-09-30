@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from app.crypto import encrypt_json
 from app.errors import ApiError
 from app.models import Backup, BackupCopy, BackupLogSegment, BackupPolicy, DataSource, Job, SchemaLink, utcnow
 from app.services import audit, backup_engine, backups, executors, jobs, provisioning
@@ -115,7 +114,7 @@ SCHEMA_V1 = {
 
 
 @pytest.fixture
-def env(tmp_path, monkeypatch, db, make_user, make_project, auth_headers):
+def env(tmp_path, monkeypatch, db, make_user, make_project, auth_headers, make_source):
     monkeypatch.setenv("BACKUP_DIR", str(tmp_path / "backups"))
     fake = FakeExecutor(tmp_path / "backups")
     monkeypatch.setattr(executors, "executor_for", lambda _host: fake)
@@ -133,26 +132,14 @@ def env(tmp_path, monkeypatch, db, make_user, make_project, auth_headers):
 
     owner, admin, dev, viewer = (make_user() for _ in range(4))
     project = make_project(owner, "Shop", members={admin: "admin", dev: "developer", viewer: "viewer"})
-    ds = DataSource(
-        project_id=project.id,
-        name="main-sql",
-        kind="sql",
-        engine="mariadb",
-        mode="managed",
-        database_name="p_shop_abc123",
-        config_encrypted=encrypt_json(
-            {
-                "host": "mariadb",
-                "port": 3306,
-                "username": "u_0123456789ab",
-                "password": secrets.token_hex(16),
-                "database": "p_shop_abc123",
-            }
-        ),
-        status="ok",
-    )
-    db.add(ds)
-    db.commit()
+    config = {
+        "host": "mariadb",
+        "port": 3306,
+        "username": "u_0123456789ab",
+        "password": secrets.token_hex(16),
+        "database": "p_shop_abc123",
+    }
+    ds = make_source(project, mode="managed", database_name="p_shop_abc123", config=config)
     return {
         "fake": fake,
         "state": state,
@@ -194,18 +181,8 @@ def test_policy_defaults_validation_and_roles(client, env):
         assert client.put(f"{env['base']}/backup-policy", json=bad, headers=env["admin"]).status_code == 422
 
 
-def test_external_sources_have_no_backups(client, env, db):
-    ext = DataSource(
-        project_id=env["project"].id,
-        name="atlas",
-        kind="nosql",
-        engine="mongodb",
-        mode="external",
-        database_name="app",
-        config_encrypted=encrypt_json({}),
-    )
-    db.add(ext)
-    db.commit()
+def test_external_sources_have_no_backups(client, env, make_source):
+    ext = make_source(env["project"], "nosql", name="atlas", config={})
     resp = client.get(f"{env['pbase']}/data-sources/{ext.id}/backup-policy", headers=env["viewer"])
     assert resp.status_code == 400 and resp.json()["error"]["code"] == "backups_not_available"
 
@@ -712,7 +689,7 @@ def test_no_successful_backup_for_twice_the_schedule_alerts(client, env, db):
     assert list(out) == [f"backup_stale:{ds.id}"]
 
 
-def test_soft_delete_and_restore_deleted_source(client, env, db):
+def test_soft_delete_and_restore_deleted_source(client, env, db, make_source):
     ds = env["ds"]
     base = env["pbase"]
     _snapshot(client, env)
@@ -730,18 +707,7 @@ def test_soft_delete_and_restore_deleted_source(client, env, db):
     assert [d["name"] for d in deleted] == ["main-sql"] and deleted[0]["purge_at"]
     assert client.get(f"{base}/deleted-sources", headers=env["dev"]).status_code == 403
     # The name can be reused while the old source is in "Recently deleted".
-    db.add(
-        DataSource(
-            project_id=ds.project_id,
-            name="main-sql",
-            kind="sql",
-            engine="mysql",
-            mode="external",
-            database_name="x",
-            config_encrypted=encrypt_json({}),
-        )
-    )
-    db.commit()
+    make_source(env["project"], engine="mysql", database_name="x", config={})
     resp = client.post(f"{base}/deleted-sources/{ds.id}/restore", json={}, headers=env["admin"])
     assert resp.status_code == 409 and resp.json()["error"]["code"] == "name_taken"
     resp = client.post(f"{base}/deleted-sources/{ds.id}/restore", json={"name": "main-sql-2"}, headers=env["admin"])

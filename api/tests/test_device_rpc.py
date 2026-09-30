@@ -11,11 +11,8 @@ from starlette.websockets import WebSocketDisconnect
 from app.errors import ApiError
 from app.models import Device, Job
 from app.services import device_rpc
-from tests import devices_support
 
 # Shared fixtures (assigned, not imported, so fixture parameters don't shadow an import).
-fake_device = devices_support.fake_device
-make_device = devices_support.make_device
 
 
 def test_call_offline_device():

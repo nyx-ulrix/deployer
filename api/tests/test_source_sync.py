@@ -13,15 +13,11 @@ import time
 import pytest
 from sqlalchemy import select
 
-from app.crypto import encrypt_json
 from app.errors import ApiError
-from app.models import DataSource, ProjectMember, SourceReplica, SyncConflict, SyncVersion
+from app.models import ProjectMember, SourceReplica, SyncConflict, SyncVersion
 from app.services import device_host, device_rpc, source_sync
 from app.services.source_sync import key_hash
-from tests import devices_support
-
-make_device = devices_support.make_device  # shared fixtures
-fake_device = devices_support.fake_device
+from tests.shared_fixtures import add_source
 
 
 class FakeStore:
@@ -101,18 +97,7 @@ def world(db, owner, make_project, make_device, monkeypatch):
         project = make_project(owner, "Shop")
         db.scalar(select(ProjectMember).where(ProjectMember.project_id == project.id)).can_cohost = True
         device, _ = make_device(owner)
-        ds = DataSource(
-            project_id=project.id,
-            name=f"main-{kind}",
-            kind=kind,
-            engine="mariadb" if kind == "sql" else "mongodb",
-            mode="managed",
-            database_name="p_shop_abc123",
-            config_encrypted=encrypt_json({}),
-            status="ok",
-        )
-        db.add(ds)
-        db.flush()
+        ds = add_source(db, project, kind, mode="managed", database_name="p_shop_abc123", config={})
         rep = SourceReplica(
             data_source_id=ds.id,
             device_id=device.id,
@@ -461,18 +446,7 @@ def test_rounds_of_different_copies_run_side_by_side(db, owner, make_project, ma
     sides, reps = {}, []
     for n in range(2):
         device, _ = make_device(owner, f"PC {n}")
-        ds = DataSource(
-            project_id=project.id,
-            name=f"db{n}",
-            kind="sql",
-            engine="mariadb",
-            mode="managed",
-            database_name=f"p_shop{n}_abc123",
-            config_encrypted=encrypt_json({}),
-            status="ok",
-        )
-        db.add(ds)
-        db.flush()
+        ds = add_source(db, project, name=f"db{n}", mode="managed", database_name=f"p_shop{n}_abc123", config={})
         rep = SourceReplica(
             data_source_id=ds.id,
             device_id=device.id,

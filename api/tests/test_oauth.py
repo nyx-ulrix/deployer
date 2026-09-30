@@ -7,52 +7,9 @@ import pytest
 
 from app.models import AuditLog, ProjectMember, User, UserIdentity
 from app.services import oauth
-from app.services.oauth import OAuthFlowError
 from app.services.tokens import REFRESH_COOKIE
 
 BASE = "http://localhost:8080"
-
-
-class FakeProviders:
-    def __init__(self):
-        self.github_user = {"id": 42, "login": "octo", "name": "Octo Cat", "avatar_url": "https://avatars/octo.png"}
-        self.github_emails = [
-            {"email": "other@example.com", "primary": False, "verified": True},
-            {"email": "Octo@Example.com", "primary": True, "verified": True},
-        ]
-        self.google_info = {
-            "sub": "g-123",
-            "email": "gina@example.com",
-            "email_verified": True,
-            "name": "Gina",
-            "picture": "https://pics/gina.png",
-        }
-        self.token_requests: list[tuple[str, dict]] = []
-
-    def post_form(self, url, data):
-        self.token_requests.append((url, data))
-        if data["code"] == "bad-code":
-            raise OAuthFlowError("oauth_failed")
-        return {"access_token": "provider-token", "token_type": "bearer"}
-
-    def get_json(self, url, access_token):
-        assert access_token == "provider-token"
-        return {
-            oauth.GITHUB_USER_URL: self.github_user,
-            oauth.GITHUB_EMAILS_URL: self.github_emails,
-            oauth.GOOGLE_USERINFO_URL: self.google_info,
-        }[url]
-
-
-@pytest.fixture
-def providers(monkeypatch, set_setting):
-    fake = FakeProviders()
-    monkeypatch.setattr(oauth, "_http_post_form", fake.post_form)
-    monkeypatch.setattr(oauth, "_http_get_json", fake.get_json)
-    for p in ("google", "github"):
-        set_setting(f"{p}_client_id", f"{p}-client")
-        set_setting(f"{p}_client_secret", f"{p}-secret")
-    return fake
 
 
 def _start(client, provider="github", **params) -> str:

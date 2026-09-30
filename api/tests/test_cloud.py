@@ -24,8 +24,7 @@ from app.models import App, AuditLog, CloudConnection, Deployment, Domain, Job
 from app.services import cloud_aws, cloud_deploy, cloud_gcp, deployments, jobs
 from app.services.app_runner import DockerCli
 from tests.apps_support import make_app
-from tests.test_deployments import docker  # noqa: F401 - fixture
-from tests.test_remote_access import fake_cf, link, state_dir  # noqa: F401 - fixtures
+from tests.test_remote_access import link
 
 CLOUD = "/v1/instance/cloud"
 
@@ -292,7 +291,7 @@ def test_target_rules(client, db, team, aws):
     assert client.delete(f"{CLOUD}/{conn.id}", headers=team["owner"]).json()["error"]["code"] == "connection_in_use"
 
 
-def test_aws_static_deploy_creates_once_updates_after_and_rolls_back(db, docker, aws, team):  # noqa: F811
+def test_aws_static_deploy_creates_once_updates_after_and_rolls_back(db, docker, aws, team):
     conn = connection(db)
     app = make_app(db, team["project"], "Site", preset="static", target="aws_static", cloud_connection_id=conn.id)
     first = deploy(db, app)
@@ -333,7 +332,7 @@ def test_aws_static_deploy_creates_once_updates_after_and_rolls_back(db, docker,
     assert db.get(Deployment, second.id).status == "superseded"
 
 
-def test_aws_app_deploy_env_rollout_and_rollback(db, docker, aws, team):  # noqa: F811
+def test_aws_app_deploy_env_rollout_and_rollback(db, docker, aws, team):
     conn = connection(db)
     app = make_app(
         db,
@@ -382,7 +381,7 @@ def test_aws_app_deploy_env_rollout_and_rollback(db, docker, aws, team):  # noqa
     assert aws.names() == ["update_service", "operation"] and aws.args("update_service")[0][1] == image
 
 
-def test_firebase_hosting_deploy(db, docker, gcp, team):  # noqa: F811
+def test_firebase_hosting_deploy(db, docker, gcp, team):
     conn = connection(db, "firebase")
     app = make_app(db, team["project"], "Docs", preset="static", target="firebase_hosting", cloud_connection_id=conn.id)
     first = deploy(db, app)
@@ -409,7 +408,7 @@ def test_firebase_hosting_deploy(db, docker, gcp, team):  # noqa: F811
     assert back.status == "live" and gcp.names() == ["release"] and gcp.args("release")[0] == (site, first.image_tag)
 
 
-def test_firebase_app_deploy(db, docker, gcp, team):  # noqa: F811
+def test_firebase_app_deploy(db, docker, gcp, team):
     conn = connection(db, "firebase")
     app = make_app(db, team["project"], "Api", env={"A": "1"}, target="firebase_app", cloud_connection_id=conn.id)
     first = deploy(db, app)
@@ -435,7 +434,7 @@ def test_firebase_app_deploy(db, docker, gcp, team):  # noqa: F811
     assert gcp.names() == ["docker_login", "update_service", "operation"]
 
 
-def test_delete_app_tears_down_and_reports_failures(client, db, docker, aws, team):  # noqa: F811
+def test_delete_app_tears_down_and_reports_failures(client, db, docker, aws, team):
     conn = connection(db)
     app = make_app(db, team["project"], "Api", target="aws_app", cloud_connection_id=conn.id)
     deploy(db, app)
@@ -451,7 +450,7 @@ def test_delete_app_tears_down_and_reports_failures(client, db, docker, aws, tea
     assert aws.names() == ["delete_service", "delete_repository"]  # the other steps still ran
 
 
-def test_switch_target_tears_down_old_resources(client, db, docker, aws, team):  # noqa: F811
+def test_switch_target_tears_down_old_resources(client, db, docker, aws, team):
     conn = connection(db)
     app = make_app(db, team["project"], "Site", preset="static", target="aws_static", cloud_connection_id=conn.id)
     first = deploy(db, app)
@@ -470,7 +469,7 @@ def test_switch_target_tears_down_old_resources(client, db, docker, aws, team): 
 # --- custom domains ------------------------------------------------------------------------------
 
 
-def test_cloud_domain_with_cloudflare(client, db, docker, aws, team, fake_cf, owner_headers):  # noqa: F811
+def test_cloud_domain_with_cloudflare(client, db, docker, aws, team, fake_cf, owner_headers):
     link(client, owner_headers)
     conn = connection(db)
     app = make_app(db, team["project"], "Site", preset="static", target="aws_static", cloud_connection_id=conn.id)
@@ -498,7 +497,7 @@ def test_cloud_domain_with_cloudflare(client, db, docker, aws, team, fake_cf, ow
     assert aws.args("set_aliases")[-1] == ("E123", [], None) and "delete_certificate" in aws.names()
 
 
-def test_cloud_domain_without_cloudflare_lists_records(client, db, docker, gcp, team, monkeypatch):  # noqa: F811
+def test_cloud_domain_without_cloudflare_lists_records(client, db, docker, gcp, team, monkeypatch):
     monkeypatch.setattr(cloud_deploy, "DOMAIN_TIMEOUT_S", 0)
     conn = connection(db, "firebase")
     app = make_app(db, team["project"], "Docs", preset="static", target="firebase_hosting", cloud_connection_id=conn.id)
@@ -539,7 +538,7 @@ def test_registry_password_goes_through_stdin_not_argv(tmp_path, monkeypatch):
     assert out.strip() == "cba"
 
 
-def test_mcp_cloud_tools(client, db, docker, aws, team):  # noqa: F811
+def test_mcp_cloud_tools(client, db, docker, aws, team):
     resp = client.post(
         f"/v1/projects/{team['project'].id}/api-keys", json={"name": "k", "role": "service"}, headers=team["admin"]
     )
