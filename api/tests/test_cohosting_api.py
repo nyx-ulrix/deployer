@@ -276,6 +276,41 @@ def test_replica_actions_roles(client, db, team, auth_headers):
     assert {"replica.pause", "replica.resume", "replica.recopy", "replica.delete"} <= actions
 
 
+def test_unsharing_or_dropping_the_role_stops_sync(client, db, team, auth_headers, fake_device, monkeypatch):
+    """A-127: once the device may no longer hold the project's data, nothing more is sent to it."""
+    t, u = team, team["users"]
+    rep = _replica(db, t)
+    dev_url = f"/v1/devices/{t['device'].id}"
+    base = _url(t, f"/replicas/{rep.id}")
+    assert client.patch(dev_url, json={"project_ids": []}, headers=auth_headers(u["cohost"])).status_code == 200
+    db.expire_all()
+    rep = db.get(SourceReplica, rep.id)
+    assert rep.status == "paused" and "not shared with this project" in rep.error
+    resp = client.post(base + "/resume", headers=auth_headers(u["admin"]))
+    assert resp.status_code == 409 and resp.json()["error"]["code"] == "device_not_eligible"
+    # Shared again: resumes. Then the role goes away behind the API's back: the next round pauses it.
+    client.patch(dev_url, json={"project_ids": [t["project"].id]}, headers=auth_headers(u["cohost"]))
+    assert client.post(base + "/resume", headers=auth_headers(u["admin"])).json()["replica"]["status"] == "syncing"
+    t["device"].roles = ["backup_storage"]
+    db.commit()
+    fd = fake_device(t["device"].id, lambda method, params: {})
+    monkeypatch.setattr(source_sync, "sides_for", lambda r, d: (_ for _ in ()).throw(AssertionError("synced")))
+    assert source_sync.sync_round(rep.id) is None
+    db.expire_all()
+    rep = db.get(SourceReplica, rep.id)
+    assert rep.status == "paused" and "database_host role" in rep.error
+    # Schema changes skip paused copies too.
+    from app.services import cohosting
+
+    cohosting.fan_out_schema_change(t["ds"], "table.create", {"name": "x"})
+    assert fd.calls == []
+
+
+def test_sync_warnings_are_capped():
+    warnings = source_sync._merge_warnings(None, [f"t{n}" for n in range(200)])
+    assert len(warnings) == source_sync.MAX_WARNINGS and warnings[-1]["table"] == "t199"
+
+
 def test_moving_a_replicated_source_is_refused(client, db, team, auth_headers):
     t = team
     _replica(db, t)

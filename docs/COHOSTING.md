@@ -50,7 +50,10 @@ through the same address whichever PC is up (phase 2, built; not yet exercised w
 - A project can have **one co-host device per member**, any number of members (at most 9 co-host
   devices per main server, see ids).
 - Switching `can_cohost` off, demoting the member or removing them **pauses** their copies (no more
-  data is sent); an admin can delete them.
+  data is sent); an admin can delete them. So does unsharing the device from the project, removing its
+  `database_host` role or disabling it: every sync round re-checks these rules and pauses the copy with
+  the reason; Resume is refused (`409 device_not_eligible`) until the rule holds again. Paused copies
+  get no schema changes either, and each copy keeps at most 50 warnings.
 
 ## Dashboard (for whoever builds it)
 
@@ -268,7 +271,7 @@ logs through `apps.logs` (503 while that PC is offline).
 | GET | `/cohosting/eligibility` | viewer+ | `{can_cohost, devices: [{id, name, online, granted}], offer}` - the caller's own active `database_host` devices only |
 | POST | `/data-sources/{sid}/replicas` | developer+ with `can_cohost` | `{device_id}` (their own, shared with the project, online) → `{replica, job}` (`replica.copy`); 409 `replica_unsupported` / `replica_exists` / `one_device_per_member` / `device_outdated` / `too_many_cohosts`; 422 `device_not_eligible`; 503 `device_offline` |
 | GET | `/data-sources/{sid}/replicas` | viewer+ | `Replica[]` (also in `DataSource.replicas`) |
-| POST | `/data-sources/{sid}/replicas/{rid}/pause` / `resume` / `recopy` | co-host owner or admin+ | `{replica, job?}`; resume/recopy need the device owner to still have `can_cohost`; recopy 503 while offline |
+| POST | `/data-sources/{sid}/replicas/{rid}/pause` / `resume` / `recopy` | co-host owner or admin+ | `{replica, job?}`; resume/recopy need the device to still pass the placement rules and its owner `can_cohost` (else 409 `device_not_eligible`); recopy 503 while offline |
 | DELETE | `/data-sources/{sid}/replicas/{rid}?drop=false` | co-host owner or admin+ | stops sync; `drop=true` also drops the device copy (503 while offline) |
 | GET | `/data-sources/{sid}/sync-conflicts?status=open\|resolved` | developer+ | `SyncConflict[]` (newest first, max 500) |
 | GET | `/data-sources/{sid}/sync-conflicts/{cid}` | developer+ | `SyncConflict` |

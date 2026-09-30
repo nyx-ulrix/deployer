@@ -186,6 +186,7 @@ function ReplicaRow({ source, replica: r }: { source: DataSource; replica: Repli
         {!r.online && r.status !== "syncing" && " · device offline"}
       </p>
       {r.status === "error" && r.error && <p className="mt-1 break-words text-danger">{r.error}</p>}
+      {r.status === "paused" && r.error && <p className="mt-1 break-words text-muted">{r.error}</p>}
       {r.warnings.length > 0 && (
         <details className="mt-1">
           <summary className="cursor-pointer text-warning">

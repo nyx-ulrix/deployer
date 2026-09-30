@@ -228,6 +228,8 @@ def update_device(device_id: str, body: DeviceUpdate, user: CurrentUser, db: DbS
         device.sharing_mode = body.sharing_mode
     if "project_ids" in fields and body.project_ids is not None:
         devices.set_grants(db, device, user, body.project_ids)
+    db.flush()
+    cohosting.pause_device_replicas(db, device)  # A-127: stop sending data it may no longer hold
     audit.record(
         db,
         "device.update",

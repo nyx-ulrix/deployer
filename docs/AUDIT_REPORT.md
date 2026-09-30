@@ -221,7 +221,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-126 **[LOW][test]** Risky recovery paths have no tests - `api/tests/test_backups_api.py:374-391, 444-487` - four focused tests (gap chain, recover_stale, undelete retry, purge drop). (not verified)
 
 **Devices / co-hosting**
-- [ ] A-127 **[LOW][security]** Unsharing a project or removing the database_host role doesn't stop co-host sync - `api/app/services/source_sync.py:972-988` - pause on placement_problem; exclude paused replicas from fan-out; cap warnings.
+- [x] A-127 **[LOW][security]** Unsharing a project or removing the database_host role doesn't stop co-host sync - `api/app/services/source_sync.py:972-988` - pause on placement_problem; exclude paused replicas from fan-out; cap warnings.
 - [ ] A-128 **[LOW][usability]** Device status shows raw exception text and "Reconnecting automatically" even when it can never succeed - `api/app/services/device_agent.py:269-273` - plain messages plus a `rejected` flag. (not verified)
 - [ ] A-129 **[LOW][bug]** Cleanup of old moved copies retries hourly forever once the device is gone - `api/app/services/device_moves.py:342-358` - drop entries for missing devices. (not verified)
 - [ ] A-130 **[LOW][bug]** The app.replicate progress callback is never called (wrong channel id) - `api/app/services/cohost_apps.py:293-300` - `progress_id=f"{device_id}:{job_id}"` or remove it. (not verified)

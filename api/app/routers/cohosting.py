@@ -141,14 +141,9 @@ def replica_action(
     _require_owner_or_admin(db, access, rep)
     job = None
     if action != "pause":
-        device = db.get(Device, rep.device_id)
-        member = db.scalar(
-            select(ProjectMember).where(
-                ProjectMember.project_id == access.project.id, ProjectMember.user_id == device.owner_id
-            )
-        )
-        if not cohosting.member_can_cohost(member):
-            raise forbidden("The device owner is not allowed to co-host this project")
+        problem = cohosting.cohost_problem(db, db.get(Device, rep.device_id), access.project)
+        if problem:
+            raise ApiError(409, "device_not_eligible", problem)
     if action == "pause":
         if rep.status == "copying":
             raise ApiError(409, "replica_copying", "Wait until the copy has finished")

@@ -15,7 +15,7 @@ from sqlalchemy import select
 
 from app.crypto import encrypt_json
 from app.errors import ApiError
-from app.models import DataSource, SourceReplica, SyncConflict, SyncVersion
+from app.models import DataSource, ProjectMember, SourceReplica, SyncConflict, SyncVersion
 from app.services import device_host, device_rpc, source_sync
 from app.services.source_sync import key_hash
 from tests import devices_support
@@ -99,6 +99,7 @@ class FakeSide:
 def world(db, owner, make_project, make_device, monkeypatch):
     def build(kind="sql"):
         project = make_project(owner, "Shop")
+        db.scalar(select(ProjectMember).where(ProjectMember.project_id == project.id)).can_cohost = True
         device, _ = make_device(owner)
         ds = DataSource(
             project_id=project.id,
@@ -449,6 +450,7 @@ def test_rounds_of_different_copies_run_side_by_side(db, owner, make_project, ma
     import threading
 
     project = make_project(owner, "Shop")
+    db.scalar(select(ProjectMember).where(ProjectMember.project_id == project.id)).can_cohost = True
     barrier = threading.Barrier(2, timeout=5)
 
     class Waiting(FakeSide):

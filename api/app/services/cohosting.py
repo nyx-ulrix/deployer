@@ -77,6 +77,45 @@ def pause_member_replicas(db: Session, project_id: str, user_id: str, reason: st
     return len(rows)
 
 
+def cohost_problem(db: Session, device: Device | None, project) -> str | None:
+    """Why `device` may no longer receive copies of `project`'s data (None = it may): the same sharing
+    and role rules as placing a copy, plus the owner's co-host permission (A-127)."""
+    from app.services import devices
+
+    if device is None:
+        return "The device was removed"
+    problem = devices.placement_problem(db, device, project)
+    if problem is None:
+        member = db.scalar(
+            select(ProjectMember).where(
+                ProjectMember.project_id == project.id, ProjectMember.user_id == device.owner_id
+            )
+        )
+        if not member_can_cohost(member):
+            problem = "The device owner is not allowed to co-host this project"
+    return problem
+
+
+def pause_device_replicas(db: Session, device: Device) -> int:
+    """After a device change (unshared, role removed, disabled): pauses its copies it may no longer hold."""
+    from app.models import Project
+
+    rows = db.execute(
+        select(SourceReplica, Project)
+        .join(DataSource, DataSource.id == SourceReplica.data_source_id)
+        .join(Project, Project.id == DataSource.project_id)
+        .where(SourceReplica.device_id == device.id, SourceReplica.status.in_(("syncing", "error")))
+    ).all()
+    paused = 0
+    for rep, project in rows:
+        problem = cohost_problem(db, device, project)
+        if problem:
+            rep.status = "paused"
+            rep.error = f"Paused: {problem}"
+            paused += 1
+    return paused
+
+
 # =============================================================================================
 # serialization
 # =============================================================================================
@@ -629,7 +668,7 @@ def fan_out_schema_change(ds: DataSource, op: str, args: dict) -> None:
         reps = list(
             session.scalars(
                 select(SourceReplica).where(
-                    SourceReplica.data_source_id == ds.id, SourceReplica.status.in_(("syncing", "error", "paused"))
+                    SourceReplica.data_source_id == ds.id, SourceReplica.status.in_(("syncing", "error"))
                 )
             )
         )
@@ -652,7 +691,7 @@ def fan_out_schema_change(ds: DataSource, op: str, args: dict) -> None:
                 rep.warnings = [
                     *(rep.warnings or []),
                     {"table": target, "message": f"Schema change {op} was not applied on this copy: {exc.message}"},
-                ]
+                ][-source_sync.MAX_WARNINGS :]
         session.commit()
     finally:
         session.close()

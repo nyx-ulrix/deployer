@@ -50,7 +50,7 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import get_sessionmaker
 from app.errors import ApiError
-from app.models import DataSource, SourceReplica, SyncConflict, SyncVersion, utcnow
+from app.models import DataSource, Device, Project, SourceReplica, SyncConflict, SyncVersion, utcnow
 from app.services import connections, device_rpc, provisioning
 
 log = logging.getLogger(__name__)
@@ -1017,13 +1017,16 @@ class _Round:
                 raise ApiError(502, "device_error", "Malformed sync outcome")
 
 
+MAX_WARNINGS = 50  # per copy, newest kept (A-127)
+
+
 def _merge_warnings(existing: list | None, skipped: list[str]) -> list:
     out = [w for w in (existing or []) if isinstance(w, dict)]
     known = {w.get("table") for w in out}
     for table in skipped:
         if table not in known:
             out.append({"table": table, "message": "No primary key: changes to this table are not synced"})
-    return out
+    return out[-MAX_WARNINGS:]
 
 
 def sync_round(replica_id: str, *, session_factory=None) -> dict | None:
@@ -1041,6 +1044,14 @@ def sync_round(replica_id: str, *, session_factory=None) -> dict | None:
         if ds is None or ds.deleted_at is not None or ds.device_id is not None or ds.mode != "managed":
             replica.status = "error"
             replica.error = "The source is no longer a managed database on the main server; remove this copy"
+            session.commit()
+            return None
+        from app.services.cohosting import cohost_problem  # cohosting imports this module
+
+        problem = cohost_problem(session, session.get(Device, replica.device_id), session.get(Project, ds.project_id))
+        if problem:  # A-127: unshared, role removed, owner lost co-host rights ... send nothing more
+            replica.status = "paused"
+            replica.error = f"Paused: {problem}"
             session.commit()
             return None
         if not device_rpc.is_online(replica.device_id):
