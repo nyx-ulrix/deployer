@@ -711,7 +711,7 @@ namespace DeployerSetup
                     "Off keeps Deployer private to this PC. On allows phones and laptops on your home or office network (private networks only).",
                     options.EnableLan, v => options.EnableLan = v);
                 y = Toggle(y, "Keep this PC awake while plugged in",
-                    "Stops Windows from sleeping while the charger is connected, so your projects stay online. Useful for a PC that acts as a server.",
+                    "Stops Windows from sleeping while the charger is connected, even with a laptop lid closed, so your projects stay online. Useful for a PC that acts as a server.",
                     options.KeepAwake, v => options.KeepAwake = v);
                 y = Toggle(y, "Start Deployer when I sign in to Windows",
                     "Runs Deployer in the background and shows its icon next to the clock. " + SignedInNote,

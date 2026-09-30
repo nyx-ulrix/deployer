@@ -322,7 +322,7 @@ Open a new terminal after installing:
 | `deployer set-port 8090` | Change the local port (not 8100-8199: those are the deployed apps' ports) |
 | `deployer lan on\|off` | Allow / block other devices on your private network |
 | `deployer autostart on\|off` | Start Deployer (and the tray icon) when you sign in |
-| `deployer keepawake on\|off` | Keep this PC awake while plugged in (off restores your previous settings) |
+| `deployer keepawake on\|off` | Keep this PC awake while plugged in, even with a laptop lid closed (off restores your previous settings) |
 | `deployer status -Json` | Machine-readable status (used by Deployer Control) |
 | `deployer device status` | Whether this PC is a host device, its connection and hosted databases |
 | `deployer device detach [-Force]` | Forget the main Deployer this PC is attached to (asks you to confirm; `-Force` while it still hosts databases) |

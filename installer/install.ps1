@@ -60,7 +60,7 @@
     Allow other devices on your private network to open Deployer.
 
 .PARAMETER PreventSleep
-    Stop this PC from sleeping while plugged in.
+    Stop this PC from sleeping while plugged in, including when a laptop lid is closed.
 
 .PARAMETER NoAutostart
     Do not start Deployer automatically when you sign in (no scheduled task).
@@ -734,7 +734,7 @@ function Invoke-DryRun {
     $n++
     Write-InstallStep $n 'Network and power settings'
     if ($WantLan) { Write-DryRunAction "add a Private-network firewall rule for TCP $Port (LAN access)" } else { Write-DryRunAction 'keep Deployer reachable from this PC only' }
-    if ($WantSleepOff) { Write-DryRunAction 'set sleep and hibernate to never while on AC power' } else { Write-DryRunAction 'leave power settings unchanged' }
+    if ($WantSleepOff) { Write-DryRunAction 'set sleep and hibernate to never, and closing the lid to do nothing, while on AC power' } else { Write-DryRunAction 'leave power settings unchanged' }
 
     $n++
     Write-InstallStep $n 'Finishing up'
@@ -868,7 +868,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
         }
         if ($chosen -eq 'wsl-engine') { Write-DeployerMirroredWarning }
         $wantSleepOff = if ($script:SleepWasGiven -or $NonInteractive) { [bool]$PreventSleep } else {
-            Read-DeployerYesNo -Question 'Prevent this PC from sleeping while plugged in (keeps your sites online)?' -Default $false
+            Read-DeployerYesNo -Question 'Prevent this PC from sleeping while plugged in, even with the lid closed (keeps your sites online)?' -Default $false
         }
 
         if ($DryRun) {

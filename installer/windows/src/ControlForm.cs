@@ -1239,7 +1239,7 @@ namespace DeployerSetup
                 "Adds a firewall rule for private (home or work) networks only.", Lan, v => Lan = v);
             if (Lan) y = LanStatus(y, cw, pad);
             y = Toggle(y, cw, pad, "Keep this PC awake while plugged in",
-                "Stops sleep and hibernate while the charger is connected. Turning it off restores your previous settings.", KeepAwake, v => KeepAwake = v);
+                "Stops sleep, hibernate and lid-close sleep while the charger is connected. Turning it off restores your previous settings.", KeepAwake, v => KeepAwake = v);
             y = Toggle(y, cw, pad, "Start Deployer when I sign in to Windows",
                 "Also shows the Deployer icon next to the clock.", Autostart, v => Autostart = v);
 

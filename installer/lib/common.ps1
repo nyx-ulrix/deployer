@@ -1334,22 +1334,41 @@ function Disable-DeployerLanAccess {
 # Power (keep awake)
 # ------------------------------------------------------------------------------------------------
 
-function Get-DeployerAcPowerTimeoutMinutes {
-    # Reads the current AC timeout of STANDBYIDLE / HIBERNATEIDLE. The labels are localized, so rely
-    # on the fact that the last two hex values printed are the AC and DC indexes (in seconds).
-    param([ValidateSet('STANDBYIDLE', 'HIBERNATEIDLE')][string]$Setting)
+function Get-DeployerAcPowerIndex {
+    # Reads the current AC value of a power setting (e.g. SUB_SLEEP STANDBYIDLE, in seconds). The
+    # labels are localized, so rely on the fact that the last two hex values printed are AC and DC.
+    param([string]$SubGroup, [string]$Setting)
     $powercfg = Join-Path $env:SystemRoot 'System32\powercfg.exe'
-    $r = Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/query', 'SCHEME_CURRENT', 'SUB_SLEEP', $Setting) -TimeoutSeconds 30
-    if ($r.ExitCode -ne 0) { return $null }
+    $r = Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/query', 'SCHEME_CURRENT', $SubGroup, $Setting) -TimeoutSeconds 30
+    if ($null -eq $r -or $r.ExitCode -ne 0) { return $null }
     $hex = @([regex]::Matches($r.StdOut, ':\s*0x([0-9a-fA-F]{8})\s*$', 'Multiline') | ForEach-Object { $_.Groups[1].Value })
     if ($hex.Count -lt 2) { return $null }
-    return [int]([Convert]::ToUInt32($hex[$hex.Count - 2], 16) / 60)
+    return [int][Convert]::ToUInt32($hex[$hex.Count - 2], 16)
+}
+
+function Get-DeployerAcPowerTimeoutMinutes {
+    param([ValidateSet('STANDBYIDLE', 'HIBERNATEIDLE')][string]$Setting)
+    $seconds = Get-DeployerAcPowerIndex -SubGroup SUB_SLEEP -Setting $Setting
+    if ($null -eq $seconds) { return $null }
+    return [int]($seconds / 60)
+}
+
+function Set-DeployerAcLidAction {
+    # 0 = do nothing, 1 = sleep, 2 = hibernate, 3 = shut down. Unlike /change, a value index only
+    # takes effect once the scheme is re-applied.
+    param([int]$Action)
+    $powercfg = Join-Path $env:SystemRoot 'System32\powercfg.exe'
+    [void](Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/setacvalueindex', 'SCHEME_CURRENT', 'SUB_BUTTONS', 'LIDACTION', "$Action"))
+    [void](Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/setactive', 'SCHEME_CURRENT'))
 }
 
 function Set-DeployerKeepAwake {
     <#
-      Enabled: remembers the current AC sleep/hibernate timeouts, then sets both to "never".
-      Disabled: restores the remembered values (Windows defaults if none were saved).
+      Enabled: remembers the current AC sleep/hibernate timeouts and lid action, then sets the
+      timeouts to "never" and closing the lid to "do nothing" (A-146: a closed laptop lid otherwise
+      still sleeps the PC and takes every site down).
+      Disabled: restores the remembered values (Windows defaults for the timeouts if none were saved;
+      the lid action only when one was saved, as older versions never changed it).
       Returns the table to store as runtime.json "keepAwake".
     #>
     param([bool]$Enabled, $Previous = $null)
@@ -1358,15 +1377,27 @@ function Set-DeployerKeepAwake {
         $wasEnabled = [bool](Get-DeployerStateValue $Previous 'enabled' $false)
         $standby = if ($wasEnabled) { Get-DeployerStateValue $Previous 'standbyAcMinutes' 30 } else { Get-DeployerAcPowerTimeoutMinutes -Setting STANDBYIDLE }
         $hibernate = if ($wasEnabled) { Get-DeployerStateValue $Previous 'hibernateAcMinutes' 180 } else { Get-DeployerAcPowerTimeoutMinutes -Setting HIBERNATEIDLE }
+        # An install from before A-146 was enabled without touching the lid, so its current value is the user's own.
+        $lid = if ($wasEnabled) { Get-DeployerStateValue $Previous 'lidAcAction' } else { $null }
+        if ($null -eq $lid) { $lid = Get-DeployerAcPowerIndex -SubGroup SUB_BUTTONS -Setting LIDACTION }
         [void](Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/change', 'standby-timeout-ac', '0'))
         [void](Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/change', 'hibernate-timeout-ac', '0'))
-        Write-DeployerOk 'Sleep and hibernate disabled while on AC power'
-        return @{ enabled = $true; standbyAcMinutes = $standby; hibernateAcMinutes = $hibernate }
+        $table = @{ enabled = $true; standbyAcMinutes = $standby; hibernateAcMinutes = $hibernate }
+        if ($null -ne $lid) {
+            Set-DeployerAcLidAction -Action 0
+            $table['lidAcAction'] = $lid
+            Write-DeployerOk 'Sleep and hibernate disabled while on AC power; closing the lid no longer sleeps the PC while plugged in'
+        } else {
+            Write-DeployerOk 'Sleep and hibernate disabled while on AC power'
+        }
+        return $table
     }
     $standby = Get-DeployerStateValue $Previous 'standbyAcMinutes' 30
     $hibernate = Get-DeployerStateValue $Previous 'hibernateAcMinutes' 180
     [void](Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/change', 'standby-timeout-ac', "$standby"))
     [void](Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/change', 'hibernate-timeout-ac', "$hibernate"))
+    $lid = Get-DeployerStateValue $Previous 'lidAcAction'
+    if ($null -ne $lid) { Set-DeployerAcLidAction -Action ([int]$lid) }
     Write-DeployerOk "Sleep restored on AC power (sleep after $standby min, hibernate after $hibernate min; 0 = never)"
     return @{ enabled = $false }
 }
