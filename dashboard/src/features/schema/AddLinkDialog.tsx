@@ -110,8 +110,11 @@ export function AddLinkDialog({
   const [note, setNote] = useState("");
 
   const complete = (e: End) => Boolean(e.sourceId && e.entity && e.field);
-  const same = from.sourceId === to.sourceId && from.entity === to.entity && from.field === to.field;
-  const valid = complete(from) && complete(to) && !same;
+  const bothComplete = complete(from) && complete(to);
+  // Only complete ends can be "the same field"; two empty pickers are just unfinished.
+  const same =
+    bothComplete && from.sourceId === to.sourceId && from.entity === to.entity && from.field === to.field;
+  const valid = bothComplete && !same;
   const crossDb = from.sourceId !== to.sourceId;
 
   const create = useMutation({
@@ -188,7 +191,7 @@ export function AddLinkDialog({
           )}
         </Field>
         {same && <Alert tone="warning">A field can't link to itself.</Alert>}
-        {complete(from) && complete(to) && !crossDb && !same && (
+        {bothComplete && !crossDb && !same && (
           <Alert tone="info">
             Both ends are in the same database. Consider a real foreign key instead, if the engine supports it.
           </Alert>
