@@ -1051,6 +1051,25 @@ function Get-DeployerLanAddresses {
 $script:DeployerAppPortFirst = 8100
 $script:DeployerAppPortLast = 8199
 
+# Processes that hold Deployer's own published ports (WSL relay, Docker, netsh portproxy).
+$script:DeployerOwnPortProcesses = '^(wslrelay|com\.docker\.backend|docker-proxy|vpnkit|svchost)$'
+
+function Test-DeployerAppPort {
+    # Caddy publishes the whole app range, so the dashboard port must stay outside it (A-064).
+    param([int]$Port)
+    return $Port -ge $script:DeployerAppPortFirst -and $Port -le $script:DeployerAppPortLast
+}
+
+function Get-DeployerAppPortUsers {
+    # "port (program)" for every listener in the app range; -SkipOwn leaves out Deployer's own.
+    param([switch]$SkipOwn)
+    @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { Test-DeployerAppPort $_.LocalPort } |
+            ForEach-Object { [pscustomobject]@{ Port = [int]$_.LocalPort; Name = [string](Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName } } |
+            Where-Object { -not ($SkipOwn -and $_.Name -match $script:DeployerOwnPortProcesses) } |
+            ForEach-Object { "$($_.Port) ($($_.Name))" } | Sort-Object -Unique)
+}
+
 function Get-DeployerLanPorts {
     # The dashboard port plus the app port range.
     param([int]$Port)

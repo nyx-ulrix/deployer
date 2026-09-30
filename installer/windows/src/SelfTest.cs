@@ -94,6 +94,7 @@ namespace DeployerSetup
             Check(m != null && m.Kind == MarkerKind.Done && m.Values["url"] == "http://localhost:8090", "done marker parses");
             m = Marker.Parse("##deployer:check port fail Port 8080 is already used by: nginx.");
             Check(m != null && m.Kind == MarkerKind.Check && m.CheckId == "port" && m.CheckState == "fail", "check marker parses");
+            Check(Ports.IsAppPort(8150) && !Ports.IsAppPort(8090) && !Ports.IsAppPort(Ports.SuggestFree(8150)), "app port range is never the dashboard port");
             Check(Marker.Parse("##deployer:reboot-required").Kind == MarkerKind.RebootRequired, "reboot marker parses");
             Check(Marker.Parse("##deployer:error Something broke").Text == "Something broke", "error marker parses");
             Check(Marker.Parse("    [ok] not a marker") == null, "plain output is not a marker");

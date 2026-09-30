@@ -273,7 +273,7 @@ Open a new terminal after installing:
 | `deployer config` | Show settings (secrets hidden) |
 | `deployer compose -- <args>` | Any `docker compose` command, e.g. `deployer compose -- ps -a` |
 | `deployer uninstall [-KeepData]` | Remove Deployer (asks you to confirm) |
-| `deployer set-port 8090` | Change the local port |
+| `deployer set-port 8090` | Change the local port (not 8100-8199: those are the deployed apps' ports) |
 | `deployer lan on\|off` | Allow / block other devices on your private network |
 | `deployer autostart on\|off` | Start Deployer (and the tray icon) when you sign in |
 | `deployer keepawake on\|off` | Keep this PC awake while plugged in (off restores your previous settings) |
@@ -306,7 +306,7 @@ stored in the database and the encrypted backup versions. To restore the daily p
 | *"Windows protected your PC"* when opening `DeployerSetup.exe` | The exe isn't code-signed yet. Click **More info → Run anyway**, or install with PowerShell instead. |
 | *Virtualization is turned off* | Restart, open the BIOS/UEFI setup (usually F2, F10, Del or Esc while the PC starts), enable *Intel Virtualization Technology* (VT-x) or *SVM Mode* (AMD), save and run setup again. |
 | *Forgot your password* | On the Deployer PC open *Deployer Control → Settings → Reset a password*, or run `deployer reset-password` (add the email to reset a member instead of the owner). |
-| *Port 8080 is used by another program* | Pick another port in setup, or later in *Deployer Control → Settings* (`deployer set-port 8090`). |
+| *Port 8080 is used by another program* | Pick another port in setup, or later in *Deployer Control → Settings* (`deployer set-port 8090`). Ports 8100-8199 are kept for deployed apps, so setup also stops if another program listens there and names it. |
 | *Your processor can't run MongoDB (no AVX)* | Everything else works. Use an external MongoDB such as a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster for NoSQL. |
 | Setup stopped with an error | Click **Try again** - setup continues where it stopped and never overwrites your `.env`. **Copy details** puts the full log on the clipboard. Logs: `%ProgramData%\Deployer\logs`. |
 | *Restart needed* | Restart Windows and sign in again; setup continues on its own (approve the administrator prompt). |

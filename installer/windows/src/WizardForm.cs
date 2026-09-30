@@ -769,6 +769,8 @@ namespace DeployerSetup
             int port = options.Port;
             if (port < 1024 || port > 65535)
                 portError = "Enter a number from 1024 to 65535.";
+            else if (Ports.IsAppPort(port))
+                portError = "Ports " + Ports.AppRange + " are kept for deployed apps. Try " + Ports.SuggestFree(port) + ".";
             else if (port != installedPort && !Ports.IsFree(port))
                 portError = "Port " + port + " is already used by another program. Try " + Ports.SuggestFree(port) + ".";
             if (portHint != null)

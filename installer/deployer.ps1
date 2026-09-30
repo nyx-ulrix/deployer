@@ -325,11 +325,14 @@ function Restart-StackForSettings {
 }
 
 function Invoke-SetPort {
-    $ctx = Get-Context
     if ($Service -notmatch '^\d{1,5}$' -or [int]$Service -lt 1 -or [int]$Service -gt 65535) {
         throw 'Usage: deployer set-port <port>   (a number from 1 to 65535, e.g. 8090)'
     }
     $newPort = [int]$Service
+    if (Test-DeployerAppPort $newPort) {
+        throw "Port $newPort is inside $($script:DeployerAppPortFirst)-$($script:DeployerAppPortLast), which Deployer keeps for deployed apps. Choose another port, e.g. 8090."
+    }
+    $ctx = Get-Context
     if ($newPort -eq $ctx.Port) {
         Write-DeployerOk "Deployer already uses port $newPort"
         return

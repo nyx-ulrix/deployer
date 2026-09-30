@@ -428,7 +428,13 @@ namespace DeployerSetup
 
             // Port
             report.SuggestedPort = port;
-            if (port == installedPort)
+            if (Ports.IsAppPort(port))
+            {
+                report.SuggestedPort = Ports.SuggestFree(port);
+                report.Items.Add(new CheckResult("port", CheckStatus.Warn, "Port " + port + " is kept for deployed apps",
+                    "Deployer will use port " + report.SuggestedPort + " instead. You can change it on the Options page."));
+            }
+            else if (port == installedPort)
             {
                 report.Items.Add(new CheckResult("port", CheckStatus.Ok, "Port " + port + " belongs to your existing Deployer", null));
             }
@@ -500,6 +506,14 @@ namespace DeployerSetup
 
     static class Ports
     {
+        /// <summary>Caddy publishes 8100-8199 for deployed apps, so the dashboard port can't be in it.</summary>
+        public const string AppRange = "8100-8199";
+
+        public static bool IsAppPort(int port)
+        {
+            return port >= 8100 && port <= 8199;
+        }
+
         public static bool IsFree(int port)
         {
             try
@@ -517,7 +531,7 @@ namespace DeployerSetup
         {
             int[] preferred = { 8080, 8090, 8081, 8088, 8888, 8000, 3080 };
             foreach (int p in preferred) if (p != start && IsFree(p)) return p;
-            for (int p = 8081; p < 8999; p++) if (IsFree(p)) return p;
+            for (int p = 8081; p < 8999; p++) if (!IsAppPort(p) && IsFree(p)) return p;
             return start;
         }
     }

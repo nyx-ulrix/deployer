@@ -94,6 +94,9 @@ jobs:
       - name: Keep-alive loop checks (no WSL needed)
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/keepalive.tests.ps1; exit $LASTEXITCODE
+      - name: Dashboard port vs app port range checks
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/ports.tests.ps1; exit $LASTEXITCODE
       - name: install.ps1 -DryRun (read-only, prints progress markers)
         shell: powershell
         run: |

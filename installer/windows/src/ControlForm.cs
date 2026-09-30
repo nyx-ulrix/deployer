@@ -1254,6 +1254,8 @@ namespace DeployerSetup
             string error = null;
             if (!int.TryParse(portInput.Box.Text.Trim(), out p) || p < 1024 || p > 65535)
                 error = "Enter a number from 1024 to 65535.";
+            else if (Ports.IsAppPort(p))
+                error = "Ports " + Ports.AppRange + " are kept for deployed apps.";
             else if (p != originalPort && !Ports.IsFree(p))
                 error = "Port " + p + " is used by another program.";
             if (error == null) Port = p;

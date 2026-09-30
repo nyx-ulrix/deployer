@@ -271,10 +271,13 @@ function Invoke-Preflight {
         $script:ForceFromSource = $true
     }
 
+    $appRange = "$($script:DeployerAppPortFirst)-$($script:DeployerAppPortLast)"
     $listeners = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
-    if ($listeners.Count -gt 0) {
+    if (Test-DeployerAppPort $Port) {
+        Write-CheckResult 'port' 'fail' "Port $Port is inside $appRange, which Deployer keeps for deployed apps. Choose another port, e.g. -Port 8090."
+    } elseif ($listeners.Count -gt 0) {
         $names = @($listeners | ForEach-Object { (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName } | Sort-Object -Unique)
-        $ours = @($names | Where-Object { $_ -match '^(wslrelay|com\.docker\.backend|docker-proxy|vpnkit|svchost)$' })
+        $ours = @($names | Where-Object { $_ -match $script:DeployerOwnPortProcesses })
         if ($IsUpgrade -and $ours.Count -eq $names.Count) {
             Write-CheckResult 'port' 'ok' "Port $Port is in use by the existing Deployer install"
         } else {
@@ -282,6 +285,14 @@ function Invoke-Preflight {
         }
     } else {
         Write-CheckResult 'port' 'ok' "Port $Port is free"
+    }
+
+    # Caddy publishes the whole app range; one busy port there stops the stack from starting.
+    $appUsers = @(Get-DeployerAppPortUsers -SkipOwn:$IsUpgrade)
+    if ($appUsers.Count -gt 0) {
+        Write-CheckResult 'appports' 'fail' "Ports $appRange are kept for deployed apps, but these are in use: $($appUsers -join ', '). Close those programs, then run setup again."
+    } else {
+        Write-CheckResult 'appports' 'ok' "App ports $appRange are free"
     }
 }
 
