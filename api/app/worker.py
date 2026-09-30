@@ -9,7 +9,7 @@ Threads started by `start_background_tasks()`:
   The leader fails stale `running` jobs, re-dispatches lost `queued` jobs and enqueues due work
   (`backups.scheduler_tick`: snapshots per policy, log archiving - MariaDB 5 min / MongoDB 1 min -,
   hourly pruning incl. purging sources deleted > 30 days ago, weekly verification, daily platform
-  snapshot).
+  snapshot) and once a day prunes the query log, audit rows > 90 days and expired refresh tokens.
 - `mongo-replset`: initiates the managed MongoDB single-node replica set on first start/upgrade.
 - `source-sync`: while this worker leads the scheduler, a co-hosting sync round every 2 s for each
   syncing database copy (docs/COHOSTING.md, `source_sync.sync_loop`).
@@ -138,7 +138,7 @@ _last_alerts = float("-inf")
 
 def scheduler_tick() -> None:
     global _last_query_log_prune, _last_alerts
-    from app.services import alerts, backups, cohost_apps, deployments, query_log
+    from app.services import alerts, audit, backups, cohost_apps, deployments, query_log
 
     jobs.recover_stale()
     jobs.redispatch_queued()
@@ -151,10 +151,10 @@ def scheduler_tick() -> None:
     if time.monotonic() - _last_query_log_prune >= PRUNE_QUERY_LOG_EVERY_S:
         _last_query_log_prune = time.monotonic()
         with jobs.get_sessionmaker()() as session:
-            pruned = query_log.prune(session)
+            pruned = query_log.prune(session) + audit.prune(session)  # A-102
             session.commit()
         if pruned:
-            log.info("pruned %d query log row(s)", pruned)
+            log.info("pruned %d query log / audit / expired session row(s)", pruned)
 
 
 def scheduler_loop(stop: threading.Event, client_factory: Callable[[], redis.Redis] = _worker_redis) -> None:

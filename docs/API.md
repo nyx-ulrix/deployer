@@ -123,6 +123,7 @@ Provider callback URLs (shown in the setup wizard):
 | GET | `/instance/users` | – | `User[]` |
 | PATCH | `/instance/users/{id}` | `{is_active:boolean}` | `User`. Disabling signs the account out everywhere (refresh tokens revoked; access tokens are refused at the next request) and stops the API keys (401 `account_disabled`) and GitHub push deploys (403 `account_disabled`) of projects it owns; apps already running keep running. 400 `cannot_disable_owner` for the instance owner |
 | GET | `/instance/projects` | – | `(Project & {owner_email, member_count})[]`: every project, `my_role` null where the owner isn't a member |
+| GET | `/instance/audit?limit=100&before={id}&action=` | – | `{id, action, user_id, user_email, project_id, ip, user_agent, details, created_at}[]`, newest first (`limit` 1-500; `before` pages by id). Rows are kept 90 days (API key reveals/downloads and instance exports are kept); the worker also deletes refresh tokens a day after they expire |
 | POST | `/instance/export` | `{passphrase}` | file download `deployer-instance-YYYYMMDD-HHMM.json` |
 
 OAuth values are trimmed and checked before they are stored (the same check backs

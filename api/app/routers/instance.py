@@ -1,13 +1,13 @@
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
 from app.deps import DbSession, InstanceOwner
 from app.errors import ApiError, not_found
-from app.models import Project, ProjectMember, User
-from app.serializers import project_out, user_out
+from app.models import AuditLog, Project, ProjectMember, User
+from app.serializers import iso, project_out, user_out
 from app.services import audit, deployments, remote_access, tokens
 from app.services.alerts import validate_webhook_url
 from app.services.instance_settings import (
@@ -178,4 +178,35 @@ def list_all_projects(owner: InstanceOwner, db: DbSession) -> list[dict]:
     return [
         {**project_out(db, p, mine.get(p.id)), "owner_email": email, "member_count": members.get(p.id, 0)}
         for p, email in rows
+    ]
+
+
+@router.get("/instance/audit")
+def list_audit(
+    owner: InstanceOwner,
+    db: DbSession,
+    limit: int = Query(100, ge=1, le=500),
+    before: int | None = Query(None, description="id cursor: rows older than this one"),
+    action: str | None = None,
+) -> list[dict]:
+    """A-102: the audit log, newest first (kept 90 days; the worker prunes older rows)."""
+    stmt = select(AuditLog, User.email).outerjoin(User, User.id == AuditLog.user_id)
+    if before is not None:
+        stmt = stmt.where(AuditLog.id < before)
+    if action:
+        stmt = stmt.where(AuditLog.action == action)
+    rows = db.execute(stmt.order_by(AuditLog.id.desc()).limit(limit)).all()
+    return [
+        {
+            "id": a.id,
+            "action": a.action,
+            "user_id": a.user_id,
+            "user_email": email,
+            "project_id": a.project_id,
+            "ip": a.ip,
+            "user_agent": a.user_agent,
+            "details": a.details,
+            "created_at": iso(a.created_at),
+        }
+        for a, email in rows
     ]
