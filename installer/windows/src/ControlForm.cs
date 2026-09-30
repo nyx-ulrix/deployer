@@ -689,14 +689,7 @@ namespace DeployerSetup
 
         void SafeInvoke(Action a)
         {
-            try
-            {
-                if (IsDisposed || exiting) return;
-                BeginInvoke(a);
-            }
-            catch (InvalidOperationException)
-            {
-            }
+            if (!exiting) Post(a);
         }
 
         // ------------------------------------------------------------------ actions
@@ -775,13 +768,8 @@ namespace DeployerSetup
         {
             if (Marker.Parse(line) != null) return;
             actionLog.Append(line).Append("\r\n");
-            string t = line.Trim();
-            if (t.Length > 0)
-            {
-                if (t.StartsWith("==> ")) t = t.Substring(4);
-                if (t.StartsWith("[ok] ") || t.StartsWith("[!] ") || t.StartsWith("[x] ")) t = t.Substring(t.IndexOf(']') + 2);
-                transient = t;
-            }
+            string t = ScriptOutput.Friendly(line);
+            if (t.Length > 0) transient = t;
             if (outputWindow != null && !outputWindow.IsDisposed) outputWindow.Append(line);
             UpdateView();
         }
@@ -794,7 +782,7 @@ namespace DeployerSetup
             if (code != 0)
             {
                 pending.Clear();
-                string error = LastError();
+                string error = ScriptOutput.LastError(actionLog);
                 FinishAction(false, actionName + " failed" + (error != null ? ": " + error : "."));
                 if (Visible)
                 {
@@ -869,17 +857,6 @@ namespace DeployerSetup
                 case "device": return "This PC was detached from its main Deployer at " + time;
                 default: return "Settings saved at " + time;
             }
-        }
-
-        string LastError()
-        {
-            string[] lines = actionLog.ToString().Split(new[] { "\r\n" }, StringSplitOptions.None);
-            for (int i = lines.Length - 1; i >= 0; i--)
-            {
-                string t = lines[i].Trim();
-                if (t.StartsWith("[x] ")) return t.Substring(4);
-            }
-            return null;
         }
 
         void FinishAction(bool ok, string text)
@@ -1379,13 +1356,8 @@ namespace DeployerSetup
             y = ButtonRow(y, cw, pad, "Run setup again",
                 "Repairs shortcuts, the sign-in task and the Apps & Features entry. Your data and settings are kept.", "Run setup…", () => OpenSetup);
 
-            Panel footer = new Panel();
-            footer.BackColor = Theme.SurfaceAlt;
-            int fh = ui.S(68);
-            footer.Bounds = new Rectangle(0, y, w, fh);
-            Rule fr = new Rule(Theme.Border);
-            fr.Bounds = new Rectangle(0, 0, w, Math.Max(1, ui.S(1)));
-            footer.Controls.Add(fr);
+            Panel footer = AddFooter(y, w);
+            int fh = footer.Height;
             int bh = ui.S(38);
             save = new FlatButton(ui, "Save", ButtonStyle.Primary);
             int sw = save.PreferredWidth(ui.S(96));
@@ -1397,7 +1369,6 @@ namespace DeployerSetup
             cancel.Bounds = new Rectangle(w - pad - sw - ui.S(10) - cwid, (fh - bh) / 2, cwid, bh);
             cancel.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
             footer.Controls.Add(cancel);
-            Controls.Add(footer);
             AcceptButton = save;
             CancelButton = cancel;
             ClientSize = new Size(w, y + fh);
@@ -1631,17 +1602,6 @@ namespace DeployerSetup
             catch (Exception ex)
             {
                 Append("Couldn't read the logs: " + ex.Message);
-            }
-        }
-
-        void Post(Action a)
-        {
-            try
-            {
-                if (!IsDisposed) BeginInvoke(a);
-            }
-            catch (InvalidOperationException)
-            {
             }
         }
 

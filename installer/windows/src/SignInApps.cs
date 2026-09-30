@@ -146,13 +146,8 @@ namespace DeployerSetup
             y += ui.S(8);
 
             // Footer: Remove | Close, Save
-            Panel footer = new Panel();
-            footer.BackColor = Theme.SurfaceAlt;
-            int fh = ui.S(68);
-            footer.Bounds = new Rectangle(0, y, w, fh);
-            Rule fr = new Rule(Theme.Border);
-            fr.Bounds = new Rectangle(0, 0, w, Math.Max(1, ui.S(1)));
-            footer.Controls.Add(fr);
+            Panel footer = AddFooter(y, w);
+            int fh = footer.Height;
             bh = ui.S(38);
             FlatButton save = new FlatButton(ui, busy ? "Saving…" : "Save", ButtonStyle.Primary);
             int sw = save.PreferredWidth(ui.S(96));
@@ -171,7 +166,6 @@ namespace DeployerSetup
             remove.Enabled = !busy && cur != null && (Json.Str(cur, "client_id").Length > 0 || hasSecret);
             remove.Click += delegate { Remove(); };
             footer.Controls.Add(remove);
-            Controls.Add(footer);
             AcceptButton = save;
             CancelButton = close;
             ClientSize = new Size(w, y + fh);
@@ -254,8 +248,8 @@ namespace DeployerSetup
                 else
                 {
                     string error;
-                    lock (lines) error = lines.Select(l => l.Trim()).LastOrDefault(l => l.StartsWith("[x] "));
-                    message = error != null ? error.Substring(4) : "Deployer reported a problem (exit code " + code + ").";
+                    lock (lines) error = ScriptOutput.LastError(lines);
+                    message = error ?? "Deployer reported a problem (exit code " + code + ").";
                     messageIsError = true;
                 }
                 Rebuild();
@@ -323,17 +317,6 @@ namespace DeployerSetup
                 }
             }
             Rebuild();
-        }
-
-        void Post(Action a)
-        {
-            try
-            {
-                if (!IsDisposed && IsHandleCreated) BeginInvoke(a);
-            }
-            catch (InvalidOperationException)
-            {
-            }
         }
     }
 }

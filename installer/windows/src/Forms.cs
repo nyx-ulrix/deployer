@@ -124,6 +124,31 @@ namespace DeployerSetup
             }
         }
 
+        /// <summary>Runs a on the UI thread from any thread; dropped once the window is gone (or not created yet).</summary>
+        protected void Post(Action a)
+        {
+            try
+            {
+                if (!IsDisposed && IsHandleCreated) BeginInvoke(a);
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
+        /// <summary>Adds the standard grey footer bar (top rule, 68 px) at y; callers add their buttons to it.</summary>
+        protected Panel AddFooter(int y, int w)
+        {
+            Panel footer = new Panel();
+            footer.BackColor = Theme.SurfaceAlt;
+            footer.Bounds = new Rectangle(0, y, w, ui.S(68));
+            Rule rule = new Rule(Theme.Border);
+            rule.Bounds = new Rectangle(0, 0, w, Math.Max(1, ui.S(1)));
+            footer.Controls.Add(rule);
+            Controls.Add(footer);
+            return footer;
+        }
+
         public void PlaceCentered(Form owner)
         {
             Rectangle area = owner != null && owner.Visible
@@ -345,13 +370,8 @@ namespace DeployerSetup
 
             y = Math.Max(y, pad + ui.S(44)) + pad;
 
-            Panel footer = new Panel();
-            footer.BackColor = Theme.SurfaceAlt;
-            int fh = ui.S(68);
-            footer.Bounds = new Rectangle(0, y, w, fh);
-            Rule rule = new Rule(Theme.Border);
-            rule.Bounds = new Rectangle(0, 0, w, Math.Max(1, ui.S(1)));
-            footer.Controls.Add(rule);
+            Panel footer = AddFooter(y, w);
+            int fh = footer.Height;
             int bx = w - pad;
             int bh = ui.S(38);
             FlatButton firstPrimary = null;
@@ -378,7 +398,6 @@ namespace DeployerSetup
                 if (firstPrimary == null && (spec.Style == ButtonStyle.Primary || spec.Style == ButtonStyle.Danger)) firstPrimary = b;
                 if (spec.Result == DialogResult.Cancel || spec.Result == DialogResult.No) CancelButton = b;
             }
-            Controls.Add(footer);
             if (firstPrimary != null) AcceptButton = firstPrimary;
             ClientSize = new Size(w, y + fh);
         }

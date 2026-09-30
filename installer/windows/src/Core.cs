@@ -969,6 +969,31 @@ namespace DeployerSetup
         }
     }
 
+    /// <summary>Reading the "==> step", "[ok]/[!]/[x] message" lines the PowerShell scripts print.</summary>
+    static class ScriptOutput
+    {
+        /// <summary>The line without its "==> " or status prefix, for a one-line progress label.</summary>
+        public static string Friendly(string line)
+        {
+            string t = line.Trim();
+            if (t.StartsWith("==> ")) t = t.Substring(4);
+            if (t.StartsWith("[ok] ") || t.StartsWith("[!] ") || t.StartsWith("[x] ")) t = t.Substring(t.IndexOf(']') + 2);
+            return t;
+        }
+
+        /// <summary>The last "[x] " error message in the output, or null.</summary>
+        public static string LastError(IEnumerable<string> lines)
+        {
+            string last = lines.Select(l => l.Trim()).LastOrDefault(l => l.StartsWith("[x] "));
+            return last != null ? last.Substring(4) : null;
+        }
+
+        public static string LastError(StringBuilder log)
+        {
+            return LastError(log.ToString().Split(new[] { "\r\n" }, StringSplitOptions.None));
+        }
+    }
+
     /// <summary>Runs powershell.exe -File script and streams its output line by line.</summary>
     class ScriptRunner
     {

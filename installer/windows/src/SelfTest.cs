@@ -109,6 +109,11 @@ namespace DeployerSetup
             Check(Marker.Parse("##deployer:reboot-required").Kind == MarkerKind.RebootRequired, "reboot marker parses");
             Check(Marker.Parse("##deployer:error Something broke").Text == "Something broke", "error marker parses");
             Check(Marker.Parse("    [ok] not a marker") == null, "plain output is not a marker");
+            Check(ScriptOutput.Friendly("  ==> Pulling images ") == "Pulling images" && ScriptOutput.Friendly("[!] Slow disk") == "Slow disk"
+                  && ScriptOutput.Friendly("[x] Docker stopped") == "Docker stopped" && ScriptOutput.Friendly("plain [x] text") == "plain [x] text"
+                  && ScriptOutput.LastError(new StringBuilder("[x] first\r\n  [x] second  \r\n[ok] cleaned up\r\n")) == "second"
+                  && ScriptOutput.LastError(new[] { "[ok] fine", "[!] warning" }) == null,
+                "shared script-output helpers strip prefixes and find the last [x] error (A-162)");
             Check(ProcessUtil.Quote(@"C:\Program Files\Deployer\") == "\"C:\\Program Files\\Deployer\\\\\"", "argument quoting doubles trailing backslashes");
             string gid = "1234-abc.apps.googleusercontent.com";
             Check(SignInAppsDialog.CheckValue("google", false, gid) == null

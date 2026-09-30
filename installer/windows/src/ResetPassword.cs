@@ -52,13 +52,8 @@ namespace DeployerSetup
                 y += Add(new TextBlock(ui, message, ui.SemiBold(10f), messageIsError ? Theme.DangerText : Theme.SuccessText), pad, y, cw) + ui.S(10);
             y += ui.S(8);
 
-            Panel footer = new Panel();
-            footer.BackColor = Theme.SurfaceAlt;
-            int fh = ui.S(68);
-            footer.Bounds = new Rectangle(0, y, w, fh);
-            Rule fr = new Rule(Theme.Border);
-            fr.Bounds = new Rectangle(0, 0, w, Math.Max(1, ui.S(1)));
-            footer.Controls.Add(fr);
+            Panel footer = AddFooter(y, w);
+            int fh = footer.Height;
             int bh = ui.S(38);
             FlatButton reset = new FlatButton(ui, busy ? "Resetting…" : "Reset password", ButtonStyle.Primary);
             int rw = reset.PreferredWidth(ui.S(96));
@@ -71,7 +66,6 @@ namespace DeployerSetup
             close.Bounds = new Rectangle(w - pad - rw - ui.S(10) - clw, (fh - bh) / 2, clw, bh);
             close.Click += delegate { Close(); };
             footer.Controls.Add(close);
-            Controls.Add(footer);
             AcceptButton = reset;
             CancelButton = close;
             ClientSize = new Size(w, y + fh);
@@ -146,17 +140,6 @@ namespace DeployerSetup
             {
                 busy = false;
                 SetMessage("Couldn't start PowerShell: " + ex.Message, true);
-            }
-        }
-
-        void Post(Action a)
-        {
-            try
-            {
-                if (!IsDisposed && IsHandleCreated) BeginInvoke(a);
-            }
-            catch (InvalidOperationException)
-            {
             }
         }
     }

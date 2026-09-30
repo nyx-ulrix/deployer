@@ -990,9 +990,9 @@ namespace DeployerSetup
                 if (dryRun) args.Add("-DryRun");
                 AppendLog("Deployer Setup " + AppInfo.Version + (dryRun ? " (test mode)" : "") + " - " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
                 runner = new ScriptRunner();
-                runner.OutputLine += line => SafeInvoke(() => OnInstallLine(line));
-                runner.TransientLine += line => SafeInvoke(() => { transient = line.Trim(); if (transientLabel != null) transientLabel.Text = transient; });
-                runner.Exited += code => SafeInvoke(() => OnInstallExited(code));
+                runner.OutputLine += line => Post(() => OnInstallLine(line));
+                runner.TransientLine += line => Post(() => { transient = line.Trim(); if (transientLabel != null) transientLabel.Text = transient; });
+                runner.Exited += code => Post(() => OnInstallExited(code));
                 runner.Start(Path.Combine(payloadRoot, @"installer\install.ps1"), args);
                 Rebuild();
             }
@@ -1003,18 +1003,6 @@ namespace DeployerSetup
                 AppendLog(ex.ToString());
                 page = WizardPage.Error;
                 Rebuild();
-            }
-        }
-
-        void SafeInvoke(Action a)
-        {
-            try
-            {
-                if (IsDisposed) return;
-                BeginInvoke(a);
-            }
-            catch (InvalidOperationException)
-            {
             }
         }
 

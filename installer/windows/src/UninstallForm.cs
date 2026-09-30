@@ -140,13 +140,8 @@ namespace DeployerSetup
             }
             y += pad;
 
-            Panel footer = new Panel();
-            footer.BackColor = Theme.SurfaceAlt;
-            int fh = ui.S(68);
-            footer.Bounds = new Rectangle(0, y, w, fh);
-            Rule fr = new Rule(Theme.Border);
-            fr.Bounds = new Rectangle(0, 0, w, Math.Max(1, ui.S(1)));
-            footer.Controls.Add(fr);
+            Panel footer = AddFooter(y, w);
+            int fh = footer.Height;
             int right = w - pad;
             int bh = ui.S(38);
             List<FlatButton> buttons = new List<FlatButton>();
@@ -190,7 +185,6 @@ namespace DeployerSetup
                 help.Bounds = new Rectangle(pad, (fh - hs.Height) / 2, hs.Width, hs.Height);
                 footer.Controls.Add(help);
             }
-            Controls.Add(footer);
             ClientSize = new Size(w, y + fh);
             if (buttons.Count > 0 && phase != Phase.Running) AcceptButton = buttons[0];
         }
@@ -248,11 +242,9 @@ namespace DeployerSetup
                 runner.OutputLine += line => Post(() =>
                 {
                     log.Append(line).Append("\r\n");
-                    string t = line.Trim();
-                    if (t.Length > 0 && Marker.Parse(t) == null)
+                    string t = ScriptOutput.Friendly(line);
+                    if (t.Length > 0 && Marker.Parse(line) == null)
                     {
-                        if (t.StartsWith("==> ")) t = t.Substring(4);
-                        if (t.StartsWith("[ok] ") || t.StartsWith("[!] ") || t.StartsWith("[x] ")) t = t.Substring(t.IndexOf(']') + 2);
                         transient = t;
                         if (transientLabel != null) transientLabel.Text = t;
                     }
@@ -332,32 +324,12 @@ namespace DeployerSetup
             foreach (string d in Directory.GetDirectories(from)) CopyTree(d, Path.Combine(to, Path.GetFileName(d)));
         }
 
-        void Post(Action a)
-        {
-            try
-            {
-                if (!IsDisposed) BeginInvoke(a);
-            }
-            catch (InvalidOperationException)
-            {
-            }
-        }
-
         void OnExited(int code)
         {
             runner = null;
             if (code != 0)
             {
-                failure = "The uninstall script stopped (exit code " + code + ").";
-                string[] lines = log.ToString().Split(new[] { "\r\n" }, StringSplitOptions.None);
-                for (int i = lines.Length - 1; i >= 0; i--)
-                {
-                    if (lines[i].Trim().StartsWith("[x] "))
-                    {
-                        failure = lines[i].Trim().Substring(4);
-                        break;
-                    }
-                }
+                failure = ScriptOutput.LastError(log) ?? "The uninstall script stopped (exit code " + code + ").";
                 SetPhase(Phase.Failed);
                 return;
             }
