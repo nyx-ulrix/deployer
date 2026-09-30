@@ -32,7 +32,7 @@ _LIT = r"""(?:'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*")"""
 # or dollar-quoted ($$x$$) is kept; add a SQL tokenizer if that shows up.
 _SECRET = re.compile(
     r"(\bIDENTIFIED\s+(?:WITH\s+\S+\s+)?(?:BY|AS)\s+(?:PASSWORD\s+)?"
-    r"|\bSET\s+PASSWORD\b[^=;]*=\s*(?:PASSWORD\s*\(\s*)?"
+    r"|\bSET\s+PASSWORD\b[^=;]{0,300}=\s*(?:PASSWORD\s*\(\s*)?"  # bounded: `*` is O(n^2) on repeats
     r"|(?<![\"'])\bPASSWORD\s*(?:\(\s*)?"
     r"|\bpwd[\"']?\s*:\s*"
     rf"|\bchangeUserPassword\s*\(\s*{_LIT}\s*,\s*)"

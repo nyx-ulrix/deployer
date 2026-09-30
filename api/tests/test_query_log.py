@@ -1,5 +1,6 @@
 """Query log (docs/QUERY_EDITOR.md): every console run is logged; list/get/delete permissions; pruning."""
 
+import time
 from datetime import timedelta
 
 import pytest
@@ -247,6 +248,13 @@ def test_record_run_caps_text_and_trims_the_project(db, console, make_user, monk
 )
 def test_redact(text, stored):
     assert query_log.redact(text) == stored
+
+
+def test_redact_is_linear():
+    """A 200 000-char request of repeated `SET PASSWORD` took ~7 s with an unbounded `[^=;]*`."""
+    started = time.monotonic()
+    query_log.redact("SET PASSWORD " * 15_000)
+    assert time.monotonic() - started < 2
 
 
 def test_logged_text_masks_passwords(client, db, console):
