@@ -191,7 +191,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-102 **[LOW][cleanup]** audit_logs and refresh_tokens grow forever; the audit log is never readable - `api/app/services/audit.py:8-27` - prune in the worker; add an owner audit endpoint or stop writing it.
 - [x] A-103 **[LOW][usability]** /health always says "ok" and shows disabled MongoDB as false; the installer prints raw JSON - `api/app/routers/health.py:52-58` - "degraded"/503; mongodb "disabled"; print one line per service. (not verified)
 - [x] A-104 **[LOW][usability]** OAuth error text blames tampering for `oauth_state_invalid`; `not_initialized` has no text - `api/app/services/oauth.py:421-423` - say "start from <public URL>"; add the missing codes to messages and API.md. (not verified)
-- [ ] A-105 **[LOW][cleanup]** The "is the instance set up?" check is copy-pasted in five places - `api/app/routers/auth.py:45, 182` - one shared is_initialized. (not verified)
+- [x] A-105 **[LOW][cleanup]** The "is the instance set up?" check is copy-pasted in five places - `api/app/routers/auth.py:45, 182` - one shared is_initialized. (not verified)
 
 **Data**
 - [ ] A-106 **[LOW][usability]** Connection test and create return raw driver errors with no guidance - `api/app/services/connections.py:166-196` - `friendly_error(kind, exc)` plus details.

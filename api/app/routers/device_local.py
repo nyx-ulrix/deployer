@@ -21,7 +21,6 @@ from urllib.parse import quote
 import httpx
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app import __version__
@@ -29,9 +28,9 @@ from app.crypto import decrypt_secret, encrypt_secret
 from app.db import get_sessionmaker
 from app.deps import DbSession, get_current_user
 from app.errors import ApiError, forbidden
-from app.models import User
 from app.redis_client import get_redis
 from app.services import device_agent, device_host
+from app.services.instance_settings import is_initialized
 
 router = APIRouter(tags=["device-local"])
 log = logging.getLogger(__name__)
@@ -46,7 +45,7 @@ _poller: threading.Thread | None = None
 
 def require_local_admin(request: Request, db: DbSession) -> None:
     """No auth while this installation has no users; afterwards only the instance owner."""
-    if db.scalar(select(User.id).limit(1)) is None:
+    if not is_initialized(db):
         return
     user = get_current_user(request, db)
     if not user.is_instance_owner:

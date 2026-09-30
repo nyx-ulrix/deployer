@@ -7,13 +7,14 @@ from typing import Annotated
 from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from app.deps import CurrentUser, DbSession, InstanceOwner, ProjectCreator
 from app.errors import ApiError, conflict, forbidden, not_found
 from app.models import Project, ProjectMember, User
 from app.serializers import project_out
 from app.services import audit, transfer
+from app.services.instance_settings import is_initialized
 
 router = APIRouter(tags=["transfer"])
 
@@ -57,7 +58,7 @@ def setup_import(
     file: Annotated[UploadFile, File()],
     passphrase: Annotated[str, Form()],
 ) -> dict:
-    if db.scalar(select(func.count()).select_from(User)):
+    if is_initialized(db):
         raise conflict("already_initialized", "This instance is already set up")
     transfer.check_passphrase(passphrase)
     path = _save_upload(file)
@@ -65,7 +66,7 @@ def setup_import(
         payload = transfer.read_export_file(path, passphrase, "instance")
     finally:
         transfer._unlink(path)
-    if db.scalar(select(func.count()).select_from(User)):
+    if is_initialized(db):
         raise conflict("already_initialized", "This instance is already set up")
     summary = transfer.import_instance(db, payload)
     del payload

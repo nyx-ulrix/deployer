@@ -5,12 +5,13 @@ import re
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.crypto import decrypt_secret, encrypt_secret
 from app.errors import ApiError
-from app.models import InstanceSetting
+from app.models import InstanceSetting, User
 
 SECRET_KEYS = {
     "google_client_secret",
@@ -51,6 +52,11 @@ KNOWN_KEYS = {
     "api_key_rate_limit",
     *SECRET_KEYS,
 }
+
+
+def is_initialized(db: Session) -> bool:
+    """True once the instance owner exists (setup done)."""
+    return db.scalar(select(User.id).limit(1)) is not None
 
 
 def get_value(db: Session, key: str):

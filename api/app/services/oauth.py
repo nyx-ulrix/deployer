@@ -34,7 +34,14 @@ from app.errors import ApiError, not_found
 from app.models import User, UserIdentity, utcnow
 from app.redis_client import get_redis
 from app.services import audit, github, invites, tokens
-from app.services.instance_settings import OAuthApp, allow_signup, oauth_app, oauth_callback_url, public_url
+from app.services.instance_settings import (
+    OAuthApp,
+    allow_signup,
+    is_initialized,
+    oauth_app,
+    oauth_callback_url,
+    public_url,
+)
 from app.services.passwords import normalize_email
 from app.services.tokens import cookie_secure
 
@@ -333,7 +340,7 @@ def _find_identity(db: Session, provider: str, provider_user_id: str) -> UserIde
 
 
 def _login(db: Session, request: Request, provider: str, profile: OAuthProfile, record: dict) -> User:
-    if db.scalar(select(User.id).limit(1)) is None:
+    if not is_initialized(db):
         raise OAuthFlowError("not_initialized")
 
     identity = _find_identity(db, provider, profile.provider_user_id)

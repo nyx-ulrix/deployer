@@ -1,6 +1,5 @@
 from fastapi import APIRouter, Request, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
 
 from app import __version__
 from app.config import get_settings
@@ -8,14 +7,10 @@ from app.deps import DbSession
 from app.errors import conflict
 from app.models import User
 from app.services import audit, tokens
-from app.services.instance_settings import allow_signup, oauth_app, public_url, reachable_elsewhere
+from app.services.instance_settings import allow_signup, is_initialized, oauth_app, public_url, reachable_elsewhere
 from app.services.passwords import Email, hash_password, validate_password
 
 router = APIRouter(tags=["setup"])
-
-
-def is_initialized(db) -> bool:
-    return db.scalar(select(User.id).limit(1)) is not None
 
 
 @router.get("/setup/status")

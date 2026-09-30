@@ -8,7 +8,7 @@ from app.errors import ApiError, conflict, not_found
 from app.models import User, UserIdentity
 from app.serializers import user_out
 from app.services import audit, invites, oauth, rate_limit, tokens
-from app.services.instance_settings import allow_signup, oauth_app
+from app.services.instance_settings import allow_signup, is_initialized, oauth_app
 from app.services.passwords import (
     Email,
     hash_password,
@@ -43,7 +43,7 @@ class SignupIn(BaseModel):
 @router.post("/auth/signup")
 def signup(body: SignupIn, request: Request, response: Response, db: DbSession) -> dict:
     rate_limit.check_login(client_ip(request))
-    if db.scalar(select(User.id).limit(1)) is None:
+    if not is_initialized(db):
         raise conflict("not_initialized", "Create the instance owner first")
     invite = None
     if body.invite_token:
@@ -180,7 +180,7 @@ def oauth_start(
     provider: str, request: Request, db: DbSession, redirect: str | None = None, invite_token: str | None = None
 ) -> RedirectResponse:
     oauth.get_provider(provider)
-    if db.scalar(select(User.id).limit(1)) is None:
+    if not is_initialized(db):
         return RedirectResponse(oauth.login_error_url(db, "not_initialized"), status_code=302)
     try:
         url, nonce = oauth.begin(db, provider, intent="login", redirect=redirect, invite_token=invite_token)

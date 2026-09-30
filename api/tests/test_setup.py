@@ -338,3 +338,26 @@ def test_only_owner_creates_projects_by_default(client, owner, owner_headers, ma
     resp = client.put("/v1/instance/settings", json={"owner_only_projects": False}, headers=owner_headers)
     assert resp.json()["owner_only_projects"] is False
     assert client.post("/v1/projects", json={"name": "Mine"}, headers=member).status_code == 200
+
+
+def test_is_initialized_is_the_single_setup_check(db, owner):
+    # A-105: every "is the instance set up?" gate goes through instance_settings.is_initialized.
+    from pathlib import Path
+
+    from app.services.instance_settings import is_initialized
+
+    assert is_initialized(db) is True
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    copies = [
+        str(p.relative_to(app_dir))
+        for p in app_dir.rglob("*.py")
+        if p.name != "instance_settings.py"
+        and ("select(User.id).limit(1)" in (text := p.read_text(encoding="utf-8")) or "select_from(User)" in text)
+    ]
+    assert copies == []
+
+
+def test_is_initialized_false_without_users(db):
+    from app.services.instance_settings import is_initialized
+
+    assert is_initialized(db) is False
