@@ -439,16 +439,32 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Roadmap
 
+The one roadmap for the project (docs link here rather than keeping their own copy).
+
 1. **Foundation** - compose stack, installer, setup wizard, auth (password/Google/GitHub + linking),
    projects, members & invites, data sources (SQL + NoSQL), schema viewer + DDL export, data browser,
    export/import. *(done)*
-2. **Operations** - `DeployerSetup.exe` + Deployer Control, host devices, backups / versions /
-   point-in-time recovery, Cloudflare remote access & custom domains. *(current)*
-3. Public data API - project-scoped REST endpoints authenticated by API keys. *(done: [docs/DATA_API.md](docs/DATA_API.md))*
-4. GitHub push-to-deploy - webhooks, build worker, per-app Caddy routing, rollbacks. *(done: [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md))*
-5. Google Cloud automation - per-install service account.
-6. MCP server for AI agents. *(done: [docs/MCP.md](docs/MCP.md))*
-7. Monitoring and hardening. *(done: [docs/MONITORING.md](docs/MONITORING.md), [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md))*
+2. **Operations** - `DeployerSetup.exe` (setup wizard + Deployer Control), host devices
+   ([docs/DEVICES.md](docs/DEVICES.md)), backups / versions / point-in-time recovery
+   ([docs/BACKUPS.md](docs/BACKUPS.md)), Cloudflare remote access & custom domains
+   ([docs/REMOTE_ACCESS.md](docs/REMOTE_ACCESS.md)). *(done)*
+3. **Public data API** - project-scoped REST endpoints authenticated by API keys. *(done: [docs/DATA_API.md](docs/DATA_API.md))*
+4. **GitHub push-to-deploy** - apps built from a Git repository by the worker (BuildKit), run as
+   containers behind Caddy, GitHub webhooks, rollbacks, app hostnames. *(done: [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md))*
+   Co-hosted apps also run on the project's co-host PCs with failover *(built, not yet exercised with
+   two real PCs: [docs/COHOSTING.md](docs/COHOSTING.md))*. Placing an app on a host device instead of
+   the main PC: later.
+5. **Google/GitHub sign-in setup** - guided setup in the dashboard (Google offers no API to create
+   OAuth clients, so it can't be automated). *(done)*
+6. **MCP server for AI agents.** *(done: [docs/MCP.md](docs/MCP.md))*
+7. **Monitoring and hardening** - host/container/API metrics (24 h in Redis) on *Settings -> Monitoring*,
+   alert rules with an https webhook, per-API-key rate limits, a security review of the
+   deploy/co-hosting/MCP code. *(done: [docs/MONITORING.md](docs/MONITORING.md),
+   [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md))* Not covered: metrics of host devices and
+   co-host PCs, email alerts, custom thresholds, a Prometheus endpoint.
+8. **Cloud hosting** on the owner's own AWS / Firebase accounts ([docs/CLOUD.md](docs/CLOUD.md)) -
+   *(current)*: C1 connections + hosting targets done; C2 cloud databases and C3 GitHub Actions
+   builds planned.
 
 ## Security
 
