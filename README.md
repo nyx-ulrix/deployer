@@ -138,7 +138,8 @@ Running it again later upgrades an existing installation and keeps your `.env` a
 `auto` (and the setup wizard) picks option 1 by default, even when Docker Desktop is installed: the
 free engine has no licensing conditions and, unlike Docker Desktop, keeps working after the PC sleeps
 and wakes. Choose `docker-desktop` or `existing` explicitly to use those instead. An existing
-installation keeps the runtime it was installed with; setup and updates never change it.
+installation keeps the runtime it was installed with; setup and updates never change it (`install.ps1`
+with a different `-Runtime` stops and points here).
 
 #### Switching runtime
 

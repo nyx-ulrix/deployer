@@ -213,6 +213,9 @@ jobs:
       - name: deployer update keeps the Apps & Features version in step
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/version.tests.ps1; exit $LASTEXITCODE
+      - name: An update never switches the runtime in place
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/runtime.tests.ps1; exit $LASTEXITCODE
       - name: install.ps1 -DryRun (read-only, prints progress markers)
         shell: powershell
         run: |

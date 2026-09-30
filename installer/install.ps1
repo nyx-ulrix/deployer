@@ -299,10 +299,16 @@ function Invoke-Preflight {
     }
 }
 
+# Databases live inside the runtime, so switching one in place would start empty and strand them (A-095).
+$script:RuntimeSwitchHelp = 'To switch runtime, export everything in the dashboard (Settings -> Export & import; keep the file and its passphrase), uninstall, install again with the new runtime and choose "Restore from export".'
+
 function Select-Runtime {
     param($State)
-    if ($Runtime -ne 'auto') { return $Runtime }
     $previous = Get-DeployerStateValue $State 'runtime'
+    if ($previous -and $Runtime -ne 'auto' -and $Runtime -ne $previous) {
+        throw "Deployer in $InstallDir runs on $previous; an update keeps it. $script:RuntimeSwitchHelp"
+    }
+    if ($Runtime -ne 'auto') { return $Runtime }
     if ($previous) {
         Write-DeployerInfo "Keeping the runtime chosen at install time: $previous"
         return $previous
@@ -554,6 +560,7 @@ function Install-DockerDesktopRuntime {
 }
 
 function Test-ExistingRuntime {
+    param([bool]$Installed)
     Write-DeployerStep 'Checking the existing Docker installation'
     if (-not (Get-DeployerDockerExe)) { throw 'No docker command found. Choose -Runtime wsl-engine or docker-desktop instead.' }
     if (-not (Test-DeployerDockerEngine -Runtime 'existing')) {
@@ -563,7 +570,8 @@ function Test-ExistingRuntime {
         Write-DeployerInfo 'The Docker engine is not running; starting Docker Desktop...'
         if (-not (Wait-DeployerDockerEngine -Runtime 'existing' -TimeoutSeconds 420 -WaitingMessage 'Waiting for Docker Desktop')) {
             if ($script:DeployerDockerNeedsWindowsRestart) {
-                throw 'Docker Desktop cannot start until Windows is restarted (a Windows issue with Docker''s socket files after sleep). Restart Windows and click Try again - or run setup again and choose "Free Docker Engine", which does not depend on Docker Desktop.'
+                $escape = if ($Installed) { "To stop it recurring, move to the Free Docker Engine. $script:RuntimeSwitchHelp" } else { 'Or run setup again and choose "Free Docker Engine", which does not depend on Docker Desktop.' }
+                throw "Docker Desktop cannot start until Windows is restarted (a Windows issue with Docker's socket files after sleep). Restart Windows and click Try again. $escape"
             }
             throw 'Docker Desktop did not start. Open it yourself, wait until it says "Engine running", then click Try again (or choose -Runtime wsl-engine).'
         }
@@ -893,7 +901,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
                 }
                 'existing' {
                     Write-InstallStep 3 'Checking your Docker'
-                    Test-ExistingRuntime
+                    Test-ExistingRuntime -Installed ($null -ne $state)
                 }
             }
             if (-not (Test-DeployerComposePlugin -Runtime $chosen)) {
