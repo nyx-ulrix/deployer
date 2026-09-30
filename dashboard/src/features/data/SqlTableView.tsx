@@ -13,6 +13,7 @@ import { Alert, EmptyState, ErrorState } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
 import { cellText, formatNumber } from "../../lib/format";
+import { clampOffset } from "../../lib/pagination";
 import { JobProgressPanel } from "../jobs/JobProgress";
 import { useProjectContext } from "../projects/project-context";
 import { RowDialog } from "./RowDialog";
@@ -96,6 +97,10 @@ export function SqlTableView({
   const pk = data?.primary_key ?? [];
   const editable = can("developer") && pk.length > 0;
   const total = data?.total ?? 0;
+  // Deleting the last row on a page leaves offset past the end: step back a page.
+  if (data && !rows.isPlaceholderData && clampOffset(offset, total, limit) !== offset) {
+    setOffset(clampOffset(offset, total, limit));
+  }
   const from = total === 0 ? 0 : offset + 1;
   const to = Math.min(offset + limit, total);
 

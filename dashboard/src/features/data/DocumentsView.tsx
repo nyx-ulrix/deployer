@@ -14,6 +14,7 @@ import { Alert, EmptyState, ErrorState } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
 import { formatNumber } from "../../lib/format";
+import { clampOffset } from "../../lib/pagination";
 import { JobProgressPanel } from "../jobs/JobProgress";
 import { useProjectContext } from "../projects/project-context";
 import { docIdString, parseJsonObject, pretty } from "./json";
@@ -85,6 +86,10 @@ export function DocumentsView({
   };
 
   const total = docs.data?.total ?? 0;
+  // Deleting the last document on a page leaves skip past the end: step back a page.
+  if (docs.data && !docs.isPlaceholderData && clampOffset(skip, total, limit) !== skip) {
+    setSkip(clampOffset(skip, total, limit));
+  }
 
   return (
     <div className="space-y-3">
