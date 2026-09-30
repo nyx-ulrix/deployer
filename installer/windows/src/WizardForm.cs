@@ -135,6 +135,7 @@ namespace DeployerSetup
         internal SystemReport report;
         internal bool checking;
         bool portEditedByUser;
+        internal bool showAdvanced; // A-198: the port sits under a collapsed "Advanced options"
         internal string installedDir;
         internal int installedPort = -1;
         internal bool updating; // A-156: this run updates or repairs an install that had finished
@@ -671,27 +672,20 @@ namespace DeployerSetup
             pageHost.Controls.Add(dirHint);
             y += dirHint.Height + ui.S(16);
 
-            TextBlock portLabel = new TextBlock(ui, "Port", labelFont, Theme.Text);
-            y += portLabel.LayoutAt(ContentLeft, y, ContentWidth) + ui.S(6);
-            pageHost.Controls.Add(portLabel);
-            portInput = new InputBox(ui, options.Port.ToString());
-            portInput.Bounds = new Rectangle(ContentLeft, y, ui.S(96), inputH);
-            portInput.Box.MaxLength = 5;
-            // An update keeps the port: moving it also needs the LAN port proxy and OAuth redirect changes Control Settings makes (A-077).
-            portInput.Box.ReadOnly = PortLocked();
-            portInput.Box.TextChanged += delegate
+            // A-198: a free port is already chosen, so the field stays out of sight unless asked for or the port has a problem.
+            portInput = null;
+            portHint = null;
+            if (showAdvanced || PortError() != null)
+                y = BuildPortField(y, labelFont, inputH);
+            else
             {
-                int p;
-                portEditedByUser = true;
-                options.Port = int.TryParse(portInput.Box.Text.Trim(), out p) ? p : -1;
-                ValidateOptions();
-            };
-            pageHost.Controls.Add(portInput);
-            portHint = new TextBlock(ui, "", ui.Font(9.5f), Theme.TextMuted);
-            portHint.SingleLine = true;
-            portHint.LayoutAt(ContentLeft + ui.S(110), y + (inputH - ui.Font(9.5f).Height) / 2, ContentWidth - ui.S(110));
-            pageHost.Controls.Add(portHint);
-            y += inputH + ui.S(14);
+                FlatButton advanced = new FlatButton(ui, "Advanced options", ButtonStyle.Link);
+                advanced.FontPoints = 10f;
+                advanced.Bounds = new Rectangle(ContentLeft, y, Ui.MeasureWidth(advanced.Text, ui.SemiBold(10f)) + ui.S(6), ui.S(24));
+                advanced.Click += delegate { showAdvanced = true; Rebuild(); };
+                pageHost.Controls.Add(advanced);
+                y += ui.S(24) + ui.S(14);
+            }
 
             Rule rule = new Rule(Theme.Border);
             rule.Bounds = new Rectangle(ContentLeft, y, ContentWidth, Math.Max(1, ui.S(1)));
@@ -726,6 +720,31 @@ namespace DeployerSetup
             ValidateOptions();
         }
 
+        int BuildPortField(int y, Font labelFont, int inputH)
+        {
+            TextBlock portLabel = new TextBlock(ui, "Web address number (port) – leave as is unless setup says it's taken", labelFont, Theme.Text);
+            y += portLabel.LayoutAt(ContentLeft, y, ContentWidth) + ui.S(6);
+            pageHost.Controls.Add(portLabel);
+            portInput = new InputBox(ui, options.Port.ToString());
+            portInput.Bounds = new Rectangle(ContentLeft, y, ui.S(96), inputH);
+            portInput.Box.MaxLength = 5;
+            // An update keeps the port: moving it also needs the LAN port proxy and OAuth redirect changes Control Settings makes (A-077).
+            portInput.Box.ReadOnly = PortLocked();
+            portInput.Box.TextChanged += delegate
+            {
+                int p;
+                portEditedByUser = true;
+                options.Port = int.TryParse(portInput.Box.Text.Trim(), out p) ? p : -1;
+                ValidateOptions();
+            };
+            pageHost.Controls.Add(portInput);
+            portHint = new TextBlock(ui, "", ui.Font(9.5f), Theme.TextMuted);
+            portHint.SingleLine = true;
+            portHint.LayoutAt(ContentLeft + ui.S(110), y + (inputH - ui.Font(9.5f).Height) / 2, ContentWidth - ui.S(110));
+            pageHost.Controls.Add(portHint);
+            return y + inputH + ui.S(14);
+        }
+
         int Toggle(int y, string title, string description, bool value, Action<bool> set)
         {
             ToggleRow row = new ToggleRow(ui, title, description, value);
@@ -755,6 +774,18 @@ namespace DeployerSetup
                     chosen = Path.Combine(chosen.Length == 2 ? chosen + "\\" : chosen, "Deployer");
                 dirInput.Box.Text = chosen;
             }
+        }
+
+        string PortError()
+        {
+            int port = options.Port;
+            if (port < 1024 || port > 65535)
+                return "Enter a number from 1024 to 65535.";
+            if (Ports.IsAppPort(port))
+                return "Ports " + Ports.AppRange + " are kept for deployed apps. Try " + Ports.SuggestFree(port) + ".";
+            if (port != installedPort && !Ports.IsFree(port))
+                return "Port " + port + " is already used by another program. Try " + Ports.SuggestFree(port) + ".";
+            return null;
         }
 
         internal bool ValidateOptions()
@@ -793,17 +824,10 @@ namespace DeployerSetup
             }
             if (dirInput != null) dirInput.Invalid = dirError != null;
 
-            string portError = null;
-            int port = options.Port;
-            if (port < 1024 || port > 65535)
-                portError = "Enter a number from 1024 to 65535.";
-            else if (Ports.IsAppPort(port))
-                portError = "Ports " + Ports.AppRange + " are kept for deployed apps. Try " + Ports.SuggestFree(port) + ".";
-            else if (port != installedPort && !Ports.IsFree(port))
-                portError = "Port " + port + " is already used by another program. Try " + Ports.SuggestFree(port) + ".";
+            string portError = PortError();
             if (portHint != null)
             {
-                portHint.Text = portError ?? "Deployer will open at http://localhost:" + port;
+                portHint.Text = portError ?? "Deployer will open at http://localhost:" + options.Port;
                 portHint.TextColor = portError != null ? Theme.Danger : Theme.TextMuted;
                 portHint.Invalidate();
             }

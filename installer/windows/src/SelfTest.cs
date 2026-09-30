@@ -191,13 +191,31 @@ namespace DeployerSetup
                   "setup from an older exe does not downgrade what 'deployer update' installed (A-074)");
 
             using (WizardForm up = UpdateOptionsSample(1f))
+            {
+                up.showAdvanced = true;
+                up.Rebuild();
                 Check(up.portInput.Box.ReadOnly && CountToggles(up) == 1,
                       "an update locks the port and leaves only the shortcut toggle; the rest is in Control Settings (A-077)");
+            }
             using (WizardForm up = UpdateOptionsSample(1f))
             {
                 up.installedPort = up.options.Port = 8150;
                 up.Rebuild();
                 Check(!up.portInput.Box.ReadOnly, "an update from an app-range port (before A-064) can still move the port (A-077)");
+            }
+
+            using (WizardForm hidden = Wizard(1f, false), shown = Wizard(1f, false), bad = Wizard(1f, false))
+            {
+                hidden.page = shown.page = bad.page = WizardPage.Options;
+                shown.showAdvanced = true;
+                bad.options.Port = 80;
+                hidden.Rebuild();
+                shown.Rebuild();
+                bad.Rebuild();
+                Check(hidden.portInput == null && !AllText(hidden).Contains("(port)") && AllText(hidden).Contains("Advanced options")
+                      && shown.portInput != null && AllText(shown).Contains("Web address number (port)") && AllText(shown).Contains("unless setup says it's taken")
+                      && bad.portInput != null && bad.portInput.Invalid && !bad.ValidateOptions(),
+                      "the port sits under Advanced options, which opens by itself when the port has a problem (A-198)");
             }
 
             using (WizardForm up = Wizard(1f, false))
@@ -554,6 +572,11 @@ namespace DeployerSetup
             w.page = WizardPage.Options;
             w.Rebuild();
             Save(w, dir, "wizard-4-options");
+            w = Wizard(scale, false);
+            w.showAdvanced = true;
+            w.page = WizardPage.Options;
+            w.Rebuild();
+            Save(w, dir, "wizard-4-options-advanced");
             Save(UpdateOptionsSample(scale), dir, "wizard-4-options-update");
 
             w = InstallSample(scale, false);
