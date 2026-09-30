@@ -2,11 +2,13 @@
 
 This is the only table that stores query text; audit logs keep counts only. Rows are insert-only,
 keep at most STORED_TEXT_LIMIT chars of text, and are pruned by the worker (`prune`: older than
-RETENTION_DAYS, or beyond MAX_RUNS_PER_PROJECT) and per project on insert (A-031).
+RETENTION_DAYS, or beyond MAX_RUNS_PER_PROJECT) and per project on insert (A-031). Password literals
+are masked before the text is stored (A-119).
 """
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
 
 from sqlalchemy import and_, delete, func, or_, select
@@ -21,6 +23,27 @@ MAX_RUNS_PER_PROJECT = 10_000
 LIST_TEXT_LIMIT = 2_000
 STORED_TEXT_LIMIT = 20_000  # A-031: requests may carry 200 000 chars; the log keeps the head
 PRUNE_SLACK = 500  # record_run trims a project once it is this far over MAX_RUNS_PER_PROJECT
+
+REDACTED = "'***'"
+_LIT = r"""(?:'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*")"""
+# A-119: the literal after each prefix is a password: MySQL/MariaDB `IDENTIFIED [WITH plugin] BY|AS`,
+# `SET PASSWORD ... =`, `PASSWORD('x')`; PostgreSQL `[ENCRYPTED] PASSWORD 'x'`; Mongo `pwd: "x"` and
+# `changeUserPassword("user", "x")`. ponytail: literal patterns only, a password built by an expression
+# or dollar-quoted ($$x$$) is kept; add a SQL tokenizer if that shows up.
+_SECRET = re.compile(
+    r"(\bIDENTIFIED\s+(?:WITH\s+\S+\s+)?(?:BY|AS)\s+(?:PASSWORD\s+)?"
+    r"|\bSET\s+PASSWORD\b[^=;]*=\s*(?:PASSWORD\s*\(\s*)?"
+    r"|(?<![\"'])\bPASSWORD\s*(?:\(\s*)?"
+    r"|\bpwd[\"']?\s*:\s*"
+    rf"|\bchangeUserPassword\s*\(\s*{_LIT}\s*,\s*)"
+    rf"{_LIT}",
+    re.IGNORECASE,
+)
+
+
+def redact(text: str) -> str:
+    """`text` with every password literal replaced by REDACTED."""
+    return _SECRET.sub(lambda m: m.group(1) + REDACTED, text)
 
 
 def _outcome(result: dict | None, error: ApiError | None) -> tuple[str, int, int, int | None, str | None]:
@@ -79,7 +102,7 @@ def record_run(
         engine=ds.engine,
         user_id=user.id,
         user_email=user.email,
-        query_text=query_text[:STORED_TEXT_LIMIT],
+        query_text=redact(query_text)[:STORED_TEXT_LIMIT],
         status=status,
         statements=statements,
         rows=rows,

@@ -413,7 +413,9 @@ function VersionsSection({
 function HistorySection({ project, source, onInsert }: { project: Project; source: DataSource; onInsert: (text: string) => void }) {
   const { can } = useProjectContext();
   const toast = useToast();
+  const queryClient = useQueryClient();
   const [everyone, setEveryone] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const scope = everyone && can("admin") ? "all" : "me";
   const log = useQueryLog(project.id, source.id, scope);
   const runs = log.data?.pages.flatMap((p) => p.runs) ?? [];
@@ -427,6 +429,17 @@ function HistorySection({ project, source, onInsert }: { project: Project; sourc
       toast.error(errorMessage(e), "Couldn't load that run");
     }
   };
+
+  // A-119: the log keeps what was typed for 90 days; owners can wipe it (every member, every source).
+  const clear = useMutation({
+    mutationFn: () => api.queryLog.clear(project.id, new Date().toISOString()),
+    onSuccess: ({ deleted }) => {
+      setClearing(false);
+      toast.success(`Deleted ${formatNumber(deleted)} logged ${deleted === 1 ? "run" : "runs"}`);
+      void queryClient.invalidateQueries({ queryKey: ["projects", project.id, "query-log"] });
+    },
+    onError: (e) => toast.error(errorMessage(e), "Couldn't clear the query history"),
+  });
 
   return (
     <section className={section} aria-label="History">
@@ -442,6 +455,11 @@ function HistorySection({ project, source, onInsert }: { project: Project; sourc
             className={cn(everyone && "bg-accent-soft text-accent")}
           >
             <Users className="size-3.5" />
+          </Button>
+        )}
+        {can("owner") && (
+          <Button size="icon-sm" variant="ghost" aria-label="Clear query history" title="Clear query history" onClick={() => setClearing(true)}>
+            <Trash2 className="size-3.5" />
           </Button>
         )}
       </SectionHeader>
@@ -484,6 +502,15 @@ function HistorySection({ project, source, onInsert }: { project: Project; sourc
           </Button>
         )}
       </div>
+      <ConfirmDialog
+        open={clearing}
+        onClose={() => setClearing(false)}
+        onConfirm={() => clear.mutate()}
+        title="Clear query history?"
+        description={`Deletes the logged text of every query run in ${project.name}, by every member and on every data source. Saved snippets are kept.`}
+        confirmLabel="Clear history"
+        loading={clear.isPending}
+      />
     </section>
   );
 }

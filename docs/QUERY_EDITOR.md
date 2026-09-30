@@ -8,7 +8,7 @@ Supabase-style SQL editor that works for both SQL and NoSQL data sources, with *
 
 | Table | Columns |
 |---|---|
-| `query_runs` | `id`, `project_id` (FK cascade), `data_source_id` (String(36), no FK: keep after source deletion), `source_name`, `kind` (`sql`/`nosql`), `engine`, `user_id` (String(36)), `user_email` (snapshot), `query_text` (Text, the first 20 000 chars as sent; requests allow 200 000), `status` (`ok`/`error`/`timeout`/`refused`), `statements` (int), `rows` (int, rows returned or documents), `affected_rows` (int, nullable), `duration_ms` (int), `error_message` (Text, nullable, redacted), `read_only` (bool), `layout` (`terminal`/`editor`/`api`), `created_at` (indexed) |
+| `query_runs` | `id`, `project_id` (FK cascade), `data_source_id` (String(36), no FK: keep after source deletion), `source_name`, `kind` (`sql`/`nosql`), `engine`, `user_id` (String(36)), `user_email` (snapshot), `query_text` (Text, the first 20 000 chars as sent, with password literals such as `IDENTIFIED BY '…'`, `PASSWORD '…'`, Mongo `pwd: "…"` masked to `'***'`; requests allow 200 000), `status` (`ok`/`error`/`timeout`/`refused`), `statements` (int), `rows` (int, rows returned or documents), `affected_rows` (int, nullable), `duration_ms` (int), `error_message` (Text, nullable, redacted), `read_only` (bool), `layout` (`terminal`/`editor`/`api`), `created_at` (indexed) |
 | `saved_queries` | `id`, `project_id` (FK cascade), `data_source_id` (nullable, SET NULL), `owner_id` (FK users), `name` (120), `folder` (120, nullable), `query_text` (Text), `kind` (`sql`/`nosql`/`any`), `version` (int, current version number; migration `0004`), `created_at`, `updated_at` (indexed by project) |
 | `saved_query_versions` (migration `0004_saved_query_versions`) | `id`, `saved_query_id` (FK cascade), `version` (int, unique per saved query, indexed), `query_text` (Text), `author_id` (String(36), snapshot), `author_email` (snapshot), `message` (200, nullable), `created_at`. Append-only; `0004` backfills one version-1 row per existing saved query (author = owner, message "Imported from before version history"). |
 
@@ -75,7 +75,8 @@ Three-pane layout under the Query tab when the mode is **Editor**:
   typing `folder/name` when saving; rename, move, delete via a row menu; "New query" button); below
   it **History**: this user's recent runs for the selected source (from `/query-log?user=me`), each
   showing the first line, status dot, duration and relative time; click loads it into a new tab.
-  Admins get a "Show everyone's" toggle. Below history: **Schema** tree (tables/collections → columns)
+  Admins get a "Show everyone's" toggle; owners get **Clear query history** (trash icon, confirm), which
+  deletes the whole project's log (`DELETE /query-log?before=now`). Below history: **Schema** tree (tables/collections → columns)
   with click-to-insert, from the existing schema endpoint.
 - **Tabs** across the top of the editor: one per open snippet or untitled query (`Untitled 1`, …),
   unsaved dot, close button, middle-click close; tabs and their contents persist per project in

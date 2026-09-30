@@ -225,3 +225,32 @@ def test_record_run_caps_text_and_trims_the_project(db, console, make_user, monk
     assert len(runs(db)) == 5  # 3 kept + 1 slack, then this insert
     add()
     assert len(runs(db)) == 4  # trimmed to 3 before the new row
+
+
+@pytest.mark.parametrize(
+    ("text", "stored"),
+    [
+        (
+            "CREATE USER 'a'@'%' IDENTIFIED BY 'typed''pw'; SELECT 1",
+            "CREATE USER 'a'@'%' IDENTIFIED BY '***'; SELECT 1",
+        ),
+        (
+            'ALTER USER b IDENTIFIED WITH caching_sha2_password BY "pw"',
+            "ALTER USER b IDENTIFIED WITH caching_sha2_password BY '***'",
+        ),
+        ("SET PASSWORD FOR 'a'@'h' = PASSWORD('pw')", "SET PASSWORD FOR 'a'@'h' = PASSWORD('***')"),
+        ("CREATE ROLE r LOGIN ENCRYPTED PASSWORD 'pw'", "CREATE ROLE r LOGIN ENCRYPTED PASSWORD '***'"),
+        ("db.createUser({user: 'u', pwd: 'pw', roles: []})", "db.createUser({user: 'u', pwd: '***', roles: []})"),
+        ("db.changeUserPassword('u', 'pw')", "db.changeUserPassword('u', '***')"),
+        ("SELECT password FROM t WHERE password = 'x'", "SELECT password FROM t WHERE password = 'x'"),
+    ],
+)
+def test_redact(text, stored):
+    assert query_log.redact(text) == stored
+
+
+def test_logged_text_masks_passwords(client, db, console):
+    """A-119: a typed password never reaches query_runs (nor its backups)."""
+    client.post(console["url"], json={"query": "CREATE USER x IDENTIFIED BY 'typed-pw'"}, headers=console["owner"])
+    [run] = runs(db)
+    assert run.query_text == "CREATE USER x IDENTIFIED BY '***'"
