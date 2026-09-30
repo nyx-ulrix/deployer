@@ -445,6 +445,26 @@ def test_quick_mode(client, owner_headers, state_dir):
     assert desired(state_dir) == {"mode": "off"}
 
 
+def test_quick_public_url_follows_a_restarted_tunnel(client, owner_headers, state_dir, db, set_setting, monkeypatch):
+    # A-136: after a restart the quick tunnel has a new hostname; public_url (and webhooks) follow it.
+    resyncs = []
+    monkeypatch.setattr("app.services.deployments.resync_webhooks", lambda s: resyncs.append(1) or [])
+    client.post(f"{BASE}/quick", json={"enabled": True}, headers=owner_headers)
+    set_setting("public_url", "https://old-words.trycloudflare.com")
+    write_status(state_dir, mode="quick", running=True, quick_url="https://old-words.trycloudflare.com")
+    assert ra.follow_quick_url(db) is False  # unchanged
+    write_status(state_dir, mode="quick", running=True, quick_url="https://new-words.trycloudflare.com/")
+    assert ra.follow_quick_url(db) is True
+    assert client.get(BASE, headers=owner_headers).json()["public_url"] == "https://new-words.trycloudflare.com"
+    assert resyncs == [1]
+    assert db.query(AuditLog).filter_by(action="remote_access.public_url_follow").count() == 1
+
+    # A public URL the owner chose elsewhere is left alone.
+    set_setting("public_url", "http://localhost:8080")
+    write_status(state_dir, mode="quick", running=True, quick_url="https://third-words.trycloudflare.com")
+    assert ra.follow_quick_url(db) is False and resyncs == [1]
+
+
 def test_quick_then_back_to_cloudflare(client, owner_headers, fake_cf, state_dir):
     link(client, owner_headers)
     client.post(f"{BASE}/quick", json={"enabled": True}, headers=owner_headers)

@@ -904,5 +904,27 @@ def switch_public_url(
     return previous, new
 
 
+def follow_quick_url(db: Session) -> bool:
+    """A-136: a quick tunnel gets a new random hostname every time it (re)starts. While `public_url` is a
+    quick-tunnel URL, point it (and the apps' GitHub webhooks) at the current one. Run by the worker's
+    scheduler; commits. Returns True when it changed."""
+    host = _public_host(db)
+    if mode(db) != "quick" or not host.endswith(QUICK_SUFFIX):
+        return False
+    _connector, quick_url = connector_state(db)
+    new_host = (urlsplit(quick_url or "").hostname or "").lower()
+    if not new_host.endswith(QUICK_SUFFIX) or new_host == host:
+        return False
+    from app.services import deployments  # deployments imports this module
+
+    previous, new = public_url(db), f"https://{new_host}"
+    set_value(db, "public_url", new)
+    audit.record(db, "remote_access.public_url_follow", previous=previous, public_url=new)
+    for warning in deployments.resync_webhooks(db):
+        log.warning("Webhook did not follow the new quick-tunnel URL: %s", warning)
+    db.commit()
+    return True
+
+
 def oauth_callbacks(db: Session) -> dict:
     return {"google": oauth_callback_url(db, "google"), "github": oauth_callback_url(db, "github")}

@@ -232,7 +232,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 
 **Deploys / monitoring / remote access**
 - [x] A-135 **[LOW][security]** App environment variables are merged into the worker's docker CLI process environment - `api/app/services/app_runner.py:218-223` - a 0600 `--env-file`; reject DOCKER_*/LD_*/PATH.
-- [ ] A-136 **[LOW][usability]** A quick-tunnel public URL goes stale after every restart - `api/app/services/remote_access.py:850-855` - auto-update it, or show a banner.
+- [x] A-136 **[LOW][usability]** A quick-tunnel public URL goes stale after every restart - `api/app/services/remote_access.py:850-855` - auto-update it, or show a banner.
 - [ ] A-137 **[LOW][bug]** A failed restore or verify raises a 24 h critical "backup failed" alert with jargon - `api/app/services/alerts.py:102-133` - limit to snapshot/archive types; plain words. (not verified)
 - [ ] A-138 **[LOW][security]** GitHub webhook: rate limit counted before the signature check; sync DB calls in an async route - `api/app/routers/apps.py:751-767` - verify first; run_in_threadpool. (not verified)
 - [ ] A-139 **[LOW][security]** `docker run` can fall back to pulling deployer-app/<id> from Docker Hub - `api/app/services/app_runner.py:185-223` - `--pull never` and a friendly error. (not verified)

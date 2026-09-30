@@ -8,7 +8,9 @@ Threads started by `start_background_tasks()`:
   The leader fails stale `running` jobs, re-dispatches lost `queued` jobs and enqueues due work
   (`backups.scheduler_tick`: snapshots per policy, log archiving - MariaDB 5 min / MongoDB 1 min -,
   hourly pruning incl. purging sources deleted > 30 days ago, weekly verification, daily platform
-  snapshot) and once a day prunes the query log, audit rows > 90 days and expired refresh tokens.
+  snapshot), points a quick-tunnel `public_url` at the tunnel's current hostname after a restart
+  (`remote_access.follow_quick_url`) and once a day prunes the query log, audit rows > 90 days and
+  expired refresh tokens.
 - `mongo-replset`: initiates the managed MongoDB single-node replica set on first start/upgrade.
 - `source-sync`: while this worker leads the scheduler, a co-hosting sync round every 2 s for each
   syncing database copy (docs/COHOSTING.md, `source_sync.sync_loop`).
@@ -137,9 +139,11 @@ _last_alerts = float("-inf")
 
 def scheduler_tick() -> None:
     global _last_query_log_prune, _last_alerts
-    from app.services import alerts, audit, backups, cohost_apps, deployments, query_log
+    from app.services import alerts, audit, backups, cohost_apps, deployments, query_log, remote_access
 
     jobs.recover_stale()
+    with jobs.get_sessionmaker()() as session:
+        remote_access.follow_quick_url(session)  # A-136: a restarted quick tunnel has a new hostname
     jobs.redispatch_queued()
     backups.scheduler_tick(jobs.get_sessionmaker())
     deployments.scheduler_tick(jobs.get_sessionmaker())

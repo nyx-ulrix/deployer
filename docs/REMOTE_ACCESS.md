@@ -80,6 +80,11 @@ https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%
    domain and mode `cloudflare` (`409 domain_not_active` / `tunnel_not_active`); `{quick:true}`
    requires a running quick tunnel with a known URL (`409 quick_tunnel_not_ready`); `{local:true}`
    sets `http://localhost:<port>`.
+   A quick tunnel gets a new random hostname every time it restarts (reboot, sidecar restart), so
+   while `public_url` is a `trycloudflare.com` URL and the mode is `quick`, the worker's scheduler
+   switches it to the current quick URL within ~15 s and re-points the apps' GitHub webhooks (audit
+   action `remote_access.public_url_follow`). OAuth callback URLs must still be updated by hand, so
+   use a Cloudflare hostname for anything long-lived.
 5. `unlink`: optionally delete Deployer's DNS records (only the records it created) and the tunnel
    (the connector is stopped and stale connections cleaned up first), then clear all `cloudflare_*`
    settings and dashboard domains and stop the connector. If a Cloudflare call fails nothing is
