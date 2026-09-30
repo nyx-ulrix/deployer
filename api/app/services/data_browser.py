@@ -20,7 +20,7 @@ from bson.errors import InvalidId
 from pymongo import ReturnDocument
 from pymongo.errors import PyMongoError
 from sqlalchemy import Engine, MetaData, Table, and_, asc, desc, func, select
-from sqlalchemy.dialects import mysql
+from sqlalchemy.dialects import mysql, postgresql
 from sqlalchemy.exc import NoSuchTableError, SQLAlchemyError
 
 from app.errors import ApiError
@@ -84,6 +84,8 @@ def _is_bool_column(column: Any) -> bool:
 
 def _coerce_for_column(column: Any, value: Any) -> Any:
     value = decode_input(value)
+    if isinstance(value, bool) and isinstance(column.type, postgresql.BIT):
+        return "1" if value else "0"  # the yes/no checkbox sends a boolean; PostgreSQL has no bool -> bit cast
     if not isinstance(value, str):
         return value
     if _is_bool_column(column) and value.strip().lower() in _BOOL_TEXT:
@@ -138,6 +140,8 @@ def _db_error(exc: SQLAlchemyError) -> ApiError:
         errno, raw = args[0], f"{args[1]} (error {args[0]})"
     else:
         errno, raw = _SQLSTATE_ERRNO.get(getattr(orig, "sqlstate", None)), str(orig)
+        if errno == 1452 and raw.startswith("update or delete"):  # PostgreSQL uses 23503 for both directions
+            errno = 1451
     raw = raw[:1000]
     if errno not in _PLAIN_ERRORS:
         return ApiError(400, "query_failed", raw)

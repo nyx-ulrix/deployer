@@ -5,7 +5,7 @@ import pymysql
 import pytest
 from bson import ObjectId
 from sqlalchemy import Boolean, Column, MetaData, Table, create_engine
-from sqlalchemy.dialects import mysql
+from sqlalchemy.dialects import mysql, postgresql
 from sqlalchemy.exc import IntegrityError
 
 from app.errors import ApiError
@@ -140,6 +140,10 @@ def test_yes_no_text_is_coerced_for_boolean_columns(engine):
         assert b._coerce_for_column(t.c.b, text) is want
     assert b._coerce_for_column(t.c.n, "true") == "true"  # a real TINYINT keeps the database's own check
     assert b._coerce_for_column(t.c.flag, "maybe") == "maybe"
+    # The checkbox sends a boolean; PostgreSQL BIT(1) only takes it as bit text.
+    bits = Table("bits", MetaData(), Column("pg", postgresql.BIT(1)), Column("my", mysql.BIT(1)))
+    assert b._coerce_for_column(bits.c.pg, True) == "1" and b._coerce_for_column(bits.c.pg, False) == "0"
+    assert b._coerce_for_column(bits.c.my, True) is True
 
     with engine.begin() as conn:
         conn.exec_driver_sql("CREATE TABLE flags (id INTEGER PRIMARY KEY, active BOOLEAN NOT NULL)")
@@ -159,6 +163,12 @@ def test_driver_errors_become_plain_messages(errno, text, expected):
     err = b._db_error(IntegrityError("INSERT ...", {}, pymysql.err.IntegrityError(errno, text)))
     assert err.code == "query_failed" and expected in err.message and str(errno) not in err.message
     assert err.details == {"errno": errno, "detail": f"{text} (error {errno})"}
+
+    class PgError(Exception):
+        sqlstate = "23503"
+
+    pg = PgError('update or delete on table "users" violates foreign key constraint "fk" on table "orders"')
+    assert "still point to this row" in b._db_error(IntegrityError("DELETE ...", {}, pg)).message
 
     unknown = b._db_error(IntegrityError("INSERT ...", {}, pymysql.err.OperationalError(1205, "Lock wait timeout")))
     assert unknown.message == "Lock wait timeout (error 1205)" and unknown.details == {}
