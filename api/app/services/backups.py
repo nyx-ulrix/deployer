@@ -12,7 +12,7 @@ Hooks for host devices
   server). Used for policy copies (`copy_to_primary` / `copy_to_device_id`) and to stage artifacts on
   another host for cross-host restores. Without a hook, copies stay `pending`.
 
-Job types (all `runs_on="primary"`): backup.snapshot, backup.archive_logs, backup.restore,
+Job types (all run on the main server): backup.snapshot, backup.archive_logs, backup.restore,
 backup.verify, backup.prune, backup.platform_snapshot, backup.copy, source.finalize_delete,
 source.undelete.
 """

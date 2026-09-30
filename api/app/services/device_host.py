@@ -621,12 +621,6 @@ def m_transfer_download(params: dict, ctx: CallContext) -> dict:
     return download_file(ctx, params.get("transfer_id"), path)
 
 
-def m_storage_delete(params: dict, ctx: CallContext) -> dict:
-    path = resolve_local_ref(params.get("local_ref"))
-    path.unlink(missing_ok=True)
-    return {}
-
-
 def m_detach(params: dict, ctx: CallContext) -> dict:
     session = get_sessionmaker()()
     try:
@@ -645,10 +639,6 @@ def m_detach(params: dict, ctx: CallContext) -> dict:
 
 def m_ping(params: dict, ctx: CallContext) -> dict:
     return {"pong": True, "time": time.time(), "version": __version__}
-
-
-def m_status(params: dict, ctx: CallContext) -> dict:
-    return {"hosted_sources": _with_session(lambda s: hosted_summary(s)), "metrics": collect_metrics()}
 
 
 # --- co-hosting sync (docs/COHOSTING.md): only databases this device hosts ------------------------
@@ -739,33 +729,16 @@ def m_sync_mongo_apply(params: dict, ctx: CallContext) -> dict:
     return {"outcomes": source_sync.apply_local("nosql", database, changes, log_bin=False)}
 
 
-# Extra job types a device can run locally (`jobs.run`): type -> fn(job_id, params, ctx) -> result.
-JOB_HANDLERS: dict[str, Callable[[str, dict, CallContext], Any]] = {}
-
-
-def register_job_handler(job_type: str, handler: Callable[[str, dict, CallContext], Any]) -> None:
-    JOB_HANDLERS[job_type] = handler
-
-
 def m_jobs_run(params: dict, ctx: CallContext) -> Any:
-    """`executor.<method>` backup calls and `runs_on="host"` jobs (see device_executor)."""
+    """`executor.<method>` backup calls (see device_executor)."""
     job_type = params.get("type")
     if not isinstance(job_type, str) or not job_type:
         raise ApiError(422, "validation_error", "type is required")
     job_id = str(params.get("job_id") or "")[:64]
     job_params = params.get("params") if isinstance(params.get("params"), dict) else {}
-    handler = JOB_HANDLERS.get(job_type)
-    if handler is not None:
-        return handler(job_id, job_params, ctx)
     from app.services import device_executor
 
-    return device_executor.run_device_job(
-        job_id,
-        job_type,
-        job_params,
-        ctx,
-        {"project_id": params.get("project_id"), "data_source_id": params.get("data_source_id")},
-    )
+    return device_executor.run_device_job(job_id, job_type, job_params, ctx)
 
 
 METHODS: dict[str, Callable[[dict, CallContext], Any]] = {
@@ -778,10 +751,8 @@ METHODS: dict[str, Callable[[dict, CallContext], Any]] = {
     "jobs.run": m_jobs_run,
     "transfer.upload": m_transfer_upload,
     "transfer.download": m_transfer_download,
-    "storage.delete": m_storage_delete,
     "device.detach": m_detach,
     "device.ping": m_ping,
-    "device.status": m_status,
     "sync.position": m_sync_position,
     "sync.sql_changes": m_sync_sql_changes,
     "sync.sql_apply": m_sync_sql_apply,

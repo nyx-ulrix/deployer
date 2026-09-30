@@ -237,6 +237,19 @@ def test_executor_calls_guarded(set_setting):
     assert exc.value.code == "unsupported_job"
 
 
+def test_unused_rpcs_are_gone(tmp_path, monkeypatch):
+    """A-131: storage.delete could delete any file in the device store; it and device.status had no caller."""
+    monkeypatch.setenv("DEVICE_STORE_DIR", str(tmp_path))
+    kept = tmp_path / "src" / "snapshots" / "a.bin"
+    kept.parent.mkdir(parents=True)
+    kept.write_bytes(b"x")
+    for method in ("storage.delete", "device.status"):
+        with pytest.raises(ApiError) as exc:
+            device_host.dispatch(method, {"local_ref": "src/snapshots/a.bin"}, device_host.CallContext())
+        assert exc.value.code == "unknown_method"
+    assert kept.exists()
+
+
 def test_local_ref_traversal(tmp_path, monkeypatch):
     monkeypatch.setenv("DEVICE_STORE_DIR", str(tmp_path))
     assert device_host.resolve_local_ref("src/snapshots/a.bin") == (tmp_path / "src/snapshots/a.bin").resolve()

@@ -1,4 +1,4 @@
-"""Job queue, runner, cancellation, crash recovery, remote dispatch, worker leadership and the jobs API."""
+"""Job queue, runner, cancellation, crash recovery, device jobs, worker leadership and the jobs API."""
 
 import threading
 from datetime import timedelta
@@ -31,16 +31,10 @@ def _cancel(ctx: jobs.JobContext):
     return {"unreachable": True}
 
 
-@jobs.job_handler("test.host", runs_on="host")
-def _host(ctx: jobs.JobContext):
-    return {"ran": "locally"}
-
-
 @pytest.fixture(autouse=True)
 def _reset():
     CALLS.clear()
     yield
-    executors.register_remote_job_dispatcher(None)
 
 
 def _enqueue(db, type_, **kw):
@@ -142,34 +136,22 @@ def test_recover_stale_and_redispatch(db, fake_redis):
     assert jobs.redispatch_queued() == 0  # already in the queue
 
 
-def test_device_jobs_go_to_the_remote_dispatcher(db, make_user):
+def test_device_jobs_run_on_the_main_server(db, make_user):
+    """A-131: jobs for a host device run their handler here; there is no remote job dispatch."""
     from app.models import Device
 
     owner = make_user()
     device = Device(name="PC", owner_id=owner.id, roles=["database_host"], token_hash="0" * 64)
     db.add(device)
     db.commit()
-    host_job = _enqueue(db, "test.host", device_id=device.id)
     unknown_job = _enqueue(db, "device.custom", device_id=device.id)
-    primary_job = _enqueue(db, "test.ok", device_id=device.id, params={"value": 1})
+    local_job = _enqueue(db, "test.ok", device_id=device.id, params={"value": 1})
 
-    # Without the host-devices code: fail cleanly.
-    assert jobs.run_job(host_job.id) == "failed"
+    assert jobs.run_job(unknown_job.id) == "failed"
+    assert jobs.run_job(local_job.id) == "succeeded"
+    assert CALLS == [("ok", {"value": 1})]
     db.expire_all()
-    assert db.get(Job, host_job.id).error == "host devices not available"
-
-    seen = []
-
-    def dispatcher(job):
-        seen.append(job.id)
-        jobs.finish(job.id, status="succeeded", result={"remote": True})
-
-    executors.register_remote_job_dispatcher(dispatcher)
-    assert jobs.run_job(unknown_job.id) == "succeeded"
-    assert jobs.run_job(primary_job.id) == "succeeded"  # runs_on="primary" handlers stay local
-    assert seen == [unknown_job.id] and CALLS == [("ok", {"value": 1})]
-    db.expire_all()
-    assert db.get(Job, unknown_job.id).result == {"remote": True}
+    assert db.get(Job, unknown_job.id).error == "Unknown job type: device.custom"
 
 
 def test_executor_for_routes_devices():

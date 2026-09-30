@@ -240,7 +240,7 @@ dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (pub
 
 ## Jobs
 
-- `app.deploy` (`runs_on=primary`, params `{deployment_id}`): clone (`git clone --depth 1 --branch
+- `app.deploy` (params `{deployment_id}`): clone (`git clone --depth 1 --branch
   <branch> <url>` with the token in the URL via a credential helper env, never argv, never the log;
   or `git fetch` of a given sha for webhook deploys), record `commit_sha`/`commit_message`, build,
   run, health wait, route, stop old, prune images. Progress messages: `Cloning`, `Building`,

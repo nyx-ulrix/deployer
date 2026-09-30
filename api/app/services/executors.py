@@ -231,7 +231,6 @@ class LocalExecutor:
 
 _local = LocalExecutor()
 _device_factory: Callable[[str], BackupExecutor] | None = None
-_remote_job_dispatcher: Callable[[Any], None] | None = None
 
 
 def local_executor() -> LocalExecutor:
@@ -242,14 +241,6 @@ def register_device_executor_factory(factory: Callable[[str], BackupExecutor] | 
     """`factory(device_id) -> BackupExecutor` for databases hosted on a device."""
     global _device_factory
     _device_factory = factory
-
-
-def register_remote_job_dispatcher(fn: Callable[[Any], None] | None) -> None:
-    """`fn(job: models.Job)`: run a job on its device. It should block until the device finished and
-    record the outcome with `jobs.finish(job.id, status=..., result=..., error=...)` (progress via
-    `jobs.update_progress`). Raising marks the job failed."""
-    global _remote_job_dispatcher
-    _remote_job_dispatcher = fn
 
 
 class DeviceExecutorUnavailable(RuntimeError):
@@ -267,12 +258,6 @@ def executor_for(data_source_or_device_id: Any) -> BackupExecutor:
     if _device_factory is None:
         raise DeviceExecutorUnavailable("host devices not available")
     return _device_factory(device_id)
-
-
-def dispatch_remote_job(job: Any) -> None:
-    if _remote_job_dispatcher is None:
-        raise NotImplementedError("host devices not available")
-    _remote_job_dispatcher(job)
 
 
 # ---------------------------------------------------------------------------------------------

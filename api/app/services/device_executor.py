@@ -1,5 +1,5 @@
 """Backups on host devices: the `BackupExecutor` for device-hosted databases (docs/BACKUPS.md,
-docs/DEVICES.md) plus the remote job dispatcher and the device-side job runner.
+docs/DEVICES.md) plus the device-side runner of its calls.
 
 Primary side (`register()`, called at API startup by `routers/devices.py` and at import of the
 `device_worker` worker plugin - never at import of this module):
@@ -9,12 +9,9 @@ Primary side (`register()`, called at API startup by `routers/devices.py` and at
   own LocalExecutor (progress is streamed back). Artifact bytes move through device transfers:
   `open_artifact` pulls a file from the device (`transfer.upload`), `put_artifact` pushes one
   (`transfer.download`).
-- `dispatch_remote_job(job)` runs a `runs_on="host"` job on the job's device and records the
-  outcome with `jobs.finish`.
 
-Device side (`run_device_job`, used by `device_host` for `jobs.run`): executor calls may only name
-databases listed in `device_hosted_credentials`; other job types run their registered handler with a
-context that forwards progress to the main Deployer.
+Device side (`run_device_job`, used by `device_host` for `jobs.run`): only `executor.<method>` calls,
+and those may only name databases listed in `device_hosted_credentials`.
 """
 
 from __future__ import annotations
@@ -23,7 +20,6 @@ import logging
 import os
 import tempfile
 import uuid
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import IO, Any
@@ -211,37 +207,11 @@ class DeviceExecutor:
         return provisioning.device_source_config(kind, database_name, str(result.get("username") or ""))
 
 
-def dispatch_remote_job(job: Any) -> None:
-    """`executors.register_remote_job_dispatcher` hook: run `job` on its device and record the outcome."""
-    from app.services import jobs
-
-    try:
-        result = device_rpc.call(
-            job.device_id,
-            "jobs.run",
-            {
-                "job_id": job.id,
-                "type": job.type,
-                "params": job.params or {},
-                "project_id": job.project_id,
-                "data_source_id": job.data_source_id,
-            },
-            timeout=LONG_TIMEOUT,
-        )
-    except ApiError as exc:
-        jobs.finish(job.id, status="failed", error=exc.message)
-        return
-    jobs.finish(
-        job.id, status="succeeded", result=result if isinstance(result, dict) or result is None else {"value": result}
-    )
-
-
 def register() -> None:
-    """Installs the device executor factory, remote job dispatcher and copy target (idempotent)."""
+    """Installs the device executor factory and copy target (idempotent)."""
     from app.services import backups, executors
 
     executors.register_device_executor_factory(DeviceExecutor)
-    executors.register_remote_job_dispatcher(dispatch_remote_job)
     backups.register_copy_target(copy_artifact)
 
 
@@ -250,7 +220,6 @@ def unregister() -> None:
     from app.services import backups, executors
 
     executors.register_device_executor_factory(None)
-    executors.register_remote_job_dispatcher(None)
     backups.register_copy_target(None)
 
 
@@ -356,42 +325,8 @@ def run_executor_call(method: str, params: dict, job_id: str, ctx: Any) -> Any:
         raise ApiError(400, "backup_failed", str(exc)[:1000]) from exc
 
 
-def _device_job_context_class():
-    from app.services import jobs
-
-    @dataclass
-    class DeviceJobContext(jobs.JobContext):
-        forward: Any = None
-
-        def progress(self, fraction: float | None, message: str | None = None, *, force: bool = False) -> None:
-            if self.forward is not None:
-                self.forward(self.job_id, fraction, message)
-
-        def cancelled(self) -> bool:
-            return False
-
-    return DeviceJobContext
-
-
-def run_device_job(job_id: str, job_type: str, params: dict, ctx: Any, extra: dict | None = None) -> Any:
+def run_device_job(job_id: str, job_type: str, params: dict, ctx: Any) -> Any:
     """Device side of `jobs.run`."""
-    if job_type.startswith(EXECUTOR_PREFIX):
-        return run_executor_call(job_type[len(EXECUTOR_PREFIX) :], params, job_id, ctx)
-    try:
-        from app.services import jobs
-    except Exception as exc:  # noqa: BLE001
-        raise ApiError(400, "unsupported_job", f"This device can't run jobs of type {job_type!r}") from exc
-    spec = jobs.handler_for(job_type)
-    if spec is None or getattr(spec, "runs_on", "primary") != "host":
+    if not job_type.startswith(EXECUTOR_PREFIX):
         raise ApiError(400, "unsupported_job", f"This device can't run jobs of type {job_type!r}")
-    extra = extra or {}
-    context = _device_job_context_class()(
-        job_id=job_id,
-        type=job_type,
-        params=params,
-        project_id=extra.get("project_id"),
-        data_source_id=extra.get("data_source_id"),
-        forward=ctx.progress,
-    )
-    result = spec.fn(context)
-    return result if isinstance(result, dict) or result is None else {"value": result}
+    return run_executor_call(job_type[len(EXECUTOR_PREFIX) :], params, job_id, ctx)

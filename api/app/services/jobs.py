@@ -14,10 +14,8 @@ Handlers::
     @job_handler("backup.snapshot")
     def run(ctx: JobContext) -> dict | None: ...      # return value -> jobs.result
 
-`runs_on="primary"` (default) handlers run in the main server's worker even for sources on a host
-device (they orchestrate and call `executors.executor_for(...)` for byte-level work).
-`runs_on="host"` handlers - and job types without a local handler - that have `device_id` set are
-handed to `executors.dispatch_remote_job(job)` instead of running locally.
+Handlers run in the main server's worker even for sources on a host device (they orchestrate and
+call `executors.executor_for(...)` or device RPCs for the work on the device).
 """
 
 from __future__ import annotations
@@ -70,15 +68,14 @@ class JobError(Exception):
 class HandlerSpec:
     type: str
     fn: Callable[[JobContext], Any]
-    runs_on: Literal["primary", "host"] = "primary"
 
 
 _registry: dict[str, HandlerSpec] = {}
 
 
-def job_handler(job_type: str, *, runs_on: Literal["primary", "host"] = "primary"):
+def job_handler(job_type: str):
     def decorator(fn: Callable[[JobContext], Any]):
-        _registry[job_type] = HandlerSpec(job_type, fn, runs_on)
+        _registry[job_type] = HandlerSpec(job_type, fn)
         return fn
 
     return decorator
@@ -339,22 +336,6 @@ def run_job(job_id: str, *, session_factory: SessionFactory | None = None) -> st
         return None
     spec = handler_for(job.type)
     with Heartbeat(job.id):
-        if job.device_id and (spec is None or spec.runs_on == "host"):
-            from app.services import executors
-
-            try:
-                executors.dispatch_remote_job(job)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("remote dispatch of job %s (%s) failed: %s", job.id, job.type, exc)
-                finish(job.id, status="failed", error=_error_text(exc), session_factory=factory)
-                return "failed"
-            # The dispatcher records the final state (jobs.finish); make sure the row isn't left running.
-            session = factory()
-            try:
-                status = session.scalar(select(Job.status).where(Job.id == job.id))
-            finally:
-                session.close()
-            return status
         if spec is None:
             finish(job.id, status="failed", error=f"Unknown job type: {job.type}", session_factory=factory)
             return "failed"

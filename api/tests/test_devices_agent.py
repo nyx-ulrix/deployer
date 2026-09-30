@@ -9,7 +9,7 @@ import time
 import pytest
 import uvicorn
 
-from app.services import device_agent, device_host, device_rpc
+from app.services import device_agent, device_host, device_rpc, executors
 from tests import devices_support
 
 make_device = devices_support.make_device  # shared fixture
@@ -79,14 +79,15 @@ def test_agent_connects_serves_calls_and_detaches(server, db, owner, make_device
 
         # Progress messages reach callers that asked for them.
         seen = []
-        device_host.register_job_handler(
-            "test.progress",
-            lambda job_id, params, ctx: (ctx.progress(job_id, 0.5, "half"), time.sleep(0.5), {"ok": 1})[2],
+        monkeypatch.setattr(
+            executors,
+            "run_local_call",
+            lambda method, params, on_progress: (on_progress(0.5, "half"), time.sleep(0.5), {"ok": 1})[2],
         )
         result = device_rpc.call(
             device.id,
             "jobs.run",
-            {"job_id": "j1", "type": "test.progress", "params": {}},
+            {"job_id": "j1", "type": "executor.storage_stats", "params": {}},
             timeout=10,
             progress_id=f"{device.id}:j1",
             on_progress=lambda f, m: seen.append((f, m)),
@@ -98,7 +99,6 @@ def test_agent_connects_serves_calls_and_detaches(server, db, owner, make_device
         db.expire_all()
         assert device_host.load_link(db) is None
     finally:
-        device_host.JOB_HANDLERS.pop("test.progress", None)
         loop.call_soon_threadsafe(stop.set)
         runner.join(15)
 

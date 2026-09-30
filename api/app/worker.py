@@ -3,8 +3,7 @@
 Threads started by `start_background_tasks()`:
 
 - `runner-N` (WORKER_CONCURRENCY, default 2): BLPOP `jobs:queue` and run jobs (`jobs.run_job`). Jobs
-  with `device_id` whose handler must run on the host (or that have no local handler) are handed to
-  `executors.dispatch_remote_job`; backup jobs orchestrate from here and use device executors.
+  for sources on a host device run here too: backup jobs orchestrate from here and use device executors.
 - `scheduler`: leader election via Redis `SET scheduler:leader <id> NX PX 30000`, renewed every 10 s.
   The leader fails stale `running` jobs, re-dispatches lost `queued` jobs and enqueues due work
   (`backups.scheduler_tick`: snapshots per policy, log archiving - MariaDB 5 min / MongoDB 1 min -,
