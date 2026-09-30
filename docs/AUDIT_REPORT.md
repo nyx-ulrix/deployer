@@ -298,7 +298,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-189 **[LOW][test]** No check that documented endpoints match the router - `docs/API.md:1-19` - a pytest that parses the doc tables against app.routes. (not verified)
 
 **Tests / CI**
-- [ ] A-190 **[LOW][test]** The release workflow publishes `latest` images without running tests, and installs track `latest` - `.github/workflows/release.yml:12-61` - `needs: tests`; no `latest` for pre-releases; pin the version in .env.
+- [x] A-190 **[LOW][test]** The release workflow publishes `latest` images without running tests, and installs track `latest` - `.github/workflows/release.yml:12-61` - `needs: tests`; no `latest` for pre-releases; pin the version in .env.
 - [ ] A-191 **[LOW][cleanup]** Dead code: unused constants and functions in the API and dashboard - `api/app/services/connections.py:32, 335` - delete them (overlaps A-109). (not verified)
 - [x] A-192 **[LOW][cleanup]** Shared fixtures are imported from other test modules; the DataSource factory is duplicated in 12 files - `api/tests/test_mcp.py:12` - move them to conftest; one make_source. (not verified)
 - [x] A-193 **[LOW][cleanup]** conftest leaks a temp directory with a SQLite DB on every test run - `api/tests/conftest.py:42` - `atexit.register(shutil.rmtree, ...)`. (not verified)

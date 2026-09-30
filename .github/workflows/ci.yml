@@ -4,6 +4,8 @@ on:
   push:
     branches: [main]
   pull_request:
+  # A-190: release.yml runs this whole suite before it pushes any image.
+  workflow_call:
 
 permissions:
   contents: read

@@ -23,3 +23,18 @@ def test_release_workflow_permissions_are_per_job():
     # setup-exe holds the signing PFX: it must not get any write scope.
     setup_exe = text.split("  setup-exe:", 1)[1].split("\n  bundle:", 1)[0]
     assert "permissions:" not in setup_exe
+
+
+def test_images_wait_for_ci_and_prereleases_skip_latest():
+    """A-190: a tag that fails CI publishes nothing, and an RC never becomes `latest`."""
+    text = RELEASE.read_text(encoding="utf-8")
+    ci = (RELEASE.parent / "ci.yml").read_text(encoding="utf-8")
+    assert re.search(r"^  workflow_call:", ci, re.M)
+    tests = text.split("\n  tests:", 1)[1].split("\n  images:", 1)[0]
+    assert "uses: ./.github/workflows/ci.yml" in tests
+    images = text.split("\n  images:", 1)[1].split("\n  setup-exe:", 1)[0]
+    assert re.search(r"^    needs: \[?tests\]?$", images, re.M)
+    assert "flavor: latest=false" in images
+    latest = [line.strip() for line in images.splitlines() if "value=latest" in line]
+    assert latest == ["type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}"]
+    assert "prerelease: ${{ contains(github.ref_name, '-') }}" in text

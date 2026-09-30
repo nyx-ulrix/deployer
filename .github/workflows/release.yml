@@ -10,9 +10,17 @@ permissions:
   contents: read
 
 jobs:
+  # A-190: the full CI suite (ci.yml, callable) gates the images - a tag that fails it publishes nothing.
+  tests:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
   images:
     name: Build and push images
     runs-on: ubuntu-latest
+    needs: tests
     permissions:
       contents: read
       packages: write
@@ -45,10 +53,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ steps.name.outputs.image }}
-          # v1.2.3 -> 1.2.3 (matches DEPLOYER_VERSION written by the installer) and latest.
+          # v1.2.3 -> 1.2.3 (matches DEPLOYER_VERSION written by the installer). `latest` only for a
+          # final release: a pre-release tag (v1.2.3-rc.1) never replaces it (A-190).
+          flavor: latest=false
           tags: |
             type=semver,pattern={{version}}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
           labels: |
             org.opencontainers.image.title=deployer-${{ matrix.component }}
             org.opencontainers.image.licenses=MIT
@@ -153,6 +163,8 @@ jobs:
             dist/deployer-deploy.zip
             dist/deployer-deploy.zip.sha256
           generate_release_notes: true
+          # Keeps an RC out of releases/latest, which the installer resolves when no -Ref is given (A-190).
+          prerelease: ${{ contains(github.ref_name, '-') }}
           body: |
             ## Install on Windows
 
@@ -166,5 +178,5 @@ jobs:
             & ([scriptblock]::Create((irm https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/installer/install.ps1))) -Repo ${{ github.repository }} -Ref ${{ github.ref_name }}
             ```
 
-            Images: `ghcr.io/${{ github.repository_owner }}/deployer-api`, `deployer-dashboard` and `deployer-tunnel`, tagged with this version (without the leading `v`) and `latest`.
+            Images: `ghcr.io/${{ github.repository_owner }}/deployer-api`, `deployer-dashboard` and `deployer-tunnel`, tagged with this version (without the leading `v`), and `latest` unless this is a pre-release. An install from a release pins its version in `.env` (`DEPLOYER_VERSION`).
             Existing installs: `deployer update -Ref ${{ github.ref_name }}`.
