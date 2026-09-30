@@ -116,6 +116,7 @@ def test_instance_settings_roundtrip(client, owner_headers, db):
     assert resp.status_code == 200
     assert resp.json() == {
         "public_url": "http://localhost:8080",
+        "local_url": "http://localhost:8080",
         "allow_signup": False,
         "owner_only_projects": True,
         "google": {

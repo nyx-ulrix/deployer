@@ -163,10 +163,9 @@ function RemoteAccessContent({
       <Card title="Local network" description="Other devices in your home or office, without any tunnel.">
         <div className="space-y-2 text-sm text-muted">
           <p>
-            On the Deployer PC itself the dashboard is at <code>http://localhost:8080</code>. Other devices on the same
-            Wi-Fi or LAN can open <code>http://&lt;this PC's address&gt;:8080</code> — the address is shown in Deployer
-            Control, or run <code>ipconfig</code> and look for IPv4 Address. Allow LAN access with{" "}
-            <code>deployer lan on</code> (block it again with <code>deployer lan off</code>).
+            On the Deployer PC itself the dashboard is at <code>{data.local_url}</code>. To open it from other devices
+            on the same Wi-Fi or LAN, turn on <em>Deployer Control → Settings → Let other devices on my network open
+            Deployer</em>. Control then shows the address to type on them.
           </p>
           <p>
             The PC must be awake and signed in for Deployer to answer. Password and email sign-in work over the LAN;
@@ -212,12 +211,12 @@ function RemoteAccessContent({
           {confirmQuick && via && (
             <Alert tone="danger" title="You're using this page through Cloudflare">
               This page is open at {via.hostname}, which stops working when the quick tunnel starts. Continue from the
-              quick tunnel URL or <code>http://localhost</code> on the Deployer PC.
+              quick tunnel URL or <code>{data.local_url}</code> on the Deployer PC.
             </Alert>
           )}
           {!confirmQuick && viaQuick && (
             <Alert tone="danger" title="You're using this page through the quick tunnel">
-              This page will lose its connection. Continue from <code>http://localhost</code> on the Deployer PC.
+              This page will lose its connection. Continue from <code>{data.local_url}</code> on the Deployer PC.
             </Alert>
           )}
         </ConfirmDialog>
@@ -272,7 +271,7 @@ function StatusBanner({
             <p className="text-xs text-muted">Only this PC (and your LAN) can reach it.</p>
           ) : (
             <Button size="sm" icon={<Home className="size-3.5" />} loading={usingLocal} onClick={onUseLocal}>
-              Back to localhost
+              Use the local address
             </Button>
           )}
         </div>

@@ -124,7 +124,7 @@ export function UnlinkDialog({ data, onClose }: { data: RemoteAccess; onClose: (
         {via && (
           <Alert tone="danger" title="You're using this page through Cloudflare">
             This page is open at {via.hostname}. Unlinking cuts that connection — continue from{" "}
-            <code>http://localhost</code> on the Deployer PC.
+            <code>{data.local_url}</code> on the Deployer PC.
           </Alert>
         )}
         {unlink.error && (

@@ -135,6 +135,7 @@ key and a message saying what to paste, e.g. "Paste only the Google Client ID, e
 ```ts
 type InstanceSettings = {
   public_url: string; allow_signup: boolean;
+  local_url: string;                 // the dashboard on the Deployer PC itself, with its real port (http://localhost:8080)
   owner_only_projects: boolean;      // default true: only the instance owner can create/import projects
   google: { client_id: string | null; secret_set: boolean; configured: boolean; callback_url: string };
   github: { client_id: string | null; secret_set: boolean; configured: boolean; callback_url: string };

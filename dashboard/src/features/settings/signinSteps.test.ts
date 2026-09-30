@@ -3,11 +3,18 @@ import { callbackUrls, deriveSigninSteps, githubPrefillUrl, isLocalUrl, oauthVal
 
 describe("callback URLs", () => {
   it("adds the localhost callback only when the public URL is elsewhere", () => {
-    expect(callbackUrls("google", "http://localhost:8080/")).toEqual(["http://localhost:8080/v1/auth/oauth/google/callback"]);
-    expect(callbackUrls("github", "https://deployer.example.com")).toEqual([
+    const local = "http://localhost:8080";
+    expect(callbackUrls("google", "http://localhost:8080/", local)).toEqual(["http://localhost:8080/v1/auth/oauth/google/callback"]);
+    expect(callbackUrls("github", "https://deployer.example.com", local)).toEqual([
       "https://deployer.example.com/v1/auth/oauth/github/callback",
       "http://localhost:8080/v1/auth/oauth/github/callback",
     ]);
+  });
+
+  it("registers the PC's real port, not a hard-coded 8080 (A-081)", () => {
+    expect(callbackUrls("github", "https://deployer.example.com", "http://localhost:9090")[1]).toBe(
+      "http://localhost:9090/v1/auth/oauth/github/callback",
+    );
   });
 
   it("recognises local addresses", () => {

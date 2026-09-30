@@ -360,7 +360,7 @@ export function OAuthProviderCard({
             steps={steps}
             ack={(i) => setAcknowledged((a) => [...a, i])}
             homepage={homepage}
-            callbacks={callbackUrls(provider, homepage)}
+            callbacks={callbackUrls(provider, homepage, settings.local_url)}
             configured={current.configured}
             paste={<CredentialsForm provider={provider} current={current} homepage={homepage} />}
           />

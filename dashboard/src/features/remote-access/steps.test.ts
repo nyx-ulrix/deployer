@@ -5,6 +5,7 @@ import { connectorHint, deriveSteps, sameUrl, tunnelHealthy } from "./steps";
 const off: RemoteAccess = {
   mode: "off",
   public_url: "http://localhost:8080",
+  local_url: "http://localhost:8080",
   connector: { running: false, started_at: null, last_error: null },
   cloudflare: { linked: false, token_valid: null, account: null, tunnel: null, domains: [], zones: [] },
   quick: { url: null },

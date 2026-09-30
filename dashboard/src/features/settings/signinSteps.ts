@@ -13,9 +13,6 @@ export const GOOGLE_STEP_TITLES = [
   "Paste them here",
 ] as const;
 
-/** The address of the Deployer PC itself (docker-compose default). Registered too, so sign-in on that PC keeps working. */
-export const LOCAL_URL = "http://localhost:8080";
-
 const trim = (url: string) => url.trim().replace(/\/+$/, "");
 
 export function isLocalUrl(url: string): boolean {
@@ -26,8 +23,11 @@ export function callbackUrl(provider: ProviderName, baseUrl: string): string {
   return `${trim(baseUrl)}/v1/auth/oauth/${provider}/callback`;
 }
 
-/** Callback URLs to register: the public one first, plus the localhost one when it differs. */
-export function callbackUrls(provider: ProviderName, publicUrl: string, localUrl = LOCAL_URL): string[] {
+/**
+ * Callback URLs to register: the public one first, plus the Deployer PC's own address (`local_url` from the API,
+ * with its real port) when it differs, so sign-in on that PC keeps working.
+ */
+export function callbackUrls(provider: ProviderName, publicUrl: string, localUrl: string): string[] {
   const urls = [callbackUrl(provider, publicUrl), callbackUrl(provider, localUrl)];
   return urls[0].toLowerCase() === urls[1].toLowerCase() ? [urls[0]] : urls;
 }

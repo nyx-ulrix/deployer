@@ -177,6 +177,8 @@ export type ProviderSettings = {
 
 export type InstanceSettings = {
   public_url: string;
+  /** The dashboard on the Deployer PC itself, e.g. http://localhost:8080 (the installation's real port). */
+  local_url: string;
   allow_signup: boolean;
   /** On by default: only the instance owner can create or import projects. */
   owner_only_projects: boolean;
@@ -809,6 +811,8 @@ export type RemoteAccessMode = "off" | "cloudflare" | "quick";
 export type RemoteAccess = {
   mode: RemoteAccessMode;
   public_url: string;
+  /** The dashboard on the Deployer PC itself, e.g. http://localhost:8080 (the installation's real port). */
+  local_url: string;
   connector: { running: boolean; started_at: string | null; last_error: string | null };
   cloudflare: {
     linked: boolean;

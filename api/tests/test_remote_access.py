@@ -104,6 +104,7 @@ def test_get_default_off(client, owner_headers, state_dir):
     assert resp.json() == {
         "mode": "off",
         "public_url": "http://localhost:8080",
+        "local_url": "http://localhost:8080",
         "connector": {"running": False, "started_at": None, "last_error": None},
         "cloudflare": {
             "linked": False,
@@ -493,6 +494,15 @@ def test_public_url_revert_on_unlink_uses_env_port(client, owner_headers, fake_c
     client.post(f"{BASE}/public-url", json={"domain_id": domain["id"]}, headers=owner_headers)
     body = client.post(f"{BASE}/cloudflare/unlink", json={}, headers=owner_headers).json()
     assert body["public_url"] == "http://localhost:9000"
+
+
+def test_local_url_follows_the_port(client, owner_headers, state_dir, monkeypatch, set_setting):
+    """A-081: the dashboard registers OAuth callbacks and offers "continue from" addresses from local_url,
+    so on a non-default port it must carry that port, not a hard-coded 8080."""
+    monkeypatch.setattr(get_settings(), "deployer_http_port", 9090)
+    set_setting("public_url", "https://deployer.example.com")
+    assert client.get(BASE, headers=owner_headers).json()["local_url"] == "http://localhost:9090"
+    assert client.get("/v1/instance/settings", headers=owner_headers).json()["local_url"] == "http://localhost:9090"
 
 
 def test_public_url_local_and_validation(client, owner_headers, fake_cf, set_setting):

@@ -177,6 +177,7 @@ type Domain = {
 type RemoteAccess = {
   mode: "off" | "cloudflare" | "quick";
   public_url: string;
+  local_url: string;  // the dashboard on the Deployer PC itself: http://localhost:<DEPLOYER_HTTP_PORT>
   connector: { running: boolean; started_at: string | null; last_error: string | null };
   cloudflare: {
     linked: boolean; token_valid: boolean | null;

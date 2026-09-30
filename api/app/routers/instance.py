@@ -8,7 +8,7 @@ from app.deps import DbSession, InstanceOwner
 from app.errors import ApiError, not_found
 from app.models import Project, ProjectMember, User
 from app.serializers import project_out, user_out
-from app.services import audit, deployments, tokens
+from app.services import audit, deployments, remote_access, tokens
 from app.services.alerts import validate_webhook_url
 from app.services.instance_settings import (
     OAUTH_KEYS,
@@ -38,6 +38,8 @@ def settings_out(db) -> dict:
 
     return {
         "public_url": public_url(db),
+        # The address on the Deployer PC itself (its real port), for OAuth callbacks and "continue from" hints.
+        "local_url": remote_access.local_url(None),
         "allow_signup": allow_signup(db),
         "owner_only_projects": owner_only_projects(db),
         "google": provider("google"),

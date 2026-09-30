@@ -363,6 +363,7 @@ def remote_access_out(db: Session, *, live: bool = True) -> dict:
     return {
         "mode": mode(db),
         "public_url": public_url(db),
+        "local_url": local_url(None),
         "connector": connector,
         "cloudflare": cloudflare,
         "quick": {"url": quick_url},

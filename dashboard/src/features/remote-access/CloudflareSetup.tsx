@@ -564,7 +564,7 @@ function HostnameStep({ data, zones, onNeedZones }: { data: RemoteAccess; zones:
         >
           {openedVia(removing.hostname) && (
             <Alert tone="danger" title="You're using this page through this hostname">
-              The page will lose its connection. Continue from <code>http://localhost</code> on the Deployer PC.
+              The page will lose its connection. Continue from <code>{data.local_url}</code> on the Deployer PC.
             </Alert>
           )}
           {sameUrl(removing.url, data.public_url) && (
