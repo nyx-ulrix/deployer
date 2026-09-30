@@ -42,50 +42,17 @@ export function AppLayout() {
             <Logo />
           </Link>
           <nav className="ml-2 hidden items-center gap-1 sm:flex">
-            <NavLink
-              to="/"
-              end
-              className={({ isActive }) =>
-                cn(
-                  "rounded-lg px-3 py-1.5 text-sm font-medium",
-                  isActive ? "bg-surface-2 text-fg" : "text-muted hover:text-fg",
-                )
-              }
-            >
+            <NavLink to="/" end className={({ isActive }) => navClass(isActive)}>
               Projects
             </NavLink>
-            <NavLink
-              to="/settings/devices"
-              className={({ isActive }) =>
-                cn(
-                  "rounded-lg px-3 py-1.5 text-sm font-medium",
-                  isActive ? "bg-surface-2 text-fg" : "text-muted hover:text-fg",
-                )
-              }
-            >
+            <NavLink to="/settings/devices" className={({ isActive }) => navClass(isActive)}>
               Devices
             </NavLink>
-            <NavLink
-              to="/settings/transfer"
-              className={({ isActive }) =>
-                cn(
-                  "rounded-lg px-3 py-1.5 text-sm font-medium",
-                  isActive ? "bg-surface-2 text-fg" : "text-muted hover:text-fg",
-                )
-              }
-            >
+            <NavLink to="/settings/transfer" className={({ isActive }) => navClass(isActive)}>
               Export &amp; import
             </NavLink>
             {user?.is_instance_owner && (
-              <NavLink
-                to="/settings/instance"
-                className={() =>
-                  cn(
-                    "rounded-lg px-3 py-1.5 text-sm font-medium",
-                    instanceSection ? "bg-surface-2 text-fg" : "text-muted hover:text-fg",
-                  )
-                }
-              >
+              <NavLink to="/settings/instance" className={() => navClass(instanceSection)}>
                 Instance
               </NavLink>
             )}
@@ -115,34 +82,16 @@ export function AppLayout() {
                     <p className="truncate text-xs text-muted">{user?.email}</p>
                   </div>
                   <div className="py-1">
-                    <MenuItem
-                      icon={<FolderKanban />}
-                      onClick={() => {
-                        close();
-                        navigate("/");
-                      }}
-                    >
+                    <MenuItem icon={<FolderKanban />} onClick={() => go(close, "/")}>
                       Projects
                     </MenuItem>
-                    <MenuItem
-                      icon={<UserRound />}
-                      onClick={() => {
-                        close();
-                        navigate("/settings/account");
-                      }}
-                    >
+                    <MenuItem icon={<UserRound />} onClick={() => go(close, "/settings/account")}>
                       Account settings
                     </MenuItem>
                     <MenuItem icon={<HardDrive />} onClick={() => go(close, "/settings/devices")}>
                       Devices
                     </MenuItem>
-                    <MenuItem
-                      icon={<ArrowLeftRight />}
-                      onClick={() => {
-                        close();
-                        navigate("/settings/transfer");
-                      }}
-                    >
+                    <MenuItem icon={<ArrowLeftRight />} onClick={() => go(close, "/settings/transfer")}>
                       Export &amp; import
                     </MenuItem>
                     {user?.is_instance_owner && (
@@ -150,13 +99,7 @@ export function AppLayout() {
                         <div className="mx-2.5 mt-1.5 mb-1 border-t border-border pt-1.5 text-[11px] font-semibold tracking-wide text-muted uppercase">
                           Instance
                         </div>
-                        <MenuItem
-                          icon={<Server />}
-                          onClick={() => {
-                            close();
-                            navigate("/settings/instance");
-                          }}
-                        >
+                        <MenuItem icon={<Server />} onClick={() => go(close, "/settings/instance")}>
                           Instance settings
                         </MenuItem>
                         <MenuItem icon={<History />} onClick={() => go(close, "/settings/backups")}>
@@ -195,6 +138,9 @@ export function AppLayout() {
     </div>
   );
 }
+
+const navClass = (active: boolean) =>
+  cn("rounded-lg px-3 py-1.5 text-sm font-medium", active ? "bg-surface-2 text-fg" : "text-muted hover:text-fg");
 
 /** Instance owner only: open, non-muted alerts (docs/MONITORING.md); links to Settings → Monitoring. */
 function AlertBadge() {

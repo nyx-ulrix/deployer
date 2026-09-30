@@ -271,7 +271,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-166 **[LOW][usability]** "Can't reach the Deployer API" shows a raw "Bad Gateway" with no guidance or auto-retry - `dashboard/src/auth/guards.tsx:25-35` - "Deployer is starting..." and polling. (not verified)
 - [x] A-167 **[LOW][cleanup]** Dead API surface and stale types (api.health, qk.me, OAuthErrorCode) - `dashboard/src/api/endpoints.ts:115, 508` - delete them; add a not_initialized message. (not verified)
 - [x] A-168 **[LOW][cleanup]** Three different isLocalUrl helpers disagree; URL trimming and ExtLink are duplicated - `dashboard/src/features/settings/signinSteps.ts:21-23` (also `remoteAccess.ts:94-101`, `eligibility.ts:198`) - one lib helper. (not verified)
-- [ ] A-169 **[LOW][cleanup]** AppLayout menu and nav repeat themselves - `dashboard/src/components/layout/AppLayout.tsx:32-35, 45-91, 118-160` - use `go` everywhere and one navClass. (not verified)
+- [x] A-169 **[LOW][cleanup]** AppLayout menu and nav repeat themselves - `dashboard/src/components/layout/AppLayout.tsx:32-35, 45-91, 118-160` - use `go` everywhere and one navClass. (not verified)
 - [ ] A-170 **[LOW][test]** The open-redirect guard safeRedirect has no test - `dashboard/src/lib/safeRedirect.ts:2-6` - add safeRedirect.test.ts. (not verified)
 
 **Dashboard data features**
