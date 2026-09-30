@@ -23,6 +23,7 @@ namespace DeployerSetup
         internal string failure = "";
         internal bool partial;  // setup stopped before runtime.json, so deployer.ps1 cannot uninstall it (A-078)
         internal bool leftover; // "delete everything" was chosen but the folder is still there
+        internal bool foreign;  // partial, and the folder holds no setup files: nothing there is deleted or blamed
         ScriptRunner runner;
         string scriptRoot;
         TextBlock transientLabel;
@@ -196,6 +197,8 @@ namespace DeployerSetup
 
         internal string DoneText()
         {
+            if (partial && foreign)
+                return "No Deployer setup files were found in " + installDir + ", so only the shortcuts and the Apps & Features entry were removed. Nothing in that folder was touched.";
             if (deleteData && leftover)
                 return "Deployer was removed, but some of its files could not be deleted from " + installDir + ". Delete that folder yourself to free the space.";
             if (deleteData)
@@ -227,6 +230,7 @@ namespace DeployerSetup
                 if (!installed)
                 {
                     partial = true;
+                    foreign = !IsSetupFolder(installDir);
                     bool wipe = deleteData;
                     System.Threading.Thread t = new System.Threading.Thread(() =>
                     {
@@ -273,7 +277,7 @@ namespace DeployerSetup
         {
             StringBuilder note = new StringBuilder("runtime.json not found in " + dir + "; setup did not finish there.\r\n");
             if (!deleteData) return note.Append("Kept its files; removed shortcuts and the Apps & Features entry only.\r\n").ToString();
-            if (!File.Exists(Integration.ControlExe(dir)) && !File.Exists(Path.Combine(dir, AppInfo.OptionsFileName)))
+            if (!IsSetupFolder(dir))
                 return note.Append("No Deployer setup files there; nothing was deleted.\r\n").ToString();
             ProcessResult list = wsl("--list --quiet");
             foreach (string line in list.StdOut.Split('\r', '\n'))
@@ -293,6 +297,11 @@ namespace DeployerSetup
                 note.Append("Could not delete ").Append(dir).Append(": ").Append(ex.Message).Append("\r\n");
             }
             return note.ToString();
+        }
+
+        static bool IsSetupFolder(string dir)
+        {
+            return File.Exists(Integration.ControlExe(dir)) || File.Exists(Path.Combine(dir, AppInfo.OptionsFileName));
         }
 
         const string DistroName = "deployer"; // $script:DeployerDistro in installer/lib/common.ps1

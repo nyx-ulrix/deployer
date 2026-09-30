@@ -187,6 +187,9 @@ namespace DeployerSetup
                 u.deleteData = true;
                 u.leftover = true;
                 Check(honestKeep && u.DoneText().Contains("could not be deleted"), "the uninstaller never claims data it left behind was removed (A-078)");
+                u.foreign = true;
+                Check(u.DoneText().Contains("Nothing in that folder") && !u.DoneText().Contains("Delete that folder"),
+                      "the uninstaller never tells you to delete a folder setup didn't make (A-078)");
             }
         }
 
