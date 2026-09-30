@@ -26,7 +26,8 @@ for `localhost`, private LAN ranges and `*.ts.net`; the dashboard warns otherwis
 
 ```text
 Device dashboard (http://localhost:8080, not initialized OR local instance owner)
-  1. User enters main Deployer URL + device name
+  1. User enters main Deployer URL + device name (no scheme typed: http:// for LAN / *.ts.net hosts,
+     https:// otherwise; the form shows "Will connect to ..." with the result)
   2. Device API → POST {primary}/v1/devices/enrollments  {name, hostname, os, version, capabilities}
        ← {enrollment_id, user_code "ABCD-EFGH", verification_uri, poll_secret, expires_in: 900}
   3. Device dashboard shows the code and a button opening

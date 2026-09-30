@@ -6,6 +6,7 @@ import {
   deviceIdFromValue,
   isDeviceOnline,
   newProjectHosts,
+  normalizeDeployerUrl,
   placementDisplay,
   reachabilityWarning,
   removalCheck,
@@ -131,5 +132,15 @@ describe("devices", () => {
     expect(reachabilityWarning("http://my-pc.tail1234.ts.net")).toBeNull();
     expect(reachabilityWarning("http://deployer.example.com")).toMatch(/https/);
     expect(reachabilityWarning("https://deployer.example.com")).toBeNull();
+  });
+
+  it("defaults to http:// for LAN hosts and https:// for public ones when no scheme is typed", () => {
+    expect(normalizeDeployerUrl("192.168.1.20:8080")).toBe("http://192.168.1.20:8080");
+    expect(normalizeDeployerUrl(" my-pc.tail1234.ts.net/ ")).toBe("http://my-pc.tail1234.ts.net");
+    expect(normalizeDeployerUrl("deployer.example.com")).toBe("https://deployer.example.com");
+    expect(normalizeDeployerUrl("https://192.168.1.20")).toBe("https://192.168.1.20");
+    expect(normalizeDeployerUrl("HTTP://deployer.example.com/app/")).toBe("http://deployer.example.com/app");
+    expect(normalizeDeployerUrl("ftp://deployer.example.com")).toBeNull();
+    expect(normalizeDeployerUrl("  ")).toBeNull();
   });
 });

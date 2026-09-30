@@ -204,6 +204,25 @@ export function reachabilityWarning(url: string): string | null {
   return null;
 }
 
+/**
+ * Turn what the user typed into a Deployer base URL, or null if it isn't one. Without a scheme,
+ * private/LAN hosts get http:// (the default install serves plain http on :8080), everything else https://.
+ */
+export function normalizeDeployerUrl(input: string): string | null {
+  const raw = input.trim().replace(/\/+$/, "");
+  if (!raw) return null;
+  try {
+    let u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    if (!/^https?:\/\//i.test(raw) && !isPrivateHost(u.hostname.replace(/^\[|\]$/g, "").toLowerCase())) {
+      u = new URL(`https://${raw}`);
+    }
+    return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, "")}`;
+  } catch {
+    return null;
+  }
+}
+
 export function isPrivateHost(host: string): boolean {
   if (host === "localhost" || host.endsWith(".ts.net") || host.endsWith(".local") || host.endsWith(".lan")) return true;
   const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);

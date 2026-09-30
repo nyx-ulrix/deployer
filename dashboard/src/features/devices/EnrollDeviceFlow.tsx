@@ -11,7 +11,7 @@ import { Field, Input } from "../../components/ui/Input";
 import { Spinner } from "../../components/ui/Spinner";
 import { Alert, ErrorAlert } from "../../components/ui/States";
 import { cn } from "../../lib/cn";
-import { reachabilityWarning } from "./eligibility";
+import { normalizeDeployerUrl, reachabilityWarning } from "./eligibility";
 
 const POLL_MS = 2000;
 
@@ -23,19 +23,6 @@ function defaultDeviceName(): string {
   if (/mac/i.test(platform)) return "Mac";
   if (/linux/i.test(platform)) return "Linux PC";
   return "Host device";
-}
-
-function normalizeUrl(input: string): string | null {
-  const raw = input.trim().replace(/\/+$/, "");
-  if (!raw) return null;
-  const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
-  try {
-    const u = new URL(withScheme);
-    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    return `${u.protocol}//${u.host}${u.pathname.replace(/\/+$/, "")}`;
-  } catch {
-    return null;
-  }
 }
 
 const TERMINAL: Record<Exclude<EnrollState, "idle" | "pending" | "approved">, { title: string; body: string }> = {
@@ -95,7 +82,7 @@ export function EnrollDeviceFlow({ onCancel }: { onCancel?: () => void }) {
     },
   });
 
-  const normalized = normalizeUrl(url);
+  const normalized = normalizeDeployerUrl(url);
   const warning = normalized ? reachabilityWarning(normalized) : null;
   const sameOrigin = normalized !== null && new URL(normalized).origin === window.location.origin;
 
@@ -196,7 +183,11 @@ export function EnrollDeviceFlow({ onCancel }: { onCancel?: () => void }) {
       )}
       <Field
         label="Main Deployer URL"
-        hint="The address you use to open the main Deployer, e.g. https://deployer.example.com"
+        hint={
+          normalized
+            ? `Will connect to ${normalized}`
+            : "The address you use to open the main Deployer, e.g. https://deployer.example.com or 192.168.1.20:8080"
+        }
         error={
           url && !normalized
             ? "Enter a URL like https://deployer.example.com"
