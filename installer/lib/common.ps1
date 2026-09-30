@@ -1012,38 +1012,45 @@ function Get-DeployerSource {
     param([string]$Repo, [string]$Ref, [string]$WorkDir)
     if (Test-Path -LiteralPath $WorkDir) { Remove-Item -LiteralPath $WorkDir -Recurse -Force }
     New-Item -ItemType Directory -Path $WorkDir -Force | Out-Null
-    $zip = Join-Path $WorkDir 'source.zip'
-    $sources = @(
-        "https://github.com/$Repo/archive/$Ref.zip",
-        "https://github.com/$Repo/releases/download/$Ref/deployer-deploy.zip"
-    )
-    # A version tag that was never published (e.g. a locally built setup exe before the first release)
-    # falls back to the main branch instead of failing the whole install.
-    if ($Ref -ne 'main') { $sources += "https://github.com/$Repo/archive/main.zip" }
-    $downloaded = $false
-    foreach ($uri in $sources) {
-        try {
-            if ($uri -like '*/archive/main.zip' -and $Ref -ne 'main') {
-                Write-DeployerWarn "'$Ref' is not published on github.com/$Repo; using the main branch instead."
+    # A-151: a failed download or extract leaves no half-filled folder in %TEMP%; on success the
+    # caller removes WorkDir once the files are copied.
+    try {
+        $zip = Join-Path $WorkDir 'source.zip'
+        $sources = @(
+            "https://github.com/$Repo/archive/$Ref.zip",
+            "https://github.com/$Repo/releases/download/$Ref/deployer-deploy.zip"
+        )
+        # A version tag that was never published (e.g. a locally built setup exe before the first release)
+        # falls back to the main branch instead of failing the whole install.
+        if ($Ref -ne 'main') { $sources += "https://github.com/$Repo/archive/main.zip" }
+        $downloaded = $false
+        foreach ($uri in $sources) {
+            try {
+                if ($uri -like '*/archive/main.zip' -and $Ref -ne 'main') {
+                    Write-DeployerWarn "'$Ref' is not published on github.com/$Repo; using the main branch instead."
+                }
+                Write-DeployerInfo "Downloading $uri"
+                Invoke-DeployerDownload -Uri $uri -OutFile $zip
+                $downloaded = $true
+                break
+            } catch {
+                Write-DeployerWarn "$_"
             }
-            Write-DeployerInfo "Downloading $uri"
-            Invoke-DeployerDownload -Uri $uri -OutFile $zip
-            $downloaded = $true
-            break
-        } catch {
-            Write-DeployerWarn "$_"
         }
+        if (-not $downloaded) {
+            throw "Could not download Deployer '$Ref' from github.com/$Repo. Check the -Repo/-Ref values and your internet connection."
+        }
+        $extract = Join-Path $WorkDir 'x'
+        Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+        $candidates = @($extract) + @(Get-ChildItem -LiteralPath $extract -Directory | ForEach-Object { $_.FullName })
+        foreach ($c in $candidates) {
+            if (Test-Path -LiteralPath (Join-Path $c 'deploy\docker-compose.yml')) { return $c }
+        }
+        throw "The downloaded archive does not contain deploy\docker-compose.yml."
+    } catch {
+        Remove-Item -LiteralPath $WorkDir -Recurse -Force -ErrorAction SilentlyContinue
+        throw
     }
-    if (-not $downloaded) {
-        throw "Could not download Deployer '$Ref' from github.com/$Repo. Check the -Repo/-Ref values and your internet connection."
-    }
-    $extract = Join-Path $WorkDir 'x'
-    Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
-    $candidates = @($extract) + @(Get-ChildItem -LiteralPath $extract -Directory | ForEach-Object { $_.FullName })
-    foreach ($c in $candidates) {
-        if (Test-Path -LiteralPath (Join-Path $c 'deploy\docker-compose.yml')) { return $c }
-    }
-    throw "The downloaded archive does not contain deploy\docker-compose.yml."
 }
 
 function Invoke-DeployerRobocopy {

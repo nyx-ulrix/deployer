@@ -100,6 +100,7 @@ $script:SleepWasGiven = $PSBoundParameters.ContainsKey('PreventSleep')
 $script:RequiredLibVersion = 3
 $script:BootstrapRoot = $null
 $script:BootstrapRef = $null
+$script:InstallerTempPaths = @()
 $script:TotalSteps = 10
 $script:PreflightFailures = @()
 if ($DryRun) { $NonInteractive = [switch]$true }
@@ -145,8 +146,19 @@ function Get-InstallerScriptFile {
     $branch = if ($Ref) { $Ref } else { 'main' }
     $uri = "https://raw.githubusercontent.com/$Repo/$branch/installer/install.ps1"
     $target = Join-Path $env:TEMP ("deployer-install-{0}.ps1" -f ([guid]::NewGuid().ToString('N').Substring(0, 8)))
+    $script:InstallerTempPaths += $target
     Invoke-WebRequest -UseBasicParsing -Uri $uri -OutFile $target
     return $target
+}
+
+function Remove-InstallerTempFiles {
+    # A-151: the downloads and staging copies in %TEMP% hold a whole source tree (hundreds of MB on
+    # small disks). Everything they feed is copied into the install folder, which the resume after a
+    # restart uses, so they go when this run ends.
+    foreach ($path in $script:InstallerTempPaths) {
+        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $script:InstallerTempPaths = @()
 }
 
 function Write-Banner {
@@ -603,6 +615,7 @@ function Get-LocalDeploySource {
         return $parent
     }
     $stage = Join-Path $env:TEMP ('deployer-local-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+    $script:InstallerTempPaths += $stage
     New-Item -ItemType Directory -Path (Join-Path $stage 'deploy') -Force | Out-Null
     # The folder may be an install folder (resume after a restart): skip its data, secrets and program files.
     Invoke-DeployerRobocopy -Source $deployFull -Destination (Join-Path $stage 'deploy') `
@@ -640,6 +653,7 @@ function Resolve-Source {
     $resolved = Resolve-DeployerRef -Repo $Repo -Ref $Ref
     Write-DeployerInfo "Installing $Repo@$resolved"
     $work = Join-Path $env:TEMP 'deployer-source'
+    $script:InstallerTempPaths += $work
     $root = Get-DeployerSource -Repo $Repo -Ref $resolved -WorkDir $work
     return @{ Root = $root; Ref = $resolved }
 }
@@ -649,7 +663,9 @@ function Get-BuildSource {
     # Always refresh: an update that reused an older src\ would rebuild the previous version.
     $resolved = Resolve-DeployerRef -Repo $Repo -Ref $Ref
     Write-DeployerInfo "Downloading the Deployer source ($Repo@$resolved) to build the images locally..."
-    $root = Get-DeployerSource -Repo $Repo -Ref $resolved -WorkDir (Join-Path $env:TEMP 'deployer-source')
+    $work = Join-Path $env:TEMP 'deployer-source'
+    $script:InstallerTempPaths += $work
+    $root = Get-DeployerSource -Repo $Repo -Ref $resolved -WorkDir $work
     $excludeDirs = @('node_modules', '.venv', 'venv', 'dist', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache')
     foreach ($component in @('api', 'dashboard', 'deploy')) {
         $from = Join-Path $root $component
@@ -777,6 +793,8 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
         Write-Host "    Could not start the installer as administrator: $($_.Exception.Message)" -ForegroundColor Red
         Write-Host '    Right-click PowerShell, choose "Run as administrator", and run the install command again.' -ForegroundColor Red
         $script:InstallerExitCode = 1
+    } finally {
+        Remove-InstallerTempFiles
     }
 } else {
     $transcriptStarted = $false
@@ -817,6 +835,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
                 $bootRoot = [System.IO.Path]::GetFullPath($SourceDir)
             } else {
                 $bootWork = Join-Path $env:TEMP 'deployer-bootstrap'
+                $script:InstallerTempPaths += $bootWork
                 if (Test-Path -LiteralPath $bootWork) { Remove-Item -LiteralPath $bootWork -Recurse -Force }
                 New-Item -ItemType Directory -Path $bootWork -Force | Out-Null
                 $bootZip = Join-Path $bootWork 'source.zip'
@@ -1060,6 +1079,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
         Write-Host '  it picks up where it left off and never overwrites your existing .env.' -ForegroundColor Red
         Write-Host ('##deployer:error ' + ($_.Exception.Message -replace "`r?`n", ' '))
     } finally {
+        Remove-InstallerTempFiles
         if ($transcriptStarted) {
             try { Stop-Transcript | Out-Null } catch { Write-Verbose 'Transcript already stopped.' }
         }

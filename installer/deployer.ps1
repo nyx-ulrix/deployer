@@ -651,6 +651,9 @@ function Invoke-Update {
     } catch {
         # The old deploy files are already replaced, so name the way back (A-150).
         throw ("{0}`n{1}" -f $_.Exception.Message, (Get-DeployerUpdateRecoveryHint -PreviousRef $currentRef -BackupName $script:DeployerLastBackup))
+    } finally {
+        # A-151: the downloaded source is in the install folder now (or not wanted); free %TEMP%.
+        Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     $table = ConvertTo-DeployerStateTable $ctx.State

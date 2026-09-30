@@ -249,7 +249,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-148 **[LOW][security]** The WSL distro enables Windows interop although nothing needs it - `installer/wsl/setup-engine.sh:27-28` - `enabled=false`. (not verified)
 - [x] A-149 **[LOW][security]** The release workflow grants write permissions to every job - `.github/workflows/release.yml:8-10` - read by default; write per job. (not verified)
 - [x] A-150 **[LOW][usability]** A failed update leaves no recovery path in the message - `installer/deployer.ps1:563-572` - print the previous ref and the roll-back command. (not verified)
-- [ ] A-151 **[LOW][cleanup]** Temporary download and staging folders are never cleaned up - `installer/lib/common.ps1:829-869` - remove them in `finally`. (not verified)
+- [x] A-151 **[LOW][cleanup]** Temporary download and staging folders are never cleaned up - `installer/lib/common.ps1:829-869` - remove them in `finally`. (not verified)
 - [ ] A-152 **[LOW][cleanup]** Dead `RestartNeeded` checks on Get-WindowsOptionalFeature - `installer/install.ps1:372, 382` - drop them. (not verified)
 - [ ] A-153 **[LOW][cleanup]** Duplicated container config between the Dockerfiles, compose and nginx - `api/Dockerfile:69-70, 90-91` - keep one source. (not verified)
 
