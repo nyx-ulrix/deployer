@@ -821,6 +821,13 @@ function Invoke-Uninstall {
     if (-not $KeepData) {
         Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
     }
+    # What DeployerControl.exe /uninstall also removes, so this scripted path leaves no dead Apps & Features entry (A-157).
+    Remove-Item -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Deployer' -Recurse -Force -ErrorAction SilentlyContinue
+    $programs = [Environment]::GetFolderPath('CommonPrograms')
+    foreach ($link in @((Join-Path $programs 'Deployer.lnk'), (Join-Path $programs 'Deployer Control.lnk'),
+            (Join-Path ([Environment]::GetFolderPath('DesktopDirectory')) 'Deployer.lnk'))) {
+        Remove-Item -LiteralPath $link -Force -ErrorAction SilentlyContinue
+    }
     if ($ctx.Runtime -eq 'docker-desktop') {
         Write-DeployerInfo 'Docker Desktop itself was not removed; uninstall it from Windows Settings > Apps if you no longer need it.'
     }
