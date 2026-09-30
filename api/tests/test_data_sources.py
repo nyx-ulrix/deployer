@@ -113,6 +113,26 @@ def test_create_external_mongo_display(client, project_setup, fake_connect):
     assert FAKE_MONGO_PASSWORD not in resp.text
 
 
+def test_create_input_friction(client, project_setup, fake_connect):
+    # A-117: kind follows from engine, a pasted username is trimmed, the Mongo database defaults from the URI.
+    s = project_setup
+    sql = {k: v for k, v in EXTERNAL_SQL.items() if k != "kind"}
+    sql["config"] = {**sql["config"], "username": " app\n"}
+    assert client.post(f"{s['base']}/data-sources", json=sql, headers=s["admin"]).json()["kind"] == "sql"
+    assert fake_connect["calls"][-1][2]["username"] == "app"
+    uri = f"mongodb+srv://app:{FAKE_MONGO_PASSWORD}@cluster0.example.invalid/shop?retryWrites=true"
+    mongo = {"mode": "external", "engine": "mongodb", "name": "atlas", "config": {"uri": uri}}
+    resp = client.post(f"{s['base']}/data-sources", json=mongo, headers=s["admin"])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kind"] == "nosql" and resp.json()["database_name"] == "shop"
+    bare = {**mongo, "name": "b", "config": {"uri": "mongodb://db.example.com/?tls=true"}}
+    assert client.post(f"{s['base']}/data-sources", json=bare, headers=s["admin"]).status_code == 422
+    # An explicit kind that contradicts the engine is still refused.
+    assert (
+        client.post(f"{s['base']}/data-sources", json={**mongo, "kind": "sql"}, headers=s["admin"]).status_code == 422
+    )
+
+
 def test_connection_failure_and_test_endpoint(client, project_setup, fake_connect):
     s = project_setup
     fake_connect["ok"] = False

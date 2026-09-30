@@ -205,7 +205,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-114 **[LOW][security]** Connection test lets project admins probe the internal network and LAN - `api/app/routers/data_sources.py:88-106` - refuse internal names and private ranges for non-owners. (not verified)
 - [x] A-115 **[LOW][security]** No denylist before dropping a managed DB on the shared MariaDB - `api/app/services/provisioning.py:170-175, 389-391` - reject platform and system DB names. (not verified)
 - [x] A-116 **[LOW][docs]** DDL export silently omits views, triggers and routines - `api/app/services/ddl_export.py:216-224, 250-251` - a header listing what was skipped; fix the README and docstring. (not verified)
-- [ ] A-117 **[LOW][usability]** Small friction in the create-source input (kind+engine, unstripped username, Mongo database) - `api/app/routers/data_sources.py:25-28, 63, 68-74` - derive kind; strip; default the DB from the URI. (not verified)
+- [x] A-117 **[LOW][usability]** Small friction in the create-source input (kind+engine, unstripped username, Mongo database) - `api/app/routers/data_sources.py:25-28, 63, 68-74` - derive kind; strip; default the DB from the URI. (not verified)
 
 **Query console**
 - [ ] A-118 **[LOW][usability]** Connection-pool exhaustion is reported as "Database unavailable" - `api/app/services/query_console.py:292-297` - catch the pool TimeoutError and return 429 too_many_queries.

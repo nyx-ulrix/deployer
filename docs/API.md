@@ -253,8 +253,12 @@ type DataSourceInput =
   | { kind: "sql"; mode: "external"; engine: "mariadb" | "mysql" | "postgresql"; name: string;
       config: { host: string; port?: number; username: string; password: string; database: string; tls?: boolean } }
   | { kind: "nosql"; mode: "external"; engine: "mongodb"; name: string;
-      config: { uri: string; database: string } };
+      config: { uri: string; database?: string } };
 ```
+
+`kind` may be left out: it follows from `engine` (`mongodb` is `nosql`, the rest `sql`). Host, username
+and database are trimmed. A MongoDB `database` left out defaults to the one named in the URI path
+(`mongodb+srv://cluster.example.net/shop`); 422 when neither names one.
 
 External hosts are reached from inside the Deployer container, so `localhost`, `127.x`, `::1` and
 `0.0.0.0` (also in a MongoDB URI) are rejected with 422 `validation_error`. For a database on the same

@@ -7,7 +7,7 @@ import socket
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 
 from app.crypto import decrypt_json, encrypt_json
@@ -32,6 +32,14 @@ class DataSourceInput(BaseModel):
     config: dict[str, Any] | None = None
     # Managed sources only: host device to place the database on (docs/DEVICES.md); null = main server.
     device_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _derive_kind(cls, data: Any) -> Any:
+        # A-117: the engine already says which kind it is; kind stays accepted (and cross-checked).
+        if isinstance(data, dict) and not data.get("kind") and data.get("engine"):
+            data = {**data, "kind": "nosql" if data["engine"] == "mongodb" else "sql"}
+        return data
 
 
 # A-027: Deployer connects from inside its container, where localhost is the container itself.
@@ -157,18 +165,19 @@ def normalize_input(body: DataSourceInput) -> tuple[str, dict[str, Any] | None]:
         return name, {
             "host": str(cfg["host"]).strip(),
             "port": port,
-            "username": str(cfg["username"]),
+            "username": str(cfg["username"]).strip(),
             "password": str(cfg.get("password") or ""),
             "database": str(cfg["database"]).strip(),
             "tls": bool(cfg.get("tls", False)),
         }
     uri = str(cfg.get("uri") or "").strip()
-    database = str(cfg.get("database") or "").strip()
     if not uri.startswith(("mongodb://", "mongodb+srv://")):
         raise validation_error("config.uri must start with mongodb:// or mongodb+srv://")
+    parsed = connections.parse_mongo_uri(uri)
+    database = str(cfg.get("database") or "").strip() or parsed["database"]
     if not database:
-        raise validation_error("config.database is required")
-    _reject_loopback(connections.parse_mongo_uri(uri)["host"])
+        raise validation_error("config.database is required (or name it in the URI: mongodb://host/<database>)")
+    _reject_loopback(parsed["host"])
     return name, {"uri": uri, "database": database}
 
 

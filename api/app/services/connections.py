@@ -353,11 +353,12 @@ def mongo_uri_password(uri: str) -> str | None:
 
 def parse_mongo_uri(uri: str) -> dict[str, Any]:
     """Parses host/port/username/tls from a MongoDB URI without DNS lookups (works for +srv)."""
-    result: dict[str, Any] = {"host": None, "port": None, "username": None, "tls": False}
+    result: dict[str, Any] = {"host": None, "port": None, "username": None, "tls": False, "database": None}
     m = re.match(r"^(mongodb(?:\+srv)?)://([^/?]*)(/[^?]*)?(\?.*)?$", uri or "")
     if not m:
         return result
-    scheme, netloc, _path, query = m.groups()
+    scheme, netloc, path, query = m.groups()
+    result["database"] = unquote((path or "").lstrip("/")).strip() or None
     if "@" in netloc:
         userinfo, hosts = netloc.rsplit("@", 1)
         result["username"] = unquote(userinfo.split(":", 1)[0]) or None
@@ -395,6 +396,7 @@ def display_for(ds: DataSource, config: dict[str, Any] | None = None) -> dict[st
             "tls": bool(config.get("tls")),
         }
     parsed = parse_mongo_uri(config.get("uri", ""))
+    parsed.pop("database")  # display is host/port/username/tls, like SQL's
     if config.get("username"):
         parsed["username"] = config["username"]
     return parsed
