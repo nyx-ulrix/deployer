@@ -224,7 +224,10 @@ also stops a running clone, build or push.
 Environment: `apps.env_encrypted` (JSON object, `encrypt_json`), values shown masked in the
 dashboard and revealable by admins. Always injected: `PORT`, `DEPLOYER_URL` (public URL + `/v1`),
 `DEPLOYER_PROJECT_ID`; when `apps.api_key_id` is set, `DEPLOYER_API_KEY` (decrypted from
-`api_keys.secret_encrypted`; a key without a stored secret cannot be attached).
+`api_keys.secret_encrypted`; a key without a stored secret cannot be attached). Names matching
+`DOCKER_*`, `LD_*` or `PATH` (any case) are rejected with 422 and never passed to a container: `docker
+run -e KEY` reads the value from the worker's own environment, so they would configure the worker's
+docker CLI (A-135).
 
 ## Data model (migration `0006_apps_deployments`)
 

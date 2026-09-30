@@ -76,6 +76,9 @@ def test_validation_and_ports(client, env, monkeypatch):
         {"preset": "dockerfile"},
         {"preset": "python"},
         {"env": {"1BAD": "x"}},
+        {"env": {"DOCKER_HOST": "tcp://203.0.113.9:2375"}},  # A-135: would configure the worker's docker
+        {"env": {"LD_PRELOAD": "/tmp/x.so"}},
+        {"env": {"path": "/tmp"}},
         {"root_dir": "../etc"},
         {"build_command": "npm run build\nrm -rf /"},
         {"branch": "feat branch"},

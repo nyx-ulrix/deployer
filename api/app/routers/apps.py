@@ -17,7 +17,18 @@ from app.db import get_sessionmaker
 from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import ApiError, conflict, forbidden, not_found
 from app.models import App, AppReplica, Deployment, Domain, Project, User
-from app.services import audit, cloud, cloud_deploy, cohost_apps, deployments, device_rpc, github, jobs, rate_limit
+from app.services import (
+    app_runner,
+    audit,
+    cloud,
+    cloud_deploy,
+    cohost_apps,
+    deployments,
+    device_rpc,
+    github,
+    jobs,
+    rate_limit,
+)
 from app.services import remote_access as ra
 
 router = APIRouter(tags=["apps"])
@@ -117,6 +128,8 @@ class AppFields(BaseModel):
         for key in value:
             if not re.match(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$", key):
                 raise ValueError(f"invalid environment variable name {key!r}")
+            if app_runner.reserved_env(key):
+                raise ValueError(f"{key} is reserved (DOCKER_*, LD_* and PATH configure the worker's docker)")
         if len(json.dumps(value)) > 64 * 1024:
             raise ValueError("environment is too large (64 KB max)")
         return value

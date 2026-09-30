@@ -38,6 +38,16 @@ LineFn = Callable[[str], None]
 # cancelled instead of only between steps.
 cancel_check: ContextVar[Callable[[], bool] | None] = ContextVar("deployer_cancel_check", default=None)
 _SHA = re.compile(r"[0-9a-f]{7,40}")
+# A-135: `-e KEY` reads the value from the docker CLI's own environment, so these names would
+# configure the worker's CLI (DOCKER_HOST sends every secret to another daemon, LD_PRELOAD, PATH).
+# The API rejects them; saved ones are never passed.
+_CLI_ENV = re.compile(r"(DOCKER_.*|LD_.*|PATH)", re.IGNORECASE)
+
+
+def reserved_env(key: str) -> bool:
+    """True for app variable names that would configure the worker's docker CLI."""
+    return bool(_CLI_ENV.fullmatch(key))
+
 
 _docker: DockerCli | None = None
 
@@ -219,7 +229,7 @@ class DockerCli:
 
     def run_container(self, name: str, image: str, *, labels: dict[str, str], env: dict[str, str]) -> None:
         """Starts a detached app container. Env values are passed through the process environment
-        (`-e KEY` without a value) so they never appear in argv."""
+        (`-e KEY` without a value) so they never appear in argv; `reserved_env` names are dropped."""
         s = get_settings()
         args = [
             "docker",
@@ -252,6 +262,10 @@ class DockerCli:
         ]
         for key, value in labels.items():
             args += ["--label", f"{key}={value}"]
+        dropped = [k for k in env if reserved_env(k)]
+        if dropped:
+            log.warning("not passing reserved variables %s to %s", ", ".join(dropped), name)
+        env = {k: v for k, v in env.items() if k not in dropped}
         for key in env:
             args += ["-e", key]
         args.append(image)

@@ -610,6 +610,15 @@ def test_real_docker_cli_argv_hardening_and_secrets_stay_out_of_argv(monkeypatch
     ]
     assert "-e APP_SECRET img:1" in joined and args[-1] == "img:1"
     assert secret not in joined and kw["env"]["APP_SECRET"] == secret
+    # A-135: an app variable never configures the worker's docker CLI (saved before validation existed).
+    calls.clear()
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+    evil = {"DOCKER_HOST": "tcp://203.0.113.9:2375", "LD_PRELOAD": "/x.so", "PATH": "/x", "OK": "1"}
+    cli.run_container("app-1", "img:1", labels={}, env=evil)
+    args, kw = calls[-1]
+    assert [a for i, a in enumerate(args) if args[i - 1] == "-e"] == ["OK"]
+    assert "DOCKER_HOST" not in kw["env"] and kw["env"]["PATH"] == os.environ["PATH"]
+    assert kw["env"].get("LD_PRELOAD") == os.environ.get("LD_PRELOAD")
 
     token = "tok-" + secrets.token_hex(16)
     calls.clear()

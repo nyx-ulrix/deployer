@@ -231,7 +231,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-134 **[LOW][test]** Missing tests for the risky device and co-hosting paths - `api/tests/test_devices_management.py:220-240` - one test each for A-008/A-009/A-011/A-127.
 
 **Deploys / monitoring / remote access**
-- [ ] A-135 **[LOW][security]** App environment variables are merged into the worker's docker CLI process environment - `api/app/services/app_runner.py:218-223` - a 0600 `--env-file`; reject DOCKER_*/LD_*/PATH.
+- [x] A-135 **[LOW][security]** App environment variables are merged into the worker's docker CLI process environment - `api/app/services/app_runner.py:218-223` - a 0600 `--env-file`; reject DOCKER_*/LD_*/PATH.
 - [ ] A-136 **[LOW][usability]** A quick-tunnel public URL goes stale after every restart - `api/app/services/remote_access.py:850-855` - auto-update it, or show a banner.
 - [ ] A-137 **[LOW][bug]** A failed restore or verify raises a 24 h critical "backup failed" alert with jargon - `api/app/services/alerts.py:102-133` - limit to snapshot/archive types; plain words. (not verified)
 - [ ] A-138 **[LOW][security]** GitHub webhook: rate limit counted before the signature check; sync DB calls in an async route - `api/app/routers/apps.py:751-767` - verify first; run_in_threadpool. (not verified)
