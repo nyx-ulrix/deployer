@@ -24,6 +24,7 @@ from sqlalchemy.dialects import mysql, postgresql
 from sqlalchemy.exc import NoSuchTableError, SQLAlchemyError
 
 from app.errors import ApiError
+from app.services.introspection import to_relaxed
 
 MAX_LIMIT = 500
 FORBIDDEN_OPERATORS = frozenset({"$where", "$function", "$accumulator"})
@@ -282,18 +283,18 @@ def delete_row(engine: Engine, table_name: str, pk: dict) -> dict:
 # =============================================================================================
 
 
-def find_forbidden_operator(value: Any, _inside_expr: bool = False) -> str | None:
+def find_forbidden_operator(value: Any) -> str | None:
     """Recursively looks for server-side JavaScript operators."""
     if isinstance(value, dict):
         for key, child in value.items():
             if isinstance(key, str) and key in FORBIDDEN_OPERATORS:
                 return key
-            found = find_forbidden_operator(child, _inside_expr or key == "$expr")
+            found = find_forbidden_operator(child)
             if found:
                 return found
     elif isinstance(value, list | tuple):
         for child in value:
-            found = find_forbidden_operator(child, _inside_expr)
+            found = find_forbidden_operator(child)
             if found:
                 return found
     return None
@@ -314,10 +315,6 @@ def parse_ejson(value: Any, what: str) -> Any:
         raise ApiError(400, "invalid_json", f"Invalid {what}: {exc}") from exc
     check_forbidden(parsed)
     return parsed
-
-
-def to_relaxed(doc: Any) -> Any:
-    return json.loads(json_util.dumps(doc, json_options=json_util.RELAXED_JSON_OPTIONS))
 
 
 def _mongo_error(exc: PyMongoError) -> ApiError:

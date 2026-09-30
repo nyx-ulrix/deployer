@@ -16,7 +16,7 @@ from sqlalchemy.schema import CreateIndex, CreateTable
 from app.models import DataSource
 from app.services import connections
 from app.services.conventions import split_type_union
-from app.services.introspection import DEFAULT_SAMPLE, analyze_documents
+from app.services.introspection import DEFAULT_SAMPLE, _s, analyze_documents
 
 # ---------------------------------------------------------------------------------------------
 # pure helpers
@@ -260,10 +260,6 @@ def mysql_table_order(engine: Engine) -> list[str]:
         ):
             deps.setdefault(_s(tname), set()).add(_s(ref))
     return topo_sort_tables(tables, deps)
-
-
-def _s(value: Any) -> Any:
-    return value.decode("utf-8", "replace") if isinstance(value, bytes | bytearray) else value
 
 
 def show_create_table(conn: Any, dialect: Any, table: str) -> str:

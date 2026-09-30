@@ -132,6 +132,17 @@ def test_parse_ejson_relaxed_and_ids():
     assert "$date" in relaxed["d"]
 
 
+def test_shared_helpers_live_in_one_module():
+    # A-109: to_relaxed and _s had copies; the dead helpers are gone.
+    from app.services import connections, conventions, ddl_export, introspection, transfer
+
+    assert b.to_relaxed is introspection.to_relaxed
+    assert ddl_export._s is introspection._s and transfer._s is introspection._s
+    assert introspection._s(b"caf\xc3\xa9") == "café"
+    for module, name in [(introspection, "encode_b64"), (conventions, "issues_by_rule"), (connections, "ping_sql")]:
+        assert not hasattr(module, name)
+
+
 def test_yes_no_text_is_coerced_for_boolean_columns(engine):
     # MariaDB BOOLEAN reflects as TINYINT(1); "true" used to reach the server as a string (error 1366).
     t = Table("t", MetaData(), Column("flag", mysql.TINYINT(1)), Column("b", Boolean), Column("n", mysql.TINYINT(4)))

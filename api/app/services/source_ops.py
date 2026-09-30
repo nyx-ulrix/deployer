@@ -283,7 +283,6 @@ def check_status(db: Session, ds: DataSource) -> DataSource:
     """`connections.check_status` for any source. Caller commits."""
     if not is_remote(ds):
         return connections.check_status(db, ds)
-    _ = db
     try:
         result = device_rpc.call(
             ds.device_id, "datasource.check", {"kind": ds.kind, "database_name": ds.database_name}, timeout=30

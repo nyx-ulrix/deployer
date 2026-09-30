@@ -421,7 +421,6 @@ def provision_managed_source(
 
 def drop_managed_source(db: Session, data_source: DataSource) -> None:
     """Drops the managed database and its user. No-op for external sources. Row is not deleted."""
-    _ = db
     if data_source.mode != "managed":
         return
     if connections.device_removed(data_source):

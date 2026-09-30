@@ -105,6 +105,7 @@ from app.models import (
 )
 from app.services import backup_crypto, connections, ddl_export, device_host, device_rpc, provisioning
 from app.services.data_browser import encode_value
+from app.services.introspection import _s
 from app.services.slugs import unique_slug
 
 log = logging.getLogger(__name__)
@@ -318,13 +319,13 @@ def _mysql_columns(conn: Any, table: str) -> list[dict]:
         "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s ORDER BY ORDINAL_POSITION",
         (table,),
     ):
-        extra_text = ddl_export._s(extra) or ""
+        extra_text = _s(extra) or ""
         if (
             re.search(r"VIRTUAL|STORED|PERSISTENT|GENERATED", extra_text, re.IGNORECASE)
             and "DEFAULT_GENERATED" not in extra_text.upper()
         ):
             continue
-        cols.append({"name": ddl_export._s(name), "type": ddl_export._s(ctype)})
+        cols.append({"name": _s(name), "type": _s(ctype)})
     return cols
 
 

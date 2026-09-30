@@ -11,7 +11,6 @@ pure), plus indexes, `$jsonSchema` validators and estimated counts.
 
 from __future__ import annotations
 
-import base64
 import datetime as dt
 import decimal
 import json
@@ -597,7 +596,3 @@ def sql_entity(ds: DataSource, table: str) -> dict | None:
 def mongo_entity(ds: DataSource, name: str, sample: int = DEFAULT_SAMPLE) -> dict | None:
     entities, _ = introspect_mongo(connections.get_mongo_db(ds), sample, only=name)
     return entities[0] if entities else None
-
-
-def encode_b64(value: bytes) -> dict:
-    return {"$base64": base64.b64encode(bytes(value)).decode("ascii")}

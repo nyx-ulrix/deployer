@@ -22,7 +22,7 @@ from urllib.parse import quote, unquote, urlsplit
 from pymongo import MongoClient
 from pymongo.database import Database
 from pymongo.errors import ConfigurationError, ConnectionFailure, OperationFailure
-from sqlalchemy import Engine, create_engine, text
+from sqlalchemy import Engine, create_engine
 from sqlalchemy.engine import URL
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import NullPool
@@ -432,8 +432,3 @@ def connection_info(ds: DataSource) -> dict[str, Any]:
     else:
         info["external_hint"] = "Use these from any app or computer that can reach this database's server."
     return info
-
-
-def ping_sql(engine: Engine) -> None:
-    with engine.connect() as conn:
-        conn.execute(text("SELECT 1"))

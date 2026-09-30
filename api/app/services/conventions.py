@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from typing import Any
 
 # --------------------------------------------------------------------------------------------
 # English inflection heuristics (deliberately simple)
@@ -607,10 +606,3 @@ def check_conventions(sources: list[dict], links: list[dict] | None = None) -> l
         issues.extend(check_structure(source))
     issues.extend(check_links(sources, links or []))
     return issues
-
-
-def issues_by_rule(issues: list[dict[str, Any]]) -> dict[str, list[dict]]:
-    out: dict[str, list[dict]] = {}
-    for i in issues:
-        out.setdefault(i["rule"], []).append(i)
-    return out
