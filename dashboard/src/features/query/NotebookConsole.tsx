@@ -59,7 +59,7 @@ import {
   type NotebookTab,
 } from "./notebook";
 import { NotebookSidebar } from "./NotebookSidebar";
-import { loadPrefs, loadSelectedSource, MOD_KEY, savePrefs, saveSelectedSource, type QueryPrefs } from "./prefs";
+import { DEFAULT_PREFS, loadPrefs, loadSelectedSource, MOD_KEY, savePrefs, saveSelectedSource, type QueryPrefs } from "./prefs";
 import { QueryEditor, type ConsoleAction, type QueryEditorHandle } from "./QueryEditor";
 import { checkReadOnly } from "./readOnly";
 import { describeQueryError, firstError, formatMs, mongoSummaryText, sqlSummaryText, starterQuery, summarizeSql } from "./results";
@@ -72,7 +72,7 @@ const NO_ENTITIES: Entity[] = [];
 const isDesktop = () => typeof window.matchMedia === "function" && window.matchMedia("(min-width: 1024px)").matches;
 
 /** Output of one cell: session state only, never persisted or saved. */
-type CellResult = { run: RunState; at: string; /** The text that was run, for the "edited since" hint. */ text: string; collapsed: boolean };
+export type CellResult = { run: RunState; at: string; /** The text that was run, for the "edited since" hint. */ text: string; collapsed: boolean };
 
 type PendingWrite = { cellId: string; text: string; reason: string };
 
@@ -606,7 +606,6 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
               result={results[c.id]}
               pendingWrite={pendingWrite?.cellId === c.id ? pendingWrite.reason : null}
               autoFocus={c.id === focusCellId}
-              maxRows={prefs.maxRows}
               on={cell}
             />
           ))}
@@ -723,7 +722,6 @@ function NotebookCell({
   result,
   pendingWrite,
   autoFocus,
-  maxRows,
   on,
 }: {
   cell: NotebookCell;
@@ -734,7 +732,6 @@ function NotebookCell({
   result: CellResult | undefined;
   pendingWrite: string | null;
   autoFocus: boolean;
-  maxRows: number;
   on: CellActions;
 }) {
   const running = result?.run.status === "running";
@@ -800,25 +797,25 @@ function NotebookCell({
         </div>
       )}
 
-      {result && <CellOutput result={result} source={source} maxRows={maxRows} onToggle={() => on.toggle(cell.id)} onCancel={() => on.cancel(cell.id)} />}
+      {result && <CellOutput result={result} source={source} onToggle={() => on.toggle(cell.id)} onCancel={() => on.cancel(cell.id)} />}
     </section>
   );
 }
 
-function CellOutput({
+/** Exported for tests. Row limits come from the run's own request, not the live picker (A-174). */
+export function CellOutput({
   result,
   source,
-  maxRows,
   onToggle,
   onCancel,
 }: {
   result: CellResult;
   source: DataSource;
-  maxRows: number;
   onToggle: () => void;
   onCancel: () => void;
 }) {
   const { run } = result;
+  const maxRows = run.request.max_rows ?? DEFAULT_PREFS.maxRows;
   const Chevron = result.collapsed ? ChevronRight : ChevronDown;
   return (
     <div className="border-t border-border" aria-live="polite">
