@@ -164,7 +164,9 @@ namespace DeployerSetup
         internal int port;
         internal StatusSnapshot status;
         internal bool healthy;
-        bool healthKnown;
+        /// <summary>The last status run gave no snapshot (WSL or Docker broken, script error); its output is kept for Show details (A-099).</summary>
+        internal bool statusFailed;
+        string statusOutput = "";
         bool everHealthy;
         int failedPolls;
         DateTime lastUserAction = DateTime.MinValue;
@@ -412,8 +414,8 @@ namespace DeployerSetup
             {
                 if (IsBusy) return RunState.Busy;
                 if (healthy) return RunState.Running;
-                if (status == null && !healthKnown) return RunState.Checking;
-                if (status == null) return RunState.Checking;
+                // A failed status run would otherwise leave "Checking..." spinning forever (A-099).
+                if (status == null) return statusFailed ? RunState.NotResponding : RunState.Checking;
                 bool anyRunning = status.Services.Any(s => s.State == "running");
                 if (anyRunning)
                 {
@@ -430,7 +432,7 @@ namespace DeployerSetup
         bool CanBackUp(RunState st)
         {
             return st == RunState.Running
-                || (st == RunState.NotResponding && status.Services.Any(s => s.Name == "mariadb" && s.State == "running"));
+                || (st == RunState.NotResponding && status != null && status.Services.Any(s => s.Name == "mariadb" && s.State == "running"));
         }
 
         internal void UpdateView()
@@ -456,8 +458,10 @@ namespace DeployerSetup
                     break;
                 case RunState.NotResponding:
                     pillText = "Not responding"; color = Theme.Danger; icon = IconKind.Warn; heroFill = Theme.DangerSoft;
-                    title = "Deployer isn't responding";
-                    text = "Try Restart. If that doesn't help, View logs shows what went wrong.";
+                    title = status == null ? "Couldn't check Deployer's services" : "Deployer isn't responding";
+                    text = status == null
+                        ? "Try Start or Restart. If that fails, Show details has the error."
+                        : "Try Restart. If that doesn't help, View logs shows what went wrong.";
                     break;
                 case RunState.Stopped:
                     pillText = "Stopped"; color = Theme.Neutral; icon = IconKind.Dot; heroFill = Theme.NeutralSoft;
@@ -512,7 +516,7 @@ namespace DeployerSetup
                 ServiceInfo info = status == null ? null : status.Services.FirstOrDefault(s => s.Name == name);
                 if (status == null)
                 {
-                    t.StateText = "Checking…";
+                    t.StateText = statusFailed ? "Unknown" : "Checking…";
                     t.Dot = Theme.Neutral;
                 }
                 else if (name == "mongodb" && !status.ManagedMongodb)
@@ -605,7 +609,6 @@ namespace DeployerSetup
                     healthBusy = false;
                     bool was = healthy;
                     healthy = ok;
-                    healthKnown = true;
                     if (ok)
                     {
                         everHealthy = true;
@@ -649,6 +652,8 @@ namespace DeployerSetup
                 SafeInvoke(() =>
                 {
                     statusBusy = false;
+                    statusFailed = snap == null;
+                    if (statusFailed) statusOutput = "> deployer status -Json (exit code " + r.ExitCode + ")\r\n" + r.StdOut + "\r\n" + r.StdErr;
                     if (snap != null)
                     {
                         status = snap;
@@ -852,7 +857,7 @@ namespace DeployerSetup
             if (outputWindow == null || outputWindow.IsDisposed)
             {
                 outputWindow = new OutputWindow("Deployer Control — details", 0);
-                outputWindow.SetText(actionLog.Length > 0 ? actionLog.ToString() : "No actions yet. Output of Start, Stop, Update, Back up and Settings appears here.");
+                outputWindow.SetText(actionLog.Length > 0 ? actionLog.ToString() : statusFailed ? statusOutput : "No actions yet. Output of Start, Stop, Update, Back up and Settings appears here.");
                 outputWindow.PlaceCentered(this);
                 outputWindow.Show(this);
             }
@@ -1142,7 +1147,6 @@ namespace DeployerSetup
         {
             status = snapshot;
             healthy = isHealthy;
-            healthKnown = true;
             lastResult = result ?? "";
             lastResultOk = resultOk;
             if (busyAction != null)

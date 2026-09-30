@@ -126,6 +126,9 @@ namespace DeployerSetup
             using (ControlForm running = ControlSample(1f, 0), stopped = ControlSample(1f, 1), broken = ControlSample(1f, 3))
                 Check(running.updateButton.Enabled && !stopped.updateButton.Enabled && broken.updateButton.Enabled,
                       "Update needs the database running, not a healthy API (A-076)");
+            using (ControlForm checking = ControlSample(1f, 5), failed = ControlSample(1f, 4))
+                Check(checking.State == RunState.Checking && failed.State == RunState.NotResponding && !failed.updateButton.Enabled,
+                      "a failed status run shows advice instead of Checking forever (A-099)");
             Check(AppInfo.CompareVersions("0.10.0", "0.9.9") > 0 && AppInfo.CompareVersions("v0.3.0", "0.3.0") == 0
                   && AppInfo.CompareVersions("0.3.0", "0.3.0-rc.1") > 0 && AppInfo.CompareVersions("main", "0.0.1") < 0
                   && InstallLocator.IsUpdate("0.4.0", "0.3.0", "0.3.0") && InstallLocator.IsUpdate("0.4.0", null, null)
@@ -491,6 +494,7 @@ namespace DeployerSetup
             Save(ControlSample(scale, 1), dir, "control-stopped");
             Save(ControlSample(scale, 2), dir, "control-busy");
             Save(ControlSample(scale, 3), dir, "control-not-responding");
+            Save(ControlSample(scale, 4), dir, "control-status-failed");
 
             Save(new SettingsDialog(8080, false, true, true, scale, null, null), dir, "dialog-settings");
             Save(new SettingsDialog(8080, true, true, true, scale, new List<string> { "http://192.168.1.20:8080" }, null), dir, "dialog-settings-lan");
@@ -624,6 +628,8 @@ namespace DeployerSetup
                 case 0: c.ApplySample(s, true, null, "Backup finished at 10:21 (in the backups folder)", true); break;
                 case 1: c.ApplySample(s, false, null, "Deployer stopped at 10:22. Your data is safe.", true); break;
                 case 2: c.ApplySample(s, true, "Backing up", null, true); break;
+                case 4: c.statusFailed = true; c.ApplySample(null, false, null, null, true); break;
+                case 5: c.ApplySample(null, false, null, null, true); break;
                 default: c.ApplySample(s, false, null, null, true); break;
             }
             return c;
