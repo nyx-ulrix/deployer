@@ -58,6 +58,8 @@ def test_build_create_table_postgres():
     assert statements[1] == 'CREATE INDEX "ix_orders_user_id" ON "orders" ("user_id")'
     # updated_at has no ON UPDATE on Postgres: a trigger keeps it current (A-112).
     assert statements[2] == schema_ops.PG_TOUCH_FUNCTION
+    # Never reuse a same-named function another role may own (search_path trojan).
+    assert schema_ops.PG_TOUCH_FUNCTION.startswith("CREATE OR REPLACE FUNCTION")
     assert statements[3] == (
         'CREATE TRIGGER "trg_orders_updated_at" BEFORE UPDATE ON "orders" '
         "FOR EACH ROW EXECUTE PROCEDURE deployer_set_updated_at()"

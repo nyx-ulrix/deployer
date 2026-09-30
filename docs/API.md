@@ -353,7 +353,8 @@ type TableSpec = {
              references?: { table: string; column: string; on_delete?: "cascade" | "set null" | "restrict" } }[];
   timestamps?: boolean;                 // adds created_at / updated_at; updated_at refreshes on every UPDATE
                                         // (MySQL: ON UPDATE; Postgres: a BEFORE UPDATE trigger calling
-                                        // the shared function deployer_set_updated_at())
+                                        // the shared function deployer_set_updated_at(); creation fails
+                                        // if another role already owns a function of that name)
 };
 ```
 

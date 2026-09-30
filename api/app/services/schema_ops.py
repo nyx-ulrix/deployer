@@ -51,21 +51,16 @@ _DEFAULT_STRING = re.compile(r"^(?:[A-Za-z0-9 _.,:;@/+#=()\[\]{}!?*&%<>|~^$-]|[^
 
 ON_DELETE = {"cascade": "CASCADE", "set null": "SET NULL", "restrict": "RESTRICT"}
 
-# Shared trigger function for `timestamps: true` on Postgres. Created only when missing (not
-# CREATE OR REPLACE) so a copy owned by another role doesn't block table creation. Like MySQL's
+# Shared trigger function for `timestamps: true` on Postgres. CREATE OR REPLACE (not "reuse if it
+# exists"): a copy planted by another role (PG <= 14 lets any role create in `public`) makes this
+# fail with "must be owner" instead of running that role's code on every UPDATE. Like MySQL's
 # ON UPDATE, an explicit new updated_at in the UPDATE is kept. EXECUTE PROCEDURE works on PG 9.x+.
-PG_TOUCH_FUNCTION = """DO $$
+PG_TOUCH_FUNCTION = """CREATE OR REPLACE FUNCTION deployer_set_updated_at() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF to_regprocedure('deployer_set_updated_at()') IS NULL THEN
-    CREATE FUNCTION deployer_set_updated_at() RETURNS trigger LANGUAGE plpgsql AS $f$
-    BEGIN
-      IF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
-        NEW.updated_at := CURRENT_TIMESTAMP;
-      END IF;
-      RETURN NEW;
-    END
-    $f$;
+  IF NEW.updated_at IS NOT DISTINCT FROM OLD.updated_at THEN
+    NEW.updated_at := CURRENT_TIMESTAMP;
   END IF;
+  RETURN NEW;
 END
 $$"""
 
