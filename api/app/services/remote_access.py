@@ -920,6 +920,7 @@ def follow_quick_url(db: Session) -> bool:
     previous, new = public_url(db), f"https://{new_host}"
     set_value(db, "public_url", new)
     audit.record(db, "remote_access.public_url_follow", previous=previous, public_url=new)
+    db.commit()  # the URL sticks even if a webhook re-sync fails (else every tick would retry it)
     for warning in deployments.resync_webhooks(db):
         log.warning("Webhook did not follow the new quick-tunnel URL: %s", warning)
     db.commit()

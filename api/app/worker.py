@@ -142,8 +142,11 @@ def scheduler_tick() -> None:
     from app.services import alerts, audit, backups, cohost_apps, deployments, query_log, remote_access
 
     jobs.recover_stale()
-    with jobs.get_sessionmaker()() as session:
-        remote_access.follow_quick_url(session)  # A-136: a restarted quick tunnel has a new hostname
+    try:
+        with jobs.get_sessionmaker()() as session:
+            remote_access.follow_quick_url(session)  # A-136: a restarted quick tunnel has a new hostname
+    except Exception:  # noqa: BLE001 - never skip the backups/deploy work below over this
+        log.exception("could not follow the quick-tunnel URL")
     jobs.redispatch_queued()
     backups.scheduler_tick(jobs.get_sessionmaker())
     deployments.scheduler_tick(jobs.get_sessionmaker())

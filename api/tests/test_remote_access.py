@@ -465,6 +465,23 @@ def test_quick_public_url_follows_a_restarted_tunnel(client, owner_headers, stat
     assert ra.follow_quick_url(db) is False and resyncs == [1]
 
 
+def test_quick_public_url_follow_sticks_when_webhook_resync_fails(
+    client, owner_headers, state_dir, db, set_setting, monkeypatch
+):
+    # A failed re-sync must not roll the URL back, or every scheduler tick would retry (and fail) again.
+    def boom(_db):
+        raise RuntimeError("resync failed")
+
+    monkeypatch.setattr("app.services.deployments.resync_webhooks", boom)
+    client.post(f"{BASE}/quick", json={"enabled": True}, headers=owner_headers)
+    set_setting("public_url", "https://old-words.trycloudflare.com")
+    write_status(state_dir, mode="quick", running=True, quick_url="https://new-words.trycloudflare.com")
+    with pytest.raises(RuntimeError):
+        ra.follow_quick_url(db)
+    db.rollback()
+    assert client.get(BASE, headers=owner_headers).json()["public_url"] == "https://new-words.trycloudflare.com"
+
+
 def test_quick_then_back_to_cloudflare(client, owner_headers, fake_cf, state_dir):
     link(client, owner_headers)
     client.post(f"{BASE}/quick", json={"enabled": True}, headers=owner_headers)
