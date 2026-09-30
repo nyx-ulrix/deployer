@@ -130,7 +130,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-059 **[MEDIUM][bug]** Images of failed or cancelled deployments are never removed - `api/app/services/deployments.py:715-728, 815-817, 833-839` - remove the image on failure and cancel; keep-set counts only live/superseded.
 - [x] A-060 **[MEDIUM][usability]** Deploy failures show raw git/docker jargon and the health timeout gives no 0.0.0.0:$PORT hint - `api/app/services/deployments.py:584-587, 789-794` - map known patterns to plain hints (private repo, wrong branch, listen address).
 - [x] A-061 **[MEDIUM][usability]** An app can't be deleted while Cloudflare is unreachable or the token is revoked - `api/app/routers/apps.py:438-440` - best-effort hostname cleanup with a warning; commit once.
-- [ ] A-062 **[MEDIUM][bug]** The deploy log is rewritten in full every 2 s, bloating the MariaDB binlog - `api/app/services/deployments.py:56, 553-572` - flush at step boundaries or every 10-15 s, or keep the live tail in Redis.
+- [x] A-062 **[MEDIUM][bug]** The deploy log is rewritten in full every 2 s, bloating the MariaDB binlog - `api/app/services/deployments.py:56, 553-572` - flush at step boundaries or every 10-15 s, or keep the live tail in Redis.
 
 **Infrastructure / installer**
 - [ ] A-063 **[MEDIUM][bug]** LAN port forwarding is not refreshed when the keep-alive loop restarts the stack - `installer/deployer.ps1:198-207` - call Update-LanForwarding in the loop; prefer the eth0 IP.

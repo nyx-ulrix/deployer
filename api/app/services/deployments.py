@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import quote, urlsplit
 
+import redis
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -53,7 +54,9 @@ PORT_MIN, PORT_MAX = 8100, 8199
 IMAGE_PREFIX = "deployer-app"
 KEEP_IMAGES = 5
 LOG_CAP = 1024 * 1024
-LOG_FLUSH_S = 2.0
+LOG_FLUSH_S = 2.0  # live tail to Redis (what the dashboard polls while a build runs)
+LOG_SAVE_S = 15.0  # the row: every UPDATE rewrites the whole log into the ROW binlog (A-062)
+LIVE_LOG_TTL_S = 86400
 HEALTH_TIMEOUT_S = 60
 ACTIVE_STATUSES = ("queued", "building", "deploying")
 FINAL_STATUSES = ("live", "failed", "cancelled", "superseded")
@@ -97,6 +100,10 @@ def internal_port(app: App) -> int:
 
 def image_tag(app_id: str, deployment_id: str) -> str:
     return f"{IMAGE_PREFIX}/{app_id}:{deployment_id}"
+
+
+def live_log_key(deployment_id: str) -> str:
+    return f"deploy-log:{deployment_id}"
 
 
 def container_name(app: App, deployment_id: str) -> str:
@@ -217,6 +224,10 @@ def deployment_out(dep: Deployment, *, with_log: bool = False) -> dict:
     }
     if with_log:
         out["log"] = dep.log or ""
+        try:  # a running build's newer tail lives in Redis until the job ends
+            out["log"] = get_redis().get(live_log_key(dep.id)) or out["log"]
+        except redis.RedisError:
+            pass
     return out
 
 
@@ -570,34 +581,72 @@ def _shell_quote(text: str) -> str:
 
 
 class _DeployLog:
-    """Deployment log kept in memory (tail of LOG_CAP bytes), flushed to the row every LOG_FLUSH_S."""
+    """Deployment log kept in memory (tail of LOG_CAP bytes). New lines reach Redis every
+    LOG_FLUSH_S (appended, so the AOF grows with the output, not with the whole log each time);
+    the row is saved at step boundaries, every LOG_SAVE_S and when the job ends."""
 
     def __init__(self, factory: jobs.SessionFactory, deployment_id: str, secrets: list[str | None]):
         self.factory, self.deployment_id, self.secrets = factory, deployment_id, secrets
         self.lines: list[str] = []
         self.size = 0
-        self.last_flush = 0.0
+        self.pending: list[str] = []  # lines not yet in Redis
+        self.live_size = 0  # characters in the Redis copy; 0 = rewrite it in full
+        self.last_flush = self.last_save = 0.0
 
-    def write(self, line: str) -> None:
+    def _add(self, line: str) -> None:
         line = redact(line, self.secrets, limit=None)
         self.lines.append(line)
+        self.pending.append(line)
         self.size += len(line) + 1
         while self.size > LOG_CAP and len(self.lines) > 1:
             self.size -= len(self.lines.pop(0)) + 1
-        if time.monotonic() - self.last_flush >= LOG_FLUSH_S:
+
+    def write(self, line: str) -> None:
+        self._add(line)
+        now = time.monotonic()
+        if now - self.last_save >= LOG_SAVE_S:
             self.flush()
+        elif now - self.last_flush >= LOG_FLUSH_S:
+            self.publish()
 
     def step(self, title: str) -> None:
-        self.write(f"==> {title}")
+        self._add(f"==> {title}")
         self.flush()
 
-    def flush(self) -> None:
+    def publish(self) -> None:
         self.last_flush = time.monotonic()
+        if not self.pending:
+            return
+        key, text = live_log_key(self.deployment_id), "\n".join(self.pending)
+        self.pending = []
+        try:
+            r = get_redis()
+            if self.live_size and self.live_size + len(text) + 1 <= 2 * LOG_CAP:
+                r.append(key, "\n" + text)
+                self.live_size += len(text) + 1
+            else:  # first write, or the copy outgrew the cap: replace it with the capped tail
+                full = "\n".join(self.lines)
+                r.set(key, full, ex=LIVE_LOG_TTL_S)
+                self.live_size = len(full)
+        except redis.RedisError:
+            self.live_size = 0  # the row still gets every line; readers fall back to it
+            log.warning("could not publish the live log of deployment %s", self.deployment_id)
+
+    def flush(self) -> None:
+        self.publish()
+        self.last_save = time.monotonic()
         with self.factory() as db:
             dep = db.get(Deployment, self.deployment_id)
             if dep is not None:
                 dep.log = "\n".join(self.lines)
                 db.commit()
+
+    def close(self) -> None:
+        self.flush()
+        try:
+            get_redis().delete(live_log_key(self.deployment_id))
+        except redis.RedisError:
+            pass  # expires after LIVE_LOG_TTL_S
 
 
 def _update(factory: jobs.SessionFactory, deployment_id: str, **values) -> None:
@@ -936,7 +985,7 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
         raise jobs.JobError(message) from exc
     finally:
         cancel_check.reset(cancel_token)
-        log_.flush()
+        log_.close()
         shutil.rmtree(workdir, ignore_errors=True)
         try:
             enqueue_next(factory, app.id, finishing_job_id=ctx.job_id)

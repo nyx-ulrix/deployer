@@ -625,3 +625,29 @@ def test_default_npm_install_works_without_a_lockfile(db, project):
     for preset in ("static", "node"):
         text = deployments.generate_dockerfile(make_app(db, project, preset[0], preset=preset))
         assert npm in text and "RUN npm ci\n" not in text
+
+
+def test_build_log_goes_live_through_redis_and_saves_the_row_rarely(db, fake_redis, project, monkeypatch):
+    # A-062: rewriting the whole log row every 2 s bloated the ROW binlog.
+    app = make_app(db, project)
+    dep, _ = deploy(db, app)
+    clock = [1000.0]
+    monkeypatch.setattr(deployments.time, "monotonic", lambda: clock[0])
+    saves = []
+    factory = jobs.get_sessionmaker()
+    log_ = deployments._DeployLog(lambda: (saves.append(1), factory())[1], dep.id, [])
+    log_.step("Build")
+    assert len(saves) == 1
+    for i in range(20):  # 40 s of output, a line every 2 s
+        clock[0] += 2
+        log_.write(f"line {i}")
+    assert len(saves) == 3  # every LOG_SAVE_S, not every LOG_FLUSH_S
+    live = fake_redis.get(deployments.live_log_key(dep.id))
+    assert live.endswith("line 19") and live == "\n".join(log_.lines)
+    db.expire_all()
+    assert "line 19" not in db.get(Deployment, dep.id).log
+    assert deployments.deployment_out(db.get(Deployment, dep.id), with_log=True)["log"] == live
+    log_.close()
+    assert fake_redis.get(deployments.live_log_key(dep.id)) is None
+    db.expire_all()
+    assert db.get(Deployment, dep.id).log == live

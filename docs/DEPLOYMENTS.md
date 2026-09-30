@@ -303,6 +303,11 @@ Runtime logs: the API has no Docker access. `GET /apps/{id}/logs` enqueues nothi
 worker keeps the last 500 lines of each live container in Redis (`apps:logs:<app_id>`, a capped
 list refreshed by a `docker logs --since` poll every 10 s in the scheduler) and the API reads that.
 
+Build log: while a deployment runs, the worker appends new lines to Redis (`deploy-log:<deployment_id>`)
+every 2 s and `GET .../deployments/{dep}?log=1` serves that copy. The `deployments.log` row is saved
+only at each step, every 15 s and when the job ends (then the Redis copy is deleted): every UPDATE
+rewrites the whole log (up to 1 MB) into MariaDB's ROW binlog, so saving it every 2 s bloated it.
+
 ```ts
 type App = { id; project_id; name; slug; repo_url; branch; root_dir; preset; install_command; build_command;
   start_command; output_dir; container_port: number|null; env_keys: string[]; has_repo_token: boolean;
