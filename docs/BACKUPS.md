@@ -26,7 +26,9 @@ A scheduled or manual snapshot is kept if it is the newest one in any of the mos
 (UTC hours/days/ISO weeks/months); the newest one is always kept. **Pinned** (labelled) versions and
 safety snapshots from the last 30 days are never pruned automatically; safety and final snapshots do
 not take a bucket. The versions list shows each one's reason (`kept_as`) from these same rules, or
-"May be pruned soon" when the next hourly prune will delete it. Log segments are
+"May be pruned soon" when the next hourly prune will delete it. In the policy dialog each Keep box must
+be a whole number from 0 to 1000 (0 turns that tier off; a blank box blocks Save rather than saving 0),
+and setting all four to 0 shows a warning that only the newest version will be kept. Log segments are
 kept for the PITR window plus the age of the oldest snapshot needed to replay into that window. Turning
 PITR off, or shortening the window, lets the next hourly prune delete the logs that fall outside it
 for good, so the policy dialog asks for confirmation before saving such a change.

@@ -11,10 +11,11 @@ import { Alert, ErrorAlert } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { formatBytes, formatDateTime } from "../../lib/format";
 import { pitrLossWarning } from "./pitr";
-import { SCHEDULE_LABELS } from "./timeline";
+import { keepCountError, SCHEDULE_LABELS } from "./timeline";
 
 const NONE = "none";
 const PRIMARY = "primary";
+const KEEP_KEYS = ["keep_hourly", "keep_daily", "keep_weekly", "keep_monthly"] as const;
 
 function copyTargetValue(p: Pick<BackupPolicy, "copy_to_primary" | "copy_to_device_id">): string {
   if (p.copy_to_primary) return PRIMARY;
@@ -88,6 +89,9 @@ export function PolicyDialog({
 
   const windowDays = Number(draft.pitr_window_days);
   const windowValid = Number.isInteger(windowDays) && windowDays >= 1 && windowDays <= 35;
+  const keepValid = KEEP_KEYS.every((k) => !keepCountError(draft[k]));
+  const onlyLatest = keepValid && KEEP_KEYS.every((k) => Number(draft[k]) === 0);
+  const formValid = windowValid && keepValid;
   const options = copyOptions(placement.data ?? [], source);
   if (!options.some((o) => o.value === draft.copy)) {
     options.push({ value: draft.copy, label: "Current device (not available)", disabled: false });
@@ -119,7 +123,7 @@ export function PolicyDialog({
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (!canEdit || !windowValid) return;
+    if (!canEdit || !formValid) return;
     const loss = pitrLossWarning(policy, {
       pitr_enabled: draft.pitr_enabled,
       pitr_window_days: clampInt(draft.pitr_window_days, 1, 35),
@@ -128,8 +132,8 @@ export function PolicyDialog({
     else save.mutate();
   };
 
-  const keepField = (key: "keep_hourly" | "keep_daily" | "keep_weekly" | "keep_monthly", label: string) => (
-    <Field label={label}>
+  const keepField = (key: (typeof KEEP_KEYS)[number], label: string) => (
+    <Field label={label} error={keepCountError(draft[key])}>
       {(id) => (
         <Input
           id={id}
@@ -139,6 +143,7 @@ export function PolicyDialog({
           max={1000}
           value={draft[key]}
           disabled={!canEdit}
+          aria-invalid={keepCountError(draft[key]) !== undefined}
           onChange={(e) => set(key, e.target.value)}
         />
       )}
@@ -159,7 +164,7 @@ export function PolicyDialog({
             <Button onClick={onClose} disabled={save.isPending}>
               Cancel
             </Button>
-            <Button type="submit" form="policy-form" variant="primary" loading={save.isPending} disabled={!windowValid}>
+            <Button type="submit" form="policy-form" variant="primary" loading={save.isPending} disabled={!formValid}>
               Save policy
             </Button>
           </>
@@ -209,6 +214,12 @@ export function PolicyDialog({
             {keepField("keep_weekly", "Weekly")}
             {keepField("keep_monthly", "Monthly")}
           </div>
+          {onlyLatest && (
+            <Alert tone="warning" className="mt-3">
+              With every Keep box at 0, only the newest automatic version is kept. All older automatic versions will
+              be deleted.
+            </Alert>
+          )}
         </section>
 
         <section className="space-y-3">

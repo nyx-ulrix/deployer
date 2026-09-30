@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Backup } from "../../api/types";
-import { dayKey, groupByDay, lastSuccessful, nextScheduledAt } from "./timeline";
+import { dayKey, groupByDay, keepCountError, lastSuccessful, nextScheduledAt } from "./timeline";
 
 let seq = 0;
 function backup(at: Date, over: Partial<Backup> = {}): Backup {
@@ -71,5 +71,18 @@ describe("nextScheduledAt / lastSuccessful", () => {
     const items = [backup(local(16, 9), { id: "a" }), backup(local(16, 10), { id: "b", status: "failed" })];
     expect(lastSuccessful(items)?.id).toBe("a");
     expect(lastSuccessful([])).toBeNull();
+  });
+});
+
+describe("keepCountError", () => {
+  it("rejects a blank box instead of treating it as 0", () => {
+    expect(keepCountError("")).toBeDefined();
+    expect(keepCountError("  ")).toBeDefined();
+  });
+  it("rejects fractions, negatives and values over 1000", () => {
+    for (const v of ["1.5", "-1", "1001", "abc"]) expect(keepCountError(v)).toBeDefined();
+  });
+  it("accepts whole numbers from 0 to 1000", () => {
+    for (const v of ["0", "7", "1000"]) expect(keepCountError(v)).toBeUndefined();
   });
 });

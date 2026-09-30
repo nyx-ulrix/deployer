@@ -79,6 +79,18 @@ export const KEPT_AS_LABELS: Record<KeptAs, string> = {
   recent_failure: "Recent failure",
 };
 
+/**
+ * Error for a policy "Keep" box, or undefined when valid. A blank box must not silently save as 0:
+ * 0 turns that tier off and the prune job then deletes the older versions it was keeping.
+ */
+export function keepCountError(value: string): string | undefined {
+  const n = Number(value);
+  if (value.trim() === "" || !Number.isInteger(n) || n < 0 || n > 1000) {
+    return "Enter a whole number from 0 to 1000 (0 turns this off).";
+  }
+  return undefined;
+}
+
 /** Latest successful version, if any. */
 export function lastSuccessful(backups: readonly Backup[]): Backup | null {
   let best: Backup | null = null;
