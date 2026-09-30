@@ -194,7 +194,8 @@ namespace DeployerSetup
         IconBadge heroIcon;
         Card hero;
         IconBadge activityIcon;
-        FlatButton startButton, stopButton, restartButton, updateButton, backupButton, settingsButton, uninstallButton, openButton, deviceButton;
+        internal FlatButton updateButton;
+        FlatButton startButton, stopButton, restartButton, backupButton, settingsButton, uninstallButton, openButton, deviceButton;
         bool deviceBusy;
         readonly Dictionary<string, ServiceTile> tiles = new Dictionary<string, ServiceTile>();
 
@@ -453,7 +454,7 @@ namespace DeployerSetup
                 case RunState.Stopped:
                     pillText = "Stopped"; color = Theme.Neutral; icon = IconKind.Dot; heroFill = Theme.NeutralSoft;
                     title = "Deployer is stopped";
-                    text = "Click Start to run it again. Your data is safe.";
+                    text = "Click Start to run it again. Your data is safe. Back up and Update need it running.";
                     break;
                 case RunState.Busy:
                     pillText = actionVerb; color = Theme.Accent; icon = IconKind.Spinner; heroFill = Theme.AccentSoft;
@@ -489,7 +490,8 @@ namespace DeployerSetup
             stopButton.Enabled = !busy && st != RunState.Stopped;
             restartButton.Enabled = !busy;
             backupButton.Enabled = !busy && st == RunState.Running;
-            updateButton.Enabled = !busy;
+            // Update backs up first, and the backup needs the containers running (A-076).
+            updateButton.Enabled = !busy && st == RunState.Running;
             settingsButton.Enabled = !busy && status != null && status.Installed;
             deviceButton.Enabled = !busy && !deviceBusy && st == RunState.Running;
             uninstallButton.Enabled = !busy;
@@ -1058,8 +1060,8 @@ namespace DeployerSetup
             {
                 if (item.Text == "Start") item.Enabled = !busy && st != RunState.Running;
                 if (item.Text == "Stop") item.Enabled = !busy && st != RunState.Stopped;
-                if (item.Text == "Restart" || item.Text == "Update…") item.Enabled = !busy;
-                if (item.Text == "Back up now") item.Enabled = !busy && st == RunState.Running;
+                if (item.Text == "Restart") item.Enabled = !busy;
+                if (item.Text == "Back up now" || item.Text == "Update…") item.Enabled = !busy && st == RunState.Running;
             }
         }
 

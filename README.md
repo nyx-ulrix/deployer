@@ -243,7 +243,8 @@ Setup copies it to `%ProgramData%\Deployer\DeployerControl.exe` and adds two Sta
   dashboard, background jobs, SQL database, NoSQL database, cache, remote access tunnel - shown as
   *Off* until you enable remote access).
 - **Open Deployer**, **Start**, **Stop**, **Restart**.
-- **Update** - takes a backup, then installs the latest release (`deployer update`). This updates the
+- **Update** - takes a backup, then installs the latest release (`deployer update`); like **Back up now**
+  it is available only while Deployer is running, since the backup needs it. This updates the
   services, not the Deployer Control app: to get a newer Deployer Control, run the newer release's
   `DeployerSetup.exe` and choose *Update Deployer to vX*.
 - **Back up now** - database dumps plus a copy of `.env` in the `backups` folder (`deployer backup`).
