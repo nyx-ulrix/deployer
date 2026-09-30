@@ -10,6 +10,7 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Reflection;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
@@ -48,6 +49,31 @@ namespace DeployerSetup
         public static string RepoUrl { get { return "https://github.com/" + Repo; } }
         public static string TroubleshootingUrl { get { return RepoUrl + "#troubleshooting"; } }
         public static string ExePath { get { return Application.ExecutablePath; } }
+
+        /// <summary>
+        /// Compares semantic versions ("0.2.0", "v0.3.0-rc.1"); a release sorts above its prereleases and
+        /// anything unparseable ("main", "", null) sorts below every version.
+        /// </summary>
+        public static int CompareVersions(string a, string b)
+        {
+            string pa, pb;
+            Version va = ParseVersion(a, out pa), vb = ParseVersion(b, out pb);
+            if (va == null || vb == null) return (va == null ? 0 : 1) - (vb == null ? 0 : 1);
+            int c = va.CompareTo(vb);
+            if (c != 0) return Math.Sign(c);
+            if (pa == null || pb == null) return (pa == null ? 1 : 0) - (pb == null ? 1 : 0);
+            // ponytail: ordinal prerelease order ("rc.10" < "rc.2"); split on dots if tags ever pass rc.9.
+            return Math.Sign(string.CompareOrdinal(pa, pb));
+        }
+
+        static Version ParseVersion(string s, out string prerelease)
+        {
+            prerelease = null;
+            Match m = Regex.Match(s ?? "", @"^\s*v?(\d{1,9})\.(\d{1,9})\.(\d{1,9})(?:-([0-9A-Za-z.\-]+))?(?:\+\S*)?\s*$");
+            if (!m.Success) return null;
+            if (m.Groups[4].Success) prerelease = m.Groups[4].Value;
+            return new Version(int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value), int.Parse(m.Groups[3].Value));
+        }
         public static string DefaultInstallDir
         {
             get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "Deployer"); }
@@ -187,18 +213,48 @@ namespace DeployerSetup
 
         public static string RegisteredInstallDir()
         {
+            return RegisteredValue("InstallLocation");
+        }
+
+        static string RegisteredValue(string name)
+        {
             try
             {
                 using (RegistryKey hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
                 using (RegistryKey key = hklm.OpenSubKey(AppInfo.UninstallKeyPath))
                 {
-                    if (key != null) return key.GetValue("InstallLocation") as string;
+                    if (key != null) return key.GetValue(name) as string;
                 }
             }
             catch (Exception)
             {
             }
             return null;
+        }
+
+        /// <summary>
+        /// The version this exe would update the installation in <paramref name="dir"/> to, or null when it
+        /// is not newer (A-074). It must be newer than DeployerControl.exe and not older than the version
+        /// 'deployer update' last installed (DisplayVersion), so setup never downgrades the stack.
+        /// </summary>
+        public static string UpdateOffer(string dir)
+        {
+            try
+            {
+                string control = Integration.ControlExe(dir);
+                if (string.Equals(Path.GetFullPath(control), Path.GetFullPath(AppInfo.ExePath), StringComparison.OrdinalIgnoreCase)) return null;
+                string controlVersion = File.Exists(control) ? FileVersionInfo.GetVersionInfo(control).ProductVersion : null;
+                return IsUpdate(AppInfo.Version, controlVersion, RegisteredValue("DisplayVersion")) ? AppInfo.Version : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        public static bool IsUpdate(string mine, string controlVersion, string registeredVersion)
+        {
+            return AppInfo.CompareVersions(mine, controlVersion) > 0 && AppInfo.CompareVersions(mine, registeredVersion) >= 0;
         }
 
         public static Dictionary<string, string> ReadEnv(string installDir)

@@ -1,6 +1,7 @@
 // DeployerSetup.exe entry point.
 //
 //   (no arguments)       Setup wizard, or Deployer Control when Deployer is already installed
+//                        (a newer exe first offers to update the installation)
 //   /setup               Setup wizard (also updates an existing installation)
 //   /dryrun              Setup wizard in test mode: install.ps1 -DryRun, nothing is changed
 //   /resume              Continue an installation after the restart (registered in RunOnce)
@@ -54,11 +55,19 @@ namespace DeployerSetup
                 {
                     MessageDialog.Info(null, "Deployer Setup " + AppInfo.Version,
                         "DeployerSetup.exe [/setup | /dryrun | /control | /tray | /uninstall | /selftest <folder>]\n\n" +
-                        "Without options it opens the setup wizard, or Deployer Control if Deployer is already installed.");
+                        "Without options it opens the setup wizard, or Deployer Control if Deployer is already installed (a newer version offers to update it first).");
                     return 0;
                 }
                 // A half-finished install goes back to the wizard, not Control (A-073).
-                return InstallLocator.IsFinished(InstallLocator.Find()) ? RunControl(false) : RunWizard(false, false);
+                string dir = InstallLocator.Find();
+                if (!InstallLocator.IsFinished(dir)) return RunWizard(false, false);
+                // A newer DeployerSetup.exe offers to update, so its fixes reach Deployer Control too (A-074).
+                string offer = InstallLocator.UpdateOffer(dir);
+                if (offer != null && MessageDialog.Ask(null, "Update Deployer to " + offer + "?",
+                        "This is a newer Deployer Setup. Updating installs version " + offer + ", including Deployer Control, and keeps your data and settings.",
+                        IconKind.Info, Theme.Accent, "Update to " + offer, ButtonStyle.Primary, "Open Deployer Control") == DialogResult.Yes)
+                    return RunWizard(false, false);
+                return RunControl(false);
             }
             catch (Exception ex)
             {

@@ -83,8 +83,9 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/API.md](docs/API.md) 
 Setup asks for administrator rights (it turns on WSL, adds a sign-in task and, if you choose, a
 firewall rule). Nothing is sent to the Deployer authors. If Windows needs to restart to finish turning
 on WSL, setup tells you and continues automatically after you sign in again. Running
-`DeployerSetup.exe` again later opens [Deployer Control](#deployer-control); run it with `/setup` to
-update an existing installation with that version.
+`DeployerSetup.exe` again later opens [Deployer Control](#deployer-control). A newer
+`DeployerSetup.exe` first offers *Update Deployer to vX*, which also updates Deployer Control itself;
+*Deployer Control -> Settings -> Run setup again* (or `/setup`) repairs an installation.
 
 ### Install with PowerShell (alternative)
 
@@ -240,11 +241,14 @@ Setup copies it to `%ProgramData%\Deployer\DeployerControl.exe` and adds two Sta
   dashboard, background jobs, SQL database, NoSQL database, cache, remote access tunnel - shown as
   *Off* until you enable remote access).
 - **Open Deployer**, **Start**, **Stop**, **Restart**.
-- **Update** - takes a backup, then installs the latest release (`deployer update`).
+- **Update** - takes a backup, then installs the latest release (`deployer update`). This updates the
+  services, not the Deployer Control app: to get a newer Deployer Control, run the newer release's
+  `DeployerSetup.exe` and choose *Update Deployer to vX*.
 - **Back up now** - database dumps plus a copy of `.env` in the `backups` folder (`deployer backup`).
 - **View logs** - live logs for all services or one of them.
 - **Settings** - port, access from other devices on your network, keep this PC awake while plugged in,
-  start at sign-in.
+  start at sign-in, and *Run setup again* (repairs shortcuts, the sign-in task and the Apps & Features
+  entry; your data is kept).
 - **Host device** - shows whether this PC is attached to another Deployer as a host device and lets you
   detach it (`deployer device status` / `deployer device detach`).
 - **Uninstall** - removes Deployer; your databases, `.env` and backups are kept unless you tick
@@ -255,7 +259,7 @@ to the clock (right-click it for actions) and tells you if Deployer stops unexpe
 
 | Command line | |
 |---|---|
-| `DeployerSetup.exe` | Setup wizard, or Deployer Control when Deployer is installed |
+| `DeployerSetup.exe` | Setup wizard, or Deployer Control when Deployer is installed (a newer version offers to update it first) |
 | `DeployerSetup.exe /setup` | Setup wizard (updates an existing installation) |
 | `DeployerSetup.exe /dryrun` | Setup wizard in test mode: runs `install.ps1 -DryRun`, changes nothing |
 | `DeployerControl.exe /control` / `/tray` | Deployer Control window / notification-area icon |
@@ -319,7 +323,7 @@ stored in the database and the encrypted backup versions. To restore the daily p
 | A deploy fails with *exit code 137* / *Out of memory* | The build or app ran out of memory. WSL2 gives Deployer about half the PC's RAM; stop other apps or projects, or add RAM (8 GB is recommended). |
 | Deployer isn't responding | *Deployer Control → Restart*, then *View logs* (`deployer logs api`). `deployer status` shows every container. |
 | Docker Desktop was closed, crashed or the PC woke from sleep, and Deployer is down | `deployer start` (or *Deployer Control → Start*) starts Docker Desktop if needed, repairs it when it crashes on its leftover socket files, and brings Deployer back. With *Start Deployer when I sign in* on (`deployer autostart on`) this happens on its own at sign-in. |
-| *Docker Desktop cannot start until Windows is restarted* | After sleep/wake Windows sometimes can no longer create Docker Desktop's socket files (*"The file cannot be accessed by the system"*); Docker Desktop then crashes on every start. Restart Windows. To stop it recurring, run setup again and choose **Free Docker Engine** (WSL2): it does not use Docker Desktop at all. |
+| *Docker Desktop cannot start until Windows is restarted* | After sleep/wake Windows sometimes can no longer create Docker Desktop's socket files (*"The file cannot be accessed by the system"*); Docker Desktop then crashes on every start. Restart Windows. To stop it recurring, move to the **Free Docker Engine** (WSL2), which does not use Docker Desktop at all: export everything (dashboard *Settings -> Export & import*), uninstall, install again choosing *Free Docker Engine*, then pick *Restore from export*. |
 | Docker Desktop asks you to sign in | Only needed if your organisation requires a paid Docker subscription. Otherwise skip it, or reinstall with the free Docker Engine. |
 
 When asking for help, include the output of `deployer status` and the latest `install-*.log` from

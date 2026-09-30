@@ -157,7 +157,7 @@ function Initialize-Engine {
     }
     if (-not (Wait-DeployerDockerEngine -Runtime $Ctx.Runtime -TimeoutSeconds $TimeoutSeconds -WaitingMessage $msg)) {
         if ($script:DeployerDockerNeedsWindowsRestart) {
-            throw "Docker Desktop cannot start until Windows is restarted (a Windows issue with Docker's socket files after sleep). Restart Windows, then run 'deployer start' - or switch to the free Docker Engine runtime (run setup again and choose 'Free Docker Engine'), which does not have this problem."
+            throw "Docker Desktop cannot start until Windows is restarted (a Windows issue with Docker's socket files after sleep). Restart Windows, then run 'deployer start'. To stop it recurring, move to the free Docker Engine (WSL2), which does not use Docker Desktop: export everything (dashboard Settings -> Export & import), uninstall, install again choosing 'Free Docker Engine', then choose 'Restore from export'."
         }
         throw "The Docker engine ($($Ctx.Runtime)) is not reachable. For Docker Desktop, open it and wait until it says 'Engine running'."
     }
@@ -634,6 +634,7 @@ function Invoke-Update {
     $table['ref'] = $target
     $table['updatedAt'] = (Get-Date).ToUniversalTime().ToString('o')
     Save-DeployerState -InstallDir $InstallDir -State $table
+    try { [void](Set-DeployerDisplayVersion -Ref $target) } catch { Write-DeployerLog 'WARN' "Apps & Features version not updated: $($_.Exception.Message)" }
     Write-DeployerOk "Updated to $target"
     [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('image', 'prune', '-f'))
 }

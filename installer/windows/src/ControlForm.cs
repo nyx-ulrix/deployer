@@ -852,6 +852,7 @@ namespace DeployerSetup
             {
                 d.OpenSignInApps = owner => ShowScriptDialog(owner, "sign-in apps", script => new SignInAppsDialog(script, installDir, 0));
                 d.OpenResetPassword = owner => ShowScriptDialog(owner, "password reset", script => new ResetPasswordDialog(script, installDir, 0));
+                d.OpenSetup = RunSetupAgain;
                 d.PlaceCentered(this);
                 if (d.ShowDialog(this) != DialogResult.OK) return;
                 List<string[]> commands = new List<string[]>();
@@ -860,6 +861,19 @@ namespace DeployerSetup
                 if (d.KeepAwake != status.KeepAwake) commands.Add(new[] { "keepawake", d.KeepAwake ? "on" : "off" });
                 if (d.Autostart != status.Autostart) commands.Add(new[] { "autostart", d.Autostart ? "on" : "off" });
                 if (commands.Count > 0) RunActions("Applying settings", commands);
+            }
+        }
+
+        void RunSetupAgain(Form owner)
+        {
+            try
+            {
+                Process.Start(AppInfo.ExePath, "/setup");
+                owner.Close();
+            }
+            catch (Exception ex)
+            {
+                ErrorDialog.Show(owner, "Couldn't start setup", "Deployer Setup didn't start. Try again, or run DeployerControl.exe /setup.", ex.ToString());
             }
         }
 
@@ -1129,6 +1143,8 @@ namespace DeployerSetup
         public Action<Form> OpenSignInApps;
         /// <summary>Opens the reset-password dialog over this one (set by Deployer Control).</summary>
         public Action<Form> OpenResetPassword;
+        /// <summary>Starts the setup wizard again (set by Deployer Control).</summary>
+        public Action<Form> OpenSetup;
         readonly int originalPort;
         InputBox portInput;
         TextBlock portHint;
@@ -1192,6 +1208,8 @@ namespace DeployerSetup
                 "Let people sign in with Google or GitHub: enter your OAuth Client IDs and secrets.", "Set up…", () => OpenSignInApps);
             y = ButtonRow(y, cw, pad, "Reset a password",
                 "Forgot a Deployer account password? Set a new one.", "Reset…", () => OpenResetPassword);
+            y = ButtonRow(y, cw, pad, "Run setup again",
+                "Repairs shortcuts, the sign-in task and the Apps & Features entry. Your data and settings are kept.", "Run setup…", () => OpenSetup);
 
             Panel footer = new Panel();
             footer.BackColor = Theme.SurfaceAlt;

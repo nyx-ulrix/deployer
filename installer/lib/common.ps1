@@ -920,6 +920,26 @@ function Get-DeployerImageVersion {
     return 'latest'
 }
 
+function Set-DeployerDisplayVersion {
+    <#
+      Sets the version Apps & Features shows for Deployer, so it follows 'deployer update' (A-074).
+      Returns $false when there is no entry (installed with install.ps1 alone) or the ref is not a version.
+    #>
+    param([string]$Ref, [Microsoft.Win32.RegistryHive]$Hive = 'LocalMachine',
+        [string]$KeyPath = 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Deployer')
+    $version = Get-DeployerImageVersion -Ref $Ref
+    if ($version -eq 'latest') { return $false }
+    $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($Hive, [Microsoft.Win32.RegistryView]::Registry64)
+    try {
+        $key = $base.OpenSubKey($KeyPath, $true)
+        if ($null -eq $key) { return $false }
+        try { $key.SetValue('DisplayVersion', $version) } finally { $key.Dispose() }
+        return $true
+    } finally {
+        $base.Dispose()
+    }
+}
+
 function Get-DeployerSource {
     <#
       Downloads https://github.com/<Repo>/archive/<Ref>.zip (falls back to the release asset
