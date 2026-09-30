@@ -84,7 +84,8 @@ Source of truth: `api/app/models.py`.
   login method.
 - Login rate limit: 10 attempts / 15 min per IP+email, 50 failed attempts / hour per email from any
   IP (cleared by a successful sign-in or `deployer reset-password`), and 30 password logins + signups
-  / 15 min per IP (Redis); at most two argon2 hashes run at once so floods queue instead of exhausting memory. Project API keys: 600 requests/min per
+  / 15 min per IP (Redis; on `:8080` every LAN/localhost client has the same gateway IP, so that cap
+  is LAN-wide - SECURITY.md); at most two argon2 hashes run at once so floods queue instead of exhausting memory. Project API keys: 600 requests/min per
   key by default (`api_key_rate_limit`), 429 with `Retry-After` ([MONITORING.md](MONITORING.md)).
 - Managed databases get their own DB user restricted to that database only, capped at
   `MANAGED_DB_MAX_USER_CONNECTIONS` (default 20) connections so one app cannot use up the connections

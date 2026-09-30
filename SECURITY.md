@@ -105,7 +105,11 @@ Security fixes are made for the latest release. Update with `deployer update`.
 - **Rate limits:** sign-in 10 attempts / 15 min per IP+email and 50 failed attempts / hour per email
   from any IP (so rotating or forging IPs doesn't buy more guesses; the flip side is that someone
   guessing can lock an account for up to an hour - `deployer reset-password` clears it), plus 30
-  password sign-ins + sign-ups / 15 min per IP; project API keys 600 requests / min per
+  password sign-ins + sign-ups / 15 min per IP. On the LAN port (`:8080`) every LAN and localhost
+  client arrives from the same address (the WSL relay / port-forwarding gateway), so "per IP" there
+  means the whole LAN together: one device guessing can make every LAN sign-in wait up to 15 minutes
+  (`deployer reset-password` clears that too), and the audit log shows that gateway address instead
+  of the device's (tunnel visitors keep their own IP). Project API keys 600 requests / min per
   key (instance setting `api_key_rate_limit`); MCP 60 tool calls / min per key; GitHub webhooks per
   app. Over a limit: `429 rate_limited` with a `Retry-After` header.
 - **Alert webhook** ([docs/MONITORING.md](docs/MONITORING.md)): https only, stored encrypted, no

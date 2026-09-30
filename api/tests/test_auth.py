@@ -1,3 +1,6 @@
+import re
+from pathlib import Path
+
 import jwt
 import pytest
 
@@ -436,3 +439,21 @@ def test_unlink_identity(client, make_user, owner, auth_headers, db):
     resp = client.delete(f"/v1/auth/identities/{google.id}", headers=auth_headers(owner))
     assert resp.status_code == 404
     assert db.query(AuditLog).filter_by(action="auth.identity_unlink").count() == 1
+
+
+def test_shared_lan_ip_lockout_is_cleared_by_reset_and_lan_cannot_forge_ips():
+    # A-145: on :8080 every LAN client has the relay's IP, so one device can fill the per-IP bucket for
+    # everyone. `deployer reset-password` (reset_logins) must clear it, as SECURITY.md says.
+    for i in range(rate_limit.LOGIN_IP_LIMIT):
+        rate_limit.check_login("172.18.0.1", f"rand{i}@example.com")
+    with pytest.raises(ApiError):
+        rate_limit.check_login("172.18.0.1", "owner@example.com")
+    rate_limit.reset_logins()
+    rate_limit.check_login("172.18.0.1", "owner@example.com")
+
+    # Only the tunnel-only :8081 listener may take a client IP from a header; :8080 trusts none.
+    caddyfile = (Path(__file__).resolve().parents[2] / "deploy" / "Caddyfile").read_text(encoding="utf-8")
+    active = "\n".join(line.split("#", 1)[0] for line in caddyfile.splitlines())
+    assert active.count("trusted_proxies") == 1
+    assert active.count("client_ip_headers") == 1
+    assert re.search(r"servers :8081 \{[^}]*trusted_proxies[^}]*client_ip_headers", active)

@@ -7,6 +7,9 @@
 	# app's site file (docs/DEPLOYMENTS.md).
 	admin unix//run/caddy-admin.sock
 	auto_https off
+	# :8080 trusts no forwarded headers. Its TCP peer is always the WSL relay / port-forwarding
+	# gateway, so every LAN and localhost client shares one IP for sign-in limits and the audit log
+	# (SECURITY.md); the per-email sign-in limit is the one that holds.
 	# If you put another reverse proxy in front of Deployer, trust it so client IPs (used for
 	# login rate limiting) and its X-Forwarded-Proto (https makes sign-in cookies Secure) are
 	# passed through, e.g.:

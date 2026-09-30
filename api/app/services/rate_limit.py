@@ -10,7 +10,8 @@ log = logging.getLogger(__name__)
 
 LOGIN_LIMIT = 10
 LOGIN_WINDOW_SECONDS = 15 * 60
-# Per-IP cap on password logins + signups (each costs an argon2 hash), across all emails.
+# Per-IP cap on password logins + signups (each costs an argon2 hash), across all emails. On :8080 it is
+# LAN-wide: every LAN/localhost client has the relay's IP there (A-145, SECURITY.md).
 LOGIN_IP_LIMIT = 30
 # Per-email cap across every source IP (A-019): source IPs are cheap to rotate, and on :8080 every LAN
 # client arrives with the same one. Cleared by a successful sign-in and by `deployer reset-password`.
