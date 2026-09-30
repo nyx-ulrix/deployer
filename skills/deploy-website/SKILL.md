@@ -124,7 +124,8 @@ Limits: 200 rows / 256 KB per result, 60 tool calls a minute. Details: `docs/MCP
 ## Feature status (check before promising anything)
 
 Deployer changes quickly. Before telling the user a feature exists, confirm it on their instance
-(`GET <url>/v1/health` for the version; the dashboard tab or endpoint named below).
+(`GET <url>/v1/health` gives the release version, e.g. `1.2.0`; `0.1.0` means a build from source,
+so check the dashboard tab or endpoint named below).
 
 | Feature | Status | Where |
 |---|---|---|

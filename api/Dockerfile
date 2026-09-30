@@ -83,6 +83,11 @@ RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
 # Owned by uid 10001 so a fresh volume is writable whichever container initialises it first.
 RUN mkdir -p /tunnel && chown deployer:deployer /tunnel && chmod 0700 /tunnel
 
+# /v1/health and the MCP server report this release's tag (A-188); release.yml sets it, local builds
+# leave it empty and report the base __version__ from app/__init__.py.
+ARG DEPLOYER_REF=
+ENV DEPLOYER_BUILD_VERSION=$DEPLOYER_REF
+
 USER deployer
 
 EXPOSE 8000

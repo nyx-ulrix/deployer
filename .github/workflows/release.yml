@@ -58,7 +58,7 @@ jobs:
           context: ${{ matrix.context }}
           platforms: linux/amd64
           push: true
-          # Used by the dashboard build only: pins its docs and agent-skill links to this tag (A-197).
+          # Dashboard: pins its docs and agent-skill links to this tag (A-197). API: reported as the version (A-188).
           build-args: |
             DEPLOYER_REPO=${{ github.repository }}
             DEPLOYER_REF=${{ github.ref_name }}
