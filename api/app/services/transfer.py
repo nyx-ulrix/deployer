@@ -721,6 +721,15 @@ def _gunzip(data: bytes, limit: int) -> bytes:
     return out
 
 
+# Keyed by the scope the uploaded file actually has (it differs from the one this route expects).
+SCOPE_MISMATCH = {
+    "projects": "This file is a project export, not a whole-instance export. Finish setup first, then import it "
+    "under Export & import > Import projects",
+    "instance": "This file is a whole-instance export, not a project export. It can only be restored on a fresh "
+    "install, with the setup wizard's “Restore from export”",
+}
+
+
 def read_export_file(path: str, passphrase: str, expected_scope: str) -> dict[str, Any]:
     check_passphrase(passphrase)
     invalid = ApiError(400, "invalid_export", "This is not a valid Deployer export file")
@@ -742,7 +751,7 @@ def read_export_file(path: str, passphrase: str, expected_scope: str) -> dict[st
         raise ApiError(
             400,
             "invalid_export",
-            f"This file is a '{outer.get('scope')}' export; a '{expected_scope}' export is required here",
+            SCOPE_MISMATCH.get(str(outer.get("scope")), invalid.message),
             {"scope": outer.get("scope")},
         )
     header = outer["encryption"]

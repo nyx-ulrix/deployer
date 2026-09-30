@@ -167,6 +167,8 @@ def test_read_export_errors(db, populated, tmp_path):
         with pytest.raises(ApiError) as err:
             transfer.read_export_file(path, PASS, "instance")
         assert err.value.code == "invalid_export"
+        assert "project export" in err.value.message and "Import projects" in err.value.message  # A-124
+        assert "'" not in err.value.message
         with pytest.raises(ApiError) as err:
             transfer.read_export_file(path, "short", "projects")
         assert err.value.status_code == 422

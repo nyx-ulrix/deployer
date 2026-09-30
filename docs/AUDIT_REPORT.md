@@ -216,7 +216,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-123 **[LOW][cleanup]** Saved-query list returns every snippet's full text and is polled every 30 s - `api/app/routers/saved_queries.py:169-178` - drop query_text from the list. (not verified)
 
 **Backups**
-- [ ] A-124 **[LOW][usability]** Error and alert text is raw tool output and internal job types - `api/app/services/alerts.py:130-132` - plain names and next steps; see also A-137. (not verified)
+- [x] A-124 **[LOW][usability]** Error and alert text is raw tool output and internal job types - `api/app/services/alerts.py:130-132` - plain names and next steps; see also A-137. (not verified)
 - [ ] A-125 **[LOW][cleanup]** Duplicated snapshot-success blocks and small dead or stale bits - `api/app/services/backups.py:504-524, 1451-1466, 1568-1583` - extract `_record_snapshot`; drop the dead bits. (not verified)
 - [ ] A-126 **[LOW][test]** Risky recovery paths have no tests - `api/tests/test_backups_api.py:374-391, 444-487` - four focused tests (gap chain, recover_stale, undelete retry, purge drop). (not verified)
 

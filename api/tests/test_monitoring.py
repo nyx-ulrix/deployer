@@ -195,6 +195,23 @@ def test_backup_failure_and_api_error_rules(fake_redis, factory, db):
     assert "backup:backup.platform_snapshot:platform" not in {a["id"] for a in alerts.active()}
 
 
+def test_backup_failed_message_is_plain(db):
+    """A-124: plain task names and a next step, never the internal job type; a gone source is 'a deleted database'."""
+    # A hard-deleted source's jobs have data_source_id NULL (ON DELETE SET NULL), like the platform's.
+    db.add(Job(type="backup.archive_logs", status="failed", finished_at=utcnow()))
+    db.add(Job(type="backup.platform_snapshot", status="failed", finished_at=utcnow()))
+    db.commit()
+    out: dict = {}
+    alerts._backup_rules(db, out)
+    archive, platform = (
+        out["backup:backup.archive_logs:platform"].message,
+        out["backup:backup.platform_snapshot:platform"].message,
+    )
+    assert archive.startswith("Saving changes for point-in-time restore of a deleted database failed")
+    assert platform.startswith("The backup of the platform data")
+    assert all("backup." not in m and "Settings > Backups" in m for m in (archive, platform))
+
+
 def test_container_rule_waits_two_minutes(fake_redis, factory):
     doc = {
         "collected_at": "x",
