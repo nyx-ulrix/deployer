@@ -58,6 +58,10 @@ jobs:
           context: ${{ matrix.context }}
           platforms: linux/amd64
           push: true
+          # Used by the dashboard build only: pins its docs and agent-skill links to this tag (A-197).
+          build-args: |
+            DEPLOYER_REPO=${{ github.repository }}
+            DEPLOYER_REF=${{ github.ref_name }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.component }}

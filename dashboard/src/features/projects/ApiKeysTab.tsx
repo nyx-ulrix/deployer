@@ -17,6 +17,7 @@ import { Table, TBody, Td, Th, THead, Tr } from "../../components/ui/Table";
 import { Tabs } from "../../components/ui/Tabs";
 import { useToast } from "../../components/ui/toast-context";
 import { formatDate, relativeTime } from "../../lib/format";
+import { repoBlobUrl } from "../../lib/repoLinks";
 import { downloadText } from "../query/csv";
 import { buildMcpSnippets, buildSnippets, SNIPPET_LANGS, type SnippetLang } from "./apiSnippets";
 import { LocalOnlyAlert } from "../remote-access/LocalOnlyAlert";
@@ -27,8 +28,8 @@ const ROLE_HELP: Record<ApiKeyRole, string> = {
   service: "Full access to the project's data. Keep it on servers only — never ship it to browsers or phones.",
 };
 
-const DOCS_URL = "https://github.com/nyx-ulrix/deployer/blob/main/docs/DATA_API.md";
-const MCP_DOCS_URL = "https://github.com/nyx-ulrix/deployer/blob/main/docs/MCP.md";
+const DOCS_URL = repoBlobUrl("docs/DATA_API.md");
+const MCP_DOCS_URL = repoBlobUrl("docs/MCP.md");
 
 type UsageTab = SnippetLang | "mcp";
 const USAGE_TABS: { value: UsageTab; label: string }[] = [...SNIPPET_LANGS, { value: "mcp", label: "AI agents (MCP)" }];

@@ -5,7 +5,10 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
-RUN npm run build
+# In-app docs and agent-skill links point at this release's tag (A-197); release.yml sets both.
+ARG DEPLOYER_REPO=nyx-ulrix/deployer
+ARG DEPLOYER_REF=main
+RUN VITE_DEPLOYER_REPO="$DEPLOYER_REPO" VITE_DEPLOYER_REF="$DEPLOYER_REF" npm run build
 
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf

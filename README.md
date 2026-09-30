@@ -454,9 +454,10 @@ It embeds `installer\install.ps1`, `deployer.ps1` and the git-tracked files in `
 
 Releases (`v*` tags) publish `ghcr.io/<owner>/deployer-api`, `-dashboard` and `-tunnel`, a
 `deployer-deploy.zip` and `DeployerSetup.exe` (signed only if the repository has the
-`WINDOWS_SIGNING_PFX` / `WINDOWS_SIGNING_PASSWORD` secrets). On a fork, make the three
-GHCR packages **public** after the first release so installers can pull them anonymously (otherwise
-the installer falls back to building from source).
+`WINDOWS_SIGNING_PFX` / `WINDOWS_SIGNING_PASSWORD` secrets). The dashboard image's links to docs
+and the agent skill point at the release tag, so they describe the installed version (builds from
+source link to `main`). On a fork, make the three GHCR packages **public** after the first release
+so installers can pull them anonymously (otherwise the installer falls back to building from source).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 

@@ -1,10 +1,11 @@
 import { Bot } from "lucide-react";
 import { CopyField } from "../../components/ui/CopyField";
 import { Card } from "../../components/ui/States";
+import { repoBlobUrl, repoRawUrl } from "../../lib/repoLinks";
 
 const SKILL_PATH = "skills/deploy-website/SKILL.md";
-const SKILL_RAW = `https://raw.githubusercontent.com/nyx-ulrix/deployer/main/${SKILL_PATH}`;
-const SKILL_PAGE = `https://github.com/nyx-ulrix/deployer/blob/main/${SKILL_PATH}`;
+const SKILL_RAW = repoRawUrl(SKILL_PATH);
+const SKILL_PAGE = repoBlobUrl(SKILL_PATH);
 
 // One-liners that drop the skill where Claude Code looks for user skills (~/.claude/skills/<name>/SKILL.md).
 const INSTALL_POWERSHELL = `$d="$HOME\\.claude\\skills\\deploy-website"; New-Item -ItemType Directory -Force $d | Out-Null; Invoke-WebRequest -UseBasicParsing ${SKILL_RAW} -OutFile "$d\\SKILL.md"`;
