@@ -1,6 +1,7 @@
 // Windows integration done by the exe itself: copying itself into the install folder, shortcuts,
 // the Apps & Features entry, resume-after-restart and cleanup on uninstall.
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -148,22 +149,32 @@ namespace DeployerSetup
             }
         }
 
-        public static void RegisterUninstallEntry(string installDir)
+        /// <summary>The Apps & Features string values. No QuietUninstallString: /uninstall always shows its
+        /// window and asks about the data, so winget --silent or an IT script would hang on it (A-157).</summary>
+        public static Dictionary<string, string> UninstallEntryStrings(string installDir)
         {
             string exe = ControlExe(installDir);
+            return new Dictionary<string, string>
+            {
+                { "DisplayName", "Deployer" },
+                { "DisplayVersion", AppInfo.Version },
+                { "Publisher", "Deployer contributors" },
+                { "DisplayIcon", exe + ",0" },
+                { "InstallLocation", installDir },
+                { "UninstallString", "\"" + exe + "\" /uninstall" },
+                { "URLInfoAbout", AppInfo.RepoUrl },
+                { "HelpLink", AppInfo.TroubleshootingUrl },
+                { "InstallDate", DateTime.Now.ToString("yyyyMMdd") }
+            };
+        }
+
+        public static void RegisterUninstallEntry(string installDir)
+        {
             using (RegistryKey hklm = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
             using (RegistryKey key = hklm.CreateSubKey(AppInfo.UninstallKeyPath))
             {
-                key.SetValue("DisplayName", "Deployer");
-                key.SetValue("DisplayVersion", AppInfo.Version);
-                key.SetValue("Publisher", "Deployer contributors");
-                key.SetValue("DisplayIcon", exe + ",0");
-                key.SetValue("InstallLocation", installDir);
-                key.SetValue("UninstallString", "\"" + exe + "\" /uninstall");
-                key.SetValue("QuietUninstallString", "\"" + exe + "\" /uninstall");
-                key.SetValue("URLInfoAbout", AppInfo.RepoUrl);
-                key.SetValue("HelpLink", AppInfo.TroubleshootingUrl);
-                key.SetValue("InstallDate", DateTime.Now.ToString("yyyyMMdd"));
+                foreach (KeyValuePair<string, string> v in UninstallEntryStrings(installDir)) key.SetValue(v.Key, v.Value);
+                key.DeleteValue("QuietUninstallString", false); // written by older versions (A-157)
                 key.SetValue("NoModify", 1, RegistryValueKind.DWord);
                 key.SetValue("NoRepair", 1, RegistryValueKind.DWord);
                 key.SetValue("EstimatedSize", EstimatedSizeKb(installDir), RegistryValueKind.DWord);

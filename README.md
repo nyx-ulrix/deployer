@@ -306,7 +306,7 @@ to the clock (right-click it for actions) and tells you if Deployer stops unexpe
 | `DeployerSetup.exe /setup` | Setup wizard (updates an existing installation) |
 | `DeployerSetup.exe /dryrun` | Setup wizard in test mode: runs `install.ps1 -DryRun`, changes nothing |
 | `DeployerControl.exe /control` / `/tray` | Deployer Control window / notification-area icon |
-| `DeployerControl.exe /uninstall` | Uninstall |
+| `DeployerControl.exe /uninstall` | Uninstall (always shows its window; for a scripted uninstall run `deployer uninstall -Yes [-KeepData]`) |
 
 ## The `deployer` command
 
