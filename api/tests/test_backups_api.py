@@ -14,7 +14,7 @@ import pytest
 from app.crypto import encrypt_json
 from app.errors import ApiError
 from app.models import Backup, BackupCopy, BackupLogSegment, BackupPolicy, DataSource, Job, SchemaLink, utcnow
-from app.services import backup_engine, backups, executors, jobs, provisioning
+from app.services import audit, backup_engine, backups, executors, jobs, provisioning
 
 
 def _iso(dt: datetime) -> str:
@@ -938,6 +938,11 @@ def test_instance_health_and_platform_snapshot(client, env, db, owner_headers):
     jobs.run_queued()
     health = client.get("/v1/instance/backups", headers=owner_headers).json()
     assert health["platform"]["last_success_at"]
+    # A-096: the page warns until a full export (the only off-PC copy) has been downloaded.
+    assert health["last_export_at"] is None
+    audit.record(db, "instance.export")  # what POST /instance/export writes (its DB dumps need a live server)
+    db.commit()
+    assert client.get("/v1/instance/backups", headers=owner_headers).json()["last_export_at"]
 
 
 def test_platform_snapshot_download_and_restore(client, env, db, owner_headers, monkeypatch, capsys):

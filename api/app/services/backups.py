@@ -36,6 +36,7 @@ from sqlalchemy.orm import Session
 from app.crypto import decrypt_json
 from app.errors import ApiError, not_found, validation_error
 from app.models import (
+    AuditLog,
     Backup,
     BackupCopy,
     BackupLogSegment,
@@ -2223,6 +2224,10 @@ def instance_health(db: Session) -> dict:
             "latest_backup_id": platform_last.id if platform_last else None,
         },
         "storage": storage,
+        # A-096: the only copy that survives a dead disk or a lost .env is a full export kept elsewhere.
+        "last_export_at": iso(
+            db.scalar(select(func.max(AuditLog.created_at)).where(AuditLog.action == "instance.export"))
+        ),
     }
 
 

@@ -78,6 +78,8 @@ in the same `backups` volume and are encrypted with a key derived from `.env`'s 
 to another PC or survive a broken disk, use the whole-instance export instead (*Settings → Export &
 import → Whole instance*, ARCHITECTURE.md), and
 keep a downloaded platform snapshot (a plain `.sql.gz` of the `deployer` database) somewhere else.
+*Settings → Backups* says this too: it shows when the last whole-instance export was made, links to
+it (*Export everything*), and turns into a warning until there is one from the last 30 days.
 
 Restore one from a terminal on the Deployer PC:
 

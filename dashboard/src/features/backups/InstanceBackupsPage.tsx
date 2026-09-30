@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, DatabaseBackup, Download, HardDrive, Server } from "lucide-react";
 import { errorMessage, saveBlob } from "../../api/client";
@@ -10,7 +10,7 @@ import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { ProgressBar } from "../../components/ui/Progress";
 import { PageSpinner } from "../../components/ui/Spinner";
-import { Card, EmptyState, ErrorState, PageHeader } from "../../components/ui/States";
+import { Alert, Card, EmptyState, ErrorState, PageHeader } from "../../components/ui/States";
 import { Table, TBody, Td, Th, THead, Tr } from "../../components/ui/Table";
 import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
@@ -18,6 +18,12 @@ import { engineLabel, formatBytes, formatDateTime, localTimeZone, relativeTime }
 import { InstanceNav } from "../settings/InstanceNav";
 
 const STALE_MS = 26 * 3_600_000;
+const EXPORT_OVERDUE_MS = 30 * 86_400_000;
+
+/** A-096: backups here share this PC's disk and .env, so nag until a recent full export exists. */
+function isExportOverdue(lastExport: string | null, now = Date.now()): boolean {
+  return !lastExport || now - Date.parse(lastExport) > EXPORT_OVERDUE_MS;
+}
 
 /** A source is unhealthy if its last attempt or restore test failed, or it hasn't succeeded for over a day. */
 function health(s: InstanceBackupSource, now = Date.now()): "ok" | "failing" | "unverified" | "stale" | "never" {
@@ -40,6 +46,7 @@ const HEALTH_BADGE = {
 
 export function InstanceBackupsPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const data = useQuery({ queryKey: qk.instanceBackups, queryFn: api.instanceBackups.get, refetchInterval: 30_000 });
   const devices = useDevices("all");
@@ -70,6 +77,8 @@ export function InstanceBackupsPage() {
   });
   const unhealthy = sources.filter((s) => health(s) !== "ok").length;
   const latestPlatform = data.data?.platform.latest_backup_id;
+  const lastExport = data.data?.last_export_at ?? null;
+  const exportOverdue = isExportOverdue(lastExport);
 
   return (
     <div className="mx-auto w-full max-w-6xl">
@@ -95,6 +104,30 @@ export function InstanceBackupsPage() {
         <ErrorState error={data.error} onRetry={() => void data.refetch()} />
       ) : (
         <div className="space-y-5">
+          <Alert
+            tone={exportOverdue ? "warning" : "info"}
+            title={
+              exportOverdue
+                ? lastExport
+                  ? "No full export in over 30 days"
+                  : "No copy of this installation off this PC yet"
+                : "These backups are stored on this PC"
+            }
+            action={
+              <Button
+                size="sm"
+                variant={exportOverdue ? "primary" : "secondary"}
+                icon={<Download className="size-4" />}
+                onClick={() => navigate("/settings/transfer")}
+              >
+                Export everything
+              </Button>
+            }
+          >
+            Every version below sits on this PC&apos;s disk and can only be read with the MASTER_KEY in its{" "}
+            <code>.env</code> file. To survive a broken PC, download a full export regularly and keep it (and its
+            passphrase) somewhere else. Last full export: <strong>{relativeTime(lastExport)}</strong>.
+          </Alert>
           <div className="grid gap-3 sm:grid-cols-3">
             <SummaryTile
               icon={unhealthy ? <AlertTriangle className="size-4" /> : <CheckCircle2 className="size-4" />}

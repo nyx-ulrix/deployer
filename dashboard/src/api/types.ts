@@ -651,6 +651,8 @@ export type InstanceBackups = {
   sources: InstanceBackupSource[];
   platform: { last_success_at: string | null; last_error: string | null; latest_backup_id: string | null };
   storage: { location: string; device_id: string | null; used_bytes: number | null; free_bytes: number | null }[];
+  /** The latest whole-instance export (Settings → Export & import); null when never. */
+  last_export_at: string | null;
 };
 
 // ---- Query console (docs/QUERY_CONSOLE.md) ----
