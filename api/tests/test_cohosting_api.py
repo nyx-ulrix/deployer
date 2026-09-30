@@ -276,6 +276,21 @@ def test_replica_actions_roles(client, db, team, auth_headers):
     assert {"replica.pause", "replica.resume", "replica.recopy", "replica.delete"} <= actions
 
 
+def test_remove_copy_with_drop_deletes_it_on_the_device(client, db, team, auth_headers, fake_device):
+    """A-009/A-134: the path device removal's 409 points at. Offline, the row stays so the copy stays tracked."""
+    t, u = team, team["users"]
+    rep_id = _replica(db, t).id
+    url = _url(t, f"/replicas/{rep_id}?drop=true")
+    assert client.delete(url, headers=auth_headers(u["cohost"])).status_code == 503
+    db.expire_all()
+    assert db.get(SourceReplica, rep_id) is not None
+    fd = fake_device(t["device"].id, lambda method, params: {})
+    assert client.delete(url, headers=auth_headers(u["cohost"])).json() == {"ok": True}
+    assert fd.calls == [("datasource.drop", {"kind": "sql", "database_name": "p_shop_abc123"})]
+    db.expire_all()
+    assert db.get(SourceReplica, rep_id) is None
+
+
 def test_unsharing_or_dropping_the_role_stops_sync(client, db, team, auth_headers, fake_device, monkeypatch):
     """A-127: once the device may no longer hold the project's data, nothing more is sent to it."""
     t, u = team, team["users"]
