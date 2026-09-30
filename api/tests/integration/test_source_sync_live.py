@@ -20,7 +20,7 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.crypto import encrypt_json
-from app.models import DataSource, SourceReplica, SyncConflict
+from app.models import DataSource, ProjectMember, SourceReplica, SyncConflict
 from app.services import device_rpc, provisioning, source_sync
 
 MARIADB_URL = os.environ.get("DEPLOYER_IT_MARIADB_URL")
@@ -74,6 +74,7 @@ def servers(monkeypatch):
 def replica(db, owner, make_project, make_device, monkeypatch, servers):
     def build(kind):
         project = make_project(owner, f"Live {kind}")
+        db.scalar(select(ProjectMember).where(ProjectMember.project_id == project.id)).can_cohost = True  # A-127
         device, _ = make_device(owner)
         ds = DataSource(
             project_id=project.id,
