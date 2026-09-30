@@ -112,12 +112,16 @@ namespace DeployerSetup
                   && SignInAppsDialog.CheckValue("github", false, "ID Ov23liExample") != null
                   && SignInAppsDialog.CheckValue("google", true, gid) != null
                   && SignInAppsDialog.CheckValue("github", true, "secret:abc") != null, "sign-in app paste checks");
-            string callbacks = SignInAppsDialog.CallbackChangeNote(SampleOAuthStatus());
+            Dictionary<string, object> local = SampleOAuthStatus();
+            ((Dictionary<string, object>)local["google"])["callback_url"] = "http://localhost:8090/v1/auth/oauth/google/callback";
+            ((Dictionary<string, object>)local["github"])["callback_url"] = "http://localhost:8090/v1/auth/oauth/github/callback";
+            string callbacks = SignInAppsDialog.CallbackChangeNote(local, 8090);
             Dictionary<string, object> noApps = SampleOAuthStatus();
             ((Dictionary<string, object>)noApps["google"])["client_id"] = "";
-            Check(callbacks != null && callbacks.Contains("Google: https://deployer.example.org/v1/auth/oauth/google/callback") && !callbacks.Contains("GitHub:")
-                  && SignInAppsDialog.CallbackChangeNote(noApps) == null && SignInAppsDialog.CallbackChangeNote(null) == null,
-                  "a port change names the new callback URLs only for sign-in apps that are set up (A-155)");
+            Check(callbacks != null && callbacks.Contains("Google: http://localhost:8090/v1/auth/oauth/google/callback") && !callbacks.Contains("GitHub:")
+                  && SignInAppsDialog.CallbackChangeNote(noApps, 8090) == null && SignInAppsDialog.CallbackChangeNote(null, 8090) == null
+                  && SignInAppsDialog.CallbackChangeNote(SampleOAuthStatus(), 8090) == null,
+                  "a port change names the new callback URLs only for set-up sign-in apps whose address carries the port (A-155)");
             Check(ResetPasswordDialog.Check("short", "short") != null
                   && ResetPasswordDialog.Check("long-enough-1", "long-enough-2") != null
                   && ResetPasswordDialog.Check("long-enough-1", "long-enough-1") == null, "reset password checks");

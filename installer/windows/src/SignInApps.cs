@@ -290,8 +290,9 @@ namespace DeployerSetup
             try { return Json.Parse(r.StdOut.Substring(a, b - a + 1)) as IDictionary<string, object>; } catch (Exception) { return null; }
         }
 
-        /// <summary>After a port change: the callback URLs each set-up sign-in app must now use, or null if none is set up (A-155).</summary>
-        internal static string CallbackChangeNote(IDictionary<string, object> status)
+        /// <summary>After a move to <paramref name="port"/>: the callback URLs each set-up sign-in app must now use, or null if
+        /// none changed (A-155). A domain/tunnel address has no port in it, so its callbacks stay the same.</summary>
+        internal static string CallbackChangeNote(IDictionary<string, object> status, int port)
         {
             if (status == null) return null;
             List<string> lines = new List<string>();
@@ -299,8 +300,9 @@ namespace DeployerSetup
             {
                 object v;
                 IDictionary<string, object> pd = status.TryGetValue(p, out v) ? v as IDictionary<string, object> : null;
-                if (Json.Str(pd, "client_id").Length > 0)
-                    lines.Add((p == "google" ? "Google" : "GitHub") + ": " + Json.Str(pd, "callback_url"));
+                string url = Json.Str(pd, "callback_url");
+                if (Json.Str(pd, "client_id").Length > 0 && url.Contains(":" + port + "/"))
+                    lines.Add((p == "google" ? "Google" : "GitHub") + ": " + url);
             }
             if (lines.Count == 0) return null;
             return "Sign-in with Google or GitHub stops working until the callback URL in each OAuth app matches the new address. Register:\n\n" +

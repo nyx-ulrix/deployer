@@ -821,15 +821,16 @@ namespace DeployerSetup
             portMoved = false;
             string script;
             try { script = DeployerCli.ScriptFor(installDir, ref extractedRoot); } catch (Exception) { return; }
+            int newPort = port;
             ThreadPool.QueueUserWorkItem(delegate
             {
-                string note = SignInAppsDialog.CallbackChangeNote(SignInAppsDialog.FetchStatus(script, installDir));
+                string note = SignInAppsDialog.CallbackChangeNote(SignInAppsDialog.FetchStatus(script, installDir), newPort);
                 if (note == null) return;
                 SafeInvoke(() =>
                 {
                     if (!Visible)
                     {
-                        if (tray != null) tray.ShowBalloonTip(8000, "Update your sign-in apps", "Deployer moved to port " + port + ". Open Settings > Sign-in apps for the new callback URLs.", ToolTipIcon.Warning);
+                        if (tray != null) tray.ShowBalloonTip(8000, "Update your sign-in apps", "Deployer moved to port " + newPort + ". Open Settings > Sign-in apps for the new callback URLs.", ToolTipIcon.Warning);
                         return;
                     }
                     if (MessageDialog.Ask(this, "Update your sign-in apps", note, IconKind.Warn, Theme.Warn,
@@ -1259,7 +1260,7 @@ namespace DeployerSetup
             portHint.LayoutAt(pad + ui.S(110), y + (inputH - ui.Font(9.5f).Height) / 2, cw - ui.S(110));
             Controls.Add(portHint);
             y += inputH + ui.S(6);
-            TextBlock portNote = new TextBlock(ui, "Changing the port also changes the callback URLs of your Google/GitHub sign-in apps.", ui.Font(9.5f), Theme.TextMuted);
+            TextBlock portNote = new TextBlock(ui, "While Deployer's address is http://localhost, changing the port also changes the callback URLs of your Google/GitHub sign-in apps.", ui.Font(9.5f), Theme.TextMuted);
             y += portNote.LayoutAt(pad, y, cw) + ui.S(12);
             Controls.Add(portNote);
 
