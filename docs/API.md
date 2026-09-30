@@ -198,7 +198,7 @@ type Alert = { id: string; alert: string; severity: "warning" | "critical"; mess
 | POST | `/projects` | any user (only the instance owner while `owner_only_projects` is on, the default; 403 otherwise) | `{name, description?, provision?:{sql:boolean, nosql:boolean}}` | `Project` (creates managed MariaDB and/or MongoDB sources when requested) |
 | GET | `/projects/{project_id}` | viewer+ | – | `Project` |
 | PATCH | `/projects/{project_id}` | admin+ | `{name?, description?}` | `Project` |
-| DELETE | `/projects/{project_id}?confirm=<slug>` | owner | – | `{ok:true}` (managed databases get a final snapshot, kept 30 days, then are dropped by a job — [BACKUPS.md](BACKUPS.md)) |
+| DELETE | `/projects/{project_id}?confirm=<slug>` | owner | – | `{ok:true}` (managed databases get a final snapshot, kept 30 days, then are dropped by a job; the project itself cannot be restored, the instance owner can download the snapshots — [BACKUPS.md](BACKUPS.md)) |
 | POST | `/projects/export` | owner of each | `{project_ids:string[], passphrase}` | file download `deployer-projects-YYYYMMDD-HHMM.json` |
 | POST | `/projects/import` | as `POST /projects` | multipart: `file`, `passphrase` | `{ok:true, projects:Project[], summary}` (`scope` must be `projects`; 413 `file_too_large` as for `/setup/import`) |
 

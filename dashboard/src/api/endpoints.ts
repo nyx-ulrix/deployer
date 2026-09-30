@@ -298,6 +298,8 @@ export const api = {
     platformNow: () => client.post<JobResponse>("/instance/backups/platform"),
     platformDownload: (backupId: string) =>
       client.download("GET", `/instance/backups/platform/${e(backupId)}/download`, "deployer-platform.sql.gz"),
+    deletedDownload: (backupId: string) =>
+      client.download("GET", `/instance/backups/deleted/${e(backupId)}/download`, "backup.gz"),
   },
 
   monitoring: {

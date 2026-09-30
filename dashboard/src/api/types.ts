@@ -640,6 +640,19 @@ export type InstanceBackups = {
   storage: { location: string; device_id: string | null; used_bytes: number | null; free_bytes: number | null }[];
   /** The latest whole-instance export (Settings → Export & import); null when never. */
   last_export_at: string | null;
+  /** A-195: final snapshots of deleted projects' databases, downloadable until `expires_at`. */
+  deleted_projects: DeletedProjectBackup[];
+};
+
+export type DeletedProjectBackup = {
+  backup_id: string;
+  project_id: string;
+  project_slug: string | null;
+  name: string;
+  engine: string;
+  size_bytes: number | null;
+  started_at: string;
+  expires_at: string | null;
 };
 
 // ---- Query console (docs/QUERY_CONSOLE.md) ----

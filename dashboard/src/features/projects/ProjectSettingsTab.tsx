@@ -136,7 +136,7 @@ function DangerCard({ project }: { project: Project }) {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="min-w-0 text-sm">
           <p className="font-medium">Delete this project</p>
-          <p className="text-muted">Removes the project and permanently drops its managed databases.</p>
+          <p className="text-muted">Removes the project and drops its managed databases.</p>
         </div>
         <Button variant="outline-danger" icon={<Trash2 className="size-4" />} onClick={() => setOpen(true)}>
           Delete project
@@ -148,7 +148,7 @@ function DangerCard({ project }: { project: Project }) {
         onConfirm={() => remove.mutate()}
         loading={remove.isPending}
         title={`Delete ${project.name}?`}
-        description="All managed databases and their data, members, invites and API keys will be permanently deleted. External databases are only disconnected. This cannot be undone."
+        description="The project, its members, invites and API keys are deleted, and its managed databases are dropped. External databases are only disconnected. The project cannot be restored; the last version of each managed database is kept for 30 days, and only the instance owner can download it (Settings → Backups)."
         confirmText={project.slug}
         confirmLabel="Delete project"
       />

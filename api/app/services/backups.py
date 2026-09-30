@@ -1674,6 +1674,54 @@ def get_platform_backup(db: Session, backup_id: str) -> Backup:
     return backup
 
 
+FINAL_LABEL = "Final snapshot of "
+
+
+def _deleted_project_finals():
+    return select(Backup).where(
+        Backup.scope == "source",
+        Backup.trigger == "final",
+        Backup.status == "succeeded",
+        Backup.project_id.is_not(None),
+        Backup.project_id.not_in(select(Project.id)),
+    )
+
+
+def deleted_project_backups(db: Session) -> list[dict]:
+    """A-195: the final snapshots of deleted projects' databases (kept DELETED_KEEP). The project's own
+    "Recently deleted" went with it, so the instance owner downloads them from Settings -> Backups."""
+    slugs: dict[str, str | None] = {}
+    out = []
+    for b in db.scalars(_deleted_project_finals().order_by(Backup.started_at.desc())):
+        if b.project_id not in slugs:
+            entry = db.scalar(
+                select(AuditLog)
+                .where(AuditLog.action == "project.delete", AuditLog.project_id == b.project_id)
+                .order_by(AuditLog.id.desc())
+            )
+            slugs[b.project_id] = (entry.details or {}).get("slug") if entry else None
+        out.append(
+            {
+                "backup_id": b.id,
+                "project_id": b.project_id,
+                "project_slug": slugs[b.project_id],
+                "name": (b.label or "").removeprefix(FINAL_LABEL) or "database",
+                "engine": b.engine,
+                "size_bytes": b.size_bytes,
+                "started_at": iso(b.started_at),
+                "expires_at": iso(b.expires_at),
+            }
+        )
+    return out
+
+
+def get_deleted_project_backup(db: Session, backup_id: str) -> Backup:
+    backup = db.scalar(_deleted_project_finals().where(Backup.id == backup_id))
+    if backup is None:
+        raise not_found("Snapshot of a deleted project")
+    return backup
+
+
 def _columns(obj: Any) -> dict:
     return {a.key: getattr(obj, a.key) for a in sa_inspect(obj).mapper.column_attrs}
 
@@ -1846,7 +1894,7 @@ def _final_snapshot_detached(
             started_at=now,
             created_by_id=user_id,
             expires_at=now + DELETED_KEEP,
-            label=f"Final snapshot of {info.get('name')}",
+            label=f"{FINAL_LABEL}{info.get('name')}",
             job_id=job_id,
         )
         session.add(backup)
@@ -1913,7 +1961,7 @@ def _job_finalize_delete(ctx: jobs.JobContext) -> dict:
             user_id=ctx.created_by_id,
             expires_at=(ds.deleted_at or utcnow()) + DELETED_KEEP,
         )
-        backup.label = f"Final snapshot of {ds.deleted_name or ds.name}"
+        backup.label = f"{FINAL_LABEL}{ds.deleted_name or ds.name}"
         # The snapshot runs inline below (jobs.run_job records its own job row).
         session.commit()
         job_id, backup_id = job.id, backup.id
@@ -2213,6 +2261,7 @@ def instance_health(db: Session) -> dict:
         "last_export_at": iso(
             db.scalar(select(func.max(AuditLog.created_at)).where(AuditLog.action == "instance.export"))
         ),
+        "deleted_projects": deleted_project_backups(db),
     }
 
 

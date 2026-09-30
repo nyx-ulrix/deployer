@@ -69,6 +69,14 @@ export function InstanceBackupsPage() {
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't download platform backup"),
   });
+  const deletedDownload = useMutation({
+    mutationFn: api.instanceBackups.deletedDownload,
+    onSuccess: (file) => {
+      saveBlob(file);
+      toast.success(`Downloaded ${file.filename}.`);
+    },
+    onError: (e) => toast.error(errorMessage(e), "Couldn't download the snapshot"),
+  });
 
   const sources = data.data?.sources ?? [];
   const sorted = [...sources].sort((a, b) => {
@@ -234,6 +242,53 @@ export function InstanceBackupsPage() {
               </Table>
             )}
           </Card>
+
+          {data.data.deleted_projects.length > 0 && (
+            <Card
+              title="Deleted projects"
+              description="The last version of each database of a deleted project, kept for 30 days after the delete. Download one to load it into a new database (MariaDB: a .sql.gz dump; MongoDB: a mongorestore --archive --gzip file)."
+              bodyClassName="p-0 sm:p-0"
+            >
+              <Table className="rounded-none border-0">
+                <THead>
+                  <Tr>
+                    <Th>Database</Th>
+                    <Th>Deleted</Th>
+                    <Th>Removed</Th>
+                    <Th className="text-right">Size</Th>
+                    <Th />
+                  </Tr>
+                </THead>
+                <TBody>
+                  {data.data.deleted_projects.map((b) => (
+                    <Tr key={b.backup_id}>
+                      <Td className="min-w-48">
+                        <span className="font-medium">{b.name}</span>
+                        <p className="text-xs text-muted">
+                          {b.project_slug ?? "Deleted project"} · {engineLabel(b.engine)}
+                        </p>
+                      </Td>
+                      <Td className="whitespace-nowrap" title={formatDateTime(b.started_at)}>
+                        {relativeTime(b.started_at)}
+                      </Td>
+                      <Td className="whitespace-nowrap">{formatDateTime(b.expires_at)}</Td>
+                      <Td className="text-right whitespace-nowrap tabular-nums">{formatBytes(b.size_bytes)}</Td>
+                      <Td className="text-right">
+                        <Button
+                          size="sm"
+                          icon={<Download className="size-4" />}
+                          loading={deletedDownload.isPending && deletedDownload.variables === b.backup_id}
+                          onClick={() => deletedDownload.mutate(b.backup_id)}
+                        >
+                          Download
+                        </Button>
+                      </Td>
+                    </Tr>
+                  ))}
+                </TBody>
+              </Table>
+            </Card>
+          )}
 
           <Card title="Storage by location">
             {data.data.storage.length === 0 ? (

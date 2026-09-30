@@ -391,3 +391,21 @@ def download_platform_snapshot(backup_id: str, user: InstanceOwner, db: DbSessio
     audit.record(db, "instance.platform_download", request=request, user_id=user.id, backup_id=backup.id)
     db.commit()
     return _decrypted_download(stream, _download_name("deployer-platform", backup))
+
+
+@router.get("/instance/backups/deleted/{backup_id}/download")
+def download_deleted_project_backup(backup_id: str, user: InstanceOwner, db: DbSession, request: Request):
+    """A-195: a deleted project's final snapshot (listed as `deleted_projects` in GET /instance/backups)."""
+    backup = backups.get_deleted_project_backup(db, backup_id)
+    stream = _open_backup(db, backup)
+    audit.record(
+        db,
+        "backup.download",
+        request=request,
+        user_id=user.id,
+        project_id=backup.project_id,
+        data_source_id=backup.data_source_id,
+        backup_id=backup.id,
+    )
+    db.commit()
+    return _decrypted_download(stream, _download_name((backup.label or "").removeprefix(backups.FINAL_LABEL), backup))

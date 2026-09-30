@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 import pytest
 
 from app.errors import ApiError
-from app.models import Backup, BackupCopy, BackupLogSegment, BackupPolicy, DataSource, Job, SchemaLink, utcnow
+from app.models import AuditLog, Backup, BackupCopy, BackupLogSegment, BackupPolicy, DataSource, Job, SchemaLink, utcnow
 from app.services import audit, backup_engine, backups, executors, jobs, provisioning
 
 
@@ -834,6 +834,26 @@ def test_project_delete_keeps_backups_then_purges(client, env, db):
     backups.prune_all(jobs.get_sessionmaker(), utcnow() + timedelta(days=31))
     db.expire_all()
     assert db.query(Backup).count() == 0 and db.get(Backup, backup_id) is None
+
+
+def test_deleted_project_final_snapshot_is_listed_and_downloadable(client, env, db, owner_headers):
+    """A-195: a deleted project's "Recently deleted" goes with it; the instance owner can still get the data."""
+    manual = _snapshot(client, env)
+    project = env["project"]
+    assert client.get("/v1/instance/backups", headers=owner_headers).json()["deleted_projects"] == []
+    client.delete(f"/v1/projects/{project.id}?confirm={project.slug}", headers=env["owner"])
+    jobs.run_queued()
+    [item] = client.get("/v1/instance/backups", headers=owner_headers).json()["deleted_projects"]
+    assert item["project_id"] == project.id and item["project_slug"] == project.slug
+    assert item["name"] == env["ds"].name and item["engine"] == "mariadb" and item["expires_at"]
+
+    url = f"/v1/instance/backups/deleted/{item['backup_id']}/download"
+    assert client.get(url, headers=env["owner"]).status_code == 403  # the former project owner
+    resp = client.get(url, headers=owner_headers)
+    assert resp.status_code == 200 and f'filename="{env["ds"].name}-' in resp.headers["content-disposition"]
+    assert resp.content and db.query(AuditLog).filter_by(action="backup.download").count() == 1
+    # Only the final snapshots: the older versions of the deleted project are not offered.
+    assert client.get(f"/v1/instance/backups/deleted/{manual}/download", headers=owner_headers).status_code == 404
 
 
 def test_prune_and_purge_deleted_sources(client, env, db):
