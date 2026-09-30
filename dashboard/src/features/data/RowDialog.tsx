@@ -2,46 +2,16 @@ import { useState, type FormEvent } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { errorMessage, isApiError } from "../../api/client";
 import { api } from "../../api/endpoints";
-import type { DataSource, Entity, Field as SchemaField, JsonObject, JsonValue } from "../../api/types";
+import type { DataSource, Entity, JsonObject } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
 import { Input, Textarea } from "../../components/ui/Input";
 import { Alert } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
+import { BOOLEAN, fromText, toText } from "./rowValues";
 
 type CellState = { text: string; isNull: boolean; touched: boolean };
-
-// BOOLEAN on MariaDB/MySQL is stored (and reported) as TINYINT(1).
-const BOOLEAN = /^(bool|boolean|tinyint\(1\)( unsigned)?|bit\(1\))$/i;
-const NUMERIC = /^(tinyint|smallint|mediumint|int|integer|bigint|float|double|real|serial|bigserial|smallserial)\b/i;
-
-function toText(v: JsonValue | undefined): string {
-  if (v === null || v === undefined) return "";
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
-}
-
-/** Convert edited text back to a JSON value, using the column type and original value as hints. */
-function fromText(text: string, field: SchemaField | undefined, original: JsonValue | undefined): JsonValue {
-  const type = field?.data_type ?? "";
-  if (typeof original === "object" && original !== null) {
-    try {
-      return JSON.parse(text) as JsonValue;
-    } catch {
-      return text;
-    }
-  }
-  if (typeof original === "boolean" || BOOLEAN.test(type)) {
-    if (/^(true|1)$/i.test(text)) return true;
-    if (/^(false|0)$/i.test(text)) return false;
-  }
-  if ((typeof original === "number" || NUMERIC.test(type)) && /^-?\d+(\.\d+)?([eE][-+]?\d+)?$/.test(text.trim())) {
-    const n = Number(text);
-    if (Number.isSafeInteger(n) || !Number.isInteger(n)) return n;
-  }
-  return text;
-}
 
 export function RowDialog({
   projectId,

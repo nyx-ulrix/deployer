@@ -286,7 +286,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-179 **[LOW][bug]** The app list nests an external `<a>` inside the row's `<Link>` - `dashboard/src/features/deploys/DeploysTab.tsx:66-87` - restructure the row. (not verified)
 - [x] A-180 **[LOW][bug]** The env editor tracks revealed secrets by row index, so reveals jump to other rows - `dashboard/src/features/deploys/EnvEditor.tsx:271-281, 298` - stable row ids. (not verified)
 - [x] A-181 **[LOW][cleanup]** Redundant cache invalidations after adding or removing a database - `dashboard/src/features/databases/AddDatabaseDialog.tsx:142-145` - one shared helper. (not verified)
-- [ ] A-182 **[LOW][test]** No tests for the job-label mapping or the row value converter - `dashboard/src/features/jobs/jobs.ts:17-20` - jobs.test.ts plus fromText tests. (not verified)
+- [x] A-182 **[LOW][test]** No tests for the job-label mapping or the row value converter - `dashboard/src/features/jobs/jobs.ts:17-20` - jobs.test.ts plus fromText tests. (not verified)
 
 **Docs / skill**
 - [ ] A-183 **[LOW][docs]** The skill and architecture docs contradict themselves on apps running on other PCs - `skills/deploy-website/SKILL.md:128, 134, 237` - reword row 134; move the Deployer rows; fix ARCHITECTURE.md:131.
