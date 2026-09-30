@@ -433,7 +433,7 @@ def test_hook_follows_public_url_and_repo_changes(client, env, gh, db, owner_hea
     url = f"{env['base']}/{app_id}"
     calls = len(gh.calls)
     bad = client.patch(
-        url, json={"repo_url": "https://github.com/acme/store", "api_key_id": "nope"}, headers=env["dev"]
+        url, json={"repo_url": "https://github.com/acme/store", "api_key_id": "nope"}, headers=env["admin"]
     )
     assert bad.status_code == 422 and len(gh.calls) == calls
     db.expire_all()

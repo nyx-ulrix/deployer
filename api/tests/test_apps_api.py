@@ -121,11 +121,18 @@ def test_patch_token_env_and_api_key(client, env, db):
         f"/v1/projects/{env['project'].id}/api-keys", json={"name": "k", "role": "service"}, headers=env["admin"]
     )
     key_id = key.json()["api_key"]["id"]
-    assert client.patch(url, json={"api_key_id": key_id}, headers=env["dev"]).json()["api_key_id"] == key_id
+    # A-171: the key's secret goes into the container, so only admins attach it or move a keyed app's repo.
+    assert client.patch(url, json={"api_key_id": key_id}, headers=env["dev"]).status_code == 403
+    assert client.post(env["base"], json={**BODY, "api_key_id": key_id}, headers=env["dev"]).status_code == 403
+    assert client.patch(url, json={"api_key_id": key_id}, headers=env["admin"]).json()["api_key_id"] == key_id
+    assert client.patch(url, json={"api_key_id": key_id, "name": "y"}, headers=env["dev"]).status_code == 200
+    moved = {"repo_url": "https://github.com/someone/else"}
+    assert client.patch(url, json=moved, headers=env["dev"]).status_code == 403
+    assert client.patch(url, json={**moved, "api_key_id": None}, headers=env["dev"]).json()["api_key_id"] is None
     db.get(ApiKey, key_id).secret_encrypted = None
     db.commit()
-    assert client.patch(url, json={"api_key_id": key_id}, headers=env["dev"]).status_code == 422
-    assert client.patch(url, json={"api_key_id": "nope"}, headers=env["dev"]).status_code == 422
+    assert client.patch(url, json={"api_key_id": key_id}, headers=env["admin"]).status_code == 422
+    assert client.patch(url, json={"api_key_id": "nope"}, headers=env["admin"]).status_code == 422
 
     env_resp = client.get(f"{url}/env", headers=env["admin"])
     assert env_resp.json() == {"env": {"A": "1", "B": "2"}}

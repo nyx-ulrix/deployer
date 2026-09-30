@@ -172,6 +172,20 @@ def _check_database_access(access: ProjectAccess, enable: bool | None) -> None:
         raise forbidden("Only project admins can give an app database access")
 
 
+def _check_api_key_access(access: ProjectAccess, app: App | None, body: AppFields, repo_moved: bool) -> None:
+    """A-171: the attached key's secret lands in the container, so only admins attach or swap one, and
+    only admins point a keyed app at another repository (its code would read DEPLOYER_API_KEY).
+    Detaching is allowed to anyone who edits, like switching database access off."""
+    if access.at_least("admin"):
+        return
+    current = app.api_key_id if app else None
+    new = body.api_key_id if "api_key_id" in body.model_fields_set else current
+    if new and new != current:
+        raise forbidden("Only project admins can attach an API key to an app")
+    if new and repo_moved:
+        raise forbidden("Only project admins can change the repository of an app with an API key attached")
+
+
 def _audit_database_access(db, request: Request, access: ProjectAccess, app: App) -> None:
     audit.record(
         db,
@@ -295,6 +309,7 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
         raise forbidden("Only project admins can change co-hosting")
     if body.cohost:
         cohost_apps.check_single_cohost(db, None)
+    _check_api_key_access(access, None, body, repo_moved=False)
     deployments.check_api_key(db, project.id, body.api_key_id)
     if body.use_github_connection:
         if body.repo_token:
@@ -381,6 +396,7 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
         cohost_apps.check_single_cohost(db, app.id)
     old_repo_url = app.repo_url
     repo_moved = bool("repo_url" in changed and body.repo_url and body.repo_url != app.repo_url)
+    _check_api_key_access(access, app, body, repo_moved)
     if (
         "repo_url" in changed
         and body.repo_url

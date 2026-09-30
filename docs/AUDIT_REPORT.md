@@ -275,7 +275,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-170 **[LOW][test]** The open-redirect guard safeRedirect has no test - `dashboard/src/lib/safeRedirect.ts:2-6` - add safeRedirect.test.ts. (not verified)
 
 **Dashboard data features**
-- [ ] A-171 **[LOW][security]** Developers can attach an admin-only API key to an app and read its secret - `api/app/routers/apps.py:274-277, 377-380` - require admin to set or change api_key_id (and repo_url on keyed apps).
+- [x] A-171 **[LOW][security]** Developers can attach an admin-only API key to an app and read its secret - `api/app/routers/apps.py:274-277, 377-380` - require admin to set or change api_key_id (and repo_url on keyed apps).
 - [ ] A-172 **[LOW][cleanup]** useQueryConsole is half-used: the notebook duplicates it and several returned members are dead - `dashboard/src/features/query/useQueryConsole.ts:81-85, 248-256, 350, 357-367` - rename it and delete the dead members. (not verified)
 - [ ] A-173 **[LOW][bug]** Clicking a conflict row pushes two identical history entries - `dashboard/src/features/cohosting/SyncPage.tsx:418, 442` - stopPropagation. (not verified)
 - [ ] A-174 **[LOW][bug]** Notebook output shows the current max-rows setting, not the one the run used - `dashboard/src/features/query/NotebookConsole.tsx:597, 866-868` - use run.request.max_rows. (not verified)

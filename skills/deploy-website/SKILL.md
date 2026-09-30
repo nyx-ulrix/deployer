@@ -181,7 +181,7 @@ never ask for a token in chat:
    `POST /v1/projects/{id}/apps {name, repo_url, branch?, root_dir?, preset, install_command?,
    build_command?, start_command?, output_dir?, container_port?, env?, api_key_id?}`
    (developer role or higher; `repo_token` only through the dashboard field the user fills in).
-   Attach the project API key with `api_key_id` so the container gets `DEPLOYER_API_KEY`,
+   A project **admin** attaches the project API key with `api_key_id` so the container gets `DEPLOYER_API_KEY`,
    `DEPLOYER_URL` and `DEPLOYER_PROJECT_ID` automatically; use those names in the code instead of
    hard-coding the config JSON.
    - If the code talks to the project's managed MariaDB / MongoDB **directly** (PyMySQL, PyMongo,
