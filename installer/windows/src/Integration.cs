@@ -107,6 +107,8 @@ namespace DeployerSetup
             string desktopLink = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), "Deployer.lnk");
             if (desktop)
                 CreateLink(desktopLink, explorer, url, installDir, exe, "Open the Deployer dashboard in your browser");
+            else if (File.Exists(desktopLink))
+                File.Delete(desktopLink); // turning the toggle off on an update removes it (A-077)
         }
 
         /// <summary>Updates the dashboard shortcuts after a port change (only the ones that exist).</summary>

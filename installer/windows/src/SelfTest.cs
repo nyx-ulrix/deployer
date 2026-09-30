@@ -129,6 +129,10 @@ namespace DeployerSetup
                   && InstallLocator.NewerThan("0.5.0", null) == null && InstallLocator.NewerThan("0.5.0", "0.5.0-rc.1") == null,
                   "setup from an older exe does not downgrade what 'deployer update' installed (A-074)");
 
+            using (WizardForm up = UpdateOptionsSample(1f))
+                Check(up.portInput.Box.ReadOnly && CountToggles(up) == 1,
+                      "an update locks the port and leaves only the shortcut toggle; the rest is in Control Settings (A-077)");
+
             string half = Path.Combine(Path.GetTempPath(), "DeployerSelfTest-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(half);
             try
@@ -231,6 +235,23 @@ namespace DeployerSetup
             w.options = new SetupOptions();
             w.options.Port = Ports.IsFree(8080) ? 8080 : Ports.SuggestFree(8080);
             return w;
+        }
+
+        static WizardForm UpdateOptionsSample(float scale)
+        {
+            WizardForm w = Wizard(scale, false);
+            w.installedDir = @"C:\ProgramData\Deployer";
+            w.installedPort = w.options.Port;
+            w.page = WizardPage.Options;
+            w.Rebuild();
+            return w;
+        }
+
+        static int CountToggles(Control c)
+        {
+            int n = c is ToggleRow ? 1 : 0;
+            foreach (Control child in c.Controls) n += CountToggles(child);
+            return n;
         }
 
         static SystemReport SampleReport(int variant)
@@ -341,6 +362,7 @@ namespace DeployerSetup
             w.page = WizardPage.Options;
             w.Rebuild();
             Save(w, dir, "wizard-4-options");
+            Save(UpdateOptionsSample(scale), dir, "wizard-4-options-update");
 
             w = InstallSample(scale, false);
             Save(w, dir, "wizard-5-install");

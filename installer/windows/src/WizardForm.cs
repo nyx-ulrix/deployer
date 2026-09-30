@@ -168,7 +168,8 @@ namespace DeployerSetup
         List<CheckRow> stepRows;
         FlatButton nextButton;
         TextBlock portHint, dirHint;
-        InputBox dirInput, portInput;
+        InputBox dirInput;
+        internal InputBox portInput;
 
         public WizardForm(bool dryRun, bool resume, float forcedScale, bool selfTest) : base(forcedScale)
         {
@@ -664,6 +665,8 @@ namespace DeployerSetup
             portInput = new InputBox(ui, options.Port.ToString());
             portInput.Bounds = new Rectangle(ContentLeft, y, ui.S(96), inputH);
             portInput.Box.MaxLength = 5;
+            // An update keeps the port: moving it also needs the LAN port proxy and OAuth redirect changes Control Settings makes (A-077).
+            portInput.Box.ReadOnly = installedDir != null;
             portInput.Box.TextChanged += delegate
             {
                 int p;
@@ -683,16 +686,25 @@ namespace DeployerSetup
             pageHost.Controls.Add(rule);
             y += ui.S(4);
 
-            y = Toggle(y, "Let other devices on my network open Deployer",
-                "Off keeps Deployer private to this PC. On allows phones and laptops on your home or office network (private networks only).",
-                options.EnableLan, v => options.EnableLan = v);
-            y = Toggle(y, "Keep this PC awake while plugged in",
-                "Stops Windows from sleeping while the charger is connected, so your projects stay online. Useful for a PC that acts as a server.",
-                options.KeepAwake, v => options.KeepAwake = v);
-            y = Toggle(y, "Start Deployer when I sign in to Windows",
-                "Runs Deployer in the background and shows its icon next to the clock.",
-                options.Autostart, v => options.Autostart = v);
+            if (installedDir == null)
+            {
+                y = Toggle(y, "Let other devices on my network open Deployer",
+                    "Off keeps Deployer private to this PC. On allows phones and laptops on your home or office network (private networks only).",
+                    options.EnableLan, v => options.EnableLan = v);
+                y = Toggle(y, "Keep this PC awake while plugged in",
+                    "Stops Windows from sleeping while the charger is connected, so your projects stay online. Useful for a PC that acts as a server.",
+                    options.KeepAwake, v => options.KeepAwake = v);
+                y = Toggle(y, "Start Deployer when I sign in to Windows",
+                    "Runs Deployer in the background and shows its icon next to the clock.",
+                    options.Autostart, v => options.Autostart = v);
+            }
             y = Toggle(y, "Create a desktop shortcut", null, options.DesktopShortcut, v => options.DesktopShortcut = v);
+            if (installedDir != null)
+            {
+                // The update keeps these as installed; Control Settings applies them fully (A-077).
+                y = Note(y + ui.S(10), IconKind.Info, Theme.Accent, Theme.AccentSoft,
+                    "This update keeps your port, network access, keep-awake and sign-in settings. Change them in Deployer Control > Settings.");
+            }
             AddBottomSpacer(y);
 
             StandardFooter(footer, dryRun ? "Start test run" : (installedDir != null ? "Update" : "Install"), true, delegate

@@ -85,7 +85,9 @@ firewall rule). Nothing is sent to the Deployer authors. If Windows needs to res
 on WSL, setup tells you and continues automatically after you sign in again. Running
 `DeployerSetup.exe` again later opens [Deployer Control](#deployer-control). A newer
 `DeployerSetup.exe` first offers *Update Deployer to vX*, which also updates Deployer Control itself;
-*Deployer Control -> Settings -> Run setup again* (or `/setup`) repairs an installation.
+*Deployer Control -> Settings -> Run setup again* (or `/setup`) repairs an installation. An update or
+repair keeps the folder, runtime, port, network access, keep-awake and sign-in choices; change those in
+*Deployer Control -> Settings*.
 
 ### Install with PowerShell (alternative)
 
