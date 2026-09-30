@@ -311,8 +311,13 @@ _SKIPPED_QUERIES = {
 
 
 def skipped_objects(conn: Any, dialect_name: str) -> dict[str, list[str]]:
+    """Best effort: a server without one of these catalogs (a MySQL/Postgres look-alike) must not
+    fail the whole export, so the header then says the check could not run."""
     queries = _SKIPPED_QUERIES.get("mysql" if dialect_name == "mariadb" else dialect_name, [])
-    found = {kind: [_s(r[0]) for r in conn.exec_driver_sql(sql)] for kind, sql in queries}
+    try:
+        found = {kind: [_s(r[0]) for r in conn.exec_driver_sql(sql)] for kind, sql in queries}
+    except Exception:  # noqa: BLE001
+        return {"views, triggers, routines": ["could not be listed on this server"]}
     return {kind: names for kind, names in found.items() if names}
 
 

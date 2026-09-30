@@ -74,6 +74,15 @@ def test_sql_script_header_lists_skipped_objects():
     )
 
 
+def test_skipped_objects_failure_does_not_fail_export():
+    class NoCatalogConn:
+        def exec_driver_sql(self, sql):
+            raise RuntimeError('relation "pg_matviews" does not exist')
+
+    skipped = ddl_export.skipped_objects(NoCatalogConn(), "postgresql")
+    assert skipped == {"views, triggers, routines": ["could not be listed on this server"]}
+
+
 def test_inferred_json_schema():
     docs = [
         {"_id": ObjectId(), "name": "a", "age": 3, "address": {"city": "x"}},
