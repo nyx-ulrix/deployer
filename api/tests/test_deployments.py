@@ -582,6 +582,47 @@ def test_commit_sha_never_reaches_git_as_an_option(db, project):
         app_runner.DockerCli().git_checkout(".", "--upload-pack=touch /tmp/x", token=None)
 
 
+def test_real_docker_cli_argv_hardening_and_secrets_stay_out_of_argv(monkeypatch):
+    # A-094: FakeDockerCli overrides every method, so the real argv was never asserted.
+    import secrets
+
+    cli = app_runner.DockerCli()
+    calls = []
+    monkeypatch.setattr(cli, "_run", lambda args, **kw: calls.append((args, kw)) or "")
+    secret = "val-" + secrets.token_hex(16)
+    cli.run_container("app-1", "img:1", labels={"deployer.app": "a"}, env={"APP_SECRET": secret})
+    args, kw = calls[-1]
+    joined = " ".join(args)
+    for flag in (
+        "--security-opt no-new-privileges:true",
+        "--cap-drop ALL",
+        "--pids-limit 256",
+        "--cpus 1",
+        f"--memory {get_settings().app_mem_limit}",
+        f"--network {get_settings().app_network}",
+    ):
+        assert flag in joined
+    assert [a for i, a in enumerate(args) if args[i - 1] == "--cap-add"] == [
+        "CHOWN",
+        "SETUID",
+        "SETGID",
+        "NET_BIND_SERVICE",
+    ]
+    assert "-e APP_SECRET img:1" in joined and args[-1] == "img:1"
+    assert secret not in joined and kw["env"]["APP_SECRET"] == secret
+
+    token = "tok-" + secrets.token_hex(16)
+    calls.clear()
+    cli.git_clone("https://example.com/r.git", "main", "/tmp/d", token=token)
+    cli.git_checkout("/tmp/d", "a" * 40, token=token)
+    assert len(calls) == 3
+    for args, kw in calls:
+        assert token not in " ".join(args)
+        assert kw["env"]["DEPLOYER_GIT_TOKEN"] == token
+        assert kw["env"]["GIT_CONFIG_KEY_0"] == "credential.helper"
+        assert token not in kw["env"]["GIT_CONFIG_VALUE_0"] and kw["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
 def test_run_times_out_a_silent_process():
     # A-012: the deadline used to be checked only between output lines, so a silent process ran forever.
     import sys
