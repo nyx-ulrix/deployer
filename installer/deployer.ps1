@@ -57,6 +57,8 @@ param(
     [switch]$Json,
     [switch]$Force,
     [string]$InstallDir = '',
+    # Set by Assert-Admin on the copy it starts in a new administrator window (A-142).
+    [switch]$Elevated,
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Rest = @()
 )
@@ -77,6 +79,12 @@ if (-not $InstallDir) {
     }
 }
 $InstallDir = [System.IO.Path]::GetFullPath($InstallDir).TrimEnd('\')
+$DeployerLogPath = Join-Path $InstallDir 'logs\deployer.log'
+if ($Elevated -and (Test-Path -LiteralPath (Join-Path $InstallDir 'runtime.json'))) {
+    # The administrator window closes when done; keep a record the parent window can point to.
+    New-Item -ItemType Directory -Path (Split-Path -Parent $DeployerLogPath) -Force | Out-Null
+    $script:DeployerLogFile = $DeployerLogPath
+}
 
 function Show-Help {
     Write-Host ''
@@ -137,13 +145,16 @@ function Assert-Admin {
     Write-DeployerInfo "Administrator rights are needed to $Why. Asking Windows..."
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, $Command)
     if ($Service) { $argList += $Service }
-    $argList += @('-InstallDir', $InstallDir)
+    $argList += @('-InstallDir', $InstallDir, '-Elevated')
     if ($KeepData) { $argList += '-KeepData' }
     if ($Yes) { $argList += '-Yes' }
     if ($Ref) { $argList += @('-Ref', $Ref) }
     if ($FromSource) { $argList += '-FromSource' }
     $quoted = ($argList | ForEach-Object { ConvertTo-DeployerArgument $_ }) -join ' '
     $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -ArgumentList $quoted -Verb RunAs -PassThru -Wait
+    # The administrator window is gone by now; say here how it ended.
+    if ($p.ExitCode -eq 0) { Write-DeployerOk 'Done (in the administrator window).' }
+    else { Write-DeployerError "Failed (exit $($p.ExitCode)), see $DeployerLogPath" }
     exit $p.ExitCode
 }
 
@@ -836,5 +847,9 @@ try {
 } catch {
     Write-DeployerError $_.Exception.Message
     Write-DeployerLog 'ERROR' ($_ | Out-String)
+    if ($Elevated) {
+        # This window closes on exit; keep the error on screen until it has been read (A-142).
+        try { [void](Read-Host '    Press Enter to close this window') } catch { Write-Verbose 'No console to pause in.' }
+    }
     exit 1
 }

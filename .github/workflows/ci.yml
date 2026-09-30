@@ -216,6 +216,9 @@ jobs:
       - name: An update never switches the runtime in place
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/runtime.tests.ps1; exit $LASTEXITCODE
+      - name: The administrator window waits on an error and logs it
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/elevated.tests.ps1; exit $LASTEXITCODE
       - name: install.ps1 -DryRun (read-only, prints progress markers)
         shell: powershell
         run: |

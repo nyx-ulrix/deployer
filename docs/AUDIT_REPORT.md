@@ -240,7 +240,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-141 **[LOW][test]** No tests cover the riskiest runtime paths - `api/tests/test_deployments.py:1-440` - one test per bug (A-012, A-054, A-055, A-057, A-014). (not verified)
 
 **Infrastructure / installer**
-- [ ] A-142 **[LOW][usability]** Commands that self-elevate close their window before the result or error can be read - `installer/deployer.ps1:125-139` - pause on error; the parent prints the exit code and log path.
+- [x] A-142 **[LOW][usability]** Commands that self-elevate close their window before the result or error can be read - `installer/deployer.ps1:125-139` - pause on error; the parent prints the exit code and log path.
 - [ ] A-143 **[LOW][security]** Managed MongoDB is pinned to end-of-life 5.0 - `deploy/docker-compose.yml:69, 87-90` - move to 7.0/8.0 with an FCV step path.
 - [ ] A-144 **[LOW][security]** Compose defaults DEPLOYER_BIND to 0.0.0.0, contradicting the docs and .env.example - `deploy/docker-compose.yml:248, 250` (also `DEPLOYMENTS.md:28, 46-47`) - default to 127.0.0.1; fix the comments and the stale "follow-up" note. (not verified)
 - [ ] A-145 **[LOW][security]** All LAN/localhost clients reach Caddy with the same source IP, so per-IP limits on :8080 are meaningless - `deploy/Caddyfile:25, 63` - document it; a per-email limit (A-019). (not verified)
