@@ -836,13 +836,6 @@ def test_source_ops_query_routing(db, owner, make_project, make_device, sqlite_e
     assert err.value.code == "device_error"
 
 
-def test_summarize():
-    assert query_console.summarize({"kind": "sql", "results": [{"type": "rows"}, {"type": "error"}]}) == (False, 2)
-    assert query_console.summarize({"kind": "sql", "results": [{"type": "count"}]}) == (True, 1)
-    assert query_console.summarize({"kind": "nosql", "error": None}) == (True, 1)
-    assert query_console.summarize({"kind": "nosql", "error": {"code": "query_failed"}}) == (False, 1)
-
-
 def test_run_sql_pool_exhausted_is_too_many_queries():
     engine = create_engine("sqlite://", pool_size=1, max_overflow=0, pool_timeout=0.1, poolclass=QueuePool)
     held = engine.connect()

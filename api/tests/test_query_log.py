@@ -66,8 +66,11 @@ def test_runs_are_logged_with_outcome(client, db, console, monkeypatch):
     assert all(r.user_email and r.source_name == console["ds"].name and r.kind == "sql" for r in rows)
     assert all(r.project_id == console["project"].id and isinstance(r.duration_ms, int) for r in rows)
     # Audit rows still carry counts only.
-    audits = list(db.scalars(select(AuditLog).where(AuditLog.action == "query.run")))
+    audits = list(db.scalars(select(AuditLog).where(AuditLog.action == "query.run").order_by(AuditLog.id)))
     assert len(audits) == 5 and not any("items" in str(a.details) for a in audits)
+    # A-122: the audit outcome is read off the log row, so the two never disagree.
+    assert [a.details["ok"] for a in audits] == [r.status == "ok" for r in rows] == [True, False, False, False, False]
+    assert [a.details["statements"] for a in audits] == [2, 2, None, None, None]
 
     resp = client.get(log_url, headers=console["viewer"])
     assert resp.status_code == 200 and [r["status"] for r in resp.json()["runs"]] == ["refused"]

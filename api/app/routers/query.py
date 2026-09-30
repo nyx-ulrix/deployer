@@ -49,34 +49,17 @@ def run_query(source_id: str, body: QueryRequest, access: QueryRunner, db: DbSes
     read_only = not access.at_least("developer")
     db.commit()  # don't hold the platform DB transaction open while the query runs
     started = time.monotonic()
-    ok, statements = False, None
     result, error = None, None
     try:
         result = source_ops.run_query(
             ds, body.query, max_rows=body.max_rows, timeout_seconds=body.timeout_seconds, read_only=read_only
         )
-        ok, statements = query_console.summarize(result)
     except ApiError as exc:
         error = exc
         raise
     finally:
         duration_ms = int((time.monotonic() - started) * 1000)
-        # Counts and timing only: query text and results never reach the audit log...
-        audit.record(
-            db,
-            "query.run",
-            request=request,
-            user_id=access.user.id,
-            project_id=access.project.id,
-            data_source_id=ds.id,
-            api_key_id=access.api_key_id,
-            kind=ds.kind,
-            statements=statements,
-            read_only=read_only,
-            duration_ms=duration_ms,
-            ok=ok,
-        )
-        # ...the query log is where the text lives, for every outcome incl. refusals and failures.
+        # The query log is where the text lives, for every outcome incl. refusals and failures...
         run = query_log.record_run(
             db,
             project_id=access.project.id,
@@ -88,6 +71,21 @@ def run_query(source_id: str, body: QueryRequest, access: QueryRunner, db: DbSes
             duration_ms=duration_ms,
             result=result,
             error=error,
+        )
+        # ...the audit log keeps counts and timing only, taken from that row so the two agree (A-122).
+        audit.record(
+            db,
+            "query.run",
+            request=request,
+            user_id=access.user.id,
+            project_id=access.project.id,
+            data_source_id=ds.id,
+            api_key_id=access.api_key_id,
+            kind=ds.kind,
+            statements=run.statements if result is not None else None,  # null: nothing ran
+            read_only=read_only,
+            duration_ms=duration_ms,
+            ok=run.status == "ok",
         )
         db.commit()
     result["run_id"] = run.id

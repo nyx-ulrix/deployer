@@ -930,11 +930,3 @@ def run_query(ds: DataSource, query: str, *, max_rows: int, timeout_seconds: int
         timeout_seconds=timeout_seconds,
         read_only=read_only,
     )
-
-
-def summarize(result: dict) -> tuple[bool, int]:
-    """`(ok, statement count)` of a console result for the audit log (never the text or the rows)."""
-    if result.get("kind") == "sql":
-        results = result.get("results") or []
-        return all(r.get("type") != "error" for r in results), len(results)
-    return result.get("error") is None, 1
