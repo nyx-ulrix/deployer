@@ -320,6 +320,7 @@ stored in the database and the encrypted backup versions. To restore the daily p
 | Problem | What to do |
 |---|---|
 | *"Windows protected your PC"* when opening `DeployerSetup.exe` | The exe isn't code-signed yet. Click **More info → Run anyway**, or install with PowerShell instead. |
+| *Setup is running as another account, not as you* | Your account isn't an administrator, so Windows ran setup as the account whose password you typed, and Deployer would be installed (and only run) for that account. Cancel, make your account an administrator (*Settings → Accounts → Other users*) and run setup again, or sign in as the administrator and install there. |
 | *Virtualization is turned off* | Restart, open the BIOS/UEFI setup (usually F2, F10, Del or Esc while the PC starts), enable *Intel Virtualization Technology* (VT-x) or *SVM Mode* (AMD), save and run setup again. |
 | *Forgot your password* | On the Deployer PC open *Deployer Control → Settings → Reset a password*, or run `deployer reset-password` (add the email to reset a member instead of the owner). |
 | *Port 8080 is used by another program* | Pick another port in setup, or later in *Deployer Control → Settings* (`deployer set-port 8090`). Ports 8100-8199 are kept for deployed apps, so setup also stops if another program listens there and names it. |

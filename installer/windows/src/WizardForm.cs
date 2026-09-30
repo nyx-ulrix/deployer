@@ -138,6 +138,7 @@ namespace DeployerSetup
         bool portEditedByUser;
         internal string installedDir;
         internal int installedPort = -1;
+        internal string otherAccount; // A-079: set when Setup runs as a different account than the one signed in
 
         internal int step;
         internal int totalSteps = 10;
@@ -179,6 +180,7 @@ namespace DeployerSetup
             Text = dryRun ? "Deployer Setup (test mode)" : "Deployer Setup";
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
+            if (!selfTest) otherAccount = SystemChecks.OtherAccountWarning();
             installedDir = InstallLocator.Find();
             if (installedDir != null)
             {
@@ -399,13 +401,20 @@ namespace DeployerSetup
             y += lead.LayoutAt(ContentLeft, y - ui.S(8), ContentWidth) + ui.S(22);
             pageHost.Controls.Add(lead);
 
-            y = Feature(y, IconKind.Lock, "Private by design",
-                "Nothing is shared with the Deployer authors \u2014 no accounts or keys needed. Every password is created on this PC.");
-            y = Feature(y, IconKind.Heart, "Free and open source",
-                "The recommended setup uses only free, open-source software. No trial, no sign-up.");
-            y = Feature(y, IconKind.Clock, "Takes about 10\u201330 minutes",
-                "Setup downloads what it needs (about 1\u20132 GB) and may ask to restart Windows once. You can keep using your PC meanwhile.");
-
+            if (otherAccount != null)
+            {
+                // Takes the place of the feature list: this has to be read before anything is installed.
+                y = Note(y, IconKind.Warn, Theme.Warn, Theme.WarnSoft, otherAccount);
+            }
+            else
+            {
+                y = Feature(y, IconKind.Lock, "Private by design",
+                    "Nothing is shared with the Deployer authors \u2014 no accounts or keys needed. Every password is created on this PC.");
+                y = Feature(y, IconKind.Heart, "Free and open source",
+                    "The recommended setup uses only free, open-source software. No trial, no sign-up.");
+                y = Feature(y, IconKind.Clock, "Takes about 10\u201330 minutes",
+                    "Setup downloads what it needs (about 1\u20132 GB) and may ask to restart Windows once. You can keep using your PC meanwhile.");
+            }
             if (installedDir != null)
             {
                 y += ui.S(4);

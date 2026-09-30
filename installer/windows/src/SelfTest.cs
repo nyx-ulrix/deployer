@@ -117,6 +117,12 @@ namespace DeployerSetup
                   && ResetPasswordDialog.Check("long-enough-1", "long-enough-1") == null, "reset password checks");
             Check(SystemChecks.MemoryCheck(4).Title.Contains("about 2 GB is available to Deployer; expect 1-2 small apps")
                   && SystemChecks.MemoryCheck(3).Detail.Contains("exit code 137"), "memory check says how much WSL gives Deployer (A-070)");
+            string other = SystemChecks.OtherAccountWarning(@"PC\Admin", @"PC\Kid");
+            Check(other != null && other.Contains("installed for Admin") && other.Contains("tray icon won't appear for Kid")
+                  && SystemChecks.OtherAccountWarning(@"PC\kid", @"PC\Kid") == null
+                  && SystemChecks.OtherAccountWarning(@"PC\Kid", "Kid") == null
+                  && SystemChecks.OtherAccountWarning(@"PC\Admin", null) == null,
+                  "setup warns when UAC ran it as another account (A-079)");
             using (ControlForm running = ControlSample(1f, 0), stopped = ControlSample(1f, 1), broken = ControlSample(1f, 3))
                 Check(running.updateButton.Enabled && !stopped.updateButton.Enabled && broken.updateButton.Enabled,
                       "Update needs the database running, not a healthy API (A-076)");
@@ -367,6 +373,12 @@ namespace DeployerSetup
 
             w = Wizard(scale, false);
             Save(w, dir, "wizard-1-welcome");
+
+            w = Wizard(scale, false);
+            w.installedDir = @"C:\ProgramData\Deployer";
+            w.otherAccount = SystemChecks.OtherAccountWarning(@"PC\Administrator", @"PC\Student");
+            w.Rebuild();
+            Save(w, dir, "wizard-1-welcome-other-account");
 
             w = Wizard(scale, false);
             w.page = WizardPage.Checks;

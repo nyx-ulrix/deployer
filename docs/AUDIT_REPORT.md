@@ -151,7 +151,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-076 **[MEDIUM][bug]** The Update button is enabled while Deployer is stopped, and the update then fails in its backup step - `installer/windows/src/ControlForm.cs:478, 1032` - enable only when Running, or queue start before update.
 - [x] A-077 **[MEDIUM][bug]** The update wizard lets you change options that the update then ignores or half-applies - `installer/windows/src/WizardForm.cs:644, 661-670, 683-692` - lock port and toggles on update and point to Control Settings.
 - [x] A-078 **[MEDIUM][bug]** The uninstaller of a half-installed Deployer removes almost nothing but reports "all data removed" - `installer/windows/src/UninstallForm.cs:76-80, 214-219, 307` - unregister the distro and delete the folder; word the result truthfully; register the ARP entry early.
-- [ ] A-079 **[MEDIUM][usability]** Setup silently installs for the admin account when a standard user approves UAC with someone else's password - `installer/windows/src/WizardForm.cs:913-971` - compare the elevated identity with the session owner and warn.
+- [x] A-079 **[MEDIUM][usability]** Setup silently installs for the admin account when a standard user approves UAC with someone else's password - `installer/windows/src/WizardForm.cs:913-971` - compare the elevated identity with the session owner and warn.
 
 **Dashboard shell**
 - [ ] A-080 **[MEDIUM][bug]** Dashboard password minimum (8) disagrees with the server (10) - `dashboard/src/lib/constants.ts:1` - set it to 10, or serve the value from the API.

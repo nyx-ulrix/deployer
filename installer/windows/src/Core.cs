@@ -398,6 +398,60 @@ namespace DeployerSetup
             return new CheckResult("memory", CheckStatus.Ok, ramText + " of memory", null);
         }
 
+        // A-079: Setup requires administrator, so when a standard user types an admin's password at the UAC
+        // prompt it runs as that admin, and the WSL distro, sign-in task and RunOnce all go to the admin.
+        public static string OtherAccountWarning(string setupAccount, string signedInAccount)
+        {
+            if (string.IsNullOrEmpty(setupAccount) || string.IsNullOrEmpty(signedInAccount)) return null;
+            string setupUser = setupAccount.Substring(setupAccount.LastIndexOf('\\') + 1);
+            string signedInUser = signedInAccount.Substring(signedInAccount.LastIndexOf('\\') + 1);
+            bool same = signedInAccount.Contains("\\")
+                ? string.Equals(setupAccount, signedInAccount, StringComparison.OrdinalIgnoreCase)
+                : string.Equals(setupUser, signedInUser, StringComparison.OrdinalIgnoreCase);
+            if (same) return null;
+            return "Setup is running as " + setupUser + ", not as you (" + signedInUser + "), because " + setupUser
+                   + "'s password was typed at the Windows prompt. Deployer will be installed for " + setupUser
+                   + ": it only runs while " + setupUser + " is signed in, and its tray icon won't appear for " + signedInUser
+                   + ". To use Deployer as " + signedInUser + ", cancel, make " + signedInUser
+                   + " an administrator (Settings > Accounts > Other users) and run Setup again, or sign in as " + setupUser + " and run Setup there.";
+        }
+
+        public static string OtherAccountWarning()
+        {
+            try
+            {
+                using (System.Security.Principal.WindowsIdentity me = System.Security.Principal.WindowsIdentity.GetCurrent())
+                    return OtherAccountWarning(me.Name, SignedInAccount());
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>DOMAIN\user signed in to this Windows session (not the account UAC elevated to), or null.</summary>
+        static string SignedInAccount()
+        {
+            string user = SessionString(5), domain = SessionString(7); // WTSUserName, WTSDomainName
+            if (string.IsNullOrEmpty(user)) return null;
+            return string.IsNullOrEmpty(domain) ? user : domain + "\\" + user;
+        }
+
+        static string SessionString(int infoClass)
+        {
+            IntPtr buffer;
+            int bytes;
+            if (!NativeMethods.WTSQuerySessionInformation(IntPtr.Zero, -1, infoClass, out buffer, out bytes)) return null;
+            try
+            {
+                return System.Runtime.InteropServices.Marshal.PtrToStringUni(buffer);
+            }
+            finally
+            {
+                NativeMethods.WTSFreeMemory(buffer);
+            }
+        }
+
         public static SystemReport Run(string installDir, int port, int installedPort, bool includeInternet)
         {
             SystemReport report = new SystemReport();
