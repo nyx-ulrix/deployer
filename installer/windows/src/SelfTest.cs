@@ -143,6 +143,14 @@ namespace DeployerSetup
             using (ControlForm running = ControlSample(1f, 0), stopped = ControlSample(1f, 1), broken = ControlSample(1f, 3))
                 Check(running.updateButton.Enabled && !stopped.updateButton.Enabled && broken.updateButton.Enabled,
                       "Update needs the database running, not a healthy API (A-076)");
+            using (ControlForm broken = ControlSample(1f, 3), wide = ControlSample(2f, 3))
+            {
+                string diag = broken.DiagnosticsText("api-1  | Traceback: boom");
+                Check(broken.heroText.Text.Contains("Copy diagnostics") && broken.diagnosticsButton.Enabled
+                      && broken.diagnosticsButton.Right < broken.uninstallButton.Left && wide.diagnosticsButton.Right < wide.uninstallButton.Left
+                      && diag.Contains("NotResponding") && diag.Contains("api: running (unhealthy)") && diag.Contains("Traceback: boom"),
+                      "Not responding offers Copy diagnostics (status plus log tail) instead of raw logs (A-160)");
+            }
             using (ControlForm checking = ControlSample(1f, 5), failed = ControlSample(1f, 4))
                 Check(checking.State == RunState.Checking && failed.State == RunState.NotResponding && !failed.updateButton.Enabled,
                       "a failed status run shows advice instead of Checking forever (A-099)");
@@ -592,6 +600,7 @@ namespace DeployerSetup
             Dictionary<string, object> standalone = new Dictionary<string, object>();
             standalone["mode"] = "standalone";
             Save(ControlForm.CreateDeviceDialog(standalone, scale), dir, "dialog-device-standalone");
+            Save(ControlForm.CreateDiagnosticsDialog(scale), dir, "dialog-diagnostics-copied");
             UninstallForm u = new UninstallForm(@"C:\ProgramData\Deployer", scale, true);
             Save(u, dir, "dialog-uninstall");
             u = new UninstallForm(@"C:\ProgramData\Deployer", scale, true);

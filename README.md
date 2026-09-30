@@ -287,6 +287,8 @@ Setup copies it to `%ProgramData%\Deployer\DeployerControl.exe` and adds two Sta
   `DeployerSetup.exe` and choose *Update Deployer to vX*.
 - **Back up now** - database dumps plus a copy of `.env` in the `backups` folder (`deployer backup`).
 - **View logs** - live logs for all services or one of them.
+- **Copy diagnostics** - puts the status, the last error and recent log lines on the clipboard, ready to
+  paste when you ask for help (no need to read the logs yourself).
 - **Settings** - port, access from other devices on your network, keep this PC awake while plugged in,
   start at sign-in, and *Run setup again* (repairs shortcuts, the sign-in task and the Apps & Features
   entry; your data is kept). After an **Update** this Deployer Control is older than Deployer, so setup
@@ -368,7 +370,7 @@ stored in the database and the encrypted backup versions. To restore the daily p
 | *Restart needed* | Restart Windows and sign in again; setup continues on its own (approve the administrator prompt). |
 | Images can't be downloaded | Check your internet connection or proxy. On forks, make the GHCR packages public (see Development). |
 | A deploy fails with *exit code 137* / *Out of memory* | The build or app ran out of memory. WSL2 gives Deployer about half the PC's RAM; stop other apps or projects, or add RAM (8 GB is recommended). |
-| Deployer isn't responding | *Deployer Control → Restart*, then *View logs* (`deployer logs api`). `deployer status` shows every container. |
+| Deployer isn't responding | *Deployer Control → Restart*. If it still isn't responding, click *Copy diagnostics* and paste the result when you ask for help (for yourself: *View logs* or `deployer logs api`; `deployer status` shows every container). |
 | Deployer Control says *Couldn't check Deployer's services* | The status check itself failed (usually WSL or Docker is broken). Click *Start* or *Restart*; if that fails, *Show details* has the error to share. |
 | Docker Desktop was closed, crashed or the PC woke from sleep, and Deployer is down | `deployer start` (or *Deployer Control → Start*) starts Docker Desktop if needed, repairs it when it crashes on its leftover socket files, and brings Deployer back. With *Start Deployer when I sign in* on (`deployer autostart on`) this happens on its own at sign-in. |
 | *Docker Desktop cannot start until Windows is restarted* | After sleep/wake Windows sometimes can no longer create Docker Desktop's socket files (*"The file cannot be accessed by the system"*); Docker Desktop then crashes on every start. Restart Windows. To stop it recurring, move to the **Free Docker Engine** (WSL2), which does not use Docker Desktop at all: export everything (dashboard *Settings -> Export & import*), uninstall, install again choosing *Free Docker Engine*, then pick *Restore from export*. |

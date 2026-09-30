@@ -198,8 +198,9 @@ namespace DeployerSetup
         Card hero;
         IconBadge activityIcon;
         internal FlatButton updateButton;
-        FlatButton startButton, stopButton, restartButton, backupButton, settingsButton, uninstallButton, openButton, deviceButton;
-        internal bool deviceBusy;
+        FlatButton startButton, stopButton, restartButton, backupButton, settingsButton, openButton, deviceButton;
+        internal FlatButton uninstallButton, diagnosticsButton;
+        internal bool deviceBusy, diagnosticsBusy;
         readonly Dictionary<string, ServiceTile> tiles = new Dictionary<string, ServiceTile>();
 
         // Every compose service (deploy/docker-compose.yml). "tunnel" idles until remote access is enabled,
@@ -350,6 +351,7 @@ namespace DeployerSetup
             y += bh + ui.S(10);
             x = pad;
             ActionButton("View logs", ButtonStyle.Secondary, ref x, y, delegate { ShowLogs(); });
+            diagnosticsButton = ActionButton("Copy diagnostics", ButtonStyle.Secondary, ref x, y, delegate { CopyDiagnostics(); });
             ActionButton("Open install folder", ButtonStyle.Secondary, ref x, y, delegate { Shell.OpenUrl(installDir); });
             settingsButton = ActionButton("Settings", ButtonStyle.Secondary, ref x, y, delegate { ShowSettings(); });
             deviceButton = ActionButton(deviceBusy ? "Checking…" : "Host device", ButtonStyle.Secondary, ref x, y, delegate { ShowDevice(); });
@@ -461,7 +463,7 @@ namespace DeployerSetup
                     title = status == null ? "Couldn't check Deployer's services" : "Deployer isn't responding";
                     text = status == null
                         ? "Try Start or Restart. If that fails, Show details has the error."
-                        : "Try Restart. If that doesn't help, View logs shows what went wrong.";
+                        : "Try Restart. If that doesn't help, Copy diagnostics and paste them when you ask for help.";
                     break;
                 case RunState.Stopped:
                     pillText = "Stopped"; color = Theme.Neutral; icon = IconKind.Dot; heroFill = Theme.NeutralSoft;
@@ -512,6 +514,8 @@ namespace DeployerSetup
             updateButton.Enabled = !busy && CanBackUp(st);
             settingsButton.Enabled = !busy && status != null && status.Installed;
             deviceButton.Enabled = !busy && !deviceBusy && st == RunState.Running;
+            diagnosticsButton.Enabled = !diagnosticsBusy;
+            diagnosticsButton.Text = diagnosticsBusy ? "Collecting…" : "Copy diagnostics";
             uninstallButton.Enabled = !busy;
             openButton.Enabled = st == RunState.Running || st == RunState.Starting || st == RunState.NotResponding;
 
@@ -921,6 +925,75 @@ namespace DeployerSetup
             LogWindow w = new LogWindow(installDir, 0);
             w.PlaceCentered(this);
             w.Show(this);
+        }
+
+        /// <summary>Puts the status, the last error and recent log lines on the clipboard, so a non-expert can
+        /// ask for help without reading raw container logs (A-160).</summary>
+        void CopyDiagnostics()
+        {
+            if (diagnosticsBusy) return;
+            string script = null, scriptError = null;
+            try { script = DeployerCli.ScriptFor(installDir, ref extractedRoot); }
+            catch (Exception ex) { scriptError = "Couldn't prepare the Deployer scripts: " + ex.Message; }
+            diagnosticsBusy = true;
+            UpdateView();
+            string args = script == null ? null : ProcessUtil.JoinArgs(ScriptRunner.ScriptArgs(script, new[] { "logs", "-Tail", "60", "-InstallDir", installDir }));
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string logs = scriptError;
+                if (args != null)
+                {
+                    ProcessResult r = ProcessUtil.Run(AppInfo.PowerShellExe, args, 90000);
+                    logs = r.StdOut + (r.StdErr.Length > 0 ? "\r\n" + r.StdErr : "");
+                }
+                SafeInvoke(() =>
+                {
+                    diagnosticsBusy = false;
+                    bool copied = true;
+                    try { Clipboard.SetText(DiagnosticsText(logs)); } catch (Exception) { copied = false; }
+                    UpdateView();
+                    if (!copied)
+                    {
+                        ErrorDialog.Show(this, "Couldn't copy the diagnostics", "Another program is using the clipboard. Try Copy diagnostics again.", null);
+                        return;
+                    }
+                    using (MessageDialog d = CreateDiagnosticsDialog(0))
+                    {
+                        d.PlaceCentered(this);
+                        d.ShowDialog(this);
+                    }
+                });
+            });
+        }
+
+        internal string DiagnosticsText(string logs)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("Deployer Control ").Append(AppInfo.Version).Append(" on ").Append(Environment.OSVersion.VersionString).Append("\r\n");
+            sb.Append("State: ").Append(State).Append(" - ").Append(heroTitle == null ? "" : heroTitle.Text).Append("\r\n");
+            sb.Append("Install folder: ").Append(installDir).Append("  Port: ").Append(port).Append("  API health: ").Append(healthy ? "ok" : "not answering").Append("\r\n");
+            if (status != null)
+            {
+                sb.Append("Runtime: ").Append(StatusSnapshot.RuntimeLabel(status.Runtime)).Append("  Version: ").Append(status.Version).Append("\r\n");
+                foreach (ServiceInfo s in status.Services)
+                    sb.Append("  ").Append(s.Name).Append(": ").Append(s.State).Append(s.Health.Length > 0 ? " (" + s.Health + ")" : "").Append("\r\n");
+            }
+            if (statusFailed) sb.Append("\r\nStatus check failed:\r\n").Append(statusOutput).Append("\r\n");
+            if (actionLog.Length > 0) sb.Append("\r\nLast action (").Append(actionName).Append("):\r\n").Append(actionLog);
+            sb.Append("\r\nRecent logs (deployer logs -Tail 60):\r\n").Append(string.IsNullOrEmpty(logs) ? "(none)" : logs.Trim()).Append("\r\n");
+            return sb.ToString();
+        }
+
+        internal static MessageDialog CreateDiagnosticsDialog(float scale)
+        {
+            List<DialogButton> buttons = new List<DialogButton> { new DialogButton("OK", ButtonStyle.Primary, DialogResult.OK) };
+            MessageDialog d = new MessageDialog("Diagnostics copied",
+                "Deployer's status, the last error and its recent log lines are on the clipboard. Paste them into your message when you ask for help. They can contain your projects' names and addresses, so share them only with someone you trust.",
+                IconKind.Check, Theme.Success, buttons, null, null, scale);
+            d.LinkLabelText = "Troubleshooting help";
+            d.LinkLabelUrl = AppInfo.TroubleshootingUrl;
+            d.Rebuild();
+            return d;
         }
 
         void ShowSettings()
