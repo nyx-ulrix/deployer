@@ -112,6 +112,12 @@ namespace DeployerSetup
                   && SignInAppsDialog.CheckValue("github", false, "ID Ov23liExample") != null
                   && SignInAppsDialog.CheckValue("google", true, gid) != null
                   && SignInAppsDialog.CheckValue("github", true, "secret:abc") != null, "sign-in app paste checks");
+            string callbacks = SignInAppsDialog.CallbackChangeNote(SampleOAuthStatus());
+            Dictionary<string, object> noApps = SampleOAuthStatus();
+            ((Dictionary<string, object>)noApps["google"])["client_id"] = "";
+            Check(callbacks != null && callbacks.Contains("Google: https://deployer.example.org/v1/auth/oauth/google/callback") && !callbacks.Contains("GitHub:")
+                  && SignInAppsDialog.CallbackChangeNote(noApps) == null && SignInAppsDialog.CallbackChangeNote(null) == null,
+                  "a port change names the new callback URLs only for sign-in apps that are set up (A-155)");
             Check(ResetPasswordDialog.Check("short", "short") != null
                   && ResetPasswordDialog.Check("long-enough-1", "long-enough-2") != null
                   && ResetPasswordDialog.Check("long-enough-1", "long-enough-1") == null, "reset password checks");

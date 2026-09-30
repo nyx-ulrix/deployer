@@ -273,18 +273,38 @@ namespace DeployerSetup
 
         void LoadStatus()
         {
-            string args = ProcessUtil.JoinArgs(ScriptRunner.ScriptArgs(script, new[] { "oauth", "status", "-Json", "-InstallDir", installDir }));
             ThreadPool.QueueUserWorkItem(delegate
             {
-                ProcessResult r = ProcessUtil.Run(AppInfo.PowerShellExe, args, 120000);
-                IDictionary<string, object> d = null;
-                int a = r.StdOut.IndexOf('{'), b = r.StdOut.LastIndexOf('}');
-                if (r.ExitCode == 0 && a >= 0 && b > a)
-                {
-                    try { d = Json.Parse(r.StdOut.Substring(a, b - a + 1)) as IDictionary<string, object>; } catch (Exception) { }
-                }
+                IDictionary<string, object> d = FetchStatus(script, installDir);
                 Post(() => ApplyStatus(d, d == null ? "Couldn't read the sign-in settings. Make sure Deployer is running, then open this again." : null));
             });
+        }
+
+        /// <summary>"deployer oauth status -Json" (blocking; run it off the UI thread), or null if it failed.</summary>
+        internal static IDictionary<string, object> FetchStatus(string script, string installDir)
+        {
+            string args = ProcessUtil.JoinArgs(ScriptRunner.ScriptArgs(script, new[] { "oauth", "status", "-Json", "-InstallDir", installDir }));
+            ProcessResult r = ProcessUtil.Run(AppInfo.PowerShellExe, args, 120000);
+            int a = r.StdOut.IndexOf('{'), b = r.StdOut.LastIndexOf('}');
+            if (r.ExitCode != 0 || a < 0 || b <= a) return null;
+            try { return Json.Parse(r.StdOut.Substring(a, b - a + 1)) as IDictionary<string, object>; } catch (Exception) { return null; }
+        }
+
+        /// <summary>After a port change: the callback URLs each set-up sign-in app must now use, or null if none is set up (A-155).</summary>
+        internal static string CallbackChangeNote(IDictionary<string, object> status)
+        {
+            if (status == null) return null;
+            List<string> lines = new List<string>();
+            foreach (string p in new[] { "google", "github" })
+            {
+                object v;
+                IDictionary<string, object> pd = status.TryGetValue(p, out v) ? v as IDictionary<string, object> : null;
+                if (Json.Str(pd, "client_id").Length > 0)
+                    lines.Add((p == "google" ? "Google" : "GitHub") + ": " + Json.Str(pd, "callback_url"));
+            }
+            if (lines.Count == 0) return null;
+            return "Sign-in with Google or GitHub stops working until the callback URL in each OAuth app matches the new address. Register:\n\n" +
+                   string.Join("\n", lines.ToArray());
         }
 
         internal void ApplyStatus(IDictionary<string, object> d, string error)

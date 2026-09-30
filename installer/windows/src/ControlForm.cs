@@ -790,6 +790,7 @@ namespace DeployerSetup
                 {
                     tray.ShowBalloonTip(8000, actionName + " didn't work", error ?? "Open Deployer Control for details.", ToolTipIcon.Error);
                 }
+                CheckSignInCallbacks();
                 return;
             }
             if (command[0] == "set-port")
@@ -798,6 +799,7 @@ namespace DeployerSetup
                 if (int.TryParse(command[1], out newPort))
                 {
                     port = newPort;
+                    portMoved = true;
                     try { Integration.UpdateDashboardShortcuts(installDir, newPort); } catch (Exception) { }
                 }
             }
@@ -807,6 +809,34 @@ namespace DeployerSetup
                 return;
             }
             FinishAction(true, DoneText(command[0]));
+            CheckSignInCallbacks();
+        }
+
+        bool portMoved;
+
+        /// <summary>A new port changes the OAuth callback URLs: name them and offer Sign-in apps (A-155).</summary>
+        void CheckSignInCallbacks()
+        {
+            if (!portMoved) return;
+            portMoved = false;
+            string script;
+            try { script = DeployerCli.ScriptFor(installDir, ref extractedRoot); } catch (Exception) { return; }
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string note = SignInAppsDialog.CallbackChangeNote(SignInAppsDialog.FetchStatus(script, installDir));
+                if (note == null) return;
+                SafeInvoke(() =>
+                {
+                    if (!Visible)
+                    {
+                        if (tray != null) tray.ShowBalloonTip(8000, "Update your sign-in apps", "Deployer moved to port " + port + ". Open Settings > Sign-in apps for the new callback URLs.", ToolTipIcon.Warning);
+                        return;
+                    }
+                    if (MessageDialog.Ask(this, "Update your sign-in apps", note, IconKind.Warn, Theme.Warn,
+                            "Open Sign-in apps", ButtonStyle.Primary, "Later") == DialogResult.Yes)
+                        ShowScriptDialog(this, "sign-in apps", s => new SignInAppsDialog(s, installDir, 0));
+                });
+            });
         }
 
         string DoneText(string command)
@@ -1228,7 +1258,10 @@ namespace DeployerSetup
             portHint.SingleLine = true;
             portHint.LayoutAt(pad + ui.S(110), y + (inputH - ui.Font(9.5f).Height) / 2, cw - ui.S(110));
             Controls.Add(portHint);
-            y += inputH + ui.S(12);
+            y += inputH + ui.S(6);
+            TextBlock portNote = new TextBlock(ui, "Changing the port also changes the callback URLs of your Google/GitHub sign-in apps.", ui.Font(9.5f), Theme.TextMuted);
+            y += portNote.LayoutAt(pad, y, cw) + ui.S(12);
+            Controls.Add(portNote);
 
             Rule rule = new Rule(Theme.Border);
             rule.Bounds = new Rectangle(pad, y, cw, Math.Max(1, ui.S(1)));

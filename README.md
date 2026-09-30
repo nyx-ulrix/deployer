@@ -195,6 +195,9 @@ callback URL with a *Copy* button, links to each console, and has one box for th
 for the Client secret. The dashboard's *Instance settings* and `deployer oauth set google|github`
 do the same. Paste **one value per box** - Deployer rejects a whole "ID ... SECRET ..." block, labels
 or spaces, and a Google Client ID must look like `1234-abc.apps.googleusercontent.com`.
+Changing the port changes these URLs: after *Settings -> Port* Deployer Control lists the new ones
+(`deployer oauth status` does too) - register them in both OAuth apps or sign-in fails with
+`redirect_uri_mismatch`.
 
 **Google**
 

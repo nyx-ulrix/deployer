@@ -255,7 +255,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 
 **Windows setup / Deployer Control**
 - [x] A-154 **[LOW][usability]** The low-disk check points to the Options page but blocks the user from reaching it - `installer/windows/src/Core.cs:396-398` - Warn when another drive has space; enforce on the chosen folder.
-- [ ] A-155 **[LOW][usability]** Changing the port in Settings silently breaks Google/GitHub sign-in - `installer/windows/src/ControlForm.cs:788, 857` - show the new callback URLs after set-port.
+- [x] A-155 **[LOW][usability]** Changing the port in Settings silently breaks Google/GitHub sign-in - `installer/windows/src/ControlForm.cs:788, 857` - show the new callback URLs after set-port.
 - [ ] A-156 **[LOW][usability]** The Finish page after an update shows first-install next steps - `installer/windows/src/WizardForm.cs:1294-1297` - an update-specific message. (not verified)
 - [ ] A-157 **[LOW][bug]** The QuietUninstallString is not quiet - `installer/windows/src/Integration.cs:160-161` - remove it or implement /quiet. (not verified)
 - [ ] A-158 **[LOW][security]** The build embeds every untracked file under deploy\ into the exe - `installer/windows/build.ps1:98-104` - use `git ls-files deploy`. (not verified)

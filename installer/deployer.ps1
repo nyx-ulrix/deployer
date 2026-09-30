@@ -390,7 +390,7 @@ function Invoke-SetPort {
         Write-DeployerOk "Firewall rule moved to TCP $newPort"
     }
     Restart-StackForSettings -Ctx $ctx -Port $newPort
-    Write-DeployerInfo 'If you use Google/GitHub sign-in, update the callback URLs in your OAuth apps to the new port.'
+    Write-DeployerInfo 'If you use Google/GitHub sign-in, register the new callback URLs in your OAuth apps ("deployer oauth status" lists them).'
 }
 
 function Invoke-Lan {
