@@ -1,5 +1,6 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Navigate, Outlet, useLocation } from "react-router-dom";
+import { isApiStarting } from "../api/client";
 import { useSetupStatus } from "../api/hooks";
 import { PageSpinner } from "../components/ui/Spinner";
 import { ErrorState } from "../components/ui/States";
@@ -15,7 +16,33 @@ export function SetupGate() {
   const location = useLocation();
   const status = useSetupStatus();
   const auth = useAuth();
+  const starting = status.isError && isApiStarting(status.error);
+  const wasStarting = useRef(false);
+  const { refreshSession } = auth;
 
+  useEffect(() => {
+    if (starting) wasStarting.current = true;
+    // The boot-time session refresh failed while the API was down: retry it now it's back.
+    else if (status.isSuccess && wasStarting.current) {
+      wasStarting.current = false;
+      void refreshSession().catch(() => {});
+    }
+  }, [starting, status.isSuccess, refreshSession]);
+
+  if (starting) {
+    return (
+      <FullPage>
+        <div className="flex flex-col items-center">
+          <PageSpinner label="Deployer is starting…" />
+          <p className="max-w-sm text-center text-sm text-muted">
+            This page reconnects on its own, usually within a minute or two after the PC starts. If it
+            doesn't, open <strong>Deployer Control</strong> from the Start menu to check its status or
+            restart it.
+          </p>
+        </div>
+      </FullPage>
+    );
+  }
   if (status.isPending || auth.status === "loading") {
     return (
       <FullPage>

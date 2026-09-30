@@ -1,10 +1,18 @@
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { api, qk } from "./endpoints";
+import { isApiStarting } from "./client";
 import type { DataSource, JobStatus, JsonObject } from "./types";
 import { isActive } from "../features/deploys/deploys";
 
 export function useSetupStatus() {
-  return useQuery({ queryKey: qk.setupStatus, queryFn: api.setup.status, staleTime: 60_000, retry: 1 });
+  return useQuery({
+    queryKey: qk.setupStatus,
+    queryFn: api.setup.status,
+    staleTime: 60_000,
+    retry: 1,
+    // While Deployer is still starting, keep checking so the page recovers on its own.
+    refetchInterval: (q) => (isApiStarting(q.state.error) ? 5_000 : false),
+  });
 }
 
 export function useProviders() {

@@ -370,6 +370,7 @@ stored in the database and the encrypted backup versions. To restore the daily p
 | *Restart needed* | Restart Windows and sign in again; setup continues on its own (approve the administrator prompt). |
 | Images can't be downloaded | Check your internet connection or proxy. On forks, make the GHCR packages public (see Development). |
 | A deploy fails with *exit code 137* / *Out of memory* | The build or app ran out of memory. WSL2 gives Deployer about half the PC's RAM; stop other apps or projects, or add RAM (8 GB is recommended). |
+| The dashboard says *Deployer is starting...* | Normal for a minute or two after the PC starts; the page reconnects on its own. If it stays, see the next row. |
 | Deployer isn't responding | *Deployer Control → Restart*. If it still isn't responding, click *Copy diagnostics* and paste the result when you ask for help (for yourself: *View logs* or `deployer logs api`; `deployer status` shows every container). |
 | Deployer Control says *Couldn't check Deployer's services* | The status check itself failed (usually WSL or Docker is broken). Click *Start* or *Restart*; if that fails, *Show details* has the error to share. |
 | Docker Desktop was closed, crashed or the PC woke from sleep, and Deployer is down | `deployer start` (or *Deployer Control → Start*) starts Docker Desktop if needed, repairs it when it crashes on its leftover socket files, and brings Deployer back. With *Start Deployer when I sign in* on (`deployer autostart on`) this happens on its own at sign-in. |

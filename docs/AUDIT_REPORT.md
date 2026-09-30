@@ -268,7 +268,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 **Dashboard shell**
 - [x] A-164 **[LOW][bug]** Monitoring shows "No active alerts" when loading the alerts fails - `dashboard/src/features/monitoring/MonitoringPage.tsx:77, 461-466` - render an error state.
 - [x] A-165 **[LOW][bug]** Admins see role and remove controls for other admins that the server always rejects - `dashboard/src/features/projects/MembersTab.tsx:110, 160` - add an owner-or-not-admin condition. (not verified)
-- [ ] A-166 **[LOW][usability]** "Can't reach the Deployer API" shows a raw "Bad Gateway" with no guidance or auto-retry - `dashboard/src/auth/guards.tsx:25-35` - "Deployer is starting..." and polling. (not verified)
+- [x] A-166 **[LOW][usability]** "Can't reach the Deployer API" shows a raw "Bad Gateway" with no guidance or auto-retry - `dashboard/src/auth/guards.tsx:25-35` - "Deployer is starting..." and polling. (not verified)
 - [ ] A-167 **[LOW][cleanup]** Dead API surface and stale types (api.health, qk.me, OAuthErrorCode) - `dashboard/src/api/endpoints.ts:115, 508` - delete them; add a not_initialized message. (not verified)
 - [ ] A-168 **[LOW][cleanup]** Three different isLocalUrl helpers disagree; URL trimming and ExtLink are duplicated - `dashboard/src/features/settings/signinSteps.ts:21-23` (also `remoteAccess.ts:94-101`, `eligibility.ts:198`) - one lib helper. (not verified)
 - [ ] A-169 **[LOW][cleanup]** AppLayout menu and nav repeat themselves - `dashboard/src/components/layout/AppLayout.tsx:32-35, 45-91, 118-160` - use `go` everywhere and one navClass. (not verified)

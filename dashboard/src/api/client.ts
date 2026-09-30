@@ -24,6 +24,11 @@ export function isDeviceOffline(e: unknown): boolean {
   return e instanceof ApiError && e.code === "device_offline";
 }
 
+/** The API is unreachable or its proxy answers 502/503/504: usually Deployer is still starting (e.g. after a reboot). */
+export function isApiStarting(e: unknown): boolean {
+  return e instanceof ApiError && [0, 502, 503, 504].includes(e.status) && !isDeviceOffline(e);
+}
+
 /** Human-readable message for any thrown value. */
 export function errorMessage(e: unknown): string {
   if (e instanceof ApiError) return e.message;
