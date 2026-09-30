@@ -164,7 +164,8 @@ function Update-LanForwarding {
     param($Ctx)
     if ($null -eq $Ctx.Lan) { return }
     if (-not (Get-DeployerStateValue $Ctx.Lan 'enabled' $false)) { return }
-    if ((Get-DeployerStateValue $Ctx.Lan 'mode' '') -eq 'portproxy') {
+    # WSL always uses the port forward (a stale 'mirrored' mode from older versions included).
+    if ($Ctx.Runtime -eq 'wsl-engine') {
         if (Update-DeployerPortProxy -Port $Ctx.Port) { Write-DeployerOk 'LAN port forwarding refreshed' }
     }
 }
@@ -357,7 +358,7 @@ function Invoke-SetPort {
 
     if ([bool](Get-DeployerStateValue $ctx.Lan 'enabled' $false)) {
         Add-DeployerFirewallRule -Port $newPort
-        if ((Get-DeployerStateValue $ctx.Lan 'mode' '') -eq 'portproxy') {
+        if ($ctx.Runtime -eq 'wsl-engine') {
             Remove-DeployerPortProxy -Port $ctx.Port
             [void](Update-DeployerPortProxy -Port $newPort)
         }
@@ -373,21 +374,20 @@ function Invoke-Lan {
     [void](Assert-Admin -Why 'change firewall and network settings')
     if ($on) {
         Write-DeployerStep 'Allowing other devices on your private network'
-        $useMirrored = ($ctx.Runtime -eq 'wsl-engine') -and (Test-DeployerMirroredSupported)
+        if ($ctx.Runtime -eq 'wsl-engine') { Write-DeployerMirroredWarning }
         if (Test-DeployerDockerEngine -Runtime $ctx.Runtime) {
-            $mode = Enable-DeployerLanAccess -Runtime $ctx.Runtime -Port $ctx.Port -UseMirrored $useMirrored
+            $mode = Enable-DeployerLanAccess -Runtime $ctx.Runtime -Port $ctx.Port
         } else {
             Add-DeployerFirewallRule -Port $ctx.Port
-            $mode = if ($ctx.Runtime -ne 'wsl-engine') { 'direct' } elseif (Test-DeployerMirroredEnabled) { 'mirrored' } else { 'portproxy' }
-            $useMirrored = ($mode -eq 'mirrored')
+            $mode = if ($ctx.Runtime -ne 'wsl-engine') { 'direct' } else { 'portproxy' }
             if ($mode -eq 'portproxy') { Write-DeployerInfo 'Port forwarding is set up the next time Deployer starts.' }
         }
-        $bind = Get-DeployerBindAddress -Lan $true -Runtime $ctx.Runtime -UseMirrored $useMirrored
+        $bind = Get-DeployerBindAddress -Lan $true -Runtime $ctx.Runtime
     } else {
         Write-DeployerStep 'Blocking other devices on your network'
         Disable-DeployerLanAccess -Port $ctx.Port
         $mode = 'none'
-        $bind = Get-DeployerBindAddress -Lan $false -Runtime $ctx.Runtime -UseMirrored $false
+        $bind = Get-DeployerBindAddress -Lan $false -Runtime $ctx.Runtime
     }
     Set-DeployerEnvValues -Path (Join-Path $InstallDir '.env') -Values ([ordered]@{ DEPLOYER_BIND = $bind })
     Save-ContextState -Ctx $ctx -Changes @{ lan = @{ enabled = $on; mode = $mode } }
@@ -748,10 +748,6 @@ function Invoke-Uninstall {
     Remove-DeployerPortProxy -Port $ctx.Port
     Remove-DeployerUserPath -Directory $InstallDir
     Write-DeployerOk 'Firewall rule, port forwarding and PATH entry removed'
-    $lanMode = if ($ctx.Lan) { Get-DeployerStateValue $ctx.Lan 'mode' '' } else { '' }
-    if ($lanMode -eq 'mirrored') {
-        Write-DeployerInfo 'WSL mirrored networking was left on in %USERPROFILE%\.wslconfig (a .deployer-backup-* copy of your old file is next to it).'
-    }
 
     $keep = if ($KeepData) { @('.env', 'backups', 'wsl') } else { @() }
     Get-ChildItem -LiteralPath $InstallDir -Force | Where-Object { $keep -notcontains $_.Name } | ForEach-Object {

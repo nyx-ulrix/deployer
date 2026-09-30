@@ -855,18 +855,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
             Write-DeployerInfo 'Deployer is reachable from this PC only unless you allow other devices on your home/office network.'
             Read-DeployerYesNo -Question 'Allow access from other devices on your private network (LAN)?' -Default $lanDefault
         }
-        $useMirrored = $false
-        if ($wantLan -and $chosen -eq 'wsl-engine' -and -not $DryRun) {
-            if (Test-DeployerMirroredSupported) {
-                if ($NonInteractive) {
-                    $useMirrored = $true
-                } else {
-                    Write-DeployerInfo 'Windows 11 22H2+ supports WSL "mirrored" networking. Enabling it edits %USERPROFILE%\.wslconfig'
-                    Write-DeployerInfo '(a backup is kept) and restarts WSL once, which also restarts other WSL distros / Docker Desktop.'
-                    $useMirrored = Read-DeployerYesNo -Question 'Use mirrored networking? (No = Windows port forwarding instead)' -Default $true
-                }
-            }
-        }
+        if ($chosen -eq 'wsl-engine') { Write-DeployerMirroredWarning }
         $wantSleepOff = if ($script:SleepWasGiven -or $NonInteractive) { [bool]$PreventSleep } else {
             Read-DeployerYesNo -Question 'Prevent this PC from sleeping while plugged in (keeps your sites online)?' -Default $false
         }
@@ -910,7 +899,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
 
             # 5/6. Files, .env, permissions ---------------------------------------------------------------
             Write-InstallStep 4 'Writing configuration'
-            $bind = Get-DeployerBindAddress -Lan $wantLan -Runtime $chosen -UseMirrored $useMirrored
+            $bind = Get-DeployerBindAddress -Lan $wantLan -Runtime $chosen
             $created = Initialize-DeployerEnv -InstallDir $InstallDir -Port $Port -MongoEnabled $facts.Avx `
                 -ImagePrefix (Get-DeployerImagePrefix -Repo $Repo) -Version (Get-DeployerImageVersion -Ref $source.Ref) `
                 -Bind $bind -SetPort:$script:PortWasGiven
@@ -981,7 +970,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
             $lanMode = 'none'
             if ($wantLan) {
                 Write-DeployerInfo 'Allowing access from your private network'
-                $lanMode = Enable-DeployerLanAccess -Runtime $chosen -Port $Port -UseMirrored $useMirrored
+                $lanMode = Enable-DeployerLanAccess -Runtime $chosen -Port $Port
                 [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $chosen -Arguments @('up', '-d'))
                 if (-not (Wait-DeployerHealth -Port $Port -TimeoutSeconds 240)) {
                     Write-DeployerWarn 'Deployer is not answering after the network change yet; check with "deployer status".'

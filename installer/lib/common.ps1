@@ -474,18 +474,18 @@ function Test-DeployerWslDistroRunning {
     return $false
 }
 
-function Test-DeployerMirroredSupported {
-    # WSL mirrored networking needs Windows 11 22H2 (build 22621) and WSL 2.0+.
-    $build = [int][Environment]::OSVersion.Version.Build
-    if ($build -lt 22621) { return $false }
-    $ver = Get-DeployerWslVersion
-    return ($null -ne $ver -and $ver -ge [version]'2.0.0')
-}
-
 function Test-DeployerMirroredEnabled {
     $cfg = Join-Path $env:USERPROFILE '.wslconfig'
     if (-not (Test-Path -LiteralPath $cfg)) { return $false }
     return ((Get-Content -LiteralPath $cfg -Raw) -match '(?im)^\s*networkingMode\s*=\s*mirrored')
+}
+
+function Write-DeployerMirroredWarning {
+    # Deployer always uses WSL's default NAT networking. Mirrored networking (set by the user or
+    # another tool) stops Docker Engine in WSL from publishing ports, so the site is unreachable.
+    if (Test-DeployerMirroredEnabled) {
+        Write-DeployerWarn 'WSL mirrored networking is on (networkingMode=mirrored in %USERPROFILE%\.wslconfig). Docker Engine in WSL cannot publish ports with it, so Deployer may be unreachable. Remove that line and run "wsl --shutdown" to go back to the default networking.'
+    }
 }
 
 function Get-DeployerWslIp {
@@ -1128,16 +1128,9 @@ function Add-DeployerFirewallRule {
     New-NetFirewallRule -Name $script:DeployerFirewallRule -DisplayName "Deployer (TCP $Port, $range)" `
         -Description 'Allows devices on private networks to reach Deployer and the apps it deploys.' `
         -Direction Inbound -Protocol TCP -LocalPort @("$Port", $range) -Action Allow -Profile Private | Out-Null
-    if (Get-Command New-NetFirewallHyperVRule -ErrorAction SilentlyContinue) {
-        # WSL mirrored networking is additionally filtered by the Hyper-V firewall.
+    # Earlier versions also added a Hyper-V firewall rule for mirrored networking; drop it.
+    if (Get-Command Remove-NetFirewallHyperVRule -ErrorAction SilentlyContinue) {
         Remove-NetFirewallHyperVRule -Name $script:DeployerFirewallRule -ErrorAction SilentlyContinue
-        try {
-            New-NetFirewallHyperVRule -Name $script:DeployerFirewallRule -DisplayName "Deployer (TCP $Port)" `
-                -Direction Inbound -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}' `
-                -Protocol TCP -LocalPorts $Port -Action Allow -ErrorAction Stop | Out-Null
-        } catch {
-            Write-Verbose "Hyper-V firewall rule not created: $_"
-        }
     }
 }
 
@@ -1150,10 +1143,11 @@ function Remove-DeployerFirewallRule {
 
 function Get-DeployerBindAddress {
     # Host address the caddy port is published on (DEPLOYER_BIND in .env).
-    param([bool]$Lan, [string]$Runtime, [bool]$UseMirrored)
+    param([bool]$Lan, [string]$Runtime)
     if ($Lan) { return '0.0.0.0' }
-    if ($Runtime -eq 'wsl-engine' -and -not $UseMirrored) {
+    if ($Runtime -eq 'wsl-engine') {
         # WSL NAT: the distro's own IP is only reachable from this PC; 0.0.0.0 keeps localhost forwarding reliable.
+        # Under mirrored networking 0.0.0.0 would be every host interface, so stay on loopback.
         if (Test-DeployerMirroredEnabled) { return '127.0.0.1' }
         return '0.0.0.0'
     }
@@ -1162,55 +1156,13 @@ function Get-DeployerBindAddress {
 
 function Enable-DeployerLanAccess {
     <#
-      Firewall rule (Private profile) plus, for the WSL runtime, mirrored networking or a netsh
-      port forward. Returns the mode: direct, mirrored or portproxy.
+      Firewall rule (Private profile) plus, for the WSL runtime, a netsh port forward to the distro
+      (refreshed on every start). Returns the mode: direct or portproxy.
     #>
-    param([string]$Runtime, [int]$Port, [bool]$UseMirrored)
+    param([string]$Runtime, [int]$Port)
     Write-DeployerInfo 'Adding a Windows Firewall rule (Private networks only)...'
     Add-DeployerFirewallRule -Port $Port
     if ($Runtime -ne 'wsl-engine') { return 'direct' }
-    if ($UseMirrored) {
-        # Docker Engine inside WSL2 does not publish container ports under mirrored networking (no
-        # docker-proxy, no NAT rule; verified with Docker 29 on WSL 2.7), so the site is unreachable
-        # even from localhost. A netsh port forward works with the default NAT networking instead.
-        Write-DeployerInfo 'Using Windows port forwarding for LAN access (WSL mirrored networking breaks Docker port publishing).'
-        $UseMirrored = $false
-    }
-    if ($UseMirrored) {
-        $cfg = Join-Path $env:USERPROFILE '.wslconfig'
-        if (Test-DeployerMirroredEnabled) {
-            Write-DeployerOk 'WSL mirrored networking is already enabled'
-            return 'mirrored'
-        }
-        $lines = New-Object System.Collections.Generic.List[string]
-        if (Test-Path -LiteralPath $cfg) {
-            $backup = "$cfg.deployer-backup-$(Get-Date -Format 'yyyyMMddHHmmss')"
-            Copy-Item -LiteralPath $cfg -Destination $backup
-            Write-DeployerInfo "Backed up $cfg to $backup"
-            foreach ($l in [System.IO.File]::ReadAllLines($cfg)) { $lines.Add($l) }
-        }
-        $section = -1
-        for ($i = 0; $i -lt $lines.Count; $i++) {
-            if ($lines[$i] -match '^\s*\[wsl2\]\s*$') { $section = $i; break }
-        }
-        if ($section -lt 0) {
-            if ($lines.Count -gt 0) { $lines.Add('') }
-            $lines.Add('[wsl2]')
-            $lines.Add('networkingMode=mirrored')
-        } else {
-            $replaced = $false
-            for ($j = $section + 1; $j -lt $lines.Count -and $lines[$j] -notmatch '^\s*\['; $j++) {
-                if ($lines[$j] -match '^\s*networkingMode\s*=') { $lines[$j] = 'networkingMode=mirrored'; $replaced = $true }
-            }
-            if (-not $replaced) { $lines.Insert($section + 1, 'networkingMode=mirrored') }
-        }
-        [System.IO.File]::WriteAllText($cfg, (($lines.ToArray() -join "`r`n") + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
-        Write-DeployerInfo 'Restarting WSL to switch to mirrored networking...'
-        Stop-DeployerKeepAlive
-        [void](Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('--shutdown') -TimeoutSeconds 120)
-        [void](Wait-DeployerDockerEngine -Runtime 'wsl-engine' -TimeoutSeconds 240)
-        return 'mirrored'
-    }
     [void](Update-DeployerPortProxy -Port $Port)
     return 'portproxy'
 }

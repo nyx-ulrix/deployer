@@ -97,6 +97,9 @@ jobs:
       - name: Dashboard port vs app port range checks
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/ports.tests.ps1; exit $LASTEXITCODE
+      - name: LAN access checks (port forward only, no mirrored networking)
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/lan.tests.ps1; exit $LASTEXITCODE
       - name: install.ps1 -DryRun (read-only, prints progress markers)
         shell: powershell
         run: |

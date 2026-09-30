@@ -200,8 +200,9 @@ URLs in both OAuth apps. Client secrets are stored encrypted with your installat
 - **This PC only** (default): `http://localhost:8080`.
 - **Your home/office network (LAN)**: answer *yes* when the installer asks, or re-run it with
   `-EnableLan`. It adds a Windows Firewall rule for **Private** networks only and, for the WSL
-  runtime, either enables WSL *mirrored* networking (Windows 11 22H2+, with a backup of your
-  `.wslconfig`) or a `netsh` port forward that `deployer start` refreshes. Then open
+  runtime, a `netsh` port forward that `deployer start` refreshes. Deployer uses WSL's default
+  networking; if `networkingMode=mirrored` is set in your `.wslconfig`, the installer warns you,
+  because Docker in WSL cannot publish ports with it. Then open
   `http://<this-PC's-IP>:8080` on another device, and set `PUBLIC_URL`/the public URL in
   *Instance settings* accordingly.
 - **From the internet**: *Settings → Domains & remote access* links your own (free) Cloudflare account
