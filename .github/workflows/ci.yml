@@ -31,7 +31,102 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
       - name: Run tests
-        run: pytest
+        # -rfEs also lists every skipped test with its reason (tests/integration runs in the job below).
+        run: pytest -rfEs
+
+  # A-092: the dashboard and tunnel images build on every push, not only on a release tag (a dead
+  # download or a changed checksum shows up here). The api image is built by the integration job.
+  images:
+    name: Docker image (${{ matrix.component }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: dashboard
+            context: dashboard
+          - component: tunnel
+            context: deploy/tunnel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.component }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+
+  # A-092: builds the api image, then runs inside it (it has the backup tools, mongosh, git and the
+  # Docker CLI) the unit suite on MariaDB and tests/integration against MariaDB 11 (row binlog, like
+  # deploy/docker-compose.yml) and MongoDB 5.0 (replica set rs0, the real deploy/mongodb wrapper).
+  integration:
+    name: API image + integration tests (MariaDB, MongoDB, Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the api image
+        uses: docker/build-push-action@v6
+        with:
+          context: api
+          platforms: linux/amd64
+          load: true
+          tags: deployer-api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+      - name: Start MariaDB 11 and MongoDB 5.0
+        run: |
+          set -eu
+          pw="$(openssl rand -hex 16)"
+          echo "::add-mask::$pw"
+          echo "IT_PW=$pw" >> "$GITHUB_ENV"
+          docker network create it
+          docker run -d --name mariadb --network it -e MARIADB_ROOT_PASSWORD="$pw" -e MARIADB_DATABASE=deployer_test \
+            mariadb:11 --log-bin=mysql-bin --binlog-format=ROW --server-id=1 --log-slave-updates \
+            --binlog-row-metadata=FULL --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+          docker run -d --name mongodb --network it -e MONGO_INITDB_ROOT_USERNAME=admin -e MONGO_INITDB_ROOT_PASSWORD="$pw" \
+            -v "$PWD/deploy/mongodb:/deployer-mongo:ro" --entrypoint bash mongo:5.0 \
+            /deployer-mongo/entrypoint.sh --replSet rs0 --keyFile /tmp/deployer-mongo-keyfile --bind_ip_all
+          for i in $(seq 1 60); do
+            if docker exec mariadb healthcheck.sh --connect --innodb_initialized >/dev/null 2>&1 \
+               && docker exec mongodb mongo --quiet --norc -u admin -p "$pw" --authenticationDatabase admin \
+                    --eval 'db.adminCommand({ ping: 1 }).ok' >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$i" = 60 ]; then docker logs mariadb; docker logs mongodb; exit 1; fi
+            sleep 2
+          done
+          docker exec mongodb mongo --quiet --norc -u admin -p "$pw" --authenticationDatabase admin \
+            --eval 'rs.initiate({ _id: "rs0", members: [{ _id: 0, host: "mongodb:27017" }] })'
+          for i in $(seq 1 30); do
+            if [ "$(docker exec mongodb mongo --quiet --norc -u admin -p "$pw" --authenticationDatabase admin \
+                     --eval 'db.hello().isWritablePrimary')" = "true" ]; then exit 0; fi
+            sleep 1
+          done
+          echo "::error::MongoDB did not become primary"; exit 1
+      - name: Unit suite on MariaDB
+        # Reported, not yet enforced: ~40 tests still fail on MariaDB (DATETIME precision, row order,
+        # innodb_snapshot_isolation). Remove continue-on-error once they pass.
+        continue-on-error: true
+        run: |
+          docker run --rm --user root --network it -v "$PWD:/repo" -w /repo/api \
+            -e DEPLOYER_TEST_DATABASE_URL="mysql+pymysql://root:${IT_PW}@mariadb:3306/deployer_test?charset=utf8mb4" \
+            --entrypoint sh deployer-api:ci -c 'pip install -q -r requirements-dev.txt && python -m pytest -p no:cacheprovider -rfEs --ignore=tests/integration'
+      - name: Integration tests (no test may be skipped)
+        run: |
+          set -o pipefail
+          docker run --rm --user root --network it -v "$PWD:/repo" -w /repo/api \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e DEPLOYER_IT_MARIADB_URL="mysql://root:${IT_PW}@mariadb:3306" \
+            -e DEPLOYER_IT_MONGO_URI="mongodb://admin:${IT_PW}@mongodb:27017/?authSource=admin" \
+            -e DEPLOYER_TEST_DOCKER=1 \
+            --entrypoint sh deployer-api:ci -c 'pip install -q -r requirements-dev.txt && python -m pytest -p no:cacheprovider -rfEs tests/integration' \
+            | tee "$RUNNER_TEMP/integration.log"
+          if grep -q '^SKIPPED' "$RUNNER_TEMP/integration.log"; then
+            echo "::error::Integration tests were skipped (see the SKIPPED lines above)"; exit 1
+          fi
 
   dashboard:
     name: Dashboard (lint, typecheck, build)

@@ -21,7 +21,7 @@ from sqlalchemy import select
 
 from app.config import get_settings
 from app.models import DataSource, Project, User
-from app.services import connections, provisioning
+from app.services import connections, jobs, provisioning
 
 MARIADB_URL = os.environ.get("DEPLOYER_IT_MARIADB_URL")
 MONGO_URI = os.environ.get("DEPLOYER_IT_MONGO_URI")
@@ -71,8 +71,11 @@ def _root_mysql():
     return pymysql.connect(host=m.hostname, port=m.port or 3306, user=m.username, password=m.password)
 
 
-def test_managed_lifecycle_and_roundtrip(client, db, managed_servers, make_user, make_project, auth_headers):
+def test_managed_lifecycle_and_roundtrip(
+    client, db, managed_servers, make_user, make_project, auth_headers, set_setting
+):
     owner = make_user("owner@example.com", owner=True)
+    set_setting("owner_only_projects", False)  # the import below is done by a second, non-owner user
     project = make_project(owner, "IT Shop")
     h = auth_headers(owner)
     base = f"/v1/projects/{project.id}"
@@ -341,6 +344,8 @@ def test_project_create_and_delete_with_provisioning(client, managed_servers, ma
         assert cur.fetchone()
     resp = client.delete(f"/v1/projects/{project['id']}?confirm={project['slug']}", headers=h)
     assert resp.status_code == 200, resp.text
+    # The final snapshot + drop run as worker jobs (docs/BACKUPS.md).
+    assert [status for _, status in jobs.run_queued()] == ["succeeded", "succeeded"]
     with _root_mysql() as conn, conn.cursor() as cur:
         cur.execute("SHOW DATABASES LIKE %s", (names["sql"],))
         assert cur.fetchone() is None

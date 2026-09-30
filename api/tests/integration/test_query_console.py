@@ -119,11 +119,18 @@ def test_mariadb_timeout(mariadb):
 
 
 def test_watchdog_kills_writes_when_the_server_timeout_is_missing(mariadb):
-    # As "mysql" the SET (max_execution_time) fails on MariaDB and DO is not a SELECT anyway:
-    # only the watchdog's KILL QUERY can stop it (A-034).
+    # As "mysql" the SET (max_execution_time) fails on MariaDB and a write is not a SELECT anyway:
+    # only the watchdog's KILL QUERY can stop it (A-034). Not `DO SLEEP(8)`: DO always reports OK and
+    # a killed SLEEP returns 1, so the statement would count as finished.
     started = time.monotonic()
     out = query_console.run_sql(
-        "mysql", mariadb, "DO SLEEP(8); SELECT 2", max_rows=5, timeout_seconds=1, read_only=False
+        "mysql",
+        mariadb,
+        "CREATE TABLE killed AS SELECT a.seq FROM seq_1_to_100000 a, seq_1_to_100000 b WHERE a.seq + b.seq = 0;"
+        " SELECT 2",
+        max_rows=5,
+        timeout_seconds=1,
+        read_only=False,
     )
     assert time.monotonic() - started < 5
     assert [r["type"] for r in out["results"]] == ["error"]
