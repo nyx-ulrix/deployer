@@ -3,7 +3,7 @@ import { Badge, type BadgeTone } from "../../components/ui/Badge";
 import { Alert, EmptyState } from "../../components/ui/States";
 import { formatNumber } from "../../lib/format";
 import { ExportMenu, ResultsGrid } from "./ResultsGrid";
-import { formatMs, statementLabel } from "./results";
+import { formatMs, resultErrorTitle, statementLabel } from "./results";
 
 const TYPES: Record<SqlStatementResult["type"], { label: string; tone: BadgeTone }> = {
   rows: { label: "Rows", tone: "sql" },
@@ -78,7 +78,7 @@ function StatementCard({
       {result.type === "empty" && <p className="px-3 py-3 text-sm font-medium text-success">OK</p>}
       {result.type === "error" && (
         <div className="p-3">
-          <Alert tone="danger" title={result.error.code === "query_failed" ? "Statement failed" : result.error.code}>
+          <Alert tone="danger" title={resultErrorTitle(result.error.code, "Statement failed")}>
             <span className="font-mono text-xs whitespace-pre-wrap">{result.error.message}</span>
             {stoppedEarly && <p className="mt-1 text-xs">Execution stopped here; the statements before it were kept.</p>}
           </Alert>

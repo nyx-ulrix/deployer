@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../../api/client";
 import type { MongoQueryResponse, SqlQueryResponse } from "../../api/types";
 import {
+  addPrimaryKeyQuery,
   describeQueryError,
   docsToTable,
   ejsonLeaf,
@@ -12,6 +13,7 @@ import {
   mongoSummaryText,
   outputLines,
   pickRunnable,
+  resultErrorTitle,
   sqlSummaryText,
   starterQuery,
   statementLabel,
@@ -159,6 +161,24 @@ describe("starterQuery", () => {
     expect(starterQuery("sql", "mysql", "we`ird")).toBe("SELECT * FROM `we``ird` LIMIT 100;");
     expect(starterQuery("sql", "postgresql", "Users")).toBe('SELECT * FROM "Users" LIMIT 100;');
     expect(starterQuery("nosql", "mongodb", "my-events")).toBe('db.getCollection("my-events").find({}).limit(20)');
+  });
+});
+
+describe("addPrimaryKeyQuery", () => {
+  it("keys an existing id column, else adds an auto-numbered one", () => {
+    expect(addPrimaryKeyQuery("mariadb", "logs", ["id", "msg"])).toBe("ALTER TABLE `logs` ADD PRIMARY KEY (id);");
+    expect(addPrimaryKeyQuery("mysql", "lo`gs", ["msg"])).toBe(
+      "ALTER TABLE `lo``gs` ADD COLUMN id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST;",
+    );
+    expect(addPrimaryKeyQuery("postgresql", "Logs", ["msg"])).toBe('ALTER TABLE "Logs" ADD COLUMN id BIGSERIAL PRIMARY KEY;');
+  });
+});
+
+describe("resultErrorTitle", () => {
+  it("never shows a raw error code", () => {
+    expect(resultErrorTitle("query_failed", "Statement failed")).toBe("Statement failed");
+    expect(resultErrorTitle("query_timeout", "Script failed")).toBe("Timed out");
+    expect(resultErrorTitle("something_new", "Statement failed")).toBe("Statement failed");
   });
 });
 

@@ -33,5 +33,5 @@ export const CONVENTION_RULES: Record<string, { title: string; description: stri
 };
 
 export function ruleInfo(rule: string) {
-  return CONVENTION_RULES[rule] ?? { title: rule, description: "See docs/CONVENTIONS.md." };
+  return CONVENTION_RULES[rule] ?? { title: rule, description: "A database planning check." };
 }

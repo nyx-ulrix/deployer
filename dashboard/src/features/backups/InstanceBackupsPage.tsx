@@ -177,7 +177,7 @@ export function InstanceBackupsPage() {
                     <Th>Status</Th>
                     <Th>Last success</Th>
                     <Th>Last failure</Th>
-                    <Th>PITR latest</Th>
+                    <Th>Recoverable up to</Th>
                     <Th className="text-right">Local</Th>
                     <Th className="text-right">Copies</Th>
                   </Tr>

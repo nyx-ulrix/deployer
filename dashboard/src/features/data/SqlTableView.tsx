@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { errorMessage } from "../../api/client";
@@ -7,6 +8,7 @@ import type { DataSource, Entity, JsonObject } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
+import { CopyButton } from "../../components/ui/CopyField";
 import { Select } from "../../components/ui/Input";
 import { PageSpinner } from "../../components/ui/Spinner";
 import { Alert, EmptyState, ErrorState } from "../../components/ui/States";
@@ -16,6 +18,7 @@ import { cellText, formatNumber } from "../../lib/format";
 import { clampOffset } from "../../lib/pagination";
 import { JobProgressPanel } from "../jobs/JobProgress";
 import { useProjectContext } from "../projects/project-context";
+import { addPrimaryKeyQuery } from "../query/results";
 import { RowDialog } from "./RowDialog";
 
 const PAGE_SIZES = [25, 50, 100];
@@ -101,6 +104,7 @@ export function SqlTableView({
   if (data && !rows.isPlaceholderData && clampOffset(offset, total, limit) !== offset) {
     setOffset(clampOffset(offset, total, limit));
   }
+  const pkStarter = addPrimaryKeyQuery(source.engine, entity.name, data?.columns ?? []);
   const from = total === 0 ? 0 : offset + 1;
   const to = Math.min(offset + limit, total);
 
@@ -137,8 +141,21 @@ export function SqlTableView({
 
       {data && pk.length === 0 && (
         <Alert tone="warning" title="Read-only table">
-          This table has no primary key, so rows can't be safely edited or deleted here. Add a primary key (convention
-          S1) to enable editing.
+          This table has no row ID (primary key), so rows can't be safely edited or deleted here.
+          {can("developer") && (
+            <>
+              {" "}
+              To add one, run this on the{" "}
+              <Link to={`/projects/${project.id}/query`} className="font-medium underline">
+                Query tab
+              </Link>
+              :
+              <span className="mt-1.5 flex items-center gap-1 rounded-md bg-surface px-2 py-1">
+                <code className="min-w-0 flex-1 font-mono text-xs break-all">{pkStarter}</code>
+                <CopyButton value={pkStarter} label="Copy SQL" />
+              </span>
+            </>
+          )}
         </Alert>
       )}
       {data && pk.length > 0 && !can("developer") && (

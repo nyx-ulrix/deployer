@@ -9,7 +9,7 @@ import { formatNumber } from "../../lib/format";
 import { pretty } from "../data/json";
 import { JsonTree } from "./JsonTree";
 import { ExportMenu, ResultsGrid } from "./ResultsGrid";
-import { docsToTable, outputLines } from "./results";
+import { docsToTable, outputLines, resultErrorTitle } from "./results";
 
 type View = "tree" | "table" | "raw";
 
@@ -24,7 +24,7 @@ export function MongoResults({ response, maxRows }: { response: MongoQueryRespon
   return (
     <div className="space-y-3">
       {response.error && (
-        <Alert tone="danger" title={response.error.code === "query_failed" ? "Script failed" : response.error.code}>
+        <Alert tone="danger" title={resultErrorTitle(response.error.code, "Script failed")}>
           <span className="font-mono text-xs whitespace-pre-wrap">{response.error.message}</span>
         </Alert>
       )}

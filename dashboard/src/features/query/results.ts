@@ -144,11 +144,32 @@ export function outputLines(output: string): string[] {
   return text ? text.split("\n") : [];
 }
 
-/** Starter query inserted from the entity sidebar. PostgreSQL quotes identifiers with `"`, MySQL/MariaDB with backticks. */
+/** PostgreSQL quotes identifiers with `"`, MySQL/MariaDB with backticks. */
+function quoteIdent(engine: string, name: string): string {
+  return engine === "postgresql" ? `"${name.replace(/"/g, '""')}"` : `\`${name.replace(/`/g, "``")}\``;
+}
+
+/** Starter query inserted from the entity sidebar. */
 export function starterQuery(kind: DataSourceKind, engine: string, name: string): string {
   if (kind === "nosql") return `db.getCollection(${JSON.stringify(name)}).find({}).limit(20)`;
-  if (engine === "postgresql") return `SELECT * FROM "${name.replace(/"/g, '""')}" LIMIT 100;`;
-  return `SELECT * FROM \`${name.replace(/`/g, "``")}\` LIMIT 100;`;
+  return `SELECT * FROM ${quoteIdent(engine, name)} LIMIT 100;`;
+}
+
+/** Alert title for an inline statement/script error: codes are query_failed and query_timeout. */
+export function resultErrorTitle(code: string, failed: string): string {
+  return code === "query_timeout" ? "Timed out" : failed;
+}
+
+/**
+ * Starter SQL that gives a table without a primary key one: an existing `id` column becomes the key,
+ * otherwise a new auto-numbered `id` is added (existing rows get numbers too).
+ */
+export function addPrimaryKeyQuery(engine: string, table: string, columns: readonly string[]): string {
+  const t = quoteIdent(engine, table);
+  if (columns.includes("id")) return `ALTER TABLE ${t} ADD PRIMARY KEY (id);`;
+  return engine === "postgresql"
+    ? `ALTER TABLE ${t} ADD COLUMN id BIGSERIAL PRIMARY KEY;`
+    : `ALTER TABLE ${t} ADD COLUMN id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY FIRST;`;
 }
 
 /** "12 ms", "1.24 s", "12.5 s". */

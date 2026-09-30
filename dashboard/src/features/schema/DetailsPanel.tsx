@@ -10,6 +10,7 @@ import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
 import { engineLabel, formatNumber } from "../../lib/format";
+import { ruleInfo } from "./conventions";
 import { MARKER_LABEL } from "./crowsfoot";
 import type { GraphEdgeInfo, GraphNodeInfo } from "./graph";
 
@@ -138,6 +139,7 @@ function IssueList({ issues }: { issues: ConventionIssue[] }) {
                 "h-fit rounded px-1 font-mono font-bold",
                 i.severity === "warning" ? "bg-warning-soft text-warning" : "bg-info-soft text-info",
               )}
+              title={ruleInfo(i.rule).title}
             >
               {i.rule}
             </span>

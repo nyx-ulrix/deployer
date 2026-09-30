@@ -80,7 +80,7 @@ export function CreateCollectionDialog({
       <form id="create-collection" className="space-y-4" onSubmit={onSubmit}>
         <Field
           label="Name"
-          hint="Plural snake_case is recommended (conventions N1, N2), e.g. order_items."
+          hint="Lower-case plural names with underscores are recommended, e.g. order_items."
           error={name && !nameValid ? "Use letters, digits and underscores; start with a letter." : undefined}
         >
           {(id) => (
