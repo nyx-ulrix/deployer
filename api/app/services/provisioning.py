@@ -453,7 +453,8 @@ def drop_managed_source(db: Session, data_source: DataSource) -> None:
         config = {}
     username = config.get("username")
     database = data_source.database_name
-    if not DB_NAME_RE.fullmatch(database or ""):
+    # A-115: a legacy row naming a reserved database is left alone (not retried forever as "unreachable").
+    if not DB_NAME_RE.fullmatch(database or "") or is_reserved_database(database):
         log.warning("not dropping managed source %s: unexpected database name %r", data_source.id, database)
         return
     try:

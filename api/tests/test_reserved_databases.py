@@ -35,3 +35,20 @@ def test_configured_platform_database_is_reserved(monkeypatch):
 def test_pick_never_returns_a_reserved_preferred_name():
     name = provisioning._pick_database_name("shop", "mysql", lambda _n: False)
     assert name.startswith("p_shop_")
+
+
+def test_legacy_reserved_rows_are_skipped_not_retried(monkeypatch):
+    """A row created before A-115 with a reserved name: deleting/purging it or cleaning up an old move
+    copy must neither touch the server nor fail forever as "unreachable"."""
+    from types import SimpleNamespace
+
+    from app.services import connections, device_moves
+
+    monkeypatch.setattr(provisioning, "mariadb_root_engine", _no_root)
+    monkeypatch.setattr(provisioning, "mongo_root_client", _no_root)
+    monkeypatch.setattr(connections, "device_removed", lambda _ds: False)
+    monkeypatch.setattr(connections, "load_config", lambda _ds: {"username": "u_0123456789ab"})
+    for kind in ("sql", "nosql"):
+        ds = SimpleNamespace(id="ds1", mode="managed", device_id=None, kind=kind, database_name="test")
+        provisioning.drop_managed_source(None, ds)
+        device_moves.drop_copy(kind, None, "mysql", None)

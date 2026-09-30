@@ -180,6 +180,9 @@ def drop_copy(kind: str, device_id: str | None, database: str, config_encrypted:
     if device_id:
         provisioning.drop_on_device(device_id, kind, database)
         return
+    if provisioning.is_reserved_database(database):
+        log.warning("not dropping old copy %r: reserved database name", database)  # A-115, never retried
+        return
     username = None
     if config_encrypted:
         try:
