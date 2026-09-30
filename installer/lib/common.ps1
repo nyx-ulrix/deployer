@@ -489,8 +489,12 @@ function Test-DeployerMirroredEnabled {
 }
 
 function Get-DeployerWslIp {
-    $r = Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('-d', $script:DeployerDistro, '-u', 'root', '--exec', 'hostname', '-I') -TimeoutSeconds 60
+    # Prefer eth0 (the NAT address Windows can reach): `hostname -I` also lists docker0 / bridge
+    # addresses and does not promise eth0 comes first. Falls back to it when `ip` is missing.
+    $r = Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('-d', $script:DeployerDistro, '-u', 'root', '--exec', 'sh', '-c',
+        'ip -4 -o addr show dev eth0 2>/dev/null; hostname -I') -TimeoutSeconds 60
     if ($r.ExitCode -ne 0) { return $null }
+    if ($r.StdOut -match '\binet (\d+\.\d+\.\d+\.\d+)/') { return $Matches[1] }
     $first = ($r.StdOut.Trim() -split '\s+') | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+$' } | Select-Object -First 1
     return $first
 }

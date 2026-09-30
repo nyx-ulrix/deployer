@@ -36,4 +36,17 @@ try {
 } finally {
     Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
 }
+
+# 3. (A-063) The loop's restart refreshes LAN port forwarding: the WSL IP changes after sleep/hibernate.
+$ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\deployer.ps1'), [ref]$null, [ref]$null)
+$loopCall = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Invoke-DeployerKeepAliveLoop' }, $true) | Select-Object -First 1
+Assert-That ($null -ne $loopCall -and $loopCall.Extent.Text -match 'Update-LanForwarding') 'the keep-alive restart refreshes LAN forwarding'
+
+# 4. (A-063) The WSL IP is eth0's, not whatever `hostname -I` lists first (docker0 can come first).
+function Get-DeployerWslExe { 'wsl.exe' }
+function Invoke-DeployerNative { param($FilePath, $ArgumentList, $TimeoutSeconds) [pscustomobject]@{ ExitCode = 0; StdOut = $script:fakeOut } }
+$script:fakeOut = "2: eth0    inet 172.28.1.5/20 brd 172.28.15.255 scope global eth0`n172.17.0.1 172.28.1.5 `n"
+Assert-That ((Get-DeployerWslIp) -eq '172.28.1.5') 'Get-DeployerWslIp prefers the eth0 address'
+$script:fakeOut = "10.0.0.7 172.17.0.1 `n"
+Assert-That ((Get-DeployerWslIp) -eq '10.0.0.7') 'Get-DeployerWslIp falls back to hostname -I without ip'
 Write-Host 'keep-alive checks passed'

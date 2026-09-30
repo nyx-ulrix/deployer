@@ -201,6 +201,8 @@ function Invoke-Start {
             # Blocks while the user is signed in; brings the stack back when the WSL VM stopped under it.
             Invoke-DeployerKeepAliveLoop -InstallDir $InstallDir -Restart {
                 $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--remove-orphans')
+                # The WSL IP changes when the VM restarts (sleep/hibernate); LAN rules must follow it.
+                try { Update-LanForwarding -Ctx $ctx } catch { Write-DeployerLog 'WARN' "LAN forwarding not refreshed: $($_.Exception.Message)" }
                 if (-not (Wait-DeployerHealth -Port $ctx.Port -TimeoutSeconds 180)) {
                     [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--force-recreate', 'caddy'))
                 }

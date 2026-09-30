@@ -133,7 +133,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-062 **[MEDIUM][bug]** The deploy log is rewritten in full every 2 s, bloating the MariaDB binlog - `api/app/services/deployments.py:56, 553-572` - flush at step boundaries or every 10-15 s, or keep the live tail in Redis.
 
 **Infrastructure / installer**
-- [ ] A-063 **[MEDIUM][bug]** LAN port forwarding is not refreshed when the keep-alive loop restarts the stack - `installer/deployer.ps1:198-207` - call Update-LanForwarding in the loop; prefer the eth0 IP.
+- [x] A-063 **[MEDIUM][bug]** LAN port forwarding is not refreshed when the keep-alive loop restarts the stack - `installer/deployer.ps1:198-207` - call Update-LanForwarding in the loop; prefer the eth0 IP.
 - [ ] A-064 **[MEDIUM][bug]** A dashboard port inside 8100-8199 (or any busy port in that range) breaks the stack; preflight never checks it - `installer/deployer.ps1:313-329` (also `install.ps1:77-78, 274-285`) - reject the range and check listeners in preflight.
 - [ ] A-065 **[MEDIUM][cleanup]** WSL mirrored-networking support is dead code, yet the installer still asks about it - `installer/lib/common.ps1:1121-1162` (also `install.ps1:847-857`, README) - delete the branch, the prompt and the Hyper-V rule; warn if mirrored is enabled.
 - [ ] A-066 **[MEDIUM][bug]** The ARM64 "build images locally" path can never succeed - `installer/install.ps1:269-272` - fail ARM64 in preflight with a clear message.
