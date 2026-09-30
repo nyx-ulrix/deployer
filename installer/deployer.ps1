@@ -11,6 +11,8 @@
     deployer update [-Ref v0.2.0] [-FromSource]
                                     Download new deploy files (keeps .env), pull images, restart
     deployer backup                 MariaDB + MongoDB dumps and .env into backups\<timestamp>
+    deployer restore <folder> [-Yes] [-Force]
+                                    Load a backup folder (or its backups\<timestamp> name) back in
     deployer open                   Open the dashboard in your browser
     deployer config                 Show non-secret settings
     deployer compose -- <args>      Run any docker compose command against the stack
@@ -86,6 +88,7 @@ function Show-Help {
     Write-Host '  deployer logs [service] [-Follow]    Show logs (-Tail N lines, default 200)'
     Write-Host '  deployer update [-Ref <tag>]         Update deploy files and images; .env and data are kept'
     Write-Host '  deployer backup                      Dump MariaDB/MongoDB and copy .env to backups\<timestamp>'
+    Write-Host '  deployer restore <folder>            Load a backup back in (replaces the current databases; asks first)'
     Write-Host '  deployer open                        Open the dashboard'
     Write-Host '  deployer config                      Show non-secret settings'
     Write-Host '  deployer compose -- <args>           Run docker compose (e.g. deployer compose -- ps -a)'
@@ -676,16 +679,33 @@ function Invoke-Backup {
         'mariadb.sql          mariadb-dump --all-databases',
         'mongodb.archive.gz   mongodump --gzip --archive (if managed MongoDB is enabled)',
         '',
-        'Restore (stack running, same MASTER_KEY in .env):',
-        '  deployer compose -- cp <backup>/mariadb.sql mariadb:/tmp/restore.sql',
-        '  deployer compose -- exec -T mariadb sh -c "mariadb -uroot -p$MARIADB_ROOT_PASSWORD < /tmp/restore.sql"',
-        '  deployer compose -- cp <backup>/mongodb.archive.gz mongodb:/tmp/restore.gz',
-        '  deployer compose -- exec -T mongodb sh -c "mongorestore --drop --gzip --archive=/tmp/restore.gz -u $MONGO_INITDB_ROOT_USERNAME -p $MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase admin"',
+        'Restore (replaces the current databases; offers a backup of them first):',
+        "  deployer restore $stamp",
+        'It refuses a backup taken with a different MASTER_KEY: copy that line from env.backup into .env first.',
         '',
         'For moving to another computer, prefer the encrypted export in the dashboard (Instance settings > Export).'
     )
     Write-DeployerTextFile -Path (Join-Path $dir 'README.txt') -Lines $readme
     Write-DeployerOk "Backup complete: $dir"
+}
+
+function Invoke-Restore {
+    if (-not $Service) { throw 'Usage: deployer restore <backup folder or backups\<timestamp> name> [-Yes] [-Force]' }
+    $ctx = Get-Context
+    $folder = if (Test-Path -LiteralPath $Service -PathType Container) { $Service } else { Join-Path $InstallDir "backups\$Service" }
+    $folder = [System.IO.Path]::GetFullPath($folder).TrimEnd('')
+    Assert-DeployerRestoreFolder -InstallDir $InstallDir -Folder $folder -Force:$Force
+    Write-DeployerStep "Restore Deployer from $folder"
+    Write-DeployerWarn 'This REPLACES every database in this Deployer (MariaDB, and MongoDB if the backup has it) with the backup.'
+    if (-not $Yes) {
+        $answer = Read-Host '    Type RESTORE to continue'
+        if ($answer -cne 'RESTORE') { Write-DeployerInfo 'Cancelled.'; return }
+    }
+    Initialize-Engine -Ctx $ctx
+    if (Read-DeployerYesNo -Question 'Back up the current databases first?' -Default $true -NonInteractive:$Yes) { Invoke-Backup }
+    Invoke-DeployerRestore -InstallDir $InstallDir -Runtime $ctx.Runtime -Folder $folder -Force:$Force `
+        -Mongo ($ctx.Env['COMPOSE_PROFILES'] -match 'mongodb')
+    Write-DeployerOk "Restored. Run 'deployer restart' so every service picks up the restored data."
 }
 
 function Invoke-Open {
@@ -783,6 +803,7 @@ try {
         'logs' { Invoke-Logs }
         'update' { Invoke-Update }
         'backup' { Invoke-Backup }
+        'restore' { Invoke-Restore }
         'open' { Invoke-Open }
         'config' { Invoke-Config }
         'compose' { Invoke-Compose }

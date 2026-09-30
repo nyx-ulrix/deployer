@@ -106,6 +106,9 @@ jobs:
       - name: WSL disk, logs and backups are not readable by Users
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/acl.tests.ps1; exit $LASTEXITCODE
+      - name: deployer restore commands (runtime paths, no PowerShell-expanded passwords)
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/restore.tests.ps1; exit $LASTEXITCODE
       - name: install.ps1 -DryRun (read-only, prints progress markers)
         shell: powershell
         run: |

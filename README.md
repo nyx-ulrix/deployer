@@ -270,6 +270,7 @@ Open a new terminal after installing:
 | `deployer logs [service] [-Follow]` | Container logs (`api`, `worker`, `dashboard`, `caddy`, `mariadb`, `mongodb`, `redis`, `tunnel`) |
 | `deployer update [-Ref v0.2.0]` | Offers a backup, downloads new deploy files (keeps `.env`), pulls images, restarts |
 | `deployer backup` | `mariadb-dump` + `mongodump` + a copy of `.env` into `backups\<timestamp>` |
+| `deployer restore <folder>` | Loads a `deployer backup` folder (or just its `<timestamp>` name) back in, replacing the current databases; asks first and offers a backup of the current data. Refuses a backup taken with a different `MASTER_KEY` unless `-Force` |
 | `deployer open` | Open the dashboard |
 | `deployer config` | Show settings (secrets hidden) |
 | `deployer compose -- <args>` | Any `docker compose` command, e.g. `deployer compose -- ps -a` |

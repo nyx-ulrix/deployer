@@ -723,6 +723,51 @@ function ConvertTo-DeployerRuntimePath {
     return $WindowsPath
 }
 
+function Assert-DeployerRestoreFolder {
+    # Refuses a folder that is not a backup, or one whose secrets this install's MASTER_KEY cannot read.
+    param([string]$InstallDir, [string]$Folder, [switch]$Force)
+    if (-not (Test-Path -LiteralPath (Join-Path $Folder 'mariadb.sql') -PathType Leaf)) {
+        throw "$Folder is not a Deployer backup folder (mariadb.sql is missing)."
+    }
+    $backupEnv = Join-Path $Folder 'env.backup'
+    if (Test-Path -LiteralPath $backupEnv) {
+        $old = [string](Read-DeployerEnvFile -Path $backupEnv)['MASTER_KEY']
+        $now = [string](Read-DeployerEnvFile -Path (Join-Path $InstallDir '.env'))['MASTER_KEY']
+        if ($old -and $old -cne $now -and -not $Force) {
+            throw "This backup was taken with a different MASTER_KEY, so the secrets in it could not be decrypted. Copy the MASTER_KEY line from $backupEnv into $InstallDir\.env and run 'deployer restart' first, or add -Force to restore anyway."
+        }
+    }
+}
+
+function Invoke-DeployerRestore {
+    # Loads a 'deployer backup' folder into the running stack (audit A-068). The sh -c scripts hold no
+    # double quotes (Windows PowerShell 5.1 does not escape them for native programs) and read the
+    # passwords inside the container; they are letters and digits (New-DeployerSecret), so unquoted is safe.
+    param([string]$InstallDir, [string]$Runtime, [string]$Folder, [bool]$Mongo, [switch]$Force)
+    Assert-DeployerRestoreFolder -InstallDir $InstallDir -Folder $Folder -Force:$Force
+    $runtimeDir = ConvertTo-DeployerRuntimePath -Runtime $Runtime -WindowsPath $Folder
+
+    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('cp', "$runtimeDir/mariadb.sql", 'mariadb:/tmp/deployer-restore.sql')
+    if ($code -ne 0) { throw "Copying mariadb.sql into the container failed (exit code $code). Is the stack running?" }
+    $load = 'export MYSQL_PWD=$MARIADB_ROOT_PASSWORD; mariadb -uroot < /tmp/deployer-restore.sql && mariadb-admin -uroot flush-privileges; rc=$?; rm -f /tmp/deployer-restore.sql; exit $rc'
+    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('exec', '-T', 'mariadb', 'sh', '-c', $load)
+    if ($code -ne 0) { throw "Loading mariadb.sql failed (exit code $code)." }
+    Write-DeployerOk 'MariaDB restored from mariadb.sql'
+
+    $archive = Join-Path $Folder 'mongodb.archive.gz'
+    if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) { return }
+    if (-not $Mongo) {
+        Write-DeployerWarn 'The backup has mongodb.archive.gz but managed MongoDB is disabled here; skipped.'
+        return
+    }
+    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('cp', "$runtimeDir/mongodb.archive.gz", 'mongodb:/tmp/deployer-restore.archive.gz')
+    if ($code -ne 0) { throw "Copying mongodb.archive.gz into the container failed (exit code $code)." }
+    $load = 'mongorestore --quiet --drop --gzip --archive=/tmp/deployer-restore.archive.gz --username=$MONGO_INITDB_ROOT_USERNAME --password=$MONGO_INITDB_ROOT_PASSWORD --authenticationDatabase=admin; rc=$?; rm -f /tmp/deployer-restore.archive.gz; exit $rc'
+    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('exec', '-T', 'mongodb', 'sh', '-c', $load)
+    if ($code -ne 0) { throw "mongorestore failed (exit code $code)." }
+    Write-DeployerOk 'MongoDB restored from mongodb.archive.gz'
+}
+
 function Get-DeployerHealth {
     param([int]$Port)
     foreach ($hostName in @('127.0.0.1', 'localhost')) {

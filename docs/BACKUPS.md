@@ -90,6 +90,11 @@ versions made since. The managed databases themselves are not changed. The list 
 is kept as it is now (so newer ones stay restorable), and jobs that were queued or running when the
 snapshot was taken are marked failed instead of running again.
 
+The whole-PC dumps `deployer backup` writes to `backups\<timestamp>` (every MariaDB database, managed
+MongoDB and a copy of `.env`) go back with `deployer restore <timestamp>` (or the folder's path). It
+replaces all databases, offers a backup of the current ones first, and refuses a backup taken with a
+different `MASTER_KEY` unless `-Force`; run `deployer restart` afterwards.
+
 ## Jobs
 
 Long operations (snapshot, log archive, restore, verify, copy, move, prune) are rows in `jobs`. Backup
