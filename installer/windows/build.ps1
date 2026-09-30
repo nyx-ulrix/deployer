@@ -9,8 +9,8 @@
       DeployerSetup.selftest.exe   same code with an asInvoker manifest, used by CI:
                                    DeployerSetup.selftest.exe /selftest <folder>
 
-    Embedded as resources: installer\install.ps1, installer\deployer.ps1, installer\lib\*,
-    installer\wsl\*, deploy\docker-compose.yml, deploy\Caddyfile, deploy\.env.example.
+    Embedded as resources: installer\install.ps1, installer\deployer.ps1 and the git-tracked files
+    in installer\lib, installer\wsl and deploy\ (never .env or docker-compose.dev.yml). Needs git.
 
 .PARAMETER Version
     Version shown in the app and written to the file properties. Default: __version__ from
@@ -92,15 +92,17 @@ $payloadFiles = New-Object System.Collections.Generic.List[string]
 foreach ($rel in @('installer\install.ps1', 'installer\deployer.ps1', 'deploy\docker-compose.yml', 'deploy\Caddyfile', 'deploy\.env.example')) {
     $payloadFiles.Add($rel)
 }
-foreach ($dir in @('installer\lib', 'installer\wsl')) {
-    Get-ChildItem -LiteralPath (Join-Path $root $dir) -File | Sort-Object Name | ForEach-Object { $payloadFiles.Add("$dir\$($_.Name)") }
-}
-# Everything else under deploy\ (e.g. sidecar build contexts, entrypoint scripts), never secrets.
-$deployRoot = Join-Path $root 'deploy'
-Get-ChildItem -LiteralPath $deployRoot -Recurse -File -Force | Sort-Object FullName | ForEach-Object {
-    $rel = 'deploy\' + $_.FullName.Substring($deployRoot.Length + 1)
-    $isSecret = ($_.Name -eq '.env') -or ($_.Name -like '.env.*' -and $_.Name -ne '.env.example')
-    if (-not $isSecret -and -not $payloadFiles.Contains($rel)) { $payloadFiles.Add($rel) }
+# Everything else in installer\lib, installer\wsl and deploy\ (sidecar build contexts, entrypoint
+# scripts) - only files git tracks, so a local .env, keys or scratch files never end up in the exe.
+# docker-compose.dev.yml is for source checkouts (bind-mounts api/), useless on an installed PC.
+if (-not (Get-Command git -ErrorAction SilentlyContinue)) { throw 'git is required to list the payload files (build from a git checkout).' }
+$tracked = (& git -C $root ls-files -z -- installer/lib installer/wsl deploy) -join '' -split "`0"
+if ($LASTEXITCODE -ne 0) { throw "git ls-files failed with exit code $LASTEXITCODE (build from a git checkout)." }
+foreach ($path in ($tracked | Where-Object { $_ } | Sort-Object)) {
+    $rel = $path -replace '/', '\'
+    $leaf = Split-Path -Leaf $rel
+    $isSecret = ($leaf -eq '.env') -or ($leaf -like '.env.*' -and $leaf -ne '.env.example')
+    if (-not $isSecret -and $leaf -ne 'docker-compose.dev.yml' -and -not $payloadFiles.Contains($rel)) { $payloadFiles.Add($rel) }
 }
 $resourceArgs = @()
 foreach ($rel in $payloadFiles) {

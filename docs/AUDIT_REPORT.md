@@ -258,7 +258,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-155 **[LOW][usability]** Changing the port in Settings silently breaks Google/GitHub sign-in - `installer/windows/src/ControlForm.cs:788, 857` - show the new callback URLs after set-port.
 - [x] A-156 **[LOW][usability]** The Finish page after an update shows first-install next steps - `installer/windows/src/WizardForm.cs:1294-1297` - an update-specific message. (not verified)
 - [x] A-157 **[LOW][bug]** The QuietUninstallString is not quiet - `installer/windows/src/Integration.cs:160-161` - remove it or implement /quiet. (not verified)
-- [ ] A-158 **[LOW][security]** The build embeds every untracked file under deploy\ into the exe - `installer/windows/build.ps1:98-104` - use `git ls-files deploy`. (not verified)
+- [x] A-158 **[LOW][security]** The build embeds every untracked file under deploy\ into the exe - `installer/windows/build.ps1:98-104` - use `git ls-files deploy`. (not verified)
 - [ ] A-159 **[LOW][bug]** Status refresh and Host device can stay "busy" forever if the scripts cannot be prepared - `installer/windows/src/ControlForm.cs:609-611, 889-892` - try/catch and reset the flags. (not verified)
 - [ ] A-160 **[LOW][usability]** The "Not responding" state sends non-experts to raw container logs - `installer/windows/src/ControlForm.cs:434-437` - a "Copy diagnostics" action. (not verified)
 - [ ] A-161 **[LOW][cleanup]** Dead code and unused parameters in the C# app - `installer/windows/src/Ui.cs:18, 208-210, 332-340` - delete them; keep the internet-check error text. (not verified)

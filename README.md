@@ -422,7 +422,8 @@ powershell -ExecutionPolicy Bypass -File installer\windows\build.ps1   # -> dist
 dist\DeployerSetup.selftest.exe /selftest dist\selftest               # renders every page to PNG, no admin
 ```
 
-It embeds `installer\install.ps1`, `deployer.ps1`, `lib\`, `wsl\` and the `deploy\` files, and runs
+It embeds `installer\install.ps1`, `deployer.ps1` and the git-tracked files in `lib\`, `wsl\` and
+`deploy\` (never a local `.env` or `docker-compose.dev.yml`, so build from a git checkout), and runs
 `install.ps1 -LocalDeployDir <extracted deploy files>`, following its `##deployer:` progress markers.
 
 Releases (`v*` tags) publish `ghcr.io/<owner>/deployer-api`, `-dashboard` and `-tunnel`, a

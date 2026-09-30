@@ -32,6 +32,8 @@ namespace DeployerSetup
             Check(Payload.Names().Any(n => n.EndsWith("installer/install.ps1")), "install.ps1 is embedded");
             Check(Payload.Names().Any(n => n.EndsWith("installer/lib/common.ps1")), "lib/common.ps1 is embedded");
             Check(Payload.Names().Any(n => n.EndsWith("deploy/docker-compose.yml")), "docker-compose.yml is embedded");
+            Check(Payload.Names().Any(n => n.EndsWith("deploy/tunnel/Dockerfile")), "tracked deploy/ subfolders are embedded");
+            Check(!Payload.Names().Any(n => n.EndsWith("/.env") || n.EndsWith("docker-compose.dev.yml")), "no .env or dev compose file is embedded");
             TestMarkers();
 
             foreach (float scale in new[] { 1f, 1.5f })
