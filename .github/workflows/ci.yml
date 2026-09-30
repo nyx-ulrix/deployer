@@ -225,6 +225,9 @@ jobs:
       - name: The administrator window waits on an error and logs it
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/elevated.tests.ps1; exit $LASTEXITCODE
+      - name: The WSL step restarts only for a pending feature state
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/wslplatform.tests.ps1; exit $LASTEXITCODE
       - name: install.ps1 -DryRun (read-only, prints progress markers)
         shell: powershell
         run: |

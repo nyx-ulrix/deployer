@@ -410,7 +410,9 @@ function Initialize-WslPlatform {
     $wslFeature = Get-WindowsOptionalFeature -Online -FeatureName Microsoft-Windows-Subsystem-Linux
     $wslVersion = if (Test-Path -LiteralPath $wsl) { Get-DeployerWslVersion } else { $null }
 
-    $pending = @($vmp, $wslFeature | Where-Object { $_ -and ($_.State -eq 'EnablePending' -or $_.RestartNeeded) })
+    # State is the only pending-restart signal on Get-WindowsOptionalFeature output: RestartNeeded is only
+    # filled in by Enable/Disable, and RestartRequired says whether enabling *would* need one.
+    $pending = @($vmp, $wslFeature | Where-Object { $_ -and $_.State -eq 'EnablePending' })
     if ($pending.Count -gt 0) {
         Register-ResumeAfterReboot -ScriptPath $ResumeScript
         Request-Reboot -Reason 'Windows needs a restart to finish enabling WSL.'
@@ -420,7 +422,7 @@ function Initialize-WslPlatform {
         Write-DeployerInfo 'Installing Windows Subsystem for Linux (WSL)...'
         $code = Invoke-DeployerStreaming -FilePath $wsl -ArgumentList @('--install', '--no-distribution')
         $vmp = Get-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform
-        if ($vmp.State -ne 'Enabled' -or $vmp.RestartNeeded) {
+        if ($vmp.State -ne 'Enabled') {
             Register-ResumeAfterReboot -ScriptPath $ResumeScript
             Request-Reboot -Reason 'WSL was installed. Windows needs a restart before it can be used.'
         }
