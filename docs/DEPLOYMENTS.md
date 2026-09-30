@@ -47,8 +47,8 @@ GitHub push ──webhook──▶ api ──job app.deploy──▶ worker (roo
   the Caddyfile's admin API listens on a Unix socket inside the Caddy container for this, never on TCP).
   The worker also keeps a `_empty.caddy` placeholder in the directory so the import always matches.
   Ports are allocated per app from the range (`apps.port`, unique); an app keeps its port for life.
-  LAN access to app ports needs the same port forwarding as 8080 (`deployer lan on` forwards the
-  range too — installer follow-up).
+  LAN access to app ports needs the same port forwarding as 8080; `deployer lan on` forwards the
+  range too.
 - **Zero-downtime swap**: the new container starts, the worker waits for a TCP accept on its port
   (up to 60 s), rewrites the Caddy file to the new container, reloads, then stops and removes the
   previous container. A failed start leaves the previous deployment live.

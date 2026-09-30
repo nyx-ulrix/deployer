@@ -65,6 +65,11 @@ try {
     Assert-That ((Write-DeployerNetworkProfileWarning) -eq 0 -and $null -eq $script:warned) 'no warning on a Private network'
     $cli = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\deployer.ps1') -Raw
     Assert-That ($install -match 'Write-DeployerNetworkProfileWarning' -and $cli -match 'Write-DeployerNetworkProfileWarning') 'install and "deployer lan on" check the network profile'
+
+    # 6. A .env without DEPLOYER_BIND publishes Caddy on loopback only, never every interface (A-144).
+    $compose = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\..\deploy\docker-compose.yml') -Raw
+    $fallbacks = @([regex]::Matches($compose, '\$\{DEPLOYER_BIND:-([^}]*)\}') | ForEach-Object { $_.Groups[1].Value })
+    Assert-That ($fallbacks.Count -ge 2 -and @($fallbacks | Where-Object { $_ -ne '127.0.0.1' }).Count -eq 0) 'compose defaults DEPLOYER_BIND to 127.0.0.1'
 } finally {
     $env:USERPROFILE = $realProfile
     Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
