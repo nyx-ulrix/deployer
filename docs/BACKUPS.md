@@ -43,6 +43,9 @@ shows which image `mongodb` runs; its log also says when the data still needs th
 
 If an upgrade step fails, the update stops before starting the new containers and names the step
 (its output is in the update window); the backup it offered first is in `backups\<timestamp>`.
+Any update that fails after the new files are in place ends with the way back: `deployer logs api`,
+`deployer update -Ref <the version that was running>`, and, if the new version already migrated the
+databases, `deployer restore <that backup>` after going back.
 Starting 8.0 on data that was never upgraded (for example setting `MONGODB_IMAGE` by hand) fails,
 and the `mongodb` log says to run `deployer update`.
 

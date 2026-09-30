@@ -984,6 +984,26 @@ function Set-DeployerDisplayVersion {
     }
 }
 
+function Get-DeployerUpdateRecoveryHint {
+    <#
+      Next steps after 'deployer update' fails once the new files are in place (A-150): how to see why,
+      how to go back to the version that was running, and the backup to restore if the new version
+      already migrated the database.
+    #>
+    param([string]$PreviousRef, [string]$BackupName)
+    $back = if ($PreviousRef) { $PreviousRef } else { '<the version you had>' }
+    $lines = @(
+        'To see why: deployer logs api',
+        "To go back to the previous version: deployer update -Ref $back"
+    )
+    $lines += if ($BackupName) {
+        "If it still fails, the new version may have migrated the database: after going back, run deployer restore $BackupName"
+    } else {
+        'No backup was taken before this update, so a database the new version already migrated cannot be put back.'
+    }
+    return ($lines -join "`n")
+}
+
 function Get-DeployerSource {
     <#
       Downloads https://github.com/<Repo>/archive/<Ref>.zip (falls back to the release asset

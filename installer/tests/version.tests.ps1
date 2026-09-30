@@ -26,3 +26,11 @@ try {
     $base.DeleteSubKeyTree($keyPath, $false)
     $base.Dispose()
 }
+
+# A-150: a failed update names the way back to the version that was running.
+$hint = Get-DeployerUpdateRecoveryHint -PreviousRef 'v0.2.0' -BackupName '20260101-120000'
+Assert-That ($hint -match 'deployer logs api') 'the hint says how to see why'
+Assert-That ($hint -match 'deployer update -Ref v0\.2\.0') 'the hint rolls back to the previous ref'
+Assert-That ($hint -match 'deployer restore 20260101-120000') 'the hint names the backup taken before the update'
+$hint = Get-DeployerUpdateRecoveryHint -PreviousRef '' -BackupName ''
+Assert-That ($hint -match 'No backup was taken') 'without a backup the hint says so instead of pointing at the backups folder'

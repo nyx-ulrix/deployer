@@ -618,33 +618,39 @@ function Invoke-Update {
     $script:DeployerLogFile = Join-Path $InstallDir 'logs\deployer.log'
 
     $backupFirst = Read-DeployerYesNo -Question 'Take a backup before updating?' -Default $true -NonInteractive:$Yes
+    $script:DeployerLastBackup = ''
     if ($backupFirst) { Invoke-Backup }
 
     $work = Join-Path $env:TEMP 'deployer-update'
     $root = Get-DeployerSource -Repo $repo -Ref $target -WorkDir $work
-    Copy-DeployerFiles -SourceRoot $root -InstallDir $InstallDir
-    # Installs from before A-067 left the WSL disk and logs readable by every local user.
-    Protect-DeployerDataDirs -InstallDir $InstallDir -UserSid ([string](Get-DeployerStateValue $ctx.State 'installUserSid' (Get-DeployerUserSid)))
+    try {
+        Copy-DeployerFiles -SourceRoot $root -InstallDir $InstallDir
+        # Installs from before A-067 left the WSL disk and logs readable by every local user.
+        Protect-DeployerDataDirs -InstallDir $InstallDir -UserSid ([string](Get-DeployerStateValue $ctx.State 'installUserSid' (Get-DeployerUserSid)))
 
-    $mongo = [bool](Get-DeployerStateValue $ctx.State 'managedMongodb' $true)
-    $bind = if ($ctx.Env['DEPLOYER_BIND']) { [string]$ctx.Env['DEPLOYER_BIND'] } else { '127.0.0.1' }
-    [void](Initialize-DeployerEnv -InstallDir $InstallDir -Port $ctx.Port -MongoEnabled $mongo `
-            -ImagePrefix (Get-DeployerImagePrefix -Repo $repo) -Version (Get-DeployerImageVersion -Ref $target) -Bind $bind)
-    Write-DeployerOk 'Deploy files updated; .env kept'
+        $mongo = [bool](Get-DeployerStateValue $ctx.State 'managedMongodb' $true)
+        $bind = if ($ctx.Env['DEPLOYER_BIND']) { [string]$ctx.Env['DEPLOYER_BIND'] } else { '127.0.0.1' }
+        [void](Initialize-DeployerEnv -InstallDir $InstallDir -Port $ctx.Port -MongoEnabled $mongo `
+                -ImagePrefix (Get-DeployerImagePrefix -Repo $repo) -Version (Get-DeployerImageVersion -Ref $target) -Bind $bind)
+        Write-DeployerOk 'Deploy files updated; .env kept'
 
-    Initialize-Engine -Ctx $ctx
-    $mode = Invoke-DeployerImages -InstallDir $InstallDir -Runtime $ctx.Runtime -FromSource:$FromSource
-    if ($mongo) { Update-DeployerMongo -InstallDir $InstallDir -Runtime $ctx.Runtime }
-    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--remove-orphans')
-    if ($code -ne 0) {
-        Show-DeployerDiagnostics -InstallDir $InstallDir -Runtime $ctx.Runtime
-        throw "docker compose up failed (exit code $code)."
-    }
-    $timeout = if ($mode -eq 'built') { 600 } else { 420 }
-    $health = Wait-DeployerHealth -Port $ctx.Port -TimeoutSeconds $timeout
-    if (-not $health) {
-        Show-DeployerDiagnostics -InstallDir $InstallDir -Runtime $ctx.Runtime
-        throw 'Deployer did not become healthy after the update. Your previous backup is in the backups folder.'
+        Initialize-Engine -Ctx $ctx
+        $mode = Invoke-DeployerImages -InstallDir $InstallDir -Runtime $ctx.Runtime -FromSource:$FromSource
+        if ($mongo) { Update-DeployerMongo -InstallDir $InstallDir -Runtime $ctx.Runtime }
+        $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--remove-orphans')
+        if ($code -ne 0) {
+            Show-DeployerDiagnostics -InstallDir $InstallDir -Runtime $ctx.Runtime
+            throw "docker compose up failed (exit code $code)."
+        }
+        $timeout = if ($mode -eq 'built') { 600 } else { 420 }
+        $health = Wait-DeployerHealth -Port $ctx.Port -TimeoutSeconds $timeout
+        if (-not $health) {
+            Show-DeployerDiagnostics -InstallDir $InstallDir -Runtime $ctx.Runtime
+            throw 'Deployer did not become healthy after the update.'
+        }
+    } catch {
+        # The old deploy files are already replaced, so name the way back (A-150).
+        throw ("{0}`n{1}" -f $_.Exception.Message, (Get-DeployerUpdateRecoveryHint -PreviousRef $currentRef -BackupName $script:DeployerLastBackup))
     }
 
     $table = ConvertTo-DeployerStateTable $ctx.State
@@ -705,6 +711,7 @@ function Invoke-Backup {
     )
     Write-DeployerTextFile -Path (Join-Path $dir 'README.txt') -Lines $readme
     Write-DeployerOk "Backup complete: $dir"
+    $script:DeployerLastBackup = $stamp
 }
 
 function Invoke-Restore {
