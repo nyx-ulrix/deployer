@@ -398,6 +398,50 @@ namespace DeployerSetup
             return new CheckResult("memory", CheckStatus.Ok, ramText + " of memory", null);
         }
 
+        public const double MinFreeGb = 4, RecommendedFreeGb = 10;
+
+        // A-154: the install folder (and so the WSL disk) can move to another drive on the Options page, so a full
+        // drive only blocks here when no other drive has room; the Options page enforces the minimum on the folder chosen.
+        public static CheckResult DiskCheck(string driveName, double freeGb, string roomyDrive, double roomyFreeGb)
+        {
+            string freeText = Gb(freeGb) + " free on " + driveName;
+            bool canMove = roomyDrive != null && roomyFreeGb >= RecommendedFreeGb;
+            string move = canMove ? " Choose a folder on " + roomyDrive + " (" + Gb(roomyFreeGb) + " free) on the Options page." : "";
+            if (freeGb < MinFreeGb)
+                return new CheckResult("disk", canMove ? CheckStatus.Warn : CheckStatus.Fail, "Not enough free space: " + freeText,
+                    "Deployer needs about 10 GB." + (canMove ? move : " Free up space (Settings > System > Storage), then click Check again."));
+            if (freeGb < RecommendedFreeGb)
+                return new CheckResult("disk", CheckStatus.Warn, "Only " + freeText,
+                    "About 10 GB is recommended for Deployer and your databases." + move);
+            return new CheckResult("disk", CheckStatus.Ok, freeText, null);
+        }
+
+        /// <summary>The Options page's error for an install folder on a drive with this much free space, or null.</summary>
+        public static string DirSpaceError(string driveLetter, double freeGb)
+        {
+            if (freeGb >= MinFreeGb) return null;
+            return "Only " + Gb(freeGb) + " free on drive " + driveLetter + ". Deployer needs at least 4 GB; choose another drive.";
+        }
+
+        static string RoomiestOtherDrive(string root, out double freeGb)
+        {
+            freeGb = 0;
+            string best = null;
+            foreach (DriveInfo d in DriveInfo.GetDrives())
+            {
+                try
+                {
+                    if (d.DriveType != DriveType.Fixed || !d.IsReady || string.Equals(d.Name, root, StringComparison.OrdinalIgnoreCase)) continue;
+                    double gb = d.AvailableFreeSpace / 1073741824.0;
+                    if (gb > freeGb) { freeGb = gb; best = d.Name.TrimEnd('\\'); }
+                }
+                catch (Exception)
+                {
+                }
+            }
+            return best;
+        }
+
         // A-079: Setup requires administrator, so when a standard user types an admin's password at the UAC
         // prompt it runs as that admin, and the WSL distro, sign-in task and RunOnce all go to the admin.
         public static string OtherAccountWarning(string setupAccount, string signedInAccount)
@@ -452,7 +496,7 @@ namespace DeployerSetup
             }
         }
 
-        public static SystemReport Run(string installDir, int port, int installedPort, bool includeInternet)
+        public static SystemReport Run(string installDir, int port, int installedPort, bool includeInternet, bool canChangeDir)
         {
             SystemReport report = new SystemReport();
             DetectDocker(report);
@@ -554,17 +598,9 @@ namespace DeployerSetup
             {
                 string root = Path.GetPathRoot(Path.GetFullPath(installDir));
                 DriveInfo drive = new DriveInfo(root);
-                double freeGb = drive.AvailableFreeSpace / 1073741824.0;
-                string driveName = root.TrimEnd('\\');
-                string freeText = Math.Round(freeGb, freeGb < 10 ? 1 : 0) + " GB free on " + driveName;
-                if (freeGb < 4)
-                    report.Items.Add(new CheckResult("disk", CheckStatus.Fail, "Not enough free space: " + freeText,
-                        "Deployer needs about 10 GB. Free up space (Settings > System > Storage) or choose a different drive on the Options page."));
-                else if (freeGb < 10)
-                    report.Items.Add(new CheckResult("disk", CheckStatus.Warn, "Only " + freeText,
-                        "About 10 GB is recommended for Deployer and your databases. You can choose another drive on the Options page."));
-                else
-                    report.Items.Add(new CheckResult("disk", CheckStatus.Ok, freeText, null));
+                double roomyFree = 0;
+                string roomy = canChangeDir ? RoomiestOtherDrive(root, out roomyFree) : null;
+                report.Items.Add(DiskCheck(root.TrimEnd('\\'), drive.AvailableFreeSpace / 1073741824.0, roomy, roomyFree));
             }
             catch (Exception)
             {

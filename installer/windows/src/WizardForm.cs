@@ -556,12 +556,13 @@ namespace DeployerSetup
             string dir = options.InstallDir;
             int port = options.Port;
             int installed = installedPort;
+            bool canChangeDir = installedDir == null;
             ThreadPool.QueueUserWorkItem(delegate
             {
                 SystemReport r;
                 try
                 {
-                    r = SystemChecks.Run(dir, port, installed, true);
+                    r = SystemChecks.Run(dir, port, installed, true, canChangeDir);
                 }
                 catch (Exception ex)
                 {
@@ -782,6 +783,7 @@ namespace DeployerSetup
                     else
                     {
                         double freeGb = drive.AvailableFreeSpace / 1073741824.0;
+                        dirError = SystemChecks.DirSpaceError(dir.Substring(0, 1).ToUpperInvariant(), freeGb);
                         if (dirHint != null)
                             dirHint.Text = "Settings, databases and backups are stored here. " + Math.Round(freeGb) + " GB free on drive " + dir.Substring(0, 1).ToUpperInvariant();
                     }

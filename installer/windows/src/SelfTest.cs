@@ -117,6 +117,11 @@ namespace DeployerSetup
                   && ResetPasswordDialog.Check("long-enough-1", "long-enough-1") == null, "reset password checks");
             Check(SystemChecks.MemoryCheck(4).Title.Contains("about 2 GB is available to Deployer; expect 1-2 small apps")
                   && SystemChecks.MemoryCheck(3).Detail.Contains("exit code 137"), "memory check says how much WSL gives Deployer (A-070)");
+            CheckResult fullC = SystemChecks.DiskCheck("C:", 2, "D:", 50), stuck = SystemChecks.DiskCheck("C:", 2, null, 0);
+            Check(!fullC.Blocking && fullC.Detail.Contains("D:") && fullC.Detail.Contains("Options page")
+                  && stuck.Blocking && !stuck.Detail.Contains("Options page") && SystemChecks.DiskCheck("C:", 2, "D:", 5).Blocking
+                  && SystemChecks.DirSpaceError("C", 2) != null && SystemChecks.DirSpaceError("D", 50) == null,
+                  "a full drive warns and names a roomier one, and the Options page enforces 4 GB on the chosen folder (A-154)");
             string other = SystemChecks.OtherAccountWarning(@"PC\Admin", @"PC\Kid");
             Check(other != null && other.Contains("installed for Admin") && other.Contains("tray icon won't appear for Kid")
                   && SystemChecks.OtherAccountWarning(@"PC\kid", @"PC\Kid") == null
