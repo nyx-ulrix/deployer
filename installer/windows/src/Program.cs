@@ -113,6 +113,18 @@ namespace DeployerSetup
 
         static int RunWizard(bool dryRun, bool resume)
         {
+            // Deployer Control is older than the stack after every Update, so its "Run setup again" (or an old
+            // DeployerSetup.exe /setup) must not reinstall that older version over it (A-074).
+            string newer = dryRun || resume ? null : InstallLocator.NewerInstalledVersion();
+            if (newer != null)
+            {
+                if (MessageDialog.Ask(null, "Deployer " + newer + " is already installed",
+                        "This Deployer Setup installs version " + AppInfo.Version + ", which is older, and would downgrade Deployer. " +
+                        "To repair or update Deployer, download Deployer Setup " + newer + " or newer and run it.",
+                        IconKind.Warn, Theme.Warn, "Open downloads", ButtonStyle.Primary, "Close") == DialogResult.Yes)
+                    Shell.OpenUrl(AppInfo.RepoUrl + "/releases");
+                return 0;
+            }
             bool created;
             using (Mutex mutex = new Mutex(true, @"Local\DeployerSetupWizard", out created))
             {

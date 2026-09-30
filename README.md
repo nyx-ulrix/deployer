@@ -248,7 +248,8 @@ Setup copies it to `%ProgramData%\Deployer\DeployerControl.exe` and adds two Sta
 - **View logs** - live logs for all services or one of them.
 - **Settings** - port, access from other devices on your network, keep this PC awake while plugged in,
   start at sign-in, and *Run setup again* (repairs shortcuts, the sign-in task and the Apps & Features
-  entry; your data is kept).
+  entry; your data is kept). After an **Update** this Deployer Control is older than Deployer, so setup
+  asks you to download the matching `DeployerSetup.exe` instead of installing the older version.
 - **Host device** - shows whether this PC is attached to another Deployer as a host device and lets you
   detach it (`deployer device status` / `deployer device detach`).
 - **Uninstall** - removes Deployer; your databases, `.env` and backups are kept unless you tick

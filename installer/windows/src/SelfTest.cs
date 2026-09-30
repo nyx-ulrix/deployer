@@ -115,6 +115,9 @@ namespace DeployerSetup
                   && InstallLocator.IsUpdate("0.4.0", "0.3.0", "0.3.0") && InstallLocator.IsUpdate("0.4.0", null, null)
                   && !InstallLocator.IsUpdate("0.3.0", "0.3.0", "0.3.0") && !InstallLocator.IsUpdate("0.4.0", "0.3.0", "0.5.0")
                   && InstallLocator.IsUpdate("0.5.0", "0.3.0", "0.5.0"), "a newer exe offers to update, never to downgrade (A-074)");
+            Check(InstallLocator.NewerThan("0.3.0", "0.5.0") == "0.5.0" && InstallLocator.NewerThan("0.5.0", "0.5.0") == null
+                  && InstallLocator.NewerThan("0.5.0", null) == null && InstallLocator.NewerThan("0.5.0", "0.5.0-rc.1") == null,
+                  "setup from an older exe does not downgrade what 'deployer update' installed (A-074)");
 
             string half = Path.Combine(Path.GetTempPath(), "DeployerSelfTest-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(half);

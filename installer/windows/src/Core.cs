@@ -257,6 +257,20 @@ namespace DeployerSetup
             return AppInfo.CompareVersions(mine, controlVersion) > 0 && AppInfo.CompareVersions(mine, registeredVersion) >= 0;
         }
 
+        /// <summary>
+        /// The version 'deployer update' last installed (DisplayVersion) when it is newer than this exe, else null.
+        /// Setup from this exe would then downgrade a stack whose database is already migrated past it (A-074).
+        /// </summary>
+        public static string NewerInstalledVersion()
+        {
+            return NewerThan(AppInfo.Version, RegisteredValue("DisplayVersion"));
+        }
+
+        public static string NewerThan(string mine, string registeredVersion)
+        {
+            return AppInfo.CompareVersions(mine, registeredVersion) < 0 ? registeredVersion : null;
+        }
+
         public static Dictionary<string, string> ReadEnv(string installDir)
         {
             Dictionary<string, string> values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
