@@ -265,7 +265,7 @@ For everyone except the instance owner (A-114), test/create/update also refuse, 
 `validation_error`, hosts on Deployer's own network: names without a dot (Docker service and container
 names such as `mariadb` or `redis`), and hosts that are or resolve to `172.16.0.0/12` (Docker's address
 pool), link-local (`169.254.x`, cloud metadata), multicast or reserved addresses. Every host of a
-MongoDB seed list is checked. LAN addresses (`10.x`, `192.168.x`) and public hosts are allowed.
+comma-separated PostgreSQL host list and of a MongoDB seed list is checked. LAN addresses (`10.x`, `192.168.x`) and public hosts are allowed.
 
 A project may have any number of SQL and NoSQL sources at once (typically one of each).
 

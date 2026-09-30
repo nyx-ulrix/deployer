@@ -67,7 +67,8 @@ INTERNAL_HOST_MESSAGE = (
 
 def _config_hosts(kind: str, config: dict[str, Any]) -> list[str]:
     if kind == "sql":
-        return [config["host"]]
+        # psycopg/libpq try each host of a comma-separated list ("db.example.com,mariadb") in turn.
+        return config["host"].split(",")
     uri = config["uri"]
     scheme, _, rest = uri.partition("://")
     netloc = rest.split("/", 1)[0].split("?", 1)[0].rsplit("@", 1)[-1]

@@ -164,7 +164,15 @@ def test_internal_network_is_refused_for_non_owners(
 
     monkeypatch.setattr(data_sources, "_resolve", lambda host: {"db.internal.example": ["172.18.0.3"]}.get(host, []))
     s = project_setup
-    for host in ("mariadb", "redis.", "172.18.0.3", "169.254.169.254", "::ffff:172.17.0.1", "db.internal.example"):
+    for host in (
+        "mariadb",
+        "redis.",
+        "172.18.0.3",
+        "169.254.169.254",
+        "::ffff:172.17.0.1",
+        "db.internal.example",
+        "db1.example.com,mariadb",
+    ):
         body = {**EXTERNAL_SQL, "config": {**EXTERNAL_SQL["config"], "host": host}}
         for path in ("data-sources", "data-sources/test"):
             resp = client.post(f"{s['base']}/{path}", json=body, headers=s["admin"])
