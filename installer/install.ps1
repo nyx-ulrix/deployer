@@ -978,7 +978,8 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
                 if (-not (Wait-DeployerHealth -Port $Port -TimeoutSeconds 240)) {
                     Write-DeployerWarn 'Deployer is not answering after the network change yet; check with "deployer status".'
                 }
-                Write-DeployerOk "LAN access enabled ($lanMode). Make sure your network is set to Private in Windows settings."
+                Write-DeployerOk "LAN access enabled ($lanMode) on networks Windows marks Private."
+                [void](Write-DeployerNetworkProfileWarning)
             } else {
                 Disable-DeployerLanAccess -Port $Port
                 Write-DeployerOk 'Reachable from this PC only'

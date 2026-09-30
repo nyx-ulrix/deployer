@@ -50,6 +50,21 @@ try {
     # 4. The installer no longer asks about mirrored networking.
     $install = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\install.ps1') -Raw
     Assert-That ($install -notmatch 'Use mirrored networking') 'install.ps1 has no mirrored prompt'
+
+    # 5. A LAN network Windows marks Public is named with the fix (A-071); Private and WSL adapters are not.
+    function Get-NetConnectionProfile {
+        @([pscustomobject]@{ Name = 'CafeWifi'; InterfaceAlias = 'Wi-Fi'; NetworkCategory = 'Public' },
+            [pscustomobject]@{ Name = 'Home'; InterfaceAlias = 'Ethernet'; NetworkCategory = 'Private' },
+            [pscustomobject]@{ Name = 'Unidentified'; InterfaceAlias = 'vEthernet (WSL)'; NetworkCategory = 'Public' })
+    }
+    $script:warned = $null
+    Assert-That ((Write-DeployerNetworkProfileWarning) -eq 1) 'only the Public LAN network is flagged'
+    Assert-That ($script:warned -match "'CafeWifi' \(Wi-Fi\) as Public" -and $script:warned -match 'Network profile type' -and $script:warned -match "Set-NetConnectionProfile -InterfaceAlias 'Wi-Fi'") 'the warning names the network and the settings path'
+    function Get-NetConnectionProfile { @([pscustomobject]@{ Name = 'Home'; InterfaceAlias = 'Ethernet'; NetworkCategory = 'Private' }) }
+    $script:warned = $null
+    Assert-That ((Write-DeployerNetworkProfileWarning) -eq 0 -and $null -eq $script:warned) 'no warning on a Private network'
+    $cli = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\deployer.ps1') -Raw
+    Assert-That ($install -match 'Write-DeployerNetworkProfileWarning' -and $cli -match 'Write-DeployerNetworkProfileWarning') 'install and "deployer lan on" check the network profile'
 } finally {
     $env:USERPROFILE = $realProfile
     Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue

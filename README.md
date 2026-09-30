@@ -199,7 +199,9 @@ URLs in both OAuth apps. Client secrets are stored encrypted with your installat
 
 - **This PC only** (default): `http://localhost:8080`.
 - **Your home/office network (LAN)**: answer *yes* when the installer asks, or re-run it with
-  `-EnableLan`. It adds a Windows Firewall rule for **Private** networks only and, for the WSL
+  `-EnableLan`. It adds a Windows Firewall rule for **Private** networks only (it warns, naming the
+  network, if Windows marks yours Public: switch it under *Settings > Network & internet > Wi-Fi/Ethernet >
+  your network > Network profile type > Private network*) and, for the WSL
   runtime, a `netsh` port forward that `deployer start` refreshes. Deployer uses WSL's default
   networking; if `networkingMode=mirrored` is set in your `.wslconfig`, the installer warns you,
   because Docker in WSL cannot publish ports with it. Then open

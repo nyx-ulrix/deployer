@@ -403,7 +403,7 @@ function Invoke-Lan {
     Restart-StackForSettings -Ctx $ctx -Port $ctx.Port
     if ($on) {
         foreach ($ip in @(Get-DeployerLanAddresses)) { Write-DeployerOk "On your network: http://${ip}:$($ctx.Port)" }
-        Write-DeployerInfo 'Make sure your network is set to Private in Windows settings.'
+        [void](Write-DeployerNetworkProfileWarning)
     } else {
         Write-DeployerOk 'Deployer is reachable from this PC only'
     }

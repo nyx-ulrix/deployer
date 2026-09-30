@@ -1231,6 +1231,21 @@ function Enable-DeployerLanAccess {
     return 'portproxy'
 }
 
+function Write-DeployerNetworkProfileWarning {
+    <#
+      The firewall rule is Private-only, so on a network Windows marks Public (or Domain) other devices
+      just time out (A-071). Names each such LAN network and says how to switch it; returns their count.
+    #>
+    $bad = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue |
+            Where-Object { $_.InterfaceAlias -notmatch 'vEthernet|WSL|Loopback|docker' -and "$($_.NetworkCategory)" -ne 'Private' })
+    foreach ($p in $bad) {
+        Write-DeployerWarn ("Windows treats the network '$($p.Name)' ($($p.InterfaceAlias)) as $($p.NetworkCategory), so other devices cannot reach Deployer on it. " +
+            "If it is your home/office network, set it to Private: Settings > Network & internet > $($p.InterfaceAlias) > $($p.Name) (Properties) > Network profile type > Private network. " +
+            "Or, in an administrator PowerShell: Set-NetConnectionProfile -InterfaceAlias '$($p.InterfaceAlias)' -NetworkCategory Private")
+    }
+    return $bad.Count
+}
+
 function Disable-DeployerLanAccess {
     param([int]$Port)
     Remove-DeployerFirewallRule
