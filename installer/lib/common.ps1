@@ -1337,13 +1337,17 @@ function Disable-DeployerLanAccess {
 function Get-DeployerAcPowerIndex {
     # Reads the current AC value of a power setting (e.g. SUB_SLEEP STANDBYIDLE, in seconds). The
     # labels are localized, so rely on the fact that the last two hex values printed are AC and DC.
+    # /query omits hidden settings (LIDACTION is hidden on many laptops) and still exits 0, so fall
+    # back to /qh, which includes them.
     param([string]$SubGroup, [string]$Setting)
     $powercfg = Join-Path $env:SystemRoot 'System32\powercfg.exe'
-    $r = Invoke-DeployerNative -FilePath $powercfg -ArgumentList @('/query', 'SCHEME_CURRENT', $SubGroup, $Setting) -TimeoutSeconds 30
-    if ($null -eq $r -or $r.ExitCode -ne 0) { return $null }
-    $hex = @([regex]::Matches($r.StdOut, ':\s*0x([0-9a-fA-F]{8})\s*$', 'Multiline') | ForEach-Object { $_.Groups[1].Value })
-    if ($hex.Count -lt 2) { return $null }
-    return [int][Convert]::ToUInt32($hex[$hex.Count - 2], 16)
+    foreach ($verb in '/query', '/qh') {
+        $r = Invoke-DeployerNative -FilePath $powercfg -ArgumentList @($verb, 'SCHEME_CURRENT', $SubGroup, $Setting) -TimeoutSeconds 30
+        if ($null -eq $r -or $r.ExitCode -ne 0) { continue }
+        $hex = @([regex]::Matches($r.StdOut, ':\s*0x([0-9a-fA-F]{8})\s*$', 'Multiline') | ForEach-Object { $_.Groups[1].Value })
+        if ($hex.Count -ge 2) { return [int][Convert]::ToUInt32($hex[$hex.Count - 2], 16) }
+    }
+    return $null
 }
 
 function Get-DeployerAcPowerTimeoutMinutes {
