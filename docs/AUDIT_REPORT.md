@@ -245,7 +245,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-144 **[LOW][security]** Compose defaults DEPLOYER_BIND to 0.0.0.0, contradicting the docs and .env.example - `deploy/docker-compose.yml:248, 250` (also `DEPLOYMENTS.md:28, 46-47`) - default to 127.0.0.1; fix the comments and the stale "follow-up" note. (not verified)
 - [x] A-145 **[LOW][security]** All LAN/localhost clients reach Caddy with the same source IP, so per-IP limits on :8080 are meaningless - `deploy/Caddyfile:25, 63` - document it; a per-email limit (A-019). (not verified)
 - [x] A-146 **[LOW][usability]** "Prevent sleep" does not cover closing a laptop lid - `installer/lib/common.ps1:1189-1212` - set LIDACTION or say so. (not verified)
-- [ ] A-147 **[LOW][usability]** Error hint tells the user to run `deployer logs api` before the command is on PATH - `installer/install.ps1:950, 992` - use the full path or the log folder. (not verified)
+- [x] A-147 **[LOW][usability]** Error hint tells the user to run `deployer logs api` before the command is on PATH - `installer/install.ps1:950, 992` - use the full path or the log folder. (not verified)
 - [ ] A-148 **[LOW][security]** The WSL distro enables Windows interop although nothing needs it - `installer/wsl/setup-engine.sh:27-28` - `enabled=false`. (not verified)
 - [ ] A-149 **[LOW][security]** The release workflow grants write permissions to every job - `.github/workflows/release.yml:8-10` - read by default; write per job. (not verified)
 - [ ] A-150 **[LOW][usability]** A failed update leaves no recovery path in the message - `installer/deployer.ps1:563-572` - print the previous ref and the roll-back command. (not verified)

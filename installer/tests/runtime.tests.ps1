@@ -34,3 +34,13 @@ Assert-That ((Select-Runtime -State $installed) -eq 'docker-desktop') '-Runtime 
 
 $Runtime = 'wsl-engine'
 Assert-That ((Select-Runtime -State $null) -eq 'wsl-engine') 'a fresh install takes the -Runtime given'
+
+# A-147: hints shown before the last step put 'deployer' on the PATH use the shim's full path.
+$hintFn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-InstallerCliHint' }, $true)
+. ([scriptblock]::Create($hintFn.Extent.Text))
+Assert-That ((Get-InstallerCliHint 'logs api') -eq 'C:\ProgramData\Deployer\deployer.cmd logs api') 'the hint names the full path of deployer.cmd'
+$InstallDir = 'C:\My Apps\Deployer'
+Assert-That ((Get-InstallerCliHint 'status') -eq "& 'C:\My Apps\Deployer\deployer.cmd' status") 'a path with spaces is quoted so it runs as typed'
+$source = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\install.ps1'))
+$beforePath = $source.Substring(0, $source.IndexOf('Add-DeployerUserPath -Directory'))
+Assert-That ($beforePath -notmatch '[''"]deployer (logs|status)') 'no message before the PATH step tells the user to run a bare deployer command'

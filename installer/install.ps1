@@ -179,6 +179,15 @@ function Write-InstallStep {
     Write-DeployerStep $Text
 }
 
+function Get-InstallerCliHint {
+    # 'deployer' is only on the PATH (and only in new terminals) after the last step, so hints shown
+    # before that use the full path of the shim that Copy-DeployerFiles has already written (A-147).
+    param([string]$Arguments)
+    $cli = Join-Path $InstallDir 'deployer.cmd'
+    if ($cli -match '\s') { $cli = "& '$cli'" }
+    return "$cli $Arguments"
+}
+
 function Write-DryRunAction {
     param([string]$Text)
     Write-Host "    [dry run] would $Text" -ForegroundColor DarkGray
@@ -514,7 +523,7 @@ function Install-WslEngine {
     Write-DeployerInfo 'Restarting the distro with systemd...'
     [void](Invoke-DeployerNative -FilePath $wsl -ArgumentList @('--terminate', $script:DeployerDistro) -TimeoutSeconds 120)
     if (-not (Wait-DeployerDockerEngine -Runtime 'wsl-engine' -TimeoutSeconds 240)) {
-        throw 'Docker Engine inside WSL did not start. Try: wsl -d deployer -u root -- systemctl status docker'
+        throw "Docker Engine inside WSL did not start. Restart Windows and run the installer again; it picks up where it left off. If it fails again, this shows why: wsl -d $($script:DeployerDistro) -u root -- systemctl status docker"
     }
     Write-DeployerOk 'Docker Engine is running in WSL'
 }
@@ -960,7 +969,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
             $health = Wait-DeployerHealth -Port $Port -TimeoutSeconds $timeout
             if (-not $health) {
                 Show-DeployerDiagnostics -InstallDir $InstallDir -Runtime $chosen
-                throw "Deployer did not become healthy within $([int]($timeout / 60)) minutes. The logs above usually explain why; run 'deployer logs api' for more."
+                throw "Deployer did not become healthy within $([int]($timeout / 60)) minutes. The logs above usually explain why (they are saved in $InstallDir\logs\deployer.log); for more, run: $(Get-InstallerCliHint 'logs api')"
             }
             Write-DeployerOk 'Deployer is up'
             Write-DeployerHealth $health
@@ -987,7 +996,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
                 $lanMode = Enable-DeployerLanAccess -Runtime $chosen -Port $Port
                 [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $chosen -Arguments @('up', '-d'))
                 if (-not (Wait-DeployerHealth -Port $Port -TimeoutSeconds 240)) {
-                    Write-DeployerWarn 'Deployer is not answering after the network change yet; check with "deployer status".'
+                    Write-DeployerWarn "Deployer is not answering after the network change yet; check with: $(Get-InstallerCliHint 'status')"
                 }
                 Write-DeployerOk "LAN access enabled ($lanMode) on networks Windows marks Private."
                 [void](Write-DeployerNetworkProfileWarning)
