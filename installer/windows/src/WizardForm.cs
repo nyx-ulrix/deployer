@@ -961,6 +961,13 @@ namespace DeployerSetup
                     Directory.CreateDirectory(dir);
                     Integration.CopySelf(dir);
                     options.Save(Path.Combine(dir, AppInfo.OptionsFileName));
+                    // Registered now so an install that stops partway can still be removed from Apps & Features (A-078).
+                    // An update keeps the entry (and its version) until it finishes.
+                    if (InstallLocator.RegisteredInstallDir() == null)
+                    {
+                        try { Integration.RegisterUninstallEntry(dir); }
+                        catch (Exception ex) { AppendLog("Apps & Features entry could not be created: " + ex.Message); }
+                    }
                 }
                 payloadRoot = Payload.Extract();
                 List<string> args = new List<string>

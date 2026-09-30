@@ -21,6 +21,8 @@ namespace DeployerSetup
         readonly StringBuilder log = new StringBuilder();
         internal string transient = "";
         internal string failure = "";
+        internal bool partial;  // setup stopped before runtime.json, so deployer.ps1 cannot uninstall it (A-078)
+        internal bool leftover; // "delete everything" was chosen but the folder is still there
         ScriptRunner runner;
         string scriptRoot;
         TextBlock transientLabel;
@@ -75,9 +77,7 @@ namespace DeployerSetup
                 case Phase.Done:
                     icon = IconKind.Check; color = Theme.Success;
                     title = "Deployer has been removed";
-                    text = deleteData
-                        ? "Deployer and all of its data were removed from this PC."
-                        : "Your databases, settings (.env) and backups were kept in " + installDir + ". Install Deployer again to use them, or delete that folder yourself.";
+                    text = DoneText();
                     break;
                 case Phase.Failed:
                     icon = IconKind.Cross; color = Theme.Danger;
@@ -194,6 +194,18 @@ namespace DeployerSetup
             if (buttons.Count > 0 && phase != Phase.Running) AcceptButton = buttons[0];
         }
 
+        internal string DoneText()
+        {
+            if (deleteData && leftover)
+                return "Deployer was removed, but some of its files could not be deleted from " + installDir + ". Delete that folder yourself to free the space.";
+            if (deleteData)
+                return "Deployer and all of its data were removed from this PC.";
+            if (partial)
+                return "Setup never finished here, so only the shortcuts and the Apps & Features entry were removed. Its files are still in " + installDir +
+                       ". To free the space, run \"wsl --unregister deployer\" if setup got that far, then delete that folder.";
+            return "Your databases, settings (.env) and backups were kept in " + installDir + ". Install Deployer again to use them, or delete that folder yourself.";
+        }
+
         FlatButton Button(string text, ButtonStyle style, EventHandler click)
         {
             FlatButton b = new FlatButton(ui, text, style);
@@ -214,8 +226,15 @@ namespace DeployerSetup
                 bool installed = File.Exists(Path.Combine(installDir, "runtime.json"));
                 if (!installed)
                 {
-                    log.Append("runtime.json not found in ").Append(installDir).Append("; removing shortcuts and the Apps & Features entry only.\r\n");
-                    OnExited(0);
+                    partial = true;
+                    bool wipe = deleteData;
+                    System.Threading.Thread t = new System.Threading.Thread(() =>
+                    {
+                        string note = RemovePartialInstall(installDir, wipe, RunWsl);
+                        Post(() => { log.Append(note); OnExited(0); });
+                    });
+                    t.IsBackground = true;
+                    t.Start();
                     return;
                 }
                 scriptRoot = PrepareScripts();
@@ -243,6 +262,44 @@ namespace DeployerSetup
                 log.Append(ex).Append("\r\n");
                 SetPhase(Phase.Failed);
             }
+        }
+
+        /// <summary>
+        /// Cleans up an install that stopped before install.ps1 wrote runtime.json, which "deployer uninstall"
+        /// refuses to handle (A-078): unregisters the "deployer" WSL distro and deletes the folder. Only a folder
+        /// setup itself created (it holds the Control exe or setup-options.json) is touched, so a wrong one is never wiped.
+        /// </summary>
+        internal static string RemovePartialInstall(string dir, bool deleteData, Func<string, ProcessResult> wsl)
+        {
+            StringBuilder note = new StringBuilder("runtime.json not found in " + dir + "; setup did not finish there.\r\n");
+            if (!deleteData) return note.Append("Kept its files; removed shortcuts and the Apps & Features entry only.\r\n").ToString();
+            if (!File.Exists(Integration.ControlExe(dir)) && !File.Exists(Path.Combine(dir, AppInfo.OptionsFileName)))
+                return note.Append("No Deployer setup files there; nothing was deleted.\r\n").ToString();
+            ProcessResult list = wsl("--list --quiet");
+            foreach (string line in list.StdOut.Split('\r', '\n'))
+            {
+                if (list.ExitCode != 0 || line.Trim().Trim('﻿') != DistroName) continue;
+                ProcessResult r = wsl("--unregister " + DistroName);
+                note.Append(r.ExitCode == 0 ? "WSL distro \"deployer\" removed.\r\n" : "wsl --unregister failed: " + r.StdOut + r.StdErr + "\r\n");
+                break;
+            }
+            try
+            {
+                Directory.Delete(dir, true);
+                note.Append("Deleted ").Append(dir).Append(".\r\n");
+            }
+            catch (Exception ex)
+            {
+                note.Append("Could not delete ").Append(dir).Append(": ").Append(ex.Message).Append("\r\n");
+            }
+            return note.ToString();
+        }
+
+        const string DistroName = "deployer"; // $script:DeployerDistro in installer/lib/common.ps1
+
+        static ProcessResult RunWsl(string args)
+        {
+            return ProcessUtil.Run(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "wsl.exe"), args, 300000);
         }
 
         /// <summary>Copies the installed scripts to a temp folder (they are deleted during uninstall).</summary>
@@ -309,6 +366,7 @@ namespace DeployerSetup
             catch (Exception)
             {
             }
+            leftover = deleteData && Directory.Exists(installDir);
             SetPhase(Phase.Done);
         }
 

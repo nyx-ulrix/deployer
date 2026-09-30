@@ -258,7 +258,8 @@ Setup copies it to `%ProgramData%\Deployer\DeployerControl.exe` and adds two Sta
 - **Host device** - shows whether this PC is attached to another Deployer as a host device and lets you
   detach it (`deployer device status` / `deployer device detach`).
 - **Uninstall** - removes Deployer; your databases, `.env` and backups are kept unless you tick
-  *Also delete all databases and backups*. Also available from *Settings → Apps* in Windows.
+  *Also delete all databases and backups*. Also available from *Settings → Apps* in Windows, even when
+  setup stopped partway (ticking the box then also removes the half-created WSL distro and folder).
 
 If you chose *Start Deployer when I sign in*, Deployer Control also sits in the notification area next
 to the clock (right-click it for actions) and tells you if Deployer stops unexpectedly.

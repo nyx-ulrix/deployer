@@ -154,6 +154,40 @@ namespace DeployerSetup
             {
                 Directory.Delete(half, true);
             }
+
+            Directory.CreateDirectory(Path.Combine(half, "wsl"));
+            try
+            {
+                List<string> wslCalls = new List<string>();
+                Func<string, ProcessResult> fakeWsl = a =>
+                {
+                    wslCalls.Add(a);
+                    ProcessResult r = new ProcessResult();
+                    r.ExitCode = 0;
+                    r.StdOut = "Ubuntu\r\ndeployer\r\n";
+                    return r;
+                };
+                UninstallForm.RemovePartialInstall(half, true, fakeWsl);
+                bool strangerKept = Directory.Exists(half) && wslCalls.Count == 0;
+                File.WriteAllText(Path.Combine(half, AppInfo.OptionsFileName), "{}");
+                UninstallForm.RemovePartialInstall(half, false, fakeWsl);
+                bool keptWhenAsked = Directory.Exists(half) && wslCalls.Count == 0;
+                UninstallForm.RemovePartialInstall(half, true, fakeWsl);
+                Check(strangerKept && keptWhenAsked && !Directory.Exists(half) && wslCalls.Contains("--unregister deployer"),
+                      "uninstalling a half-install with delete ticked removes its WSL distro and folder, never a folder setup didn't make (A-078)");
+            }
+            finally
+            {
+                if (Directory.Exists(half)) Directory.Delete(half, true);
+            }
+            using (UninstallForm u = new UninstallForm(half, 1f, true))
+            {
+                u.partial = true;
+                bool honestKeep = u.DoneText().Contains("never finished") && u.DoneText().Contains(half);
+                u.deleteData = true;
+                u.leftover = true;
+                Check(honestKeep && u.DoneText().Contains("could not be deleted"), "the uninstaller never claims data it left behind was removed (A-078)");
+            }
         }
 
         /// <summary>Renders a form that is never shown: handles are created, nothing appears on screen.</summary>
