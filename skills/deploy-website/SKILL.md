@@ -65,7 +65,8 @@ The dashboard is at the instance's public URL (default `http://localhost:8080`; 
    One project per site.
 2. **Databases**: Databases tab → *Add database*. Managed MariaDB (SQL) and MongoDB (NoSQL) can be
    used together; external databases can be linked too (one on the same PC: host = the PC's network
-   IP, never `localhost`; `host.docker.internal` only with Docker Desktop). Managed ones are backed up automatically
+   IP, never `localhost`; `host.docker.internal` only with Docker Desktop; only the instance owner may
+   use Docker names or `172.16-31.x` addresses). Managed ones are backed up automatically
    (docs/BACKUPS.md).
 3. **Schema and data**: Schema tab (ER diagram, DDL export), Data tab (rows/documents), Query tab
    (notebook or terminal).

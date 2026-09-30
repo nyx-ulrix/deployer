@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ipaddress
+import socket
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, Request
@@ -51,6 +52,73 @@ def _reject_loopback(host: str | None) -> None:
         loopback = h == "localhost" or h.endswith(".localhost")
     if loopback:
         raise validation_error(SAME_PC_HOST_MESSAGE.format(host=h))
+
+
+# A-114: the connection test reaches whatever host it is given, from inside Deployer's network. Project
+# admins who are not the instance owner may not point it at Deployer's own containers (Docker DNS names,
+# Docker's default 172.16.0.0/12 address pool) or at link-local addresses (cloud metadata endpoints).
+# LAN addresses (10.x, 192.168.x) stay allowed: that is where a database on this PC or the network lives.
+DOCKER_POOL = ipaddress.ip_network("172.16.0.0/12")
+INTERNAL_HOST_MESSAGE = (
+    "'{host}' is on Deployer's own internal network. Only the instance owner can connect a data source "
+    "there; use the database server's LAN IP address or public hostname."
+)
+
+
+def _config_hosts(kind: str, config: dict[str, Any]) -> list[str]:
+    if kind == "sql":
+        return [config["host"]]
+    uri = config["uri"]
+    scheme, _, rest = uri.partition("://")
+    netloc = rest.split("/", 1)[0].split("?", 1)[0].rsplit("@", 1)[-1]
+    # Every seed host of a replica-set URI, not just the first.
+    return [connections.parse_mongo_uri(f"{scheme}://{part}")["host"] or "" for part in netloc.split(",")]
+
+
+def _resolve(host: str) -> list[str]:
+    try:
+        return [info[4][0] for info in socket.getaddrinfo(host, None)]
+    except (OSError, UnicodeError):
+        return []  # unresolvable: the connection test itself reports that
+
+
+def _is_internal(address: str) -> bool:
+    ip = ipaddress.ip_address(address.split("%", 1)[0])
+    ip = getattr(ip, "ipv4_mapped", None) or ip
+    return (
+        ip.is_loopback
+        or ip.is_link_local
+        or ip.is_unspecified
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip in DOCKER_POOL
+    )
+
+
+def _reject_internal(kind: str, config: dict[str, Any]) -> None:
+    # ponytail: resolve-then-connect, a DNS name that changes answers in between slips through;
+    # pinning the resolved IP into the driver would close that but breaks TLS hostname checks.
+    for host in _config_hosts(kind, config):
+        h = host.strip().strip("[]").rstrip(".").lower()
+        if not h:
+            continue
+        try:
+            addresses = [str(ipaddress.ip_address(h))]
+        except ValueError:
+            if "." not in h:  # Docker DNS: compose service and container names (mariadb, redis, ...)
+                raise validation_error(INTERNAL_HOST_MESSAGE.format(host=h)) from None
+            # mongodb+srv names are SRV records, usually without an address of their own.
+            addresses = _resolve(h)
+        if any(_is_internal(a) for a in addresses):
+            raise validation_error(INTERNAL_HOST_MESSAGE.format(host=h))
+
+
+def external_config(body: DataSourceInput, access: ProjectAccess) -> tuple[str, dict[str, Any] | None]:
+    """normalize_input plus the A-114 internal-network check for everyone but the instance owner."""
+    name, config = normalize_input(body)
+    if config is not None and not access.user.is_instance_owner:
+        _reject_internal(body.kind, config)
+    return name, config
 
 
 class DataSourceUpdate(BaseModel):
@@ -119,7 +187,7 @@ def list_data_sources(access: Viewer, db: DbSession) -> list[dict]:
 
 @router.post("/projects/{project_id}/data-sources/test")
 def test_data_source(body: DataSourceInput, access: Admin, db: DbSession) -> dict:
-    _, config = normalize_input(body)
+    _, config = external_config(body, access)
     if body.mode == "managed":
         from app.config import get_settings
 
@@ -140,7 +208,7 @@ def test_data_source(body: DataSourceInput, access: Admin, db: DbSession) -> dic
 
 @router.post("/projects/{project_id}/data-sources")
 def create_data_source(body: DataSourceInput, access: Admin, db: DbSession, request: Request) -> dict:
-    name, config = normalize_input(body)
+    name, config = external_config(body, access)
     project = access.project
     _ensure_name_free(db, project.id, name)
     if body.mode == "managed":
@@ -206,8 +274,8 @@ def update_data_source(source_id: str, body: DataSourceUpdate, access: Admin, db
     config = None
     if body.config is not None:
         merged = {**decrypt_json(ds.config_encrypted), **body.config}
-        _, config = normalize_input(
-            DataSourceInput(kind=ds.kind, mode=ds.mode, engine=ds.engine, name=name, config=merged)
+        _, config = external_config(
+            DataSourceInput(kind=ds.kind, mode=ds.mode, engine=ds.engine, name=name, config=merged), access
         )
     changed = []
     if name != ds.name:

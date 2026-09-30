@@ -23,6 +23,7 @@ Fixtures:
                            returns the JSON AuthResponse (the refresh cookie lands in `client.cookies`).
 - `make_project(owner, name="Test Project", *, members=None)` – inserts a committed `Project` with
                            `owner` as owner member; `members` is `{User: role}`.
+- DNS: data source host resolution (`app.routers.data_sources._resolve`) returns no addresses.
 - `set_setting(key, value)` – stores an instance setting (see services.instance_settings.KNOWN_KEYS).
 - `fake_provisioning`    – replaces `app.services.provisioning` with a fake whose
                            `provision_managed_source` inserts a DataSource row and records calls in
@@ -125,6 +126,14 @@ def _clean_state(_schema, fake_redis):
     fake_redis.flushall()
     redis_client.set_redis(fake_redis)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _no_dns(monkeypatch):
+    # A-114's internal-network check resolves data source hosts; tests never touch real DNS.
+    from app.routers import data_sources
+
+    monkeypatch.setattr(data_sources, "_resolve", lambda host: [])
 
 
 @pytest.fixture

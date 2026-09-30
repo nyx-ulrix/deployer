@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import create_engine, select
 
 from app.crypto import decrypt_json, encrypt_json
-from app.models import AuditLog, DataSource, SchemaLink
+from app.models import AuditLog, DataSource, ProjectMember, SchemaLink
 from app.services import connections
 
 # Obviously fake credentials: built at runtime so secret scanners never see a literal
@@ -154,6 +154,37 @@ def test_same_pc_host_is_explained(client, project_setup, fake_connect):
     assert fake_connect["calls"] == []
     ok = {**EXTERNAL_SQL, "config": {**EXTERNAL_SQL["config"], "host": "host.docker.internal"}}
     assert client.post(f"{s['base']}/data-sources", json=ok, headers=s["admin"]).status_code == 200
+
+
+def test_internal_network_is_refused_for_non_owners(
+    client, db, make_user, auth_headers, project_setup, fake_connect, monkeypatch
+):
+    # A-114: project admins may not aim the connection test at Deployer's own containers or metadata IPs.
+    from app.routers import data_sources
+
+    monkeypatch.setattr(data_sources, "_resolve", lambda host: {"db.internal.example": ["172.18.0.3"]}.get(host, []))
+    s = project_setup
+    for host in ("mariadb", "redis.", "172.18.0.3", "169.254.169.254", "::ffff:172.17.0.1", "db.internal.example"):
+        body = {**EXTERNAL_SQL, "config": {**EXTERNAL_SQL["config"], "host": host}}
+        for path in ("data-sources", "data-sources/test"):
+            resp = client.post(f"{s['base']}/{path}", json=body, headers=s["admin"])
+            assert resp.status_code == 422, (host, resp.text)
+            assert "internal network" in resp.json()["error"]["message"]
+    # Every seed host of a replica-set URI is checked, not just the first.
+    mongo = {**EXTERNAL_MONGO, "config": {"uri": "mongodb://db1.example.com,mongodb:27017/?tls=false", "database": "a"}}
+    assert client.post(f"{s['base']}/data-sources/test", json=mongo, headers=s["admin"]).status_code == 422
+    assert fake_connect["calls"] == []
+    # The LAN (a database on this PC or the network) stays allowed, and the instance owner is not limited.
+    lan = {**EXTERNAL_SQL, "config": {**EXTERNAL_SQL["config"], "host": "192.168.1.20"}}
+    assert client.post(f"{s['base']}/data-sources/test", json=lan, headers=s["admin"]).json()["ok"] is True
+    internal = {**EXTERNAL_SQL, "config": {**EXTERNAL_SQL["config"], "host": "mariadb"}}
+    # The project owner is not the instance owner either.
+    assert client.post(f"{s['base']}/data-sources/test", json=internal, headers=s["owner"]).status_code == 422
+    instance_owner = make_user(owner=True)
+    db.add(ProjectMember(project_id=s["project"].id, user_id=instance_owner.id, role="admin"))
+    db.commit()
+    resp = client.post(f"{s['base']}/data-sources/test", json=internal, headers=auth_headers(instance_owner))
+    assert resp.json()["ok"] is True
 
 
 def test_managed_mongo_unavailable(client, project_setup):

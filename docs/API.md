@@ -261,6 +261,12 @@ External hosts are reached from inside the Deployer container, so `localhost`, `
 PC use the PC's network IP address (`host.docker.internal` reaches Windows only with the Docker Desktop
 runtime; on the default WSL engine it is the WSL VM), and let the database accept network connections (MySQL/MariaDB `bind-address`, PostgreSQL `listen_addresses` + `pg_hba.conf`).
 
+For everyone except the instance owner (A-114), test/create/update also refuse, with 422
+`validation_error`, hosts on Deployer's own network: names without a dot (Docker service and container
+names such as `mariadb` or `redis`), and hosts that are or resolve to `172.16.0.0/12` (Docker's address
+pool), link-local (`169.254.x`, cloud metadata), multicast or reserved addresses. Every host of a
+MongoDB seed list is checked. LAN addresses (`10.x`, `192.168.x`) and public hosts are allowed.
+
 A project may have any number of SQL and NoSQL sources at once (typically one of each).
 
 ### Co-hosting (live copies on members' devices)
