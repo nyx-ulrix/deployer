@@ -110,6 +110,12 @@ export function placementDisplay(option: PlacementOption, engine: ManagedEngine 
   return { value: placementValue(option.device_id), label, disabled: reason !== null, reason };
 }
 
+/** Whether "Move" has anywhere to go: any placement other than where the database lives now. */
+export function hasOtherPlacement(options: readonly PlacementOption[], deviceId: string | null | undefined): boolean {
+  const current = placementValue(deviceId);
+  return options.some((o) => placementValue(o.device_id) !== current);
+}
+
 /** Pick a sensible default: the main server if usable, else the first usable option. */
 export function defaultPlacement(options: readonly PlacementOption[], engine: ManagedEngine | null): string {
   const displays = options.map((o) => placementDisplay(o, engine));

@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRightLeft, Database, History, Leaf, Pencil, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { errorMessage, isDeviceOffline } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import { useCohostEligibility, useDataSourcesWithReplicas } from "../../api/hooks";
+import { useCohostEligibility, useDataSourcesWithReplicas, usePlacementOptions } from "../../api/hooks";
 import type { CohostEligibility, DataSource } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -18,6 +18,7 @@ import { relativeTime } from "../../lib/format";
 import { RecentlyDeletedCard } from "../backups/RecentlyDeleted";
 import { SourceCopies } from "../cohosting/SourceCopies";
 import { DeviceBadge } from "../devices/DeviceBits";
+import { hasOtherPlacement } from "../devices/eligibility";
 import { MoveDatabaseDialog } from "../devices/MoveDatabaseDialog";
 import { useDeviceNames } from "../devices/useDeviceNames";
 import { useProjectContext } from "../projects/project-context";
@@ -37,6 +38,8 @@ export function DatabasesTab() {
   const [editing, setEditing] = useState<DataSource | null>(null);
   const anyOnDevice = sources.data?.some((s) => s.device_id) ?? false;
   const deviceName = useDeviceNames(project.id, anyOnDevice);
+  // Admin-only endpoint; same cache entry the Move dialog reads.
+  const placement = usePlacementOptions(project.id, can("admin"));
 
   return (
     <div className="space-y-4">
@@ -80,6 +83,8 @@ export function DatabasesTab() {
                 allSources={sources.data}
                 eligibility={eligibility.data}
                 deviceName={deviceName(s)}
+                // Unknown (loading/failed) keeps Move enabled; the dialog explains either way.
+                canMove={placement.data ? hasOtherPlacement(placement.data, s.device_id) : true}
                 onConnection={() => setConnectionFor(s)}
                 onDelete={() => setDeleting(s)}
                 onMove={() => setMoving(s)}
@@ -115,6 +120,7 @@ function SourceCard({
   allSources,
   eligibility,
   deviceName,
+  canMove,
   onConnection,
   onDelete,
   onMove,
@@ -124,6 +130,7 @@ function SourceCard({
   allSources: DataSource[];
   eligibility: CohostEligibility | undefined;
   deviceName: string | null;
+  canMove: boolean;
   onConnection: () => void;
   onDelete: () => void;
   onMove: () => void;
@@ -223,7 +230,13 @@ function SourceCard({
           </Button>
         )}
         {can("admin") && source.mode === "managed" && (
-          <Button size="sm" icon={<ArrowRightLeft className="size-3.5" />} onClick={onMove}>
+          <Button
+            size="sm"
+            icon={<ArrowRightLeft className="size-3.5" />}
+            onClick={onMove}
+            disabled={!canMove}
+            title={canMove ? undefined : "Nowhere to move it yet: attach another PC as a host device in Settings → Devices"}
+          >
             Move
           </Button>
         )}

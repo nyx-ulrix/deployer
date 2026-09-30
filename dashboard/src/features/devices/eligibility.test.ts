@@ -4,6 +4,7 @@ import {
   capabilityNotes,
   defaultPlacement,
   deviceIdFromValue,
+  hasOtherPlacement,
   isDeviceOnline,
   newProjectHosts,
   normalizeDeployerUrl,
@@ -65,6 +66,15 @@ describe("placementDisplay", () => {
     expect(noAvx.reason).toMatch(/MongoDB not available.*AVX/);
     expect(noAvx.label).toMatch(/— MongoDB not available/);
     expect(placementDisplay(option({ engines: { mariadb: true, mongodb: false } }), "mariadb").disabled).toBe(false);
+  });
+
+  it("only offers a move when another placement exists", () => {
+    const main = option({ device_id: null, name: "Main server" });
+    expect(hasOtherPlacement([main], null)).toBe(false);
+    expect(hasOtherPlacement([], null)).toBe(false);
+    expect(hasOtherPlacement([main, option()], null)).toBe(true);
+    expect(hasOtherPlacement([main, option()], "d1")).toBe(true);
+    expect(hasOtherPlacement([option()], "d1")).toBe(false);
   });
 
   it("defaults to the main server when usable, else the first usable option", () => {
