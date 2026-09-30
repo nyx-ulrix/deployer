@@ -26,8 +26,9 @@ Errors always look like:
 { "error": { "code": "snake_case_code", "message": "Human readable", "details": {} } }
 ```
 
-Common codes: `unauthorized` (401), `forbidden` (403), `not_found` (404), `validation_error` (422),
-`conflict` (409), `rate_limited` (429), `not_initialized` / `already_initialized` (409).
+Common codes: `unauthorized` (401), `forbidden` (403), `not_found` (404), `method_not_allowed` (405),
+`validation_error` (422), `conflict` (409), `rate_limited` (429), `not_initialized` / `already_initialized` (409),
+and `internal_error` (500, an unexpected failure; the details are in `deployer logs api` on the PC).
 A malformed body or query is `422 validation_error` whose message names the first bad field
 (e.g. `branch: is not a valid branch name`); `details.errors` lists every error (`loc`, `msg`, `type`),
 without the submitted values.

@@ -1,9 +1,13 @@
+import logging
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException
+
+log = logging.getLogger(__name__)
 
 
 class ApiError(Exception):
@@ -79,10 +83,20 @@ def install_error_handlers(app: FastAPI) -> None:
             status_code=422, content=_body("validation_error", message, {"errors": jsonable_encoder(errors)})
         )
 
+    # Starlette's class (FastAPI's subclasses it), so router 404/405s get the envelope too.
     @app.exception_handler(HTTPException)
     async def _http(_: Request, exc: HTTPException) -> JSONResponse:
         codes = {401: "unauthorized", 403: "forbidden", 404: "not_found", 405: "method_not_allowed"}
         return JSONResponse(
             status_code=exc.status_code,
             content=_body(codes.get(exc.status_code, "http_error"), str(exc.detail)),
+            headers=exc.headers,  # e.g. the 405's Allow
+        )
+
+    @app.exception_handler(Exception)
+    async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
+        log.error("Unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
+        return JSONResponse(
+            status_code=500,
+            content=_body("internal_error", "Something went wrong. Run 'deployer logs api' on the PC for details."),
         )
