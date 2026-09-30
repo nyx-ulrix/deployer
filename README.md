@@ -147,7 +147,9 @@ installation keeps the runtime it was installed with unless you run setup again 
    On the *Public URL* step, leave the address as it is; *Settings -> Domains & remote access* sets
    it for you later.
 3. Optionally configure Google and GitHub sign-in (below) and whether people can sign up without an
-   invite.
+   invite. Open sign-up is off by default; keep it off and use invite links unless everyone who can
+   reach this address is trusted - anyone who signs up can create projects and run websites on this
+   PC (unless *Only I can create projects* is on).
 4. Create projects, add SQL/NoSQL data sources and invite collaborators. Invite links use the public
    URL, so while it is `http://localhost:8080` they only open on this PC: set up remote access
    (*Settings -> Domains & remote access*) before inviting someone on another device.

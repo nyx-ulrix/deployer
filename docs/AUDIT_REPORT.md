@@ -169,7 +169,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 **Docs / skill**
 - [x] A-089 **[MEDIUM][docs]** The skill's JavaScript config example cannot run - `skills/deploy-website/SKILL.md:74-91` - destructure `default.deployer`, define the source id, describe the real file shape.
 - [x] A-090 **[MEDIUM][usability]** README "Deploy an app" leaves out Connect GitHub and does not warn that webhooks need a public URL - `README.md:206-218` - rewrite around Connect GitHub; fix the nav name in github.py:237.
-- [ ] A-091 **[MEDIUM][security]** README and the dashboard present open signup with no warning that it lets strangers run code on the PC - `README.md:142-143` - add the warning to README and the checkbox description.
+- [x] A-091 **[MEDIUM][security]** README and the dashboard present open signup with no warning that it lets strangers run code on the PC - `README.md:142-143` - add the warning to README and the checkbox description.
 
 **Tests / CI**
 - [ ] A-092 **[MEDIUM][test]** Integration tests for core DB features never run in CI, and CI never builds the Dockerfiles - `.github/workflows/ci.yml:16-34, 125-137` - a job with mariadb/mongo services and a buildx build of api/dashboard/tunnel; `-rs`.

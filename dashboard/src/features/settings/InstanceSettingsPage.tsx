@@ -138,7 +138,7 @@ function GeneralCard({ settings }: { settings: InstanceSettings }) {
           checked={allowSignup}
           onChange={(e) => setAllowSignup(e.target.checked)}
           label="Allow anyone who can reach this instance to sign up"
-          description="When off, new people can only join with an invite link."
+          description="Anyone who signs up can create projects and run websites on this PC (unless only you can create projects, below). Leave this off and use invite links unless everyone who can reach this address is trusted."
         />
         <Checkbox
           checked={ownerOnly}
