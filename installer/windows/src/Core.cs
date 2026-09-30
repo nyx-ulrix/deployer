@@ -292,7 +292,7 @@ namespace DeployerSetup
                 return new CheckResult("memory", CheckStatus.Warn, "Couldn't read the amount of memory", "Deployer needs at least 4 GB of memory (8 GB recommended).");
             if (ramGb < 3.6)
                 return new CheckResult("memory", CheckStatus.Warn, "Only " + ramText + " of memory",
-                    "About " + forDeployer + " is available to Deployer, below the 4 GB minimum. Expect at most 1 small app; builds may fail with \"exit code 137\" (out of memory). 8 GB is recommended.");
+                    "Below the 4 GB minimum: only about " + forDeployer + " is available to Deployer. Expect at most 1 small app; builds may fail with \"exit code 137\" (out of memory). 8 GB is recommended.");
             if (ramGb < 7.5)
                 return new CheckResult("memory", CheckStatus.Ok, ramText + " of memory: about " + forDeployer + " is available to Deployer; expect 1-2 small apps", null);
             return new CheckResult("memory", CheckStatus.Ok, ramText + " of memory", null);
