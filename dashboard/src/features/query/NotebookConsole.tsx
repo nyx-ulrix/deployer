@@ -19,7 +19,7 @@ import {
 import { errorMessage, isDeviceOffline } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import { useSavedQueries, useSourceSchema } from "../../api/hooks";
-import type { DataSource, Entity, Project, QueryRequest, SavedQuery } from "../../api/types";
+import type { DataSource, Entity, Project, QueryRequest, SavedQuery, SavedQuerySummary } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -130,7 +130,7 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
   const [message, setMessage] = useState("");
   const [conflict, setConflict] = useState<Conflict | null>(null);
   /** The banner's "Reload theirs" confirms before it throws local edits away. */
-  const [reloading, setReloading] = useState<SavedQuery | null>(null);
+  const [reloading, setReloading] = useState<SavedQuerySummary | null>(null);
   /** Per tab, the remote version the user chose to keep editing over (hides the banner until the next one). */
   const [dismissed, setDismissed] = useState<Record<string, number>>({});
 
@@ -176,10 +176,13 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
       return !t.dirty && sv && isBehind(t, sv) ? [{ t, sv }] : [];
     });
     if (newer.length === 0) return;
-    setState((prev) => newer.reduce((acc, { sv }) => refreshSaved(acc, sv), prev));
-    const active = newer.find(({ t }) => t.id === s.activeId);
-    if (active) toast.info(`Updated to v${active.sv.version} by ${active.sv.updated_by_email}`);
-  }, [savedList.data, toast]);
+    // The list carries no text (A-123): fetch the newer copies; a failed fetch is retried on the next poll.
+    void Promise.all(newer.map(({ sv }) => api.savedQueries.get(project.id, sv.id))).then((fresh) => {
+      setState((prev) => fresh.reduce((acc, sv) => refreshSaved(acc, sv), prev));
+      const active = fresh.find((sv) => sv.id === newer.find(({ t }) => t.id === s.activeId)?.sv.id);
+      if (active) toast.info(`Updated to v${active.version} by ${active.updated_by_email}`);
+    }, () => undefined);
+  }, [project.id, savedList.data, toast]);
 
   const setPrefs = (next: QueryPrefs) => {
     setPrefsState(next);
@@ -373,6 +376,10 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
     },
   });
 
+  /** The snippet list carries no text: fetch one snippet's full copy before opening, diffing or reloading it. */
+  const withText = (id: string, then: (full: SavedQuery) => void) =>
+    void api.savedQueries.get(project.id, id).then(then, (e: unknown) => toast.error(errorMessage(e), "Couldn't load the snippet"));
+
   /** Replace a tab's document with the server copy — the user has seen the diff or confirmed the reload. */
   const reloadTheirs = (current: SavedQuery) => {
     setState((s) => refreshSaved(s, current, true));
@@ -409,10 +416,15 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
       source={source}
       schema={schema}
       openSavedId={tab.savedId}
-      onOpenSaved={(saved) => {
-        setState((s) => openSaved(s, saved, source.id));
-        setActiveCellId(null);
-        if (inDrawer) setDrawerOpen(false);
+      onOpenSaved={(summary) => {
+        const show = (saved: SavedQuery) => {
+          setState((s) => openSaved(s, saved, source.id));
+          setActiveCellId(null);
+          if (inDrawer) setDrawerOpen(false);
+        };
+        // Already open: openSaved only focuses that tab, so the text is not needed.
+        if (state.tabs.some((t) => t.savedId === summary.id)) show({ ...summary, query_text: "" });
+        else withText(summary.id, show);
       }}
       onNew={() => {
         newTab();
@@ -566,7 +578,7 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
               tone="warning"
               action={
                 <div className="flex flex-wrap gap-1">
-                  <Button size="sm" onClick={() => setConflict({ tabId: tab.id, current: behind, mode: "remote" })}>
+                  <Button size="sm" onClick={() => withText(behind.id, (current) => setConflict({ tabId: tab.id, current, mode: "remote" }))}>
                     Show diff
                   </Button>
                   <Button size="sm" onClick={() => setReloading(behind)}>
@@ -632,7 +644,7 @@ export function NotebookConsole({ project, sources, readOnly }: { project: Proje
         open={reloading !== null}
         onClose={() => setReloading(null)}
         onConfirm={() => {
-          if (reloading) reloadTheirs(reloading);
+          if (reloading) withText(reloading.id, reloadTheirs);
         }}
         title={`Reload v${reloading?.version}?`}
         description={`Your unsaved edits in this tab are replaced by what ${reloading?.updated_by_email} saved.`}

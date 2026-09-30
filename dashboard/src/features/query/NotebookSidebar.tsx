@@ -4,7 +4,7 @@ import { FileCode, Folder, GitCommitVertical, History, MoreHorizontal, Pencil, P
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import { useQueryLog, useSavedQueries, useSavedQueryVersion, useSavedQueryVersions } from "../../api/hooks";
-import type { DataSource, DataSourceKind, Project, QueryRun, SavedQuery, SavedQueryVersion, SourceSchema } from "../../api/types";
+import type { DataSource, DataSourceKind, Project, QueryRun, SavedQuery, SavedQuerySummary, SavedQueryVersion, SourceSchema } from "../../api/types";
 import { useCurrentUser } from "../../auth/auth-context";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -27,7 +27,7 @@ type Props = {
   schema: UseQueryResult<SourceSchema | null>;
   /** Saved query of the active tab, highlighted in the list. */
   openSavedId: string | null;
-  onOpenSaved: (saved: SavedQuery) => void;
+  onOpenSaved: (saved: SavedQuerySummary) => void;
   onNew: () => void;
   onRenamed: (saved: SavedQuery) => void;
   onDeleted: (id: string) => void;
@@ -50,9 +50,9 @@ type Props = {
 const NO_FOLDER = "";
 
 /** Snippets grouped by folder (unfiled last), filtered by name or folder. */
-function groupSnippets(list: readonly SavedQuery[], query: string): [string, SavedQuery[]][] {
+function groupSnippets(list: readonly SavedQuerySummary[], query: string): [string, SavedQuerySummary[]][] {
   const q = query.trim().toLowerCase();
-  const groups = new Map<string, SavedQuery[]>();
+  const groups = new Map<string, SavedQuerySummary[]>();
   for (const s of list) {
     if (q && !s.name.toLowerCase().includes(q) && !(s.folder ?? "").toLowerCase().includes(q)) continue;
     const key = s.folder ?? NO_FOLDER;
@@ -120,15 +120,15 @@ function Snippets({
   const queryClient = useQueryClient();
   const list = useSavedQueries(project.id);
   const [filter, setFilter] = useState("");
-  const [renaming, setRenaming] = useState<SavedQuery | null>(null);
-  const [deleting, setDeleting] = useState<SavedQuery | null>(null);
+  const [renaming, setRenaming] = useState<SavedQuerySummary | null>(null);
+  const [deleting, setDeleting] = useState<SavedQuerySummary | null>(null);
   const groups = useMemo(() => groupSnippets(list.data ?? [], filter), [list.data, filter]);
   const invalidate = () => queryClient.invalidateQueries({ queryKey: qk.savedQueries(project.id) });
   // Phase 2: PATCH (rename, move) is for any developer+; DELETE stays with the snippet's owner or admin+.
-  const canDelete = (s: SavedQuery) => s.owner_id === user.id || can("admin");
+  const canDelete = (s: SavedQuerySummary) => s.owner_id === user.id || can("admin");
 
   const rename = useMutation({
-    mutationFn: async ({ snippet, name, folder }: { snippet: SavedQuery; name: string; folder: string | null }) => {
+    mutationFn: async ({ snippet, name, folder }: { snippet: SavedQuerySummary; name: string; folder: string | null }) => {
       try {
         return await api.savedQueries.update(project.id, snippet.id, { name, folder, version: snippet.version });
       } catch (e) {

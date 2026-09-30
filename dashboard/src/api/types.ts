@@ -737,6 +737,9 @@ export type SavedQuery = {
   updated_by_email: string;
 };
 
+/** A row of the (polled) snippet list: no `query_text`, fetch one snippet for that (A-123). */
+export type SavedQuerySummary = Omit<SavedQuery, "query_text">;
+
 export type SavedQueryInput = {
   name: string;
   folder?: string | null;

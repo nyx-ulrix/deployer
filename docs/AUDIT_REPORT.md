@@ -213,7 +213,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-120 **[LOW][bug]** PATCH saved query with explicit null name/kind crashes with 500 - `api/app/routers/saved_queries.py:63-70, 197-202` - reject null for those fields. (not verified)
 - [x] A-121 **[LOW][usability]** mongosh output over 8 MiB discards everything with no hint - `api/app/services/query_console.py:656-661` - suggest .limit()/a projection. (not verified)
 - [x] A-122 **[LOW][cleanup]** Audit summary and query-log outcome compute the same thing twice - `api/app/services/query_console.py:720-725` - delete summarize and use the run row. (not verified)
-- [ ] A-123 **[LOW][cleanup]** Saved-query list returns every snippet's full text and is polled every 30 s - `api/app/routers/saved_queries.py:169-178` - drop query_text from the list. (not verified)
+- [x] A-123 **[LOW][cleanup]** Saved-query list returns every snippet's full text and is polled every 30 s - `api/app/routers/saved_queries.py:169-178` - drop query_text from the list. (not verified)
 
 **Backups**
 - [ ] A-124 **[LOW][usability]** Error and alert text is raw tool output and internal job types - `api/app/services/alerts.py:130-132` - plain names and next steps; see also A-137. (not verified)

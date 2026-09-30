@@ -185,6 +185,8 @@ describe("versions", () => {
     expect(refreshSaved(dirty, v2)).toBe(dirty);
     expect(refreshSaved(dirty, v2, true).tabs[0]).toMatchObject({ version: 2, dirty: false, cells: [{ id: "z", text: "SELECT 9;" }] });
     expect(refreshSaved(clean, saved({ id: "other" }))).toBe(clean);
+    // A copy fetched after the poll can be older than what the tab now holds: never step back.
+    expect(refreshSaved(refreshed, saved())).toBe(refreshed);
   });
 
   it("isBehind compares the tab's version with the server's", () => {

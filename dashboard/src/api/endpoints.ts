@@ -87,6 +87,7 @@ import type {
   SavedQuery,
   SavedQueryInput,
   SavedQueryRestore,
+  SavedQuerySummary,
   SavedQueryUpdate,
   SavedQueryVersion,
   Role,
@@ -384,7 +385,8 @@ export const api = {
 
   // QUERY_EDITOR.md: snippets (POST needs developer+; PATCH/DELETE the snippet's owner or admin+).
   savedQueries: {
-    list: (pid: string) => client.get<SavedQuery[]>(`/projects/${e(pid)}/saved-queries`),
+    list: (pid: string) => client.get<SavedQuerySummary[]>(`/projects/${e(pid)}/saved-queries`),
+    get: (pid: string, id: string) => client.get<SavedQuery>(`/projects/${e(pid)}/saved-queries/${e(id)}`),
     create: (pid: string, body: SavedQueryInput) => client.post<SavedQuery>(`/projects/${e(pid)}/saved-queries`, body),
     update: (pid: string, id: string, body: SavedQueryUpdate) =>
       client.patch<SavedQuery>(`/projects/${e(pid)}/saved-queries/${e(id)}`, body),

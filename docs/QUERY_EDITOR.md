@@ -26,7 +26,8 @@ All under `/v1/projects/{project_id}`.
 | GET | `/query-log?source_id=&user=me\|all&limit=50&before=<created_at>&before_id=<id>` | viewer+ (`user=all` needs admin+) | – | `{runs: QueryRun[], has_more}` newest first; `query_text` truncated to 2 000 chars in list responses. Next page: pass the last row's `created_at` and `id` (keyset on both, so same-second runs are not skipped); `before` alone is a plain `created_at <` cutoff |
 | GET | `/query-log/{run_id}` | own run: viewer+; others: admin+ | – | `QueryRun` (full text) |
 | DELETE | `/query-log?before=<iso>` | owner | – | `{deleted: n}` |
-| GET | `/saved-queries` | viewer+ | – | `SavedQuery[]` (all of the project, folder-sorted) |
+| GET | `/saved-queries` | viewer+ | – | `SavedQuery[]` without `query_text` (all of the project, folder-sorted; the dashboard polls it every 30 s) |
+| GET | `/saved-queries/{id}` | viewer+ | – | `SavedQuery` incl. `query_text` (fetched when a snippet is opened, diffed or reloaded) |
 | POST | `/saved-queries` | developer+ | `{name, folder?, query_text, data_source_id?, kind}` | `SavedQuery` |
 | PATCH | `/saved-queries/{id}` | developer+ | partial, **`version` required** (see Phase 2) | `SavedQuery` |
 | DELETE | `/saved-queries/{id}` | owner of the snippet or admin+ | – | `{ok:true}` |

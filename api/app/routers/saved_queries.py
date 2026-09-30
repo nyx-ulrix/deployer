@@ -84,8 +84,10 @@ class RestoreBody(BaseModel):
     message: Message = None
 
 
-def saved_query_out(sq: SavedQuery, owner_email: str | None, updated_by_email: str | None) -> dict:
-    return {
+def saved_query_out(
+    sq: SavedQuery, owner_email: str | None, updated_by_email: str | None, *, with_text: bool = True
+) -> dict:
+    out = {
         "id": sq.id,
         "project_id": sq.project_id,
         "data_source_id": sq.data_source_id,
@@ -93,13 +95,15 @@ def saved_query_out(sq: SavedQuery, owner_email: str | None, updated_by_email: s
         "owner_email": owner_email or "",
         "name": sq.name,
         "folder": sq.folder,
-        "query_text": sq.query_text,
         "kind": sq.kind,
         "version": sq.version,
         "updated_by_email": updated_by_email or "",
         "created_at": iso(sq.created_at),
         "updated_at": iso(sq.updated_at),
     }
+    if with_text:
+        out["query_text"] = sq.query_text
+    return out
 
 
 def version_out(v: SavedQueryVersion, *, with_text: bool = False) -> dict:
@@ -160,8 +164,7 @@ def _check_version(db: DbSession, sq: SavedQuery, client_version: int) -> None:
 def _add_version(db: DbSession, sq: SavedQuery, user: User, text: str, message: str | None) -> None:
     """Append a version row with `text` and make it current (history is never rewritten)."""
     sq.version = (sq.version or 0) + 1
-    sq.query_text = text
-    sq.updated_at = utcnow()
+    sq.query_text = text  # updated_at follows via the column's onupdate
     db.add(
         SavedQueryVersion(
             saved_query_id=sq.id,
@@ -183,7 +186,13 @@ def list_saved_queries(access: Viewer, db: DbSession) -> list[dict]:
         .where(SavedQuery.project_id == access.project.id)
         .order_by(SavedQuery.folder.is_not(None), SavedQuery.folder, SavedQuery.name)
     ).all()
-    return [saved_query_out(sq, email, by) for sq, email, by in rows]
+    # No query_text: this list is polled every 30 s; the dashboard fetches one snippet's text on open (A-123).
+    return [saved_query_out(sq, email, by, with_text=False) for sq, email, by in rows]
+
+
+@router.get("/projects/{project_id}/saved-queries/{saved_query_id}")
+def get_saved_query(saved_query_id: str, access: Viewer, db: DbSession) -> dict:
+    return _out(db, _load(db, access, saved_query_id))
 
 
 @router.post("/projects/{project_id}/saved-queries", status_code=201)

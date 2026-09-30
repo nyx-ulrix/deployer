@@ -66,6 +66,11 @@ def test_crud_and_validation(client, db, project_setup):  # noqa: F811
 
     listed = client.get(url, headers=project_setup["viewer"]).json()
     assert [(q["folder"], q["name"]) for q in listed] == [(None, "a"), (None, "b"), ("reports", "Top items")]
+    # A-123: the polled list carries no text; one snippet's GET does.
+    assert all("query_text" not in q for q in listed)
+    one = client.get(f"{url}/{body['id']}", headers=project_setup["viewer"])
+    assert one.status_code == 200 and one.json()["query_text"] == doc and one.json()["version"] == 1
+    assert client.get(f"{url}/nope", headers=project_setup["viewer"]).status_code == 404
 
     db.expire_all()
     before = db.get(SavedQuery, body["id"]).updated_at
@@ -138,6 +143,7 @@ def test_permissions(client, db, project_setup, make_user, make_project, auth_he
     foreign = f"/v1/projects/{other.id}/saved-queries/{mine['id']}"
     assert client.patch(foreign, json={"name": "x", **v1}, headers=auth_headers(stranger)).status_code == 404
     assert client.delete(foreign, headers=auth_headers(stranger)).status_code == 404
+    assert client.get(foreign, headers=auth_headers(stranger)).status_code == 404
     assert client.get(url).status_code == 401
 
     assert client.delete(f"{url}/{mine['id']}", headers=project_setup["owner"]).status_code == 200
@@ -180,9 +186,11 @@ def test_export_and_imports_carry_saved_queries(client, db, project_setup, make_
     [new_project] = ok.json()["projects"]
     copied = client.get(f"/v1/projects/{new_project['id']}/saved-queries", headers=auth_headers(importer)).json()
     assert len(copied) == 1 and copied[0]["id"] != snippet.id and copied[0]["owner_id"] == importer.id
-    assert (
-        copied[0]["name"] == "Daily" and copied[0]["folder"] == "reports" and copied[0]["query_text"] == '{"cells":[]}'
-    )
+    assert copied[0]["name"] == "Daily" and copied[0]["folder"] == "reports"
+    text = client.get(
+        f"/v1/projects/{new_project['id']}/saved-queries/{copied[0]['id']}", headers=auth_headers(importer)
+    ).json()["query_text"]
+    assert text == '{"cells":[]}'
     new_source = db.scalar(select(DataSource.id).where(DataSource.project_id == new_project["id"]))
     assert copied[0]["data_source_id"] == new_source and copied[0]["created_at"] == "2026-01-02T03:04:05Z"
 

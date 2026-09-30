@@ -166,10 +166,11 @@ export function attachSaved(state: NotebookState, id: string, saved: Pick<SavedQ
 /**
  * The server has a newer copy of a tab's saved query: take its name, folder, text and version. A dirty tab is
  * left alone (the user decides in the UI) unless `force` — "Reload theirs" after a conflict, or a restore.
+ * Unforced, a copy that is not newer than the tab's version is ignored (a fetch can lose a race with a save).
  */
 export function refreshSaved(state: NotebookState, saved: SavedQuery, force = false): NotebookState {
   const tab = state.tabs.find((t) => t.savedId === saved.id);
-  if (!tab || (tab.dirty && !force)) return state;
+  if (!tab || (!force && (tab.dirty || !isBehind(tab, saved)))) return state;
   return patchTab(state, tab.id, { name: saved.name, folder: saved.folder, version: saved.version, cells: parseDocument(saved.query_text), dirty: false });
 }
 
