@@ -1,4 +1,4 @@
-﻿# Deployer audit - 2026-09-28
+# Deployer audit - 2026-09-28
 
 ## Executive summary
 
