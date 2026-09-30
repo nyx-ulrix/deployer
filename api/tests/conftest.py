@@ -38,9 +38,11 @@ fixture from a test module and renaming it there breaks unrelated tests.
 - tests/devices_support.py – `make_device`, `fake_device`.
 """
 
+import atexit
 import base64
 import os
 import secrets
+import shutil
 import sys
 import tempfile
 import types
@@ -49,6 +51,8 @@ from pathlib import Path
 import pytest
 
 _tmpdir = Path(tempfile.mkdtemp(prefix="deployer-tests-"))
+# Runs after pytest's session teardown has disposed the engine, so the SQLite file is closed by then.
+atexit.register(shutil.rmtree, _tmpdir, ignore_errors=True)
 os.environ["DATABASE_URL_OVERRIDE"] = os.environ.get("DEPLOYER_TEST_DATABASE_URL") or (
     f"sqlite:///{(_tmpdir / 'test.db').as_posix()}"
 )
