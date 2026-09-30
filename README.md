@@ -221,17 +221,29 @@ URLs in both OAuth apps. Client secrets are stored encrypted with your installat
 
 ## Deploy an app
 
-Project → **Deploys** → *New app*: name, GitHub repository URL (+ a fine-grained token with
-*Contents: read* for private repositories), branch, a preset (`static`, `node`, `python` or
-`dockerfile`), environment variables and optionally one of the project's API keys (injected as
-`DEPLOYER_API_KEY` next to `DEPLOYER_URL` and `DEPLOYER_PROJECT_ID`). *Deploy now* clones, builds
-(BuildKit) and starts the app; it is served on `http://localhost:<port>` (ports 8100-8199, LAN when
-enabled) and on any hostname you add under the app's **Domains** once Cloudflare is linked.
+1. Project → **Deploys** → *New app* → **Connect GitHub** (once per user; needs the GitHub sign-in
+   app from [Google and GitHub sign-in](#google-and-github-sign-in-your-own-oauth-apps)), then pick a
+   repository - private ones included. Deployer reads it and fills in the preset (`static`, `node`,
+   `python` or `dockerfile`), build commands and the environment variable names from `.env.example`.
+2. Check the settings, fill in the environment values, optionally attach one of the project's API
+   keys (injected as `DEPLOYER_API_KEY` next to `DEPLOYER_URL` and `DEPLOYER_PROJECT_ID`), and click
+   **Create & deploy**. Deployer clones, builds (BuildKit) and starts the app; it is served on
+   `http://localhost:<port>` (ports 8100-8199, LAN when enabled) and on any hostname you add under
+   the app's **Domains** once Cloudflare is linked.
+3. **Push-to-deploy** needs a public address: GitHub cannot deliver webhooks to `localhost` or a
+   LAN address. Set one up under *Settings → Domains & remote access* (see
+   [Reaching Deployer from other devices](#reaching-deployer-from-other-devices)); Deployer then
+   adds the repository's push webhook for you, also for apps created before the public address
+   existed. Until then, deploy with **Deploy now** on the app page.
 
-For push-to-deploy, copy the webhook URL and secret from the app's **Settings** into the GitHub
-repository (*Settings → Webhooks*, content type `application/json`, just the push event). Every push
-to the configured branch becomes a deployment; a failed build or start leaves the previous one
-running, and older successful deployments can be rolled back to. Details: [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md).
+Every push to the configured branch then becomes a deployment; a failed build or start leaves the
+previous one running, and older successful deployments can be rolled back to.
+
+Without the GitHub connection (no GitHub sign-in app, or a non-GitHub host), paste the repository
+URL instead (+ a fine-grained token with *Contents: read* for private repositories) and, once you
+have a public address, add the webhook by hand: copy its URL and secret from the app's **Settings**
+into the repository's *Settings → Webhooks* (content type `application/json`, just the push event).
+Details: [docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md).
 
 To serve an app from the cloud instead (it keeps running when this PC is off), the instance owner
 connects an AWS or Firebase account under *Settings → Cloud accounts*, and a project admin picks the

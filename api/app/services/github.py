@@ -234,8 +234,8 @@ def unreachable_reason(url: str) -> str | None:
     if not private:
         return None
     return (
-        f"GitHub can't reach {parts.scheme}://{parts.netloc} — set up a public URL (Settings → Domains) "
-        "to deploy on push"
+        f"GitHub can't reach {parts.scheme}://{parts.netloc} — set up a public URL "
+        "(Settings → Domains & remote access) to deploy on push"
     )
 
 

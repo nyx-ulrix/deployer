@@ -195,8 +195,8 @@ The New app dialog starts with **Choose a repository**; everything it fills in s
    `POST /instance/remote-access/public-url`) re-points the hooks of all connected apps, so an app
    created before remote access was set up starts deploying on push once it is. When the public URL
    is `localhost` or a private address the hook is skipped and the response carries the warning
-   "GitHub can't reach http://localhost:8080 — set up a public URL (Settings → Domains) to deploy on
-   push"; a GitHub error becomes a warning too. The app is created either way and the manual webhook
+   "GitHub can't reach http://localhost:8080 — set up a public URL (Settings → Domains & remote
+   access) to deploy on push"; a GitHub error becomes a warning too. The app is created either way and the manual webhook
    instructions in Settings still apply.
 
 Migration `0009_github_connections`: `github_connections (id, user_id unique FK CASCADE,
@@ -355,7 +355,7 @@ add the hostname again on the new one.
   **Runtime logs** panel (tail, refresh); **Settings** (edit everything, env values masked with
   reveal for admins, webhook URL + secret reveal/rotate with GitHub instructions: repo → Settings →
   Webhooks → payload URL, content type `application/json`, secret, "Just the push event"); **Domains**
-  (add hostname when Cloudflare is linked, else a link to Settings → Domains); **Delete app** (confirm).
+  (add hostname when Cloudflare is linked, else a link to Settings → Domains & remote access); **Delete app** (confirm).
 - Overview tab quick link "Deploys"; the `deploy-website` skill gains the option "this Deployer
   instance" as a real target.
 

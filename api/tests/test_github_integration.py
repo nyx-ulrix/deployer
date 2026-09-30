@@ -332,7 +332,8 @@ def test_localhost_public_url_warns_and_skips_hook(client, env, gh, db):
     assert resp.status_code == 201
     out = resp.json()
     assert out["warnings"] == [
-        "GitHub can't reach http://localhost:8080 — set up a public URL (Settings → Domains) to deploy on push"
+        "GitHub can't reach http://localhost:8080 — set up a public URL "
+        "(Settings → Domains & remote access) to deploy on push"
     ]
     assert out["github"]["hook_active"] is False and gh.calls == []
     # A manual (non-connection) app has no github block and no warnings.
