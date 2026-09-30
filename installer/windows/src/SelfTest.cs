@@ -157,7 +157,7 @@ namespace DeployerSetup
             Dictionary<string, string> arp = Integration.UninstallEntryStrings(@"C:\Deployer");
             Check(arp["UninstallString"] == "\"C:\\Deployer\\" + AppInfo.ControlExeName + "\" /uninstall" && !arp.ContainsKey("QuietUninstallString"),
                   "Apps & Features has no QuietUninstallString, since /uninstall is interactive (A-157)");
-            Check(AppInfo.CompareVersions("0.10.0", "0.9.9") > 0 &&AppInfo.CompareVersions("v0.3.0", "0.3.0") == 0
+            Check(AppInfo.CompareVersions("0.10.0", "0.9.9") > 0 && AppInfo.CompareVersions("v0.3.0", "0.3.0") == 0
                   && AppInfo.CompareVersions("0.3.0", "0.3.0-rc.1") > 0 && AppInfo.CompareVersions("main", "0.0.1") < 0
                   && InstallLocator.IsUpdate("0.4.0", "0.3.0", "0.3.0") && InstallLocator.IsUpdate("0.4.0", null, null)
                   && !InstallLocator.IsUpdate("0.3.0", "0.3.0", "0.3.0") && !InstallLocator.IsUpdate("0.4.0", "0.3.0", "0.5.0")
