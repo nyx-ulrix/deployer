@@ -244,7 +244,7 @@ Setup copies it to `%ProgramData%\Deployer\DeployerControl.exe` and adds two Sta
   *Off* until you enable remote access).
 - **Open Deployer**, **Start**, **Stop**, **Restart**.
 - **Update** - takes a backup, then installs the latest release (`deployer update`); like **Back up now**
-  it is available only while Deployer is running, since the backup needs it. This updates the
+  it needs Deployer's database running (so not while stopped), but works while it is *Not responding*. This updates the
   services, not the Deployer Control app: to get a newer Deployer Control, run the newer release's
   `DeployerSetup.exe` and choose *Update Deployer to vX*.
 - **Back up now** - database dumps plus a copy of `.env` in the `backups` folder (`deployer backup`).

@@ -118,8 +118,8 @@ namespace DeployerSetup
             Check(SystemChecks.MemoryCheck(4).Title.Contains("about 2 GB is available to Deployer; expect 1-2 small apps")
                   && SystemChecks.MemoryCheck(3).Detail.Contains("exit code 137"), "memory check says how much WSL gives Deployer (A-070)");
             using (ControlForm running = ControlSample(1f, 0), stopped = ControlSample(1f, 1), broken = ControlSample(1f, 3))
-                Check(running.updateButton.Enabled && !stopped.updateButton.Enabled && !broken.updateButton.Enabled,
-                      "Update is enabled only while Deployer is running (A-076)");
+                Check(running.updateButton.Enabled && !stopped.updateButton.Enabled && broken.updateButton.Enabled,
+                      "Update needs the database running, not a healthy API (A-076)");
             Check(AppInfo.CompareVersions("0.10.0", "0.9.9") > 0 && AppInfo.CompareVersions("v0.3.0", "0.3.0") == 0
                   && AppInfo.CompareVersions("0.3.0", "0.3.0-rc.1") > 0 && AppInfo.CompareVersions("main", "0.0.1") < 0
                   && InstallLocator.IsUpdate("0.4.0", "0.3.0", "0.3.0") && InstallLocator.IsUpdate("0.4.0", null, null)

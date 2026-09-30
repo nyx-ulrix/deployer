@@ -425,6 +425,14 @@ namespace DeployerSetup
             }
         }
 
+        /// <summary>The backup (and so Update) dumps from the database container, not through the API, so it
+        /// also works while the API is not responding - where an update may be the fix.</summary>
+        bool CanBackUp(RunState st)
+        {
+            return st == RunState.Running
+                || (st == RunState.NotResponding && status.Services.Any(s => s.Name == "mariadb" && s.State == "running"));
+        }
+
         internal void UpdateView()
         {
             if (pill == null) return;
@@ -489,9 +497,9 @@ namespace DeployerSetup
             startButton.Enabled = !busy && st != RunState.Running;
             stopButton.Enabled = !busy && st != RunState.Stopped;
             restartButton.Enabled = !busy;
-            backupButton.Enabled = !busy && st == RunState.Running;
+            backupButton.Enabled = !busy && CanBackUp(st);
             // Update backs up first, and the backup needs the containers running (A-076).
-            updateButton.Enabled = !busy && st == RunState.Running;
+            updateButton.Enabled = !busy && CanBackUp(st);
             settingsButton.Enabled = !busy && status != null && status.Installed;
             deviceButton.Enabled = !busy && !deviceBusy && st == RunState.Running;
             uninstallButton.Enabled = !busy;
@@ -1061,7 +1069,7 @@ namespace DeployerSetup
                 if (item.Text == "Start") item.Enabled = !busy && st != RunState.Running;
                 if (item.Text == "Stop") item.Enabled = !busy && st != RunState.Stopped;
                 if (item.Text == "Restart") item.Enabled = !busy;
-                if (item.Text == "Back up now" || item.Text == "Update…") item.Enabled = !busy && st == RunState.Running;
+                if (item.Text == "Back up now" || item.Text == "Update…") item.Enabled = !busy && CanBackUp(st);
             }
         }
 
