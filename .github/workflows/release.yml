@@ -4,15 +4,18 @@ on:
   push:
     tags: ["v*"]
 
-# Only the repository's own GITHUB_TOKEN is used - no personal secrets.
+# Only the repository's own GITHUB_TOKEN is used - no personal secrets. Read-only by default; each job
+# asks for the one write scope it needs, so the signing job (which holds the PFX) cannot push anything.
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   images:
     name: Build and push images
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     strategy:
       matrix:
         include:
@@ -120,6 +123,8 @@ jobs:
     name: Deploy bundle + GitHub release
     runs-on: ubuntu-latest
     needs: [images, setup-exe]
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
