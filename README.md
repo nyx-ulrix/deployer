@@ -454,7 +454,9 @@ It embeds `installer\install.ps1`, `deployer.ps1` and the git-tracked files in `
 
 Releases (`v*` tags) publish `ghcr.io/<owner>/deployer-api`, `-dashboard` and `-tunnel`, a
 `deployer-deploy.zip` and `DeployerSetup.exe` (signed only if the repository has the
-`WINDOWS_SIGNING_PFX` / `WINDOWS_SIGNING_PASSWORD` secrets). The dashboard image's links to docs
+`WINDOWS_SIGNING_PFX` / `WINDOWS_SIGNING_PASSWORD` secrets), but only after the full CI suite passes
+on the tag. A pre-release tag (`v1.2.3-rc.1`) gets no `latest` image tag and is marked as a GitHub
+pre-release, so installs without `-Ref` never pick it up. The dashboard image's links to docs
 and the agent skill point at the release tag, so they describe the installed version (builds from
 source link to `main`). On a fork, make the three GHCR packages **public** after the first release
 so installers can pull them anonymously (otherwise the installer falls back to building from source).
