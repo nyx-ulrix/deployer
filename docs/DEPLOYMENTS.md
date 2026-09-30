@@ -361,8 +361,8 @@ add the hostname again on the new one.
   reveal for admins, webhook URL + secret reveal/rotate with GitHub instructions: repo → Settings →
   Webhooks → payload URL, content type `application/json`, secret, "Just the push event"); **Domains**
   (add hostname when Cloudflare is linked, else a link to Settings → Domains & remote access); **Delete app** (confirm).
-- Overview tab quick link "Deploys"; the `deploy-website` skill gains the option "this Deployer
-  instance" as a real target.
+- Overview tab quick link "Deploys"; the `deploy-website` skill offers "this Deployer instance" as a
+  target.
 
 ## Tests
 

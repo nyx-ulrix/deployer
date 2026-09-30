@@ -292,7 +292,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-183 **[LOW][docs]** The skill and architecture docs contradict themselves on apps running on other PCs - `skills/deploy-website/SKILL.md:128, 134, 237` - reword row 134; move the Deployer rows; fix ARCHITECTURE.md:131.
 - [x] A-184 **[LOW][docs]** REMOTE_ACCESS.md Domain type and data model are stale - `docs/REMOTE_ACCESS.md:151-153, 169-173` - dashboard/app/cloud_app plus the missing fields. (not verified)
 - [x] A-185 **[LOW][docs]** The roadmaps in README and ARCHITECTURE disagree and both are stale - `README.md:359-370` - keep one. (not verified)
-- [ ] A-186 **[LOW][cleanup]** Shipped docs still contain stale planning notes and to-do lists - `docs/QUERY_EDITOR.md:69-101, 115-134` - describe the Notebook/Terminal modes; delete the plans. (not verified)
+- [x] A-186 **[LOW][cleanup]** Shipped docs still contain stale planning notes and to-do lists - `docs/QUERY_EDITOR.md:69-101, 115-134` - describe the Notebook/Terminal modes; delete the plans. (not verified)
 - [ ] A-187 **[LOW][docs]** The doc indexes in ARCHITECTURE and CONTRIBUTING are incomplete - `docs/ARCHITECTURE.md:49` - one full index in README. (not verified)
 - [ ] A-188 **[LOW][docs]** The version is stuck at 0.1.0, yet the skill tells agents to read it from /v1/health - `skills/deploy-website/SKILL.md:114-115` - set it from the release tag. (not verified)
 - [ ] A-189 **[LOW][test]** No check that documented endpoints match the router - `docs/API.md:1-19` - a pytest that parses the doc tables against app.routes. (not verified)

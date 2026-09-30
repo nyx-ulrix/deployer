@@ -1,8 +1,8 @@
-# Query Editor (Supabase-style) & Query Log
+# Query Notebook, Saved Queries & Query Log
 
-Extends the Query Console ([QUERY_CONSOLE.md](QUERY_CONSOLE.md)). The **Editor** layout becomes a
-Supabase-style SQL editor that works for both SQL and NoSQL data sources, with **saved queries**
-(snippets) and a **server-side query log** of every command run through the console (both layouts).
+Extends the Query Console ([QUERY_CONSOLE.md](QUERY_CONSOLE.md)) with a **Notebook** mode next to the
+**Terminal** mode, for both SQL and NoSQL data sources, with **saved queries** (snippets, versioned) and
+a **server-side query log** of every command run through the console (both modes).
 
 ## Data model (migration `0003_query_editor`)
 
@@ -68,40 +68,45 @@ instance import restores them as-is (only for saved queries that made it).
 Audit stays as before (counts only); the query log is the record of the commands themselves. Export
 (`/projects/export`, instance export) includes `saved_queries` and `saved_query_versions`; `query_runs` are not exported.
 
-## Dashboard — Editor layout (Supabase-style)
+## Dashboard — Query tab modes
 
-Three-pane layout under the Query tab when the mode is **Editor**:
+The Query tab has two layouts, switched by the **Terminal / Notebook** toggle in its toolbar or under
+Account settings → *Query console* (per browser; default Terminal; the Notebook mode's stored value is
+`"editor"`, which is also the `layout` its runs log). Both share the source selector, rows and timeout
+selects, the viewer *read-only* badge and the result renderers from [QUERY_CONSOLE.md](QUERY_CONSOLE.md).
 
-- **Left sidebar** (collapsible, 260 px): search box; **Snippets** grouped by folder (create folder by
-  typing `folder/name` when saving; rename, move, delete via a row menu; "New query" button); below
-  it **History**: this user's recent runs for the selected source (from `/query-log?user=me`), each
-  showing the first line, status dot, duration and relative time; click loads it into a new tab.
-  Admins get a "Show everyone's" toggle; owners get **Clear query history** (trash icon, confirm), which
-  deletes the whole project's log (`DELETE /query-log?before=now`). Below history: **Schema** tree (tables/collections → columns)
-  with click-to-insert, from the existing schema endpoint.
-- **Tabs** across the top of the editor: one per open snippet or untitled query (`Untitled 1`, …),
-  unsaved dot, close button, middle-click close; tabs and their contents persist per project in
-  `localStorage`. Each tab remembers its data source.
-- **Toolbar**: data source selector (SQL/NoSQL badges, device badge, status), **Run** (Ctrl/Cmd+Enter;
-  runs the selection when one exists, with the "Run selection" hint), Save (Ctrl/Cmd+S → name/folder
-  dialog on first save), rows and timeout selects, Format (SQL only, client-side using the existing
-  formatter if present, otherwise skip), read-only badge for viewers, layout switch to Terminal.
-- **Editor**: CodeMirror with the existing highlighting/completion; larger, resizable split with the
-  results pane (drag handle; persisted).
-- **Results pane** with tabs **Results** / **Messages** / **Log**:
-  - *Results*: one section per statement (collapsible headers `1 · SELECT … · 12 rows · 8 ms`);
-    grid with sticky header, column type hints, client-side pagination (100 per page), column
-    resize, cell click to expand, copy cell/row; for MongoDB the document batch as a grid (union of
-    top-level keys, nested values shown as JSON) with a JSON toggle; Export CSV/JSON; "truncated at N"
-    notice with a button to rerun with a larger limit.
-  - *Messages*: status lines like Supabase (`Success. 3 rows returned in 8 ms`, `Query OK, 2 rows
-    affected`, shell `output`, errors in red with the failing statement highlighted in the editor).
-  - *Log*: the project's query log (`/query-log`), filterable by source/status/user (admin+), with
-    "Load into editor" and a details drawer (full text, error).
-- Phone width: sidebar becomes a drawer, results stack under the editor.
+### Terminal
 
-The Terminal layout is unchanged except that it also sends `layout: "terminal"` and its `\history`
-now reads from the server log for the selected source.
+A shell-style transcript with the prompt pinned at the bottom (`main-sql›`), like the mysql and mongosh
+clients. Enter runs once the SQL ends with `;` or the MongoDB code has balanced brackets (Shift+Enter
+adds a newline, Ctrl/Cmd+Enter always runs); ↑/↓ browse this browser's history for the source (last
+50, `localStorage`); built-ins `\use <name>`, `\list`, `\rows <n>`, `\timeout <s>`, `\clear`, `\help`;
+a Tables/Collections panel; **Copy transcript**. Runs send `layout: "terminal"`.
+
+### Notebook
+
+One scrolling document per tab: a *cell* per command with its output (result grid, Mongo output,
+errors) directly below it, then the next cell.
+
+- **Cells**: run (Ctrl/Cmd+Enter; Shift+Enter runs and moves to the next cell, adding one at the end),
+  cancel, move up/down, add below, delete (confirmed when it has text), collapse the output. **Run
+  all** runs top to bottom and stops at the first failure. Outputs stay in memory only.
+- **Tabs**: one per open document (`Untitled N` or a snippet name), unsaved dot, close (confirmed when
+  dirty), New tab. Tabs, their cells and each tab's data source persist per project in `localStorage`
+  (`deployer.notebook.<project>`, text only).
+- **Saving** (developer+): Save (Ctrl/Cmd+S; name/folder dialog the first time, `folder/name` sets the
+  folder) and Save as…, with an optional "What changed?" message. A document is stored as
+  `query_text = {"cells":[{id,text}]}`; a plain-text snippet opens as one cell.
+- **Collaboration** (Phase 2 above): the snippet list is polled every 30 s; a clean tab follows a
+  teammate's newer version silently, a dirty one shows a banner (view diff / reload theirs / keep
+  editing). A save or restore that loses the race (`409 version_conflict`) opens a diff with *Reload
+  theirs* or *Keep mine* (saves on top as the next version). No silent overwrites.
+- **Sidebar** (260 px, collapsible; a drawer below desktop width): **Snippets** grouped by folder
+  with search, rename/delete row menu and New query; **Versions** of the active tab's snippet (author,
+  message, time, diff against the tab, restore as a new version); **History** of this user's runs on
+  the selected source from `/query-log?user=me` (admins: *Show everyone's*; owners: *Clear query
+  history*, which deletes the whole project's log), click inserts the text as a new cell; **Schema**
+  tree, click inserts a starter query into the active cell.
 
 ## Tests
 
@@ -112,26 +117,6 @@ now reads from the server log for the selected source.
   (409/422), two developers editing the same snippet, viewer 403, restore (new version, 409 when
   stale, 404 unknown), list order and `chars`, delete cascades, export/import carry versions,
   migration `0004` backfill on a scratch SQLite database.
-- Dashboard: tabs store, snippet folder parsing (`folder/name`), pagination helper, message
-  formatting, history mapping; typecheck/lint/test/build green.
-
-## Revised direction (2026-09-18, user)
-
-Build order after the weekly reset, in this priority:
-
-1. **Notebook-style editor for SQL and NoSQL** ("like the MariaDB client in a terminal"): each
-   command and its output are stacked vertically in one scrolling document — a *cell* per command
-   with the result grid / shell output directly below it, then the next command below that. Cells can
-   be re-run, edited and deleted; the whole document is a saved query file. **Tabs** let the user
-   switch between open files. This replaces the split editor/results layout above; the Terminal
-   layout stays as the second mode. Everything else in this spec (saved queries, folders, sidebar,
-   history, schema tree, server-side log of every command, results pane features) applies per cell.
-2. **Collaboration with strict version control** on those files: project members open the same
-   files from the same Deployer; every save creates a `saved_query_versions` row
-   (`id, saved_query_id, version, query_text, author_id, author_email, message, created_at`);
-   `PATCH /saved-queries/{id}` requires the client's `version` and answers `409 version_conflict`
-   with the current version when someone else saved first (the UI shows a diff and lets the user
-   merge/reload); version list, diff between versions, restore-as-new-version, and who-changed-what
-   in the sidebar; edits limited by project roles (viewer read-only). No silent overwrites, ever.
-3. **Deploy pipeline ("Vercel functions")** — only after the user's explicit go-ahead once 1 and 2
-   are done (phase 4 in ARCHITECTURE.md).
+- Dashboard: `notebook.test.ts` (document ⇄ `query_text`, cells, tabs, versions, `folder/name`
+  parsing, history rows, persistence), `NotebookConsole.test.tsx` (cell output), `terminal.test.ts`
+  (prompt, commands, Enter rule, ↑/↓ history, shell-style output), `diff.test.ts`.

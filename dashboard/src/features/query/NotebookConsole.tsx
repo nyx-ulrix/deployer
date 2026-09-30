@@ -103,7 +103,7 @@ function initialState(projectId: string): NotebookState {
 }
 
 /**
- * Notebook layout (QUERY_EDITOR.md → Revised direction): tabs of documents, each a stack of cells with
+ * Notebook layout (QUERY_EDITOR.md → Notebook): tabs of documents, each a stack of cells with
  * the cell's output right below it, like a database shell you can edit and re-run.
  */
 export function NotebookConsole({ project, sources, readOnly }: { project: Project; sources: DataSource[]; readOnly: boolean }) {

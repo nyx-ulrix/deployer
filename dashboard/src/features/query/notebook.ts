@@ -5,7 +5,7 @@ import { readJson, writeStorage } from "../../lib/storage";
 import { newId } from "./history";
 import { formatMs } from "./results";
 
-// Notebook layout (docs/QUERY_EDITOR.md → Revised direction): a document is an ordered list of cells,
+// Notebook layout (docs/QUERY_EDITOR.md → Notebook): a document is an ordered list of cells,
 // one command each; open documents are tabs. Everything here is pure so it can be unit-tested.
 
 export type NotebookCell = { id: string; text: string };

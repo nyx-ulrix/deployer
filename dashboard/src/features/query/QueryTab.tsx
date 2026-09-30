@@ -33,7 +33,7 @@ export default function QueryTab() {
     );
   }
   const readOnly = !can("developer");
-  // "editor" is the stored value of the notebook mode (QUERY_EDITOR.md → Revised direction).
+  // "editor" is the stored value of the notebook mode (QUERY_EDITOR.md → Notebook).
   return mode === "terminal" ? (
     <TerminalQueryConsole key={project.id} project={project} sources={sources.data} readOnly={readOnly} />
   ) : (

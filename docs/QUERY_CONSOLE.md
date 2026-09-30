@@ -179,7 +179,8 @@ null when the run was refused or failed before anything ran), `read_only` (bool)
 ## Dashboard
 
 New project tab **Query** at `/projects/:projectId/query` (viewer+; viewers see a *read-only* badge and
-their write queries are refused by the API).
+their write queries are refused by the API). It has two modes, **Terminal** and **Notebook**, described in
+[QUERY_EDITOR.md](QUERY_EDITOR.md); the pieces below are what they share.
 
 - **Database selector**: every data source of the project (name, engine badge, SQL/NoSQL, "on
   <device>" badge, status dot). Selection persisted per project in `localStorage`. Switching sources
@@ -205,10 +206,3 @@ their write queries are refused by the API).
   errors as toasts + inline. Works at phone width (editor above results, sidebar collapses).
 - Tests (vitest): history store, CSV export, statement/result helpers, viewer read-only detection
   used for the badge.
-
-## Docs & repo
-
-- `docs/API.md`: add the console to the feature table.
-- `docs/DEVICES.md`: op `query`.
-- `README.md`: feature bullet "Query console: SQL and MongoDB shell in the browser, per database".
-- `api/Dockerfile`: `mongosh` (pinned, SHA256 verified).

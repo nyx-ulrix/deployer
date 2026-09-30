@@ -59,7 +59,7 @@ Source of truth: `api/app/models.py`.
 | `users` | accounts; `password_hash` nullable (OAuth-only users); first user is `is_instance_owner` |
 | `user_identities` | linked Google/GitHub identities (`provider`, `provider_user_id`) |
 | `refresh_tokens` | hashed rotating refresh tokens, grouped by `family_id` for reuse detection |
-| `projects` | a project groups data sources, members, API keys, (later) deployments |
+| `projects` | a project groups data sources, members, API keys and apps (deployments) |
 | `project_members` | `owner` / `admin` / `developer` / `viewer` |
 | `project_invites` | hashed single-use invite tokens (optional email lock) |
 | `data_sources` | SQL and/or NoSQL databases attached to a project — `managed` (on this host) or `external` (e.g. Atlas, remote MySQL/Postgres); connection config encrypted |

@@ -74,7 +74,7 @@ function SectionHeader({ icon, title, count, children }: { icon: React.ReactNode
 
 const section = "flex flex-col overflow-hidden rounded-xl border border-border bg-surface shadow-xs";
 
-/** Snippets, this user's history for the selected source and the schema tree (QUERY_EDITOR.md → sidebar). */
+/** Snippets, this user's history for the selected source and the schema tree (QUERY_EDITOR.md → Notebook → Sidebar). */
 export function NotebookSidebar({
   project,
   source,
