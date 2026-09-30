@@ -45,6 +45,7 @@ def test_anon_key_reads_but_cannot_write(client, db, setup):
 
     denied = client.post(setup["rows"], json={"values": {"name": "new"}}, headers=h)
     assert denied.status_code == 403 and denied.json()["error"]["code"] == "forbidden"
+    assert "anon key is read-only; use a service key" in denied.json()["error"]["message"]  # A-196
 
     db.expire_all()
     assert db.get(ApiKey, key["id"]).last_used_at is not None

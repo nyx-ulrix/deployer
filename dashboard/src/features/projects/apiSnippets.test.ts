@@ -16,6 +16,7 @@ const input: SnippetInput = {
   kind: "sql",
   entity: "users",
   key: null,
+  role: "service",
 };
 
 describe("joinUrl", () => {
@@ -56,6 +57,17 @@ describe("buildSnippets", () => {
       const bodyOf = (code: string) => JSON.parse(/-d '(.*)'$/.exec(code)?.[1] ?? "");
       expect(bodyOf(curl[1].code)).toEqual(bodies.insert);
       expect(bodyOf(curl[2].code)).toEqual(bodies.query);
+    }
+  });
+});
+
+describe("buildSnippets roles", () => {
+  it("shows anon keys only the read snippet, since writes and queries return 403 (A-196)", () => {
+    for (const { value } of SNIPPET_LANGS) {
+      const anon = buildSnippets(value, { ...input, role: "anon" });
+      expect(anon.map((s) => s.title)).toEqual(["List rows"]);
+      expect(anon[0].code).not.toContain("POST");
+      expect(buildSnippets(value, input).map((s) => s.title)).toEqual(["List rows", "Insert a row", "Run a query"]);
     }
   });
 });

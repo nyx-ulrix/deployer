@@ -172,6 +172,8 @@ def require_role(minimum: str, *, api_keys: bool = False):
         else:
             access = load_project_access(db, get_current_user(request, db), project_id)
         if not access.at_least(minimum):
+            if access.is_anon_key:  # A-196: say what to do, not which internal role the key maps to
+                raise forbidden("This anon key is read-only; use a service key to change data")
             raise forbidden(f"Requires the {minimum} role or higher on this project")
         return access
 

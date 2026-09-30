@@ -1,4 +1,4 @@
-import type { DataSourceKind } from "../../api/types";
+import type { ApiKeyRole, DataSourceKind } from "../../api/types";
 
 /** Shown in snippets until the key has been revealed in this session. */
 export const KEY_PLACEHOLDER = "dpl_…";
@@ -21,6 +21,8 @@ export type SnippetInput = {
   entity: string;
   /** The revealed secret, or `null` for the placeholder. */
   key: string | null;
+  /** anon keys are read-only (403 on writes and queries), so they only get the read snippet (A-196). */
+  role: ApiKeyRole;
 };
 
 export type Snippet = { title: string; code: string };
@@ -46,10 +48,12 @@ function requests(input: SnippetInput): Req[] {
   const items = kind === "sql" ? `${source}/tables/${entity}/rows` : `${source}/collections/${entity}/documents`;
   const noun = kind === "sql" ? "row" : "document";
   const bodies = snippetBodies(kind);
+  const list: Req = { title: `List ${noun}s`, method: "GET", path: `${items}?limit=50` };
+  if (input.role === "anon") return [list];
   return [
-    { title: `List ${noun}s`, method: "GET", path: `${items}?limit=50` },
-    { title: `Insert a ${noun} (service key)`, method: "POST", path: items, body: bodies.insert },
-    { title: "Run a query (service key)", method: "POST", path: `${source}/query`, body: bodies.query },
+    list,
+    { title: `Insert a ${noun}`, method: "POST", path: items, body: bodies.insert },
+    { title: "Run a query", method: "POST", path: `${source}/query`, body: bodies.query },
   ];
 }
 

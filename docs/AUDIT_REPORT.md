@@ -306,7 +306,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 
 **Non-expert usability**
 - [x] A-195 **[LOW][cleanup]** Deleted projects keep 30 days of snapshots that no screen can restore - `api/app/routers/projects.py:157-176` - a restore UI, or stop keeping them. (not verified)
-- [ ] A-196 **[LOW][usability]** Usage snippets show write calls for read-only anon keys - `dashboard/src/features/projects/apiSnippets.ts:45-51` - role-aware snippets; a clearer 403. (not verified)
+- [x] A-196 **[LOW][usability]** Usage snippets show write calls for read-only anon keys - `dashboard/src/features/projects/apiSnippets.ts:45-51` - role-aware snippets; a clearer 403. (not verified)
 - [ ] A-197 **[LOW][docs]** In-app tutorial and agent-skill links point at the author's GitHub main branch - `dashboard/src/features/projects/AgentSkillCard.tsx:5-11` - pin to the release tag or serve them locally. (not verified)
 - [ ] A-198 **[LOW][usability]** The installer Options page shows a bare "Port" field to non-experts - `installer/windows/src/WizardForm.cs:658-676` - move it under Advanced. (not verified)
 

@@ -251,7 +251,7 @@ function UsageDialog({
   const mcp = lang === "mcp";
   const snippets = mcp
     ? buildMcpSnippets({ baseUrl, projectId: project.id, key: secret })
-    : buildSnippets(lang, { baseUrl, projectId: project.id, sourceId: source?.id ?? "{sid}", kind, entity, key: secret });
+    : buildSnippets(lang, { baseUrl, projectId: project.id, sourceId: source?.id ?? "{sid}", kind, entity, key: secret, role: apiKey.role });
 
   return (
     <Dialog open onClose={onClose} title={`How to use “${apiKey.name}”`} size="lg">
@@ -314,6 +314,7 @@ function UsageDialog({
           </p>
         ) : (
           <p className="text-xs text-muted">
+            {apiKey.role === "anon" && "This anon key is read-only, so only reads are shown; use a service key to insert rows or run queries. "}
             <span className="font-medium text-fg">anon</span> keys are read-only but can read every table and collection;{" "}
             <span className="font-medium text-fg">service</span> keys can read and write. Never ship a service key to browsers
             or phones, and ship an anon key only if all the project's data is public; otherwise call the API from your server.{" "}
