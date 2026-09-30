@@ -157,10 +157,11 @@ socket access.
   `cloudflare_apps_tunnel_token` (secret), `remote_access_mode` (`off`/`cloudflare`/`quick`),
   `instance_id`; on a co-host device `cohost_apps_tunnel_token` (secret, from RPC `apps.tunnel`).
 - API process settings: `TUNNEL_STATE_DIR` (default `/tunnel`), `DEPLOYER_HTTP_PORT`.
-- `domains`: `id, hostname (unique), provider ("cloudflare"), zone_id, zone_name, dns_record_id,
-  target_type ("dashboard", "app" = an app's tunnel hostname, "cloud_app" = a cloud target's custom
-  domain; "project" reserved), project_id, app_id (nullable), status
-  ("pending"/"active"/"error"), status_message, created_at, updated_at`.
+- `domains`: `id, hostname (unique), provider ("cloudflare" for tunnel hostnames, "aws"/"firebase" for a
+  cloud target's custom domain), zone_id, zone_name, dns_record_id, target_type ("dashboard", "app" = an
+  app's tunnel hostname, "cloud_app" = a cloud target's custom domain, docs/CLOUD.md), project_id, app_id
+  (nullable), status ("pending"/"active"/"error"), status_message, dns_records (JSON, `cloud_app` only: the
+  records the cloud target asks for), created_at, updated_at`.
 
 ## API (instance owner only)
 
@@ -177,9 +178,12 @@ socket access.
 
 ```ts
 type Domain = {
-  id: string; hostname: string; zone_id: string; zone_name: string;
+  id: string; hostname: string; zone_id: string | null; zone_name: string | null;
   target_type: "dashboard" | "app" | "cloud_app"; project_id: string | null; app_id: string | null;
   status: "pending" | "active" | "error"; status_message: string | null; url: string;
+  provider: "cloudflare" | "aws" | "firebase";
+  // cloud_app only (docs/CLOUD.md "Custom domains"); created = the record was made in Cloudflare
+  dns_records: { type: string; name: string; value: string; created: boolean; error: string | null }[];
 };
 type RemoteAccess = {
   mode: "off" | "cloudflare" | "quick";

@@ -391,7 +391,7 @@ class Domain(Base):
     zone_id: Mapped[str | None] = mapped_column(String(64))
     zone_name: Mapped[str | None] = mapped_column(String(253))
     dns_record_id: Mapped[str | None] = mapped_column(String(64))
-    # dashboard | project | app (docs/DEPLOYMENTS.md: app hostnames route to the app's container) |
+    # dashboard | app (docs/DEPLOYMENTS.md: app hostnames route to the app's container) |
     # cloud_app (docs/CLOUD.md: served by the app's cloud target, never by the tunnel)
     target_type: Mapped[str] = mapped_column(String(12), default="dashboard", nullable=False)
     project_id: Mapped[str | None] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), index=True)

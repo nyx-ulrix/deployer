@@ -2,7 +2,9 @@
 
 import json
 import os
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -662,3 +664,14 @@ def test_worker_gives_a_root_owned_state_volume_back_to_uid_10001(state_dir, mon
     monkeypatch.setattr(ra.Path, "lstat", lambda p: os.stat_result((0,) * 10))
     assert ra.fix_state_ownership() == 2
     assert calls == [(str(state_dir), 10001, 10001), (str(state_dir / "desired.json"), 10001, 10001)]
+
+
+def test_documented_domain_type_matches_the_api(client, owner_headers, fake_cf):
+    """A-184: docs/REMOTE_ACCESS.md's `Domain` type lists exactly the fields the API returns."""
+    link(client, owner_headers)
+    domain = add_host(client, owner_headers).json()
+    doc = (Path(__file__).resolve().parents[2] / "docs" / "REMOTE_ACCESS.md").read_text(encoding="utf-8")
+    body = re.search(r"type Domain = \{(.*?)\n\};", doc, re.S).group(1)
+    documented = set(re.findall(r"(\w+): ", re.sub(r"//.*|\{[^{}]*\}", "", body)))
+    assert documented == set(domain)
+    assert '"project" reserved' not in doc
