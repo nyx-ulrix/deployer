@@ -217,6 +217,9 @@ def run_copy(ctx: jobs.JobContext) -> dict:
             raise jobs.JobError("The copy was removed")
         if ds.mode != "managed" or ds.device_id is not None or ds.deleted_at is not None:
             raise ApiError(409, "replica_unsupported", "Only managed databases on the main server can be copied")
+        problem = cohost_problem(session, session.get(Device, rep.device_id), ds.project)
+        if problem:  # A-127: the device lost the right to hold this data while the copy was queued
+            raise ApiError(409, "device_not_eligible", problem)
         device_id, kind, database = rep.device_id, ds.kind, ds.database_name
         rep.status = "copying"
         rep.error = None

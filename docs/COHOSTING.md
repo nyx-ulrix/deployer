@@ -52,8 +52,8 @@ through the same address whichever PC is up (phase 2, built; not yet exercised w
 - Switching `can_cohost` off, demoting the member or removing them **pauses** their copies (no more
   data is sent); an admin can delete them. So does unsharing the device from the project, removing its
   `database_host` role or disabling it: every sync round re-checks these rules and pauses the copy with
-  the reason; Resume is refused (`409 device_not_eligible`) until the rule holds again. Paused copies
-  get no schema changes either, and each copy keeps at most 50 warnings.
+  the reason, and a queued copy job fails; Resume is refused (`409 device_not_eligible`) until the rule
+  holds again. Paused copies get no schema changes either, and each copy keeps at most 50 warnings.
 
 ## Dashboard (for whoever builds it)
 

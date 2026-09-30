@@ -306,6 +306,17 @@ def test_unsharing_or_dropping_the_role_stops_sync(client, db, team, auth_header
     assert fd.calls == []
 
 
+def test_queued_copy_is_refused_once_the_device_is_unshared(client, db, team, auth_headers, fake_device):
+    t, u = team, team["users"]
+    fd = fake_device(t["device"].id, lambda method, params: {})
+    resp = client.post(_url(t, "/replicas"), json={"device_id": t["device"].id}, headers=auth_headers(u["cohost"]))
+    client.patch(f"/v1/devices/{t['device'].id}", json={"project_ids": []}, headers=auth_headers(u["cohost"]))
+    assert dict(jobs.run_queued())[resp.json()["job"]["id"]] == "failed"
+    db.expire_all()
+    rep = db.get(SourceReplica, resp.json()["replica"]["id"])
+    assert "not shared with this project" in rep.error and fd.calls == []
+
+
 def test_sync_warnings_are_capped():
     warnings = source_sync._merge_warnings(None, [f"t{n}" for n in range(200)])
     assert len(warnings) == source_sync.MAX_WARNINGS and warnings[-1]["table"] == "t199"
