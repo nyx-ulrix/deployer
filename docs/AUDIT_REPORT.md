@@ -154,7 +154,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-079 **[MEDIUM][usability]** Setup silently installs for the admin account when a standard user approves UAC with someone else's password - `installer/windows/src/WizardForm.cs:913-971` - compare the elevated identity with the session owner and warn.
 
 **Dashboard shell**
-- [ ] A-080 **[MEDIUM][bug]** Dashboard password minimum (8) disagrees with the server (10) - `dashboard/src/lib/constants.ts:1` - set it to 10, or serve the value from the API.
+- [x] A-080 **[MEDIUM][bug]** Dashboard password minimum (8) disagrees with the server (10) - `dashboard/src/lib/constants.ts:1` - set it to 10, or serve the value from the API.
 - [ ] A-081 **[MEDIUM][usability]** Screens hard-code port 8080 and port-less localhost, and claim Control shows the LAN address - `dashboard/src/features/settings/signinSteps.ts:195` (also `RemoteAccessPage.tsx:162-219`, `CloudflareSetup.tsx:567`, `PublicUrlDialogs.tsx:83`) - return local_url from the API and use it; point to the Control LAN toggle.
 - [ ] A-082 **[MEDIUM][usability]** Troubleshooting text gives raw `docker compose`/`chown` commands that fail on the Windows install - `dashboard/src/features/remote-access/steps.ts:56-75` (also `RemoteAccessPage.tsx:140, 303, 311`, `steps.test.ts`) - use `deployer restart tunnel` / `deployer logs tunnel`; auto-fix ownership.
 - [ ] A-083 **[MEDIUM][usability]** The setup wizard asks a first-time user for a Tailscale/Cloudflare URL they can't have yet - `dashboard/src/features/setup/SetupWizard.tsx:385-395` - "Leave this as it is for now", and point to Domains & remote access.
