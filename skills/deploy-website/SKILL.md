@@ -143,7 +143,7 @@ Deployer changes quickly. Before telling the user a feature exists, confirm it o
 | **Firebase hosting** through Deployer: Firebase Hosting (`firebase_hosting`), full apps on Cloud Run behind Hosting (`firebase_app`, Blaze plan), custom domains; keeps serving with the PC off | Available when `GET /v1/projects/{id}/cloud/targets` exists and lists them `available` (a Firebase account connected); not yet exercised against a live Google account | same as AWS |
 | Cloud databases (RDS, DynamoDB, Firestore, Realtime Database) | **Not built** (planned, `docs/CLOUD.md` C2) - cloud apps use their own database credentials under Environment for now | - |
 | Deploys that run without the PC (GitHub Actions builds) | **Not built** (planned, `docs/CLOUD.md` C3) - cloud apps serve with the PC off, but deploying needs it on | - |
-| Apps running on host devices | **Not built** (apps run on the main Deployer PC only) | - |
+| Apps placed on a host device instead of the main PC | **Not built** - an app always runs on the main Deployer PC; with *Co-host this app* (phase 2 above) it **also** runs on the project's co-host PCs | - |
 
 Never describe a "being built" or "planned" feature as available; say what the user can do today
 instead (e.g. "paste a token by hand for now").
@@ -209,7 +209,7 @@ never ask for a token in chat:
 6. Runtime: `GET .../apps/{app_id}/logs?tail=200` (container stdout/stderr, last 500 lines);
    older successful deployments can be re-activated with `POST .../deployments/{dep_id}/rollback`.
 
-Limits to tell the user: one PC, 512 MB RAM per app by default, no persistent volumes (use the
+Limits to tell the user: one PC (plus the co-host PCs below, when co-hosted), 512 MB RAM per app by default, no persistent volumes (use the
 project's databases), builds run through Docker on that PC and take a few minutes the first time.
 
 ### Cloud targets (AWS / Firebase through Deployer)
@@ -239,6 +239,17 @@ The same app, served from the user's own cloud account so it **keeps running whe
 6. **Moving or deleting** the app removes what Deployer created in the cloud account (the dashboard
    lists it first; failures are reported by the teardown job).
 
+### Co-host PCs (the same app on other PCs, with failover)
+
+Check Feature status (co-hosting phase 2) first. Deploy on this Deployer instance as above, then a
+project **admin** ticks *Co-host this app* (App → Settings; `cohost: true` on `PATCH .../apps/{app_id}`).
+Every co-host PC of the project (a member with the Co-host flag whose PC is shared with the project and,
+for apps with database access, holds live copies of its databases) builds and runs the same commit, and
+the app's hostnames fail over between PCs. Only one app per Deployer can be co-hosted for now
+(409 `cohost_limit`: turn it off on the other app first). A private repository also needs *Let co-hosts
+clone this private repository* (`cohost_share_repo_access`; the token becomes readable on those PCs).
+Details: `docs/COHOSTING.md`.
+
 ## Step 2b - Frontend / serverless on an external platform
 
 Only after the user answered the platform question:
@@ -249,8 +260,6 @@ Only after the user answered the platform question:
 | Netlify | `netlify deploy --prod`, or Git integration | same, in *Site settings → Environment* |
 | Cloudflare Pages | `wrangler pages deploy <dir>` or Git integration | same; the Deployer tunnel can share the zone |
 | GitHub Pages | workflow that builds and publishes `dist/` | no server side: no key at all unless every table in the project is public (an `anon` key reads all data); otherwise pick a platform with functions |
-| AWS / Firebase through Deployer | See "Cloud targets" in Step 2a: the owner connects the account, an admin picks the target, then deploy as usual | `target`, `cloud_connection_id` on the app (admin) |
-| Deployer host device / co-host PC | Deploy on "this Deployer instance" first, then a project admin ticks *Co-host this app*: every co-host PC of the project (a member with the Co-host flag whose PC is shared with the project and, for apps with database access, holds live copies of its databases) builds and runs the same commit, and the app's hostnames fail over between PCs. Only one app per Deployer can be co-hosted for now (409 `cohost_limit`: turn it off on the other app first). Private repositories also need *Let co-hosts clone this private repository* (the token becomes readable on those PCs). | `cohost`, `cohost_share_repo_access` on the app (admin) |
 
 After deploying: open the site, run one real request against the data API from it, and check the
 project's query log / audit (Deployer dashboard) shows the call. Then tell the user the URL, the

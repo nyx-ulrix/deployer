@@ -154,7 +154,8 @@ user's Google/GitHub OAuth apps if the public URL changed.
 3. Public data API — project-scoped REST endpoints authenticated by API keys. **Done.**
 4. GitHub push-to-deploy — apps built from a Git repository by the worker (BuildKit), run as
    containers behind Caddy, GitHub webhooks, rollbacks, app hostnames
-   ([DEPLOYMENTS.md](DEPLOYMENTS.md)). **Done** (host devices as app hosts: later).
+   ([DEPLOYMENTS.md](DEPLOYMENTS.md)). **Done**; co-hosted apps also run on the project's co-host PCs with failover
+   ([COHOSTING.md](COHOSTING.md), phase 2). Placing an app on a host device instead of the main PC: later.
 5. Google/GitHub sign-in setup — guided setup in the dashboard (Google offers no API to create OAuth
    clients, so it can't be automated). **Done.**
 6. MCP server for AI agents ([MCP.md](MCP.md)). **Done.**
