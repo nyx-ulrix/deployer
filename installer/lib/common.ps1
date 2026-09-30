@@ -902,6 +902,9 @@ function Update-DeployerMongo {
     if ($code -ne 0) {
         throw "Upgrading the managed MongoDB data failed at step mongodb-upgrade-$($steps[-1]) (exit code $code). Its data is unchanged since the last finished step; run the update again, or see docs/BACKUPS.md `"MongoDB versions`"."
     }
+    # Only now may compose start 8.0 on this data (its fallback without the key is 5.0, which is what
+    # the previous `deployer` script, running the first update to this version, leaves in place).
+    Set-DeployerEnvValues -Path (Join-Path $InstallDir '.env') -Values ([ordered]@{ MONGODB_IMAGE = 'mongo:8.0' })
     Write-DeployerOk 'Managed MongoDB data is ready for MongoDB 8.0'
 }
 
@@ -1142,6 +1145,9 @@ function Initialize-DeployerEnv {
     }
     if ($isNew) {
         foreach ($key in $managed.Keys) { $secrets[$key] = $managed[$key] }
+        # A new install has no MongoDB 5.0 data. An existing .env gets this key from Update-DeployerMongo
+        # only once its data is upgraded; until then compose keeps mongo:5.0 (A-143).
+        $secrets['MONGODB_IMAGE'] = 'mongo:8.0'
         Set-DeployerEnvValues -Path $path -Values $secrets
     } else {
         Set-DeployerEnvValues -Path $path -Values $secrets -OnlyIfMissing

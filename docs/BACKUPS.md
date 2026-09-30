@@ -24,8 +24,8 @@ keyfile auth). MariaDB runs with `log_bin`, `binlog_format=ROW`, `server_id=1`, 
 The managed MongoDB is `mongo:8.0` (supported upstream until 2029). Installs made before audit A-143
 ran 5.0, which is end-of-life, and MongoDB only opens data whose feature-compatibility version (FCV)
 is its own major or the one before. So `deployer update` (and setup over a folder kept by
-`uninstall -KeepData`) upgrades the data before starting the new version: it takes the usual backup,
-stops `mongodb` cleanly, then runs `deploy/mongodb/upgrade.sh` in one-off containers of MongoDB 6.0,
+`uninstall -KeepData`) upgrades the data before starting the new version: after the usual backup
+offer, it stops `mongodb` cleanly, then runs `deploy/mongodb/upgrade.sh` in one-off containers of MongoDB 6.0,
 7.0 and 8.0 (compose services `mongodb-upgrade-6/7/8`, no network). Each step starts `mongod`
 standalone on the volume, runs `setFeatureCompatibilityVersion`, shuts down cleanly and records the
 new FCV in `/data/db/deployer-fcv`; a step that is already done does nothing, so a failed or
@@ -34,10 +34,17 @@ the 8.0 step, which returns at once. The upgrade downloads the 6.0 and 7.0 image
 hundred MB each); after a successful update they can be removed with `docker image rm mongo:6.0
 mongo:7.0` (in the WSL runtime: `wsl -d deployer -u root docker image rm mongo:6.0 mongo:7.0`).
 
+Only then does it set `MONGODB_IMAGE=mongo:8.0` in `.env` (a new install gets it straight away);
+without that key compose keeps `mongo:5.0`. This matters for the **first** update from a version
+before A-143: that update is run by the previous `deployer` script, which has no upgrade step, so it
+updates everything else and leaves MongoDB on 5.0 with its data untouched. **Run `deployer update`
+once more** afterwards; that run uses the new script and moves MongoDB to 8.0 (`docker compose ps`
+shows which image `mongodb` runs; its log also says when the data still needs the upgrade).
+
 If an upgrade step fails, the update stops before starting the new containers and names the step
 (its output is in the update window); the backup it offered first is in `backups\<timestamp>`.
-Starting 8.0 on data that was never upgraded (for example `docker compose up` after copying new
-deploy files by hand) fails, and the `mongodb` log says to run `deployer update`.
+Starting 8.0 on data that was never upgraded (for example setting `MONGODB_IMAGE` by hand) fails,
+and the `mongodb` log says to run `deployer update`.
 
 ## Retention (grandfather-father-son)
 

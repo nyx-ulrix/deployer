@@ -312,7 +312,7 @@ Open a new terminal after installing:
 | `deployer status` | Runtime, containers, health |
 | `deployer start` / `stop` / `restart [service]` | Control the stack |
 | `deployer logs [service] [-Follow]` | Container logs (`api`, `worker`, `dashboard`, `caddy`, `mariadb`, `mongodb`, `redis`, `tunnel`) |
-| `deployer update [-Ref v0.2.0]` | Offers a backup, downloads new deploy files (keeps `.env`), pulls images, upgrades managed MongoDB data if needed ([BACKUPS.md](docs/BACKUPS.md#mongodb-versions)), restarts |
+| `deployer update [-Ref v0.2.0]` | Offers a backup, downloads new deploy files (keeps `.env`), pulls images, upgrades managed MongoDB data if needed (from a version with MongoDB 5.0, run it twice: [BACKUPS.md](docs/BACKUPS.md#mongodb-versions)), restarts |
 | `deployer backup` | `mariadb-dump` + `mongodump` + a copy of `.env` into `backups\<timestamp>` |
 | `deployer restore <folder>` | Loads a `deployer backup` folder (or just its `<timestamp>` name) back in, replacing the current databases; asks first and offers a backup of the current data. Only onto the install that made it: refuses other database passwords, and a different `MASTER_KEY` unless `-Force` |
 | `deployer open` | Open the dashboard |

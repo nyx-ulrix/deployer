@@ -22,6 +22,9 @@ try {
     Assert-That ($isNew -eq $true) 'first run creates .env'
     Assert-That (@($secretKeys | Where-Object { -not $first[$_] }).Count -eq 0) 'every secret is generated'
     Assert-That ($first['DEPLOYER_VERSION'] -eq 'v1' -and $first['DEPLOYER_HTTP_PORT'] -eq '8080') 'managed keys are written'
+    Assert-That ($first['MONGODB_IMAGE'] -eq 'mongo:8.0') 'a new install starts on MongoDB 8.0 (A-143)'
+    # A pre-A-143 .env has 5.0 data: only Update-DeployerMongo may move it to 8.0.
+    Set-Content -LiteralPath $envPath -Value (Get-Content -LiteralPath $envPath | Where-Object { $_ -notmatch '^MONGODB_IMAGE=' })
 
     # 2. The user's edits survive an upgrade; secrets stay; managed keys follow the new install.
     Set-DeployerEnvValues -Path $envPath -Values ([ordered]@{ GOOGLE_CLIENT_ID = 'mine' })
@@ -33,6 +36,7 @@ try {
     Assert-That (@($secretKeys | Where-Object { $second[$_] -ne $first[$_] }).Count -eq 0) 'no secret is rotated on upgrade'
     Assert-That ($second['DEPLOYER_VERSION'] -eq 'v2' -and $second['DEPLOYER_IMAGE_PREFIX'] -eq 'ghcr.io/b' -and $second['DEPLOYER_BIND'] -eq '0.0.0.0') 'managed keys are updated'
     Assert-That ($second['COMPOSE_PROFILES'] -eq 'mongodb' -and $second['MANAGED_MONGODB_ENABLED'] -eq 'true') 'the MongoDB choice is updated'
+    Assert-That (-not $second['MONGODB_IMAGE']) 'an upgrade does not switch MongoDB data it has not upgraded'
     Assert-That ($second['DEPLOYER_HTTP_PORT'] -eq '8080' -and $second['PUBLIC_URL'] -eq 'http://localhost:8080') 'the port is kept without -SetPort'
     Assert-That ($second['GOOGLE_CLIENT_ID'] -eq 'mine' -and $text.Contains('# my note')) 'user edits are kept'
     $keys = @(Get-Content -LiteralPath $envPath | Where-Object { $_ -match '^[A-Za-z_]\w*=' } | ForEach-Object { ($_ -split '=', 2)[0] })

@@ -25,12 +25,17 @@ function Invoke-DeployerCompose {
 function Write-DeployerInfo { param([string]$Message) }
 function Write-DeployerOk { param([string]$Message) }
 
+# A pre-A-143 .env: no MONGODB_IMAGE, so compose keeps mongo:5.0 until the data is upgraded.
+$dir = Join-Path $env:TEMP ('deployer-mongo-test-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $dir | Out-Null
 function Invoke-Case {
     param([hashtable]$Codes)
     $script:codes = $Codes
     $script:calls = @()
-    try { Update-DeployerMongo -InstallDir 'C:\Deployer' -Runtime 'wsl-engine'; return '' } catch { return $_.Exception.Message }
+    Set-Content -LiteralPath (Join-Path $dir '.env') -Value 'COMPOSE_PROFILES=mongodb'
+    try { Update-DeployerMongo -InstallDir $dir -Runtime 'wsl-engine'; return '' } catch { return $_.Exception.Message }
 }
+function Get-Image { (Read-DeployerEnvFile -Path (Join-Path $dir '.env'))['MONGODB_IMAGE'] }
 function Get-Steps { ($script:calls | Select-Object -Skip 1 | ForEach-Object { ($_ -split ' ')[-1] -replace 'mongodb-upgrade-', '' }) -join ',' }
 
 $err = Invoke-Case @{}
@@ -40,10 +45,13 @@ Assert-That ($err -eq '' -and (Get-Steps) -eq '8') 'new or current data: only th
 
 $err = Invoke-Case @{ 'mongodb-upgrade-8' = @(3) }
 Assert-That ($err -eq '' -and (Get-Steps) -eq '8,6,7,8') "5.0 data: 6.0, 7.0 then 8.0 after the 8.0 step says it is too old ($(Get-Steps))"
+Assert-That ((Get-Image) -eq 'mongo:8.0') 'only upgraded data switches compose to mongo:8.0'
 
 $err = Invoke-Case @{ 'mongodb-upgrade-8' = @(3); 'mongodb-upgrade-7' = @(1) }
 Assert-That ($err -like '*mongodb-upgrade-7*exit code 1*') "a failed step stops the update before 'up' and names it: $err"
 Assert-That ((Get-Steps) -eq '8,6,7') 'no later step runs after a failure'
+Assert-That (-not (Get-Image)) 'a failed upgrade leaves compose on mongo:5.0'
 
 $err = Invoke-Case @{ 'mongodb-upgrade-8' = @(1) }
 Assert-That ($err -like '*mongodb-upgrade-8*exit code 1*' -and (Get-Steps) -eq '8') 'any other failure of the 8.0 step is not mistaken for old data'
+Remove-Item -LiteralPath $dir -Recurse -Force

@@ -16,7 +16,8 @@
 # MongoDB 8.0 needs a CPU with AVX. It only starts when COMPOSE_PROFILES contains `mongodb`
 # (the installer omits it on CPUs without AVX and sets MANAGED_MONGODB_ENABLED=false).
 # Installs made before A-143 have MongoDB 5.0 data: `deployer update` lifts it one version at a time
-# with the `mongodb-upgrade-*` one-off services below before starting mongo:8.0 (docs/BACKUPS.md).
+# with the `mongodb-upgrade-*` one-off services below, then sets MONGODB_IMAGE=mongo:8.0 in .env
+# (a .env without it keeps mongo:5.0, see the `mongodb` service; docs/BACKUPS.md).
 
 name: deployer
 
@@ -85,9 +86,13 @@ services:
     logging: *default-logging
 
   mongodb:
-    # A new major also needs a `mongodb-upgrade-<major>` step below (MongoDB opens data only from its
-    # own or the previous major).
-    image: &mongodb-image mongo:8.0
+    # MONGODB_IMAGE is written to .env by the installer for a new install and by Update-DeployerMongo
+    # (installer/lib/common.ps1) once existing data is upgraded. The first update from a pre-A-143
+    # install is run by the previous `deployer` script, which knows neither, so without the key
+    # MongoDB stays on 5.0 (still able to open its data) until the next `deployer update`. A new
+    # major also needs a `mongodb-upgrade-<major>` step below (MongoDB opens data only from its own
+    # or the previous major) and the new image in Update-DeployerMongo / Initialize-DeployerEnv.
+    image: ${MONGODB_IMAGE:-mongo:5.0}
     profiles: ["mongodb"]
     restart: unless-stopped
     # Single-node replica set `rs0` (the oplog enables point-in-time recovery, docs/BACKUPS.md). The
@@ -127,7 +132,7 @@ services:
     image: mongo:7.0
   mongodb-upgrade-8:
     <<: *mongodb-upgrade
-    image: *mongodb-image
+    image: mongo:8.0
 
   redis:
     image: redis:7-alpine
