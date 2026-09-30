@@ -129,6 +129,16 @@ namespace DeployerSetup
             using (ControlForm checking = ControlSample(1f, 5), failed = ControlSample(1f, 4))
                 Check(checking.State == RunState.Checking && failed.State == RunState.NotResponding && !failed.updateButton.Enabled,
                       "a failed status run shows advice instead of Checking forever (A-099)");
+            using (ControlForm stopped = ControlSample(1f, 1))
+            using (WizardForm done = Wizard(1f, false))
+            {
+                done.page = WizardPage.Options;
+                done.Rebuild();
+                TextBlock ht = stopped.heroText;
+                Check(ht.Text.Contains("signed in to Windows") && ht.Height >= 2 * ht.TextFont.Height && ht.Bottom <= ht.Parent.ClientSize.Height
+                      && AllText(done).Contains(WizardForm.SignedInNote),
+                      "Control's Stopped text and the Options page say signing out or a restart stops Deployer (A-100)");
+            }
             Check(AppInfo.CompareVersions("0.10.0", "0.9.9") > 0 && AppInfo.CompareVersions("v0.3.0", "0.3.0") == 0
                   && AppInfo.CompareVersions("0.3.0", "0.3.0-rc.1") > 0 && AppInfo.CompareVersions("main", "0.0.1") < 0
                   && InstallLocator.IsUpdate("0.4.0", "0.3.0", "0.3.0") && InstallLocator.IsUpdate("0.4.0", null, null)
@@ -312,6 +322,8 @@ namespace DeployerSetup
         static string AllText(Control c)
         {
             StringBuilder sb = new StringBuilder(c.Text).Append('\n');
+            ToggleRow toggle = c as ToggleRow;
+            if (toggle != null) sb.Append(toggle.Description).Append('\n');
             foreach (Control child in c.Controls) sb.Append(AllText(child));
             return sb.ToString();
         }

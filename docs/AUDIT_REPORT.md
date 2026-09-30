@@ -182,7 +182,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-097 **[MEDIUM][bug]** Data browser shows raw driver errors; typing "true" into a BOOLEAN (TINYINT(1)) column fails - `api/app/services/data_browser.py:71-90, 105-107` - coerce booleans; use a checkbox; plain messages for 1366/1062/1452/1048.
 - [x] A-098 **[MEDIUM][usability]** The create-table dialog is all SQL jargon with no plain-language layer - `dashboard/src/features/data/CreateTableDialog.tsx:27-45, 281-342, 354` - friendly types first, rename the flags, explain cascade.
 - [x] A-099 **[MEDIUM][bug]** Deployer Control shows "Checking Deployer..." forever when the status script fails - `installer/windows/src/ControlForm.cs:394-409, 607-636` - `status == null` gives NotResponding once health is known; show advice.
-- [ ] A-100 **[MEDIUM][usability]** Deployer stops when the Windows user signs out or after an unattended reboot, and the installer doesn't say so - `installer/windows/src/WizardForm.cs:686-691` - add a note on the Options/Finish page and in Control's Stopped text.
+- [x] A-100 **[MEDIUM][usability]** Deployer stops when the Windows user signs out or after an unattended reboot, and the installer doesn't say so - `installer/windows/src/WizardForm.cs:686-691` - add a note on the Options/Finish page and in Control's Stopped text.
 
 ### Low
 

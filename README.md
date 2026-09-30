@@ -332,7 +332,10 @@ Open a new terminal after installing:
 
 Autostart is a scheduled task named **Deployer** that runs at sign-in of the account that installed
 it. WSL distros belong to a single Windows account, so with the WSL runtime Deployer runs while that
-account is signed in (locking the screen is fine; signing out stops it).
+account is signed in (locking the screen is fine; signing out stops it). Docker Desktop is per-account too.
+After a restart - including an overnight Windows Update - it stays down until that account signs in
+again. For a PC that acts as a server, turn on automatic sign-in for that account or check Deployer
+after Windows updates (setup and *Deployer Control* say this too).
 While it runs, the task brings Deployer back after sleep or a WSL restart (and, with LAN access on,
 points the port forwarding at the WSL address, which changes on every restart). `deployer stop` (or
 *Deployer Control → Stop*) keeps it stopped until you start it again or sign in next time.

@@ -192,7 +192,8 @@ namespace DeployerSetup
         OutputWindow outputWindow;
 
         StatusPill pill;
-        TextBlock heroTitle, heroText, activityText, updatedText;
+        TextBlock heroTitle, activityText, updatedText;
+        internal TextBlock heroText;
         IconBadge heroIcon;
         Card hero;
         IconBadge activityIcon;
@@ -299,7 +300,6 @@ namespace DeployerSetup
             heroTitle = new TextBlock(ui, "", ui.SemiBold(13f), Theme.Text);
             heroTitle.SingleLine = true;
             heroText = new TextBlock(ui, "", ui.Font(9.5f), Theme.TextMuted);
-            heroText.SingleLine = true;
             int block = ui.SemiBold(13f).Height + ui.S(2) + ui.Font(9.5f).Height;
             heroTitle.LayoutAt(textLeft, (heroH - block) / 2, textWidth);
             heroText.LayoutAt(textLeft, (heroH - block) / 2 + ui.SemiBold(13f).Height + ui.S(2), textWidth);
@@ -466,7 +466,8 @@ namespace DeployerSetup
                 case RunState.Stopped:
                     pillText = "Stopped"; color = Theme.Neutral; icon = IconKind.Dot; heroFill = Theme.NeutralSoft;
                     title = "Deployer is stopped";
-                    text = "Click Start to run it again. Your data is safe. Back up and Update need it running.";
+                    // Deployer runs in this Windows account's session (WSL / Docker Desktop), so signing out or an unattended restart stops it (A-100).
+                    text = "Click Start to run it again; your data is safe. Back up and Update need it running. Deployer only runs while you're signed in to Windows, so signing out or a restart stops it.";
                     break;
                 case RunState.Busy:
                     pillText = actionVerb; color = Theme.Accent; icon = IconKind.Spinner; heroFill = Theme.AccentSoft;
@@ -491,6 +492,11 @@ namespace DeployerSetup
             heroIcon.Invalidate();
             heroTitle.Text = title;
             heroText.Text = text;
+            // The text wraps (up to what the card holds), so re-centre the title and text block vertically.
+            int textH = Math.Min(heroText.LayoutAt(heroText.Left, 0, heroText.Width), hero.ClientSize.Height - heroTitle.Height - ui.S(16));
+            heroText.Height = textH;
+            heroTitle.Top = (hero.ClientSize.Height - heroTitle.Height - ui.S(2) - textH) / 2;
+            heroText.Top = heroTitle.Bottom + ui.S(2);
             foreach (Control c in Controls)
             {
                 TextBlock tb = c as TextBlock;

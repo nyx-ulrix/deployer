@@ -714,7 +714,7 @@ namespace DeployerSetup
                     "Stops Windows from sleeping while the charger is connected, so your projects stay online. Useful for a PC that acts as a server.",
                     options.KeepAwake, v => options.KeepAwake = v);
                 y = Toggle(y, "Start Deployer when I sign in to Windows",
-                    "Runs Deployer in the background and shows its icon next to the clock.",
+                    "Runs Deployer in the background and shows its icon next to the clock. " + SignedInNote,
                     options.Autostart, v => options.Autostart = v);
             }
             y = Toggle(y, "Create a desktop shortcut", null, options.DesktopShortcut, v => options.DesktopShortcut = v);
@@ -1311,6 +1311,10 @@ namespace DeployerSetup
             };
             AcceptButton = retry;
         }
+
+        // Deployer runs in the installing account's session (WSL / Docker Desktop are per-user), so it stops at sign-out
+        // and stays down after an unattended restart until someone signs in (A-100).
+        internal const string SignedInNote = "It runs only while you're signed in: signing out or a restart stops it. For a PC that acts as a server, turn on automatic sign-in or check it after Windows updates.";
 
         void BuildFinish(Panel footer)
         {
