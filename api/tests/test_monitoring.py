@@ -200,16 +200,17 @@ def test_backup_failed_message_is_plain(db):
     # A hard-deleted source's jobs have data_source_id NULL (ON DELETE SET NULL), like the platform's.
     db.add(Job(type="backup.archive_logs", status="failed", finished_at=utcnow()))
     db.add(Job(type="backup.platform_snapshot", status="failed", finished_at=utcnow()))
+    db.add(Job(type="backup.prune", status="failed", finished_at=utcnow()))  # global: names no database
     db.commit()
     out: dict = {}
     alerts._backup_rules(db, out)
-    archive, platform = (
-        out["backup:backup.archive_logs:platform"].message,
-        out["backup:backup.platform_snapshot:platform"].message,
+    archive, platform, prune = (
+        out[f"backup:backup.{t}:platform"].message for t in ("archive_logs", "platform_snapshot", "prune")
     )
     assert archive.startswith("Saving changes for point-in-time restore of a deleted database failed")
     assert platform.startswith("The backup of the platform data")
-    assert all("backup." not in m and "Settings > Backups" in m for m in (archive, platform))
+    assert prune.startswith("Removing old backups failed")
+    assert all("backup." not in m and "Settings > Backups" in m for m in (archive, platform, prune))
 
 
 def test_container_rule_waits_two_minutes(fake_redis, factory):

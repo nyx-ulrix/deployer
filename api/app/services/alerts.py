@@ -50,15 +50,16 @@ class Condition:
     for_s: int = 0
 
 
-# Plain words for the backup job types, so an alert never shows "backup.archive_logs".
+# Plain words for the backup job types, so an alert never shows "backup.archive_logs". "{}" is the database;
+# prune and copy run for every database at once (no data_source_id), so they name none.
 BACKUP_JOB_LABELS = {
-    "backup.snapshot": "The scheduled backup",
-    "backup.platform_snapshot": "The backup",
-    "backup.archive_logs": "Saving changes for point-in-time restore",
-    "backup.restore": "A restore",
-    "backup.verify": "A restore test",
+    "backup.snapshot": "A backup of {}",
+    "backup.platform_snapshot": "The backup of the platform data (users, projects, settings)",
+    "backup.archive_logs": "Saving changes for point-in-time restore of {}",
+    "backup.restore": "A restore of {}",
+    "backup.verify": "A restore test of {}",
     "backup.prune": "Removing old backups",
-    "backup.copy": "Copying a backup off this PC",
+    "backup.copy": "Copying backups off this PC",
 }
 
 
@@ -147,18 +148,13 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
         if recovered:
             continue
         ds = db.get(DataSource, job.data_source_id) if job.data_source_id else None
-        if job.type == "backup.platform_snapshot":
-            target = "the platform data (users, projects, settings)"
-        elif ds is None or ds.deleted_at is not None:  # a hard delete nulls the job's data_source_id
-            target = "a deleted database"
-        else:
-            target = f"database {ds.name}"
-        what = BACKUP_JOB_LABELS.get(job.type, "A backup task")
+        # A hard delete nulls the job's data_source_id (ON DELETE SET NULL).
+        target = f"database {ds.name}" if ds is not None and ds.deleted_at is None else "a deleted database"
+        what = BACKUP_JOB_LABELS.get(job.type, "A backup task for {}").format(target)
         out[f"backup:{job.type}:{job.data_source_id or 'platform'}"] = Condition(
             "backup_failed",
             "critical",
-            f"{what} of {target} failed. Open Settings > Backups for the reason; "
-            "this alert clears once it next succeeds",
+            f"{what} failed. Open Settings > Backups for the reason; this alert clears once it next succeeds",
         )
     # A job that never ends (a hung tool) fails nothing: alert when a scheduled database has had no
     # successful snapshot for twice its schedule. Held for an hour first, so a PC that just woke from
