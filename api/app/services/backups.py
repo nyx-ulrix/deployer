@@ -522,33 +522,10 @@ def perform_snapshot(factory: jobs.SessionFactory, backup_id: str, progress: exe
                 kind=kind, engine=engine, database_name=database, artifact_ref=ref, on_progress=progress
             )
         except Exception as exc:
-            backup.status, backup.finished_at = "failed", utcnow()
-            backup.error = jobs.redact_error(jobs._error_text(exc))
-            session.commit()
+            _snapshot_failed(session, backup, exc)
             raise
         progress(0.93, "Recording schema")
-        schema = _schema_snapshot(ds)
-        backup.status = "succeeded"
-        backup.finished_at = utcnow()
-        backup.size_bytes = int(result.get("size_bytes") or 0)
-        backup.sha256 = result.get("sha256")
-        backup.consistent_point = result.get("consistent_point") or {}
-        backup.row_counts = result.get("row_counts") or {}
-        backup.schema_snapshot = schema
-        backup.error = None
-        local = BackupCopy(
-            artifact_type="backup",
-            artifact_id=backup.id,
-            location="local",
-            device_id=device_id,
-            ref=ref,
-            size_bytes=backup.size_bytes,
-            sha256=backup.sha256,
-            status="ok",
-            verified_at=utcnow(),
-        )
-        session.add(local)
-        session.flush()
+        local = _record_snapshot(session, backup, result, ref, device_id, schema=_schema_snapshot(ds))
         replicate(
             session, artifact_type="backup", artifact_id=backup.id, local=local, policy=session.get(BackupPolicy, ds.id)
         )
@@ -556,6 +533,41 @@ def perform_snapshot(factory: jobs.SessionFactory, backup_id: str, progress: exe
         return {"backup_id": backup.id, "size_bytes": backup.size_bytes, "row_counts": backup.row_counts}
     finally:
         session.close()
+
+
+def _snapshot_failed(session: Session, backup: Backup, exc: Exception) -> None:
+    backup.status, backup.finished_at = "failed", utcnow()
+    backup.error = jobs.redact_error(jobs._error_text(exc))
+    session.commit()
+
+
+def _record_snapshot(
+    session: Session, backup: Backup, result: dict, ref: str, device_id: str | None, *, schema: dict | None = None
+) -> BackupCopy:
+    """Marks `backup` succeeded from an executor snapshot result and adds its local copy (flushed, not committed).
+
+    The one place for every snapshot kind (source, platform, final of a deleted source), so they cannot drift.
+    """
+    backup.status, backup.finished_at, backup.error = "succeeded", utcnow(), None
+    backup.size_bytes = int(result.get("size_bytes") or 0)
+    backup.sha256 = result.get("sha256")
+    backup.consistent_point = result.get("consistent_point") or {}
+    backup.row_counts = result.get("row_counts") or {}
+    backup.schema_snapshot = schema
+    local = BackupCopy(
+        artifact_type="backup",
+        artifact_id=backup.id,
+        location="local",
+        device_id=device_id,
+        ref=ref,
+        size_bytes=backup.size_bytes,
+        sha256=backup.sha256,
+        status="ok",
+        verified_at=utcnow(),
+    )
+    session.add(local)
+    session.flush()
+    return local
 
 
 def _schema_snapshot(ds: DataSource) -> dict | None:
@@ -1017,7 +1029,7 @@ def _job_archive(ctx: jobs.JobContext) -> dict:
 # =============================================================================================
 
 
-def _restored_name(db: Session, ds: DataSource, requested: str | None, now: datetime) -> str:
+def _restored_name(ds: DataSource, requested: str | None, now: datetime) -> str:
     name = (requested or "").strip() or f"{(ds.deleted_name or ds.name)[:40]}-restored-{now:%Y%m%d-%H%M}"
     if len(name) > 63:
         raise validation_error("new_name must be at most 63 characters")
@@ -1064,7 +1076,7 @@ def start_restore(
             from app.services import devices  # same placement rules as creating a source (docs/DEVICES.md)
 
             devices.validate_placement(db, db.get(Project, ds.project_id), target_device, ds.kind)
-        name = _restored_name(db, ds, new_name, utcnow())
+        name = _restored_name(ds, new_name, utcnow())
         if _name_taken(db, ds.project_id, name):
             raise ApiError(409, "name_taken", f"A data source named '{name}' already exists in this project")
         params.update(new_name=name, target_device_id=target_device)
@@ -1306,16 +1318,18 @@ def perform_verify(factory: jobs.SessionFactory, backup_id: str) -> dict:
         session.commit()
         executor = executors.executor_for(host)
         try:
-            checksum_ok = True
-            if isinstance(executor, executors.LocalExecutor) and sha:
-                from app.services.backup_crypto import sha256_file
+            from app.services.backup_crypto import sha256_file
 
-                checksum_ok = sha256_file(executor.artifact_path(ref)) == sha
-            outcome = (
-                executor.verify(kind=kind, engine=engine, snapshot_ref=ref, expected_row_counts=expected)
-                if checksum_ok
-                else {"ok": False, "message": "Checksum mismatch", "mismatches": []}
-            )
+            if not executor.artifact_exists(ref):
+                outcome = {"ok": False, "message": "The backup file is missing from its storage", "mismatches": []}
+            elif (
+                isinstance(executor, executors.LocalExecutor)
+                and sha
+                and sha256_file(executor.artifact_path(ref)) != sha
+            ):
+                outcome = {"ok": False, "message": "Checksum mismatch", "mismatches": []}
+            else:
+                outcome = executor.verify(kind=kind, engine=engine, snapshot_ref=ref, expected_row_counts=expected)
         except Exception as exc:  # noqa: BLE001 - a failed verification is a result, not a job failure
             outcome = {"ok": False, "message": jobs.redact_error(jobs._error_text(exc)), "mismatches": []}
         backup = session.get(Backup, backup_id)
@@ -1632,26 +1646,9 @@ def _job_platform_snapshot(ctx: jobs.JobContext) -> dict:
         try:
             result = executors.local_executor().platform_snapshot(artifact_ref=ref, on_progress=ctx.progress)
         except Exception as exc:
-            backup.status, backup.finished_at = "failed", utcnow()
-            backup.error = jobs.redact_error(jobs._error_text(exc))
-            session.commit()
+            _snapshot_failed(session, backup, exc)
             raise
-        backup.status, backup.finished_at = "succeeded", utcnow()
-        backup.size_bytes, backup.sha256 = int(result.get("size_bytes") or 0), result.get("sha256")
-        backup.consistent_point, backup.row_counts = result.get("consistent_point"), result.get("row_counts")
-        session.add(
-            BackupCopy(
-                artifact_type="backup",
-                artifact_id=backup.id,
-                location="local",
-                device_id=None,
-                ref=ref,
-                size_bytes=backup.size_bytes,
-                sha256=backup.sha256,
-                status="ok",
-                verified_at=utcnow(),
-            )
-        )
+        _record_snapshot(session, backup, result, ref, None)
         session.commit()
         return {"backup_id": backup.id, "size_bytes": backup.size_bytes}
     finally:
@@ -1864,26 +1861,9 @@ def _final_snapshot_detached(
                 on_progress=progress,
             )
         except Exception as exc:
-            backup.status, backup.finished_at = "failed", utcnow()
-            backup.error = jobs.redact_error(jobs._error_text(exc))
-            session.commit()
+            _snapshot_failed(session, backup, exc)
             raise
-        backup.status, backup.finished_at = "succeeded", utcnow()
-        backup.size_bytes, backup.sha256 = int(result.get("size_bytes") or 0), result.get("sha256")
-        backup.consistent_point, backup.row_counts = result.get("consistent_point"), result.get("row_counts")
-        session.add(
-            BackupCopy(
-                artifact_type="backup",
-                artifact_id=backup.id,
-                location="local",
-                device_id=info.get("device_id"),
-                ref=ref,
-                size_bytes=backup.size_bytes,
-                sha256=backup.sha256,
-                status="ok",
-                verified_at=utcnow(),
-            )
-        )
+        _record_snapshot(session, backup, result, ref, info.get("device_id"))
         session.commit()
         return backup.id
     finally:
@@ -1934,7 +1914,7 @@ def _job_finalize_delete(ctx: jobs.JobContext) -> dict:
             expires_at=(ds.deleted_at or utcnow()) + DELETED_KEEP,
         )
         backup.label = f"Final snapshot of {ds.deleted_name or ds.name}"
-        # The snapshot runs inside this job; mark its own job row as done alongside.
+        # The snapshot runs inline below (jobs.run_job records its own job row).
         session.commit()
         job_id, backup_id = job.id, backup.id
     finally:
@@ -2015,7 +1995,7 @@ def _job_undelete(ctx: jobs.JobContext) -> dict:
         dropped = _was_dropped(session, ds) if supported(ds) else False
         result: dict[str, Any] = {"data_source_id": ds.id, "restored_data": False}
         if dropped:
-            snaps = [s for s in successful_snapshots(session, ds.id)]
+            snaps = successful_snapshots(session, ds.id)
             if not snaps:
                 raise ApiError(409, "no_backup", "No snapshot of this data source is left to restore")
             snap = snaps[-1]
@@ -2153,8 +2133,8 @@ def instance_health(db: Session) -> dict:
             last_error, last_failure_at = failed_job.error, failed_job.finished_at or failed_job.created_at
         if last_ok and last_failure_at and last_ok > last_failure_at:
             last_error = None
-        artifact_ids = [b for b in db.scalars(select(Backup.id).where(Backup.data_source_id == ds.id))]
-        seg_ids = [s for s in db.scalars(select(BackupLogSegment.id).where(BackupLogSegment.data_source_id == ds.id))]
+        artifact_ids = list(db.scalars(select(Backup.id).where(Backup.data_source_id == ds.id)))
+        seg_ids = list(db.scalars(select(BackupLogSegment.id).where(BackupLogSegment.data_source_id == ds.id)))
         local_bytes = copy_bytes = 0
         if artifact_ids or seg_ids:
             for copy in db.scalars(select(BackupCopy).where(BackupCopy.artifact_id.in_(artifact_ids + seg_ids))):

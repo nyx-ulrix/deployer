@@ -60,6 +60,7 @@ from typing import IO, Any
 from urllib.parse import quote
 
 from app.config import get_settings
+from app.serializers import iso
 from app.services import backup_crypto
 
 log = logging.getLogger(__name__)
@@ -102,10 +103,6 @@ def check_db_name(name: str, *, platform: bool = False) -> str:
 
 def _now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
-
-
-def iso(dt: datetime | None) -> str | None:
-    return dt.isoformat(timespec="seconds") + "Z" if dt else None
 
 
 def _secrets() -> list[str]:

@@ -603,6 +603,30 @@ def test_verify_job(client, env, db):
     assert listed["verify_status"] == "failed"
 
 
+def test_verify_reports_a_missing_backup_file(client, env, db):
+    """A-125: verify checks the file is there before the restore test, and says so in plain words."""
+    backup_id = _snapshot(client, env)
+    env["fake"].delete_artifact(backups.snapshot_ref(db.get(Backup, backup_id)))
+    result = backups.perform_verify(jobs.get_sessionmaker(), backup_id)
+    assert result["ok"] is False and "missing" in result["message"]
+    assert not [c for c in env["fake"].calls if c[0] == "verify"]
+
+
+def test_platform_snapshot_records_like_a_source_snapshot(client, env, db, owner_headers, monkeypatch):
+    """A-125: every snapshot kind shares _record_snapshot, so a result without a point still stores {} not None."""
+    monkeypatch.setattr(
+        env["fake"], "platform_snapshot", lambda *, artifact_ref, on_progress=None: {"size_bytes": 5, "sha256": "ab"}
+    )
+    client.post("/v1/instance/backups/platform", headers=owner_headers)
+    jobs.run_queued()
+    db.expire_all()
+    snap = db.query(Backup).filter_by(scope="platform").one()
+    assert snap.status == "succeeded" and snap.error is None and snap.size_bytes == 5
+    assert snap.consistent_point == {} and snap.row_counts == {}
+    copy = db.query(BackupCopy).filter_by(artifact_id=snap.id).one()
+    assert copy.status == "ok" and copy.sha256 == "ab" and copy.device_id is None
+
+
 def test_failed_verify_alerts_shows_in_health_and_retries_next_day(client, env, db, owner_headers, fake_redis):
     """A-038: a failed verification is not a failed job, so it needs its own alert, health field and retry."""
     from app.services import alerts
