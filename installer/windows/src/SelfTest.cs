@@ -183,19 +183,21 @@ namespace DeployerSetup
                       "the runtime note says to export and restore when switching, not to keep the data (A-095)");
             }
 
-            using (WizardForm fresh = Wizard(1f, false), up = Wizard(1f, false))
+            using (WizardForm fresh = Wizard(1f, false), up = Wizard(1f, false), repair = Wizard(1f, false))
             {
-                fresh.page = up.page = WizardPage.Finish;
-                fresh.doneUrl = up.doneUrl = "http://localhost:8080";
-                up.installedDir = @"C:\ProgramData\Deployer";
-                up.updating = true;
+                fresh.page = up.page = repair.page = WizardPage.Finish;
+                fresh.doneUrl = up.doneUrl = repair.doneUrl = "http://localhost:8080";
+                up.installedDir = repair.installedDir = @"C:\ProgramData\Deployer";
+                up.updating = up.newVersion = repair.updating = true;
                 fresh.Rebuild();
                 up.Rebuild();
-                string freshText = AllText(fresh), upText = AllText(up);
+                repair.Rebuild();
+                string freshText = AllText(fresh), upText = AllText(up), repairText = AllText(repair);
                 Check(freshText.Contains("Create your owner account") && fresh.finishOpenUrl == "http://localhost:8080/setup"
                       && upText.Contains("updated to " + AppInfo.Version) && upText.Contains("were kept")
-                      && !upText.Contains("owner account") && up.finishOpenUrl == "http://localhost:8080/",
-                      "the Finish page after an update says so and opens the dashboard, not the first-run setup (A-156)");
+                      && !upText.Contains("owner account") && up.finishOpenUrl == "http://localhost:8080/"
+                      && !repairText.Contains("updated to") && repairText.Contains(AppInfo.Version + " is ready") && repair.finishOpenUrl == "http://localhost:8080/",
+                      "the Finish page after an update says so, a same-version repair does not claim one, and both open the dashboard, not the first-run setup (A-156)");
             }
 
             string half = Path.Combine(Path.GetTempPath(), "DeployerSelfTest-" + Guid.NewGuid().ToString("N").Substring(0, 8));
@@ -334,7 +336,7 @@ namespace DeployerSetup
             WizardForm w = new WizardForm(dryRun, false, scale, true);
             w.installedDir = null;
             w.installedPort = -1;
-            w.updating = false;
+            w.updating = w.newVersion = false;
             w.options = new SetupOptions();
             w.options.Port = Ports.IsFree(8080) ? 8080 : Ports.SuggestFree(8080);
             return w;
@@ -521,7 +523,7 @@ namespace DeployerSetup
 
             w = Wizard(scale, false);
             w.installedDir = @"C:\ProgramData\Deployer";
-            w.updating = true;
+            w.updating = w.newVersion = true;
             w.page = WizardPage.Finish;
             w.doneUrl = "http://localhost:8080";
             w.Rebuild();

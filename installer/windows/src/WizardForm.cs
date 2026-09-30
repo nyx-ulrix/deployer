@@ -138,7 +138,8 @@ namespace DeployerSetup
         bool portEditedByUser;
         internal string installedDir;
         internal int installedPort = -1;
-        internal bool updating; // A-156: this run updates an install that had finished, so the owner account already exists
+        internal bool updating; // A-156: this run updates or repairs an install that had finished
+        internal bool newVersion; // ...and installs a newer version than the one there ("Run setup again" does not)
         internal string finishOpenUrl;
         internal string otherAccount; // A-079: set when Setup runs as a different account than the one signed in
 
@@ -186,6 +187,7 @@ namespace DeployerSetup
             installedDir = InstallLocator.Find();
             // Checked before this run writes setup-options.json, which marks the install unfinished again (A-073).
             updating = InstallLocator.IsFinished(installedDir);
+            newVersion = updating && InstallLocator.UpdateOffer(installedDir) != null;
             if (installedDir != null)
             {
                 options.InstallDir = installedDir;
@@ -1327,7 +1329,7 @@ namespace DeployerSetup
             string url = string.IsNullOrEmpty(doneUrl) ? "http://localhost:" + options.Port : doneUrl;
             bool updated = updating && !dryRun;
             int y = BigIcon(ui.S(40), IconKind.Check, Theme.Success);
-            y = Paragraph(y, dryRun ? "Test run complete" : updated ? "Deployer was updated to " + AppInfo.Version : "Deployer is ready", ui.SemiBold(19f), Theme.Text, ui.S(8));
+            y = Paragraph(y, dryRun ? "Test run complete" : !updated ? "Deployer is ready" : newVersion ? "Deployer was updated to " + AppInfo.Version : "Deployer " + AppInfo.Version + " is ready", ui.SemiBold(19f), Theme.Text, ui.S(8));
             y = Paragraph(y, dryRun
                     ? "Every step checked out. Nothing was changed on this PC. Run DeployerSetup.exe without /dryrun to install."
                     : (updated ? "Your projects, data and settings were kept. " : "") + "Deployer is running on this PC at " + url + ".",
