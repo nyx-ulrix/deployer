@@ -216,8 +216,8 @@ export function PolicyDialog({
           </div>
           {onlyLatest && (
             <Alert tone="warning" className="mt-3">
-              With every Keep box at 0, only the newest automatic version is kept. All older automatic versions will
-              be deleted.
+              With every Keep box at 0, only the newest scheduled or manual version is kept. All older scheduled and
+              manual versions will be deleted unless they are pinned.
             </Alert>
           )}
         </section>
