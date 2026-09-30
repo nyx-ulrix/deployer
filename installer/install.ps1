@@ -20,7 +20,7 @@
         ##deployer:step 3/10 <text>          a new main step started
         ##deployer:check <id> ok|warn|fail <text>
         ##deployer:reboot-required           Windows must restart; the install resumes after sign-in
-        ##deployer:done url=http://localhost:8080
+        ##deployer:done url=http://localhost:8080 [lan=<url>,<url> publicnet=<count>]   (lan/publicnet with LAN access on)
         ##deployer:error <message>
 
 .PARAMETER Runtime
@@ -1017,13 +1017,16 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
             $mongoText = if ($facts.Avx) { 'managed MongoDB 5.0 enabled' } else { 'managed MongoDB disabled (no AVX) - use an external MongoDB such as Atlas' }
             Write-Host "    NoSQL          $mongoText"
             if ($wantLan) {
-                foreach ($ip in @(Get-DeployerLanAddresses)) { Write-Host "    On your LAN    http://${ip}:$Port" }
+                foreach ($lanUrl in @(Get-DeployerLanUrls -Port $Port)) { Write-Host "    On your LAN    $lanUrl" }
             }
             Write-Host ''
             Write-Host '    Manage it with: deployer status | logs | stop | start | update | backup | uninstall'
             Write-Host '    Back up .env (it holds MASTER_KEY) together with your backups.' -ForegroundColor Yellow
             Write-Host ''
-            Write-DeployerMarker "done url=http://localhost:$Port"
+            # The wizard shows the LAN addresses and warns about Public networks (A-075).
+            $doneMarker = "done url=http://localhost:$Port"
+            if ($wantLan) { $doneMarker += " lan=$(@(Get-DeployerLanUrls -Port $Port) -join ',') publicnet=$(@(Get-DeployerNonPrivateNetworks).Count)" }
+            Write-DeployerMarker $doneMarker
         }
     } catch [System.OperationCanceledException] {
         Write-Host ''

@@ -1130,6 +1130,12 @@ function Get-DeployerLanAddresses {
         Select-Object -ExpandProperty IPAddress
 }
 
+function Get-DeployerLanUrls {
+    # The addresses other devices type to open Deployer (A-075).
+    param([int]$Port)
+    @(Get-DeployerLanAddresses | ForEach-Object { "http://${_}:$Port" })
+}
+
 # Deployed apps are served by Caddy on one port each from this range (docs/DEPLOYMENTS.md); LAN
 # access forwards and opens it together with the dashboard port.
 $script:DeployerAppPortFirst = 8100
@@ -1251,13 +1257,18 @@ function Enable-DeployerLanAccess {
     return 'portproxy'
 }
 
+function Get-DeployerNonPrivateNetworks {
+    # LAN networks Windows marks Public (or Domain): the Private-only firewall rule blocks other devices there.
+    @(Get-NetConnectionProfile -ErrorAction SilentlyContinue |
+            Where-Object { $_.InterfaceAlias -notmatch 'vEthernet|WSL|Loopback|docker' -and "$($_.NetworkCategory)" -ne 'Private' })
+}
+
 function Write-DeployerNetworkProfileWarning {
     <#
       The firewall rule is Private-only, so on a network Windows marks Public (or Domain) other devices
       just time out (A-071). Names each such LAN network and says how to switch it; returns their count.
     #>
-    $bad = @(Get-NetConnectionProfile -ErrorAction SilentlyContinue |
-            Where-Object { $_.InterfaceAlias -notmatch 'vEthernet|WSL|Loopback|docker' -and "$($_.NetworkCategory)" -ne 'Private' })
+    $bad = @(Get-DeployerNonPrivateNetworks)
     foreach ($p in $bad) {
         Write-DeployerWarn ("Windows treats the network '$($p.Name)' ($($p.InterfaceAlias)) as $($p.NetworkCategory), so other devices cannot reach Deployer on it. " +
             "If it is your home/office network, set it to Private: Settings > Network & internet > $($p.InterfaceAlias) > $($p.Name) (Properties) > Network profile type > Private network. " +

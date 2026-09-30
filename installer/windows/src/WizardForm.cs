@@ -151,6 +151,9 @@ namespace DeployerSetup
         internal DateTime installStarted = DateTime.Now;
         internal string errorMessage = "";
         internal string doneUrl = "";
+        // From the done marker when LAN access is on: the addresses other devices use, and how many LAN networks are Public (A-075).
+        internal string doneLan = "";
+        internal int donePublicNetworks;
         bool sawReboot, sawDone;
         internal ScriptRunner runner;
         string payloadRoot;
@@ -1040,6 +1043,9 @@ namespace DeployerSetup
                     sawDone = true;
                     string url;
                     doneUrl = m.Values.TryGetValue("url", out url) ? url : "http://localhost:" + options.Port;
+                    doneLan = m.Values.TryGetValue("lan", out url) ? url : "";
+                    int publicNets;
+                    donePublicNetworks = m.Values.TryGetValue("publicnet", out url) && int.TryParse(url, out publicNets) ? publicNets : 0;
                     break;
                 case MarkerKind.Error:
                     errorMessage = m.Text;
@@ -1277,6 +1283,21 @@ namespace DeployerSetup
                     ? "Every step checked out. Nothing was changed on this PC. Run DeployerSetup.exe without /dryrun to install."
                     : "Deployer is running on this PC at " + url + ".",
                 ui.Font(11f), Theme.TextMuted, ui.S(20));
+            if (!dryRun && donePublicNetworks > 0)
+            {
+                y = Paragraph(y - ui.S(12), "Other devices can't connect yet: Windows marks your network as Public. If it is your home or office network, set its Network profile type to Private.",
+                    ui.Font(10f), Theme.Danger, ui.S(2));
+                FlatButton netSettings = new FlatButton(ui, "Open network settings", ButtonStyle.Link);
+                netSettings.FontPoints = 10f;
+                netSettings.Bounds = new Rectangle(ContentLeft - ui.S(3), y, Ui.MeasureWidth(netSettings.Text, ui.SemiBold(10f)) + ui.S(6), ui.S(26));
+                netSettings.Click += delegate { Shell.OpenUrl("ms-settings:network-status"); };
+                pageHost.Controls.Add(netSettings);
+                y += ui.S(26) + ui.S(14);
+            }
+            else if (!dryRun && doneLan != "")
+            {
+                y = Paragraph(y - ui.S(12), "On other devices on your network open " + doneLan.Replace(",", " or ") + ".", ui.Font(10f), Theme.TextMuted, ui.S(20));
+            }
 
             FlatButton open = null;
             if (!dryRun)

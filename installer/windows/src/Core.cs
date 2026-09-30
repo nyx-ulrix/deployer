@@ -122,6 +122,18 @@ namespace DeployerSetup
             return int.TryParse(Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture), out i) ? i : fallback;
         }
 
+        public static List<string> Strings(IDictionary<string, object> d, string key)
+        {
+            List<string> list = new List<string>();
+            object v;
+            if (d == null || !d.TryGetValue(key, out v) || v == null || v is string) return list;
+            IEnumerable items = v as IEnumerable;
+            if (items == null) return list;
+            foreach (object o in items)
+                if (o is string && (string)o != "") list.Add((string)o);
+            return list;
+        }
+
         public static List<IDictionary<string, object>> List(IDictionary<string, object> d, string key)
         {
             List<IDictionary<string, object>> list = new List<IDictionary<string, object>>();

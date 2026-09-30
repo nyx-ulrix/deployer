@@ -207,7 +207,9 @@ URLs in both OAuth apps. Client secrets are stored encrypted with your installat
   networking; if `networkingMode=mirrored` is set in your `.wslconfig`, the installer warns you,
   because Docker in WSL cannot publish ports with it. Then open
   `http://<this-PC's-IP>:8080` on another device, and set `PUBLIC_URL`/the public URL in
-  *Instance settings* accordingly.
+  *Instance settings* accordingly. The setup Finish page, the Deployer Control home card and
+  *Control > Settings* show that address (`deployer status -Json` returns it as `lanUrls`), or a
+  Public-network warning with an *Open network settings* button.
 - **From the internet**: *Settings → Domains & remote access* links your own (free) Cloudflare account
   and gives you `https://<your-domain>` through a Cloudflare Tunnel - no port forwarding, no
   certificates. A quick `trycloudflare.com` tunnel is available for testing. See

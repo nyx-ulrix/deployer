@@ -31,6 +31,9 @@ namespace DeployerSetup
         public bool Lan;
         public bool KeepAwake;
         public bool ManagedMongodb = true;
+        /// <summary>What other devices type to open Deployer, and the LAN networks Windows marks Public (A-075).</summary>
+        public List<string> LanUrls = new List<string>();
+        public List<string> PublicNetworks = new List<string>();
         public readonly List<ServiceInfo> Services = new List<ServiceInfo>();
         public DateTime Taken = DateTime.Now;
 
@@ -49,6 +52,8 @@ namespace DeployerSetup
             s.Lan = Json.Bool(d, "lan");
             s.KeepAwake = Json.Bool(d, "keepAwake");
             s.ManagedMongodb = !d.ContainsKey("managedMongodb") || Json.Bool(d, "managedMongodb");
+            s.LanUrls = Json.Strings(d, "lanUrls");
+            s.PublicNetworks = Json.Strings(d, "publicNetworks");
             foreach (IDictionary<string, object> svc in Json.List(d, "services"))
             {
                 ServiceInfo i = new ServiceInfo();
@@ -58,6 +63,15 @@ namespace DeployerSetup
                 s.Services.Add(i);
             }
             return s;
+        }
+
+        /// <summary>One line about LAN access for the hero card, or null when it is off.</summary>
+        public string LanLine()
+        {
+            if (!Lan) return null;
+            if (PublicNetworks.Count > 0) return "Other devices can't connect: Windows marks \"" + PublicNetworks[0] + "\" as Public. See Settings.";
+            if (LanUrls.Count > 0) return "On other devices open " + LanUrls[0];
+            return null;
         }
 
         public static string RuntimeLabel(string runtime)
@@ -424,7 +438,7 @@ namespace DeployerSetup
                 case RunState.Running:
                     pillText = "Running"; color = Theme.Success; icon = IconKind.Check; heroFill = Theme.SuccessSoft;
                     title = "Deployer is running";
-                    text = "Everything is working. Open it in your browser at http://localhost:" + port;
+                    text = (status == null ? null : status.LanLine()) ?? "Everything is working. Open it in your browser at http://localhost:" + port;
                     break;
                 case RunState.Starting:
                     pillText = "Starting"; color = Theme.Warn; icon = IconKind.Spinner; heroFill = Theme.WarnSoft;
@@ -848,7 +862,7 @@ namespace DeployerSetup
         void ShowSettings()
         {
             if (status == null) return;
-            using (SettingsDialog d = new SettingsDialog(port, status.Lan, status.KeepAwake, status.Autostart, 0))
+            using (SettingsDialog d = new SettingsDialog(port, status.Lan, status.KeepAwake, status.Autostart, 0, status.LanUrls, status.PublicNetworks))
             {
                 d.OpenSignInApps = owner => ShowScriptDialog(owner, "sign-in apps", script => new SignInAppsDialog(script, installDir, 0));
                 d.OpenResetPassword = owner => ShowScriptDialog(owner, "password reset", script => new ResetPasswordDialog(script, installDir, 0));
@@ -1150,8 +1164,12 @@ namespace DeployerSetup
         TextBlock portHint;
         FlatButton save;
 
-        public SettingsDialog(int port, bool lan, bool keepAwake, bool autostart, float forcedScale) : base(forcedScale)
+        readonly List<string> lanUrls, publicNetworks;
+
+        public SettingsDialog(int port, bool lan, bool keepAwake, bool autostart, float forcedScale, List<string> lanUrls, List<string> publicNetworks) : base(forcedScale)
         {
+            this.lanUrls = lanUrls ?? new List<string>();
+            this.publicNetworks = publicNetworks ?? new List<string>();
             Port = originalPort = port;
             Lan = lan;
             KeepAwake = keepAwake;
@@ -1199,6 +1217,7 @@ namespace DeployerSetup
 
             y = Toggle(y, cw, pad, "Let other devices on my network open Deployer",
                 "Adds a firewall rule for private (home or work) networks only.", Lan, v => Lan = v);
+            if (Lan) y = LanStatus(y, cw, pad);
             y = Toggle(y, cw, pad, "Keep this PC awake while plugged in",
                 "Stops sleep and hibernate while the charger is connected. Turning it off restores your previous settings.", KeepAwake, v => KeepAwake = v);
             y = Toggle(y, cw, pad, "Start Deployer when I sign in to Windows",
@@ -1234,6 +1253,30 @@ namespace DeployerSetup
             CancelButton = cancel;
             ClientSize = new Size(w, y + fh);
             Validate2();
+        }
+
+        /// <summary>Where other devices open Deployer, or why they can't: a network Windows marks Public (A-075).</summary>
+        int LanStatus(int y, int cw, int pad)
+        {
+            int left = pad + ui.S(4);
+            if (publicNetworks.Count > 0)
+            {
+                TextBlock warn = new TextBlock(ui, "Other devices can't connect: Windows marks \"" + string.Join("\", \"", publicNetworks.ToArray()) +
+                    "\" as a Public network. If it is your home or office network, set its Network profile type to Private.", ui.Font(9.5f), Theme.Danger);
+                y += warn.LayoutAt(left, y, cw - ui.S(4)) + ui.S(4);
+                Controls.Add(warn);
+                FlatButton open = new FlatButton(ui, "Open network settings", ButtonStyle.Link);
+                open.FontPoints = 9.5f;
+                open.Bounds = new Rectangle(left - ui.S(3), y, Ui.MeasureWidth(open.Text, ui.SemiBold(9.5f)) + ui.S(6), ui.S(24));
+                open.Click += delegate { Shell.OpenUrl("ms-settings:network-status"); };
+                Controls.Add(open);
+                return y + ui.S(24) + ui.S(8);
+            }
+            if (lanUrls.Count == 0) return y;
+            TextBlock urls = new TextBlock(ui, "On other devices open: " + string.Join("  or  ", lanUrls.ToArray()), ui.Font(9.5f), Theme.TextMuted);
+            y += urls.LayoutAt(left, y, cw - ui.S(4)) + ui.S(10);
+            Controls.Add(urls);
+            return y;
         }
 
         int ButtonRow(int y, int cw, int pad, string title, string description, string buttonText, Func<Action<Form>> open)

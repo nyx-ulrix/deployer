@@ -92,6 +92,13 @@ namespace DeployerSetup
             Check(m != null && m.Kind == MarkerKind.Step && m.Step == 3 && m.Total == 10 && m.Text == "Installing the free Docker Engine (WSL2)", "step marker parses");
             m = Marker.Parse("##deployer:done url=http://localhost:8090 dryrun=true");
             Check(m != null && m.Kind == MarkerKind.Done && m.Values["url"] == "http://localhost:8090", "done marker parses");
+            m = Marker.Parse("##deployer:done url=http://localhost:8080 lan=http://192.168.1.20:8080,http://10.0.0.5:8080 publicnet=1");
+            Check(m.Values["lan"] == "http://192.168.1.20:8080,http://10.0.0.5:8080" && m.Values["publicnet"] == "1", "done marker carries the LAN addresses and Public networks");
+            StatusSnapshot lan = StatusSnapshot.FromJson("{\"installed\":true,\"lan\":true,\"lanUrls\":[\"http://192.168.1.20:8080\"],\"publicNetworks\":[]}");
+            Check(lan.LanLine() == "On other devices open http://192.168.1.20:8080", "Control shows the LAN address");
+            lan = StatusSnapshot.FromJson("{\"installed\":true,\"lan\":true,\"lanUrls\":[\"http://192.168.1.20:8080\"],\"publicNetworks\":[\"CafeWifi\"]}");
+            Check(lan.LanLine().Contains("\"CafeWifi\" as Public"), "Control warns about a Public network");
+            Check(StatusSnapshot.FromJson("{\"installed\":true,\"lan\":false}").LanLine() == null, "no LAN line with LAN access off");
             m = Marker.Parse("##deployer:check port fail Port 8080 is already used by: nginx.");
             Check(m != null && m.Kind == MarkerKind.Check && m.CheckId == "port" && m.CheckState == "fail", "check marker parses");
             Check(Ports.IsAppPort(8150) && !Ports.IsAppPort(8090) && !Ports.IsAppPort(Ports.SuggestFree(8150)), "app port range is never the dashboard port");
@@ -355,6 +362,21 @@ namespace DeployerSetup
             w.Rebuild();
             Save(w, dir, "wizard-6-finish");
 
+            w = Wizard(scale, false);
+            w.page = WizardPage.Finish;
+            w.doneUrl = "http://localhost:8080";
+            w.doneLan = "http://192.168.1.20:8080";
+            w.Rebuild();
+            Save(w, dir, "wizard-6-finish-lan");
+
+            w = Wizard(scale, false);
+            w.page = WizardPage.Finish;
+            w.doneUrl = "http://localhost:8080";
+            w.doneLan = "http://192.168.1.20:8080";
+            w.donePublicNetworks = 1;
+            w.Rebuild();
+            Save(w, dir, "wizard-6-finish-public");
+
             w = Wizard(scale, true);
             w.page = WizardPage.Welcome;
             w.Rebuild();
@@ -366,7 +388,9 @@ namespace DeployerSetup
             Save(ControlSample(scale, 2), dir, "control-busy");
             Save(ControlSample(scale, 3), dir, "control-not-responding");
 
-            Save(new SettingsDialog(8080, false, true, true, scale), dir, "dialog-settings");
+            Save(new SettingsDialog(8080, false, true, true, scale, null, null), dir, "dialog-settings");
+            Save(new SettingsDialog(8080, true, true, true, scale, new List<string> { "http://192.168.1.20:8080" }, null), dir, "dialog-settings-lan");
+            Save(new SettingsDialog(8080, true, true, true, scale, null, new List<string> { "CafeWifi" }), dir, "dialog-settings-public");
             Save(new SignInAppsDialog(null, @"C:\ProgramData\Deployer", scale), dir, "dialog-signin-empty");
             SignInAppsDialog signIn = new SignInAppsDialog(null, @"C:\ProgramData\Deployer", scale);
             signIn.ApplyStatus(SampleOAuthStatus(), null);

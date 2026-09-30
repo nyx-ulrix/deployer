@@ -287,6 +287,11 @@ function Invoke-StatusJson {
         $result['autostart'] = (Test-DeployerTaskRegistered)
         $result['lan'] = [bool](Get-DeployerStateValue $lan 'enabled' $false)
         $result['lanMode'] = [string](Get-DeployerStateValue $lan 'mode' 'none')
+        if ($result['lan']) {
+            # Deployer Control shows these (A-075).
+            $result['lanUrls'] = @(Get-DeployerLanUrls -Port $ctx.Port)
+            $result['publicNetworks'] = @(Get-DeployerNonPrivateNetworks | ForEach-Object { [string]$_.Name })
+        }
         $result['keepAwake'] = [bool](Get-DeployerStateValue $keepAwake 'enabled' $false)
         $engine = $true
         if ($ctx.Runtime -eq 'wsl-engine') { $engine = Test-DeployerWslDistroRunning }
@@ -402,7 +407,7 @@ function Invoke-Lan {
     Save-ContextState -Ctx $ctx -Changes @{ lan = @{ enabled = $on; mode = $mode } }
     Restart-StackForSettings -Ctx $ctx -Port $ctx.Port
     if ($on) {
-        foreach ($ip in @(Get-DeployerLanAddresses)) { Write-DeployerOk "On your network: http://${ip}:$($ctx.Port)" }
+        foreach ($lanUrl in @(Get-DeployerLanUrls -Port $ctx.Port)) { Write-DeployerOk "On your network: $lanUrl" }
         [void](Write-DeployerNetworkProfileWarning)
     } else {
         Write-DeployerOk 'Deployer is reachable from this PC only'
