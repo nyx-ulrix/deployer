@@ -218,7 +218,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 **Backups**
 - [x] A-124 **[LOW][usability]** Error and alert text is raw tool output and internal job types - `api/app/services/alerts.py:130-132` - plain names and next steps; see also A-137. (not verified)
 - [x] A-125 **[LOW][cleanup]** Duplicated snapshot-success blocks and small dead or stale bits - `api/app/services/backups.py:504-524, 1451-1466, 1568-1583` - extract `_record_snapshot`; drop the dead bits. (not verified)
-- [ ] A-126 **[LOW][test]** Risky recovery paths have no tests - `api/tests/test_backups_api.py:374-391, 444-487` - four focused tests (gap chain, recover_stale, undelete retry, purge drop). (not verified)
+- [x] A-126 **[LOW][test]** Risky recovery paths have no tests - `api/tests/test_backups_api.py:374-391, 444-487` - four focused tests (gap chain, recover_stale, undelete retry, purge drop). (not verified)
 
 **Devices / co-hosting**
 - [ ] A-127 **[LOW][security]** Unsharing a project or removing the database_host role doesn't stop co-host sync - `api/app/services/source_sync.py:972-988` - pause on placement_problem; exclude paused replicas from fan-out; cap warnings.

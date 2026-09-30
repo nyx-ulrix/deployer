@@ -507,6 +507,31 @@ def test_jobs_ended_by_a_dead_worker_or_cancel_leave_nothing_stuck(client, env, 
     assert client.delete(f"{env['base']}/backups/{backup_id}", headers=env["admin"]).json() == {"ok": True}
 
 
+def test_snapshot_killed_mid_run_is_failed_by_recover_stale(client, env, db, monkeypatch, fake_redis):
+    # A-126: the PC slept or rebooted while a snapshot ran; its version must not stay "running" forever.
+    resp = client.post(f"{env['base']}/backups", json={}, headers=env["dev"])
+    backup_id, job_id = resp.json()["backup_id"], resp.json()["job"]["id"]
+
+    def killed(**kwargs):
+        raise _WorkerKilled
+
+    monkeypatch.setattr(env["fake"], "snapshot", killed)
+    with pytest.raises(_WorkerKilled):
+        jobs.run_job(job_id)
+    db.expire_all()
+    assert db.get(Backup, backup_id).status == "running"
+    db.get(Job, job_id).started_at = utcnow() - timedelta(minutes=10)
+    db.commit()
+    fake_redis.delete(jobs.heartbeat_key(job_id))
+    assert jobs.recover_stale() == 1
+    assert backups.reconcile_interrupted(jobs.get_sessionmaker()) == 1
+    db.expire_all()
+    backup = db.get(Backup, backup_id)
+    assert backup.status == "failed" and backup.finished_at is not None
+    assert backup.error == db.get(Job, job_id).error
+    assert client.delete(f"{env['base']}/backups/{backup_id}", headers=env["admin"]).json() == {"ok": True}
+
+
 def test_sweep_leftovers_removes_stale_partials_and_temp_databases(tmp_path, monkeypatch):
     import os
     import time
