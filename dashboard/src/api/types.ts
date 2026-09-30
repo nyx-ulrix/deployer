@@ -511,6 +511,8 @@ export type LocalDeviceStatus = {
   device_name: string | null;
   connected: boolean;
   last_error: string | null;
+  /** The main Deployer refused this device (removed or disabled there): retrying cannot help. */
+  rejected: boolean;
   last_connected_at: string | null;
   hosted_sources: LocalHostedSource[];
   metrics: DeviceMetrics | null;

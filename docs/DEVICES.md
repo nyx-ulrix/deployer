@@ -52,7 +52,9 @@ the primary) only authorizes the device endpoints below.
     `{"type":"heartbeat", metrics}` every 20 s, `{"type":"result", id, ok, result|error}`,
     `{"type":"progress", job_id, progress, message}`.
   - primary → device: `{"type":"call", id, method, params, timeout}`.
-  - Reconnect with exponential backoff (1 s → 60 s). Primary marks a device offline after 60 s
+  - Reconnect with exponential backoff (1 s → 60 s); after a 401/403 (device removed or disabled
+    on the primary) straight to 60 s, with `rejected: true` in `/v1/device/status` so the device's
+    page offers to detach instead of promising a reconnect. Primary marks a device offline after 60 s
     without a heartbeat (`devices.last_seen_at`, live state in Redis `device:{id}:online`).
 - **RPC routing on the primary:** any API process publishes calls to Redis channel
   `device:{id}:calls`; the process holding the socket forwards them; replies come back on
@@ -238,7 +240,7 @@ Errors raised **on the device** and re-raised on the primary with the same statu
 
 | Method | Path | Auth | Body | Response |
 |---|---|---|---|---|
-| GET | `/v1/device/status` | – | – | `{mode:"standalone"\|"host", primary_url, device_id, device_name, connected, last_error, last_connected_at, hosted_sources:[{database_name, kind, size_bytes}], metrics}` |
+| GET | `/v1/device/status` | – | – | `{mode:"standalone"\|"host", primary_url, device_id, device_name, connected, last_error, rejected, last_connected_at, hosted_sources:[{database_name, kind, size_bytes}], metrics}` |
 | POST | `/v1/device/enroll/start` | none if instance not initialized, else instance-owner bearer | `{primary_url, device_name}` | `{user_code, verification_url, expires_in}` |
 | GET | `/v1/device/enroll/status` | same | – | `{status:"idle"\|"pending"\|"approved"\|"denied"\|"expired"\|"error", message}`; while pending also `user_code, verification_url, expires_at, expires_in` (so a refreshed page shows the code again) |
 | POST | `/v1/device/enroll/cancel` | same | – | `{ok:true}` |

@@ -233,6 +233,7 @@ def device_status(db: DbSession) -> dict:
         "device_name": link.get("device_name") if link else None,
         "connected": bool(link and fresh and agent.get("connected")),
         "last_error": agent.get("last_error") if link else None,
+        "rejected": bool(link and not agent.get("connected") and agent.get("rejected")),
         "last_connected_at": agent.get("last_connected_at") if link else None,
         "hosted_sources": hosted,
         "metrics": metrics,

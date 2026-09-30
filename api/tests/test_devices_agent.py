@@ -160,7 +160,29 @@ def test_agent_reports_rejection(server, db, owner, set_setting, monkeypatch):
     runner = threading.Thread(target=lambda: loop.run_until_complete(device_agent.run_agent(stop)), daemon=True)
     runner.start()
     try:
-        assert _wait(lambda: "rejected" in (device_agent.read_status().get("last_error") or ""))
+        assert _wait(lambda: device_agent.read_status().get("rejected") is True)
+        assert "removed or disabled" in device_agent.read_status()["last_error"]
     finally:
         loop.call_soon_threadsafe(stop.set)
         runner.join(15)
+
+
+def test_connection_errors_read_as_plain_words():
+    import socket
+    import ssl
+
+    def describe(exc):
+        return device_agent._describe(exc, "https://main.example.com")
+
+    assert describe(socket.gaierror(11001, "getaddrinfo failed"))[0].startswith("Can't find main.example.com")
+    assert "Can't connect to main.example.com" in describe(ConnectionRefusedError(1225, "refused"))[0]
+    assert "certificate" in describe(ssl.SSLCertVerificationError("certificate verify failed"))[0]
+    assert "didn't answer in time" in describe(TimeoutError())[0]
+    for exc in (socket.gaierror(), ConnectionRefusedError(), TimeoutError()):
+        assert describe(exc)[1] is False and "Error" not in describe(exc)[0]
+
+    class Rejected(Exception):
+        response = type("R", (), {"status_code": 401})()
+
+    message, rejected = describe(Rejected())
+    assert rejected and "removed or disabled" in message

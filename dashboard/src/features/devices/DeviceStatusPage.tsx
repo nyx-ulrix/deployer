@@ -77,7 +77,13 @@ export function DeviceStatusPage() {
                   </a>
                 </p>
               )}
-              {!status.data.connected && (
+              {!status.data.connected && status.data.rejected && (
+                <Alert tone="danger" title="The main Deployer no longer accepts this PC">
+                  {status.data.last_error ?? "It was removed or disabled there."} If that was intended, detach this PC
+                  (below); its databases stay here. Otherwise ask the main Deployer's owner to re-enable it.
+                </Alert>
+              )}
+              {!status.data.connected && !status.data.rejected && (
                 <Alert tone="warning" title="Reconnecting automatically">
                   {status.data.last_error ??
                     "The device retries with increasing delays (up to a minute). Check that this PC can reach the main Deployer's URL."}

@@ -55,6 +55,7 @@ def _status() -> int:
         "device_name": link.get("device_name") if link else None,
         "connected": bool(agent.get("connected")),
         "last_error": agent.get("last_error"),
+        "rejected": bool(agent.get("rejected")),
         "last_connected_at": agent.get("last_connected_at"),
         "hosted_sources": hosted,
     }
@@ -91,7 +92,7 @@ def _detach(force: bool) -> int:
         session.commit()
     finally:
         session.close()
-    device_agent.write_status(mode="standalone", connected=False, last_error=None)
+    device_agent.write_status(mode="standalone", connected=False, last_error=None, rejected=False)
     print(f"Detached from {link.get('primary_url')}. The device agent disconnects within a few seconds.")
     if hosted:
         print(f"Kept {len(hosted)} hosted database(s) and their credentials on this machine.")

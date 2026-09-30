@@ -17,6 +17,7 @@ import json
 import logging
 import random
 import socket
+import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -123,19 +124,23 @@ class DeviceAgent:
                 continue
             started = time.monotonic()
             self._detached = False
+            rejected = False
             try:
                 await self._session(link)
                 error = None
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001
-                error = _describe(exc)
-                log.warning("device agent connection failed: %s", error)
-            write_status(mode="host", connected=False, **({"last_error": error} if error else {}))
+                error, rejected = _describe(exc, link["primary_url"])
+                log.warning("device agent connection failed: %s (%s: %s)", error, type(exc).__name__, exc)
+            extra = {"last_error": error, "rejected": rejected} if error else {}
+            write_status(mode="host", connected=False, **extra)
             if self._stop.is_set():
                 break
             if time.monotonic() - started > 60:
                 backoff = MIN_BACKOFF
+            if rejected:  # a removed device's token never works again: retry rarely, in case it is re-enabled
+                backoff = MAX_BACKOFF
             await self._sleep(0.2 if self._detached else backoff * (0.8 + 0.4 * random.random()))
             backoff = MIN_BACKOFF if self._detached else min(backoff * 2, MAX_BACKOFF)
 
@@ -156,6 +161,7 @@ class DeviceAgent:
                 mode="host",
                 connected=True,
                 last_error=None,
+                rejected=False,
                 last_connected_at=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 primary_url=link["primary_url"],
             )
@@ -209,7 +215,7 @@ class DeviceAgent:
 
     def _on_detach(self) -> None:
         self._detached = True
-        write_status(mode="standalone", connected=False, last_error=None)
+        write_status(mode="standalone", connected=False, last_error=None, rejected=False)
 
     async def _heartbeat(self, ws, link: dict) -> None:
         while True:
@@ -289,11 +295,27 @@ async def _send(ws, payload: dict) -> None:
         log.debug("send failed", exc_info=True)
 
 
-def _describe(exc: Exception) -> str:
+def _describe(exc: Exception, primary_url: str) -> tuple[str, bool]:
+    """A plain-words reason the connection failed, and whether the main Deployer rejected this device
+    (it was removed or disabled there: retrying cannot help, the page offers to detach instead)."""
+    host = urlsplit(primary_url).hostname or primary_url
     status = getattr(getattr(exc, "response", None), "status_code", None)
     if status in (401, 403):
-        return f"The main Deployer rejected this device (HTTP {status}); it may have been removed or disabled"
-    return f"{type(exc).__name__}: {exc}"[:500]
+        return (
+            f"The main Deployer at {host} rejected this device (HTTP {status}); it was removed or disabled there",
+            True,
+        )
+    if isinstance(exc, socket.gaierror):
+        return f"Can't find {host}: check the main Deployer's address and this PC's internet connection", False
+    if isinstance(exc, ssl.SSLError):
+        return f"Secure connection to {host} failed: its HTTPS certificate isn't valid or trusted by this PC", False
+    if isinstance(exc, TimeoutError):
+        return f"{host} didn't answer in time: the main Deployer may be off or slow to reach", False
+    if isinstance(exc, OSError):  # refused, unreachable, reset
+        return f"Can't connect to {host}: the main Deployer may be off, or unreachable from this PC", False
+    if status:
+        return f"The main Deployer at {host} answered HTTP {status}; it may be updating or misconfigured", False
+    return f"Lost the connection to {host} ({type(exc).__name__}: {exc})"[:500], False
 
 
 async def run_agent(stop: asyncio.Event | None = None) -> None:
