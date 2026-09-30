@@ -297,8 +297,8 @@ Webhook (no auth header): `POST /v1/hooks/github/{app_id}` with GitHub's `X-Hub-
 otherwise), `X-GitHub-Event: ping` → 200 `{ok}`; `push` for `refs/heads/<branch>` → 202
 `{deployment_id}` (`trigger=webhook`, `commit_sha`, first line of the head commit message); other
 branches/events → 200 `{ignored: true}`. Coalescing: a push while a deployment is still `queued`
-for the same app replaces its commit instead of adding another. Rate limit 6/min per app (every
-delivery counts, including rejected signatures; 429 `rate_limited`). Unknown app → 404. When the
+for the same app replaces its commit instead of adding another. Rate limit 6/min per app (signed
+deliveries only, checked after the signature so junk cannot block real pushes; 429 `rate_limited`). Unknown app → 404. When the
 instance owner has disabled the project owner's account → 403 `account_disabled`. Bodies over
 5 MB → 413 `payload_too_large`; an `after` that is not a 40-hex sha deploys the branch head instead.
 

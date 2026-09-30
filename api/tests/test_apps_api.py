@@ -199,7 +199,10 @@ def test_webhook(client, env, db, fake_redis, set_setting):
             headers={**headers, "X-Hub-Signature-256": sign(secret, payload), "X-GitHub-Event": "push"},
         )
 
-    rate_limit.reset(f"rl:hook:{app['id']}")  # every delivery counts, including the rejected ones above
+    rate_limit.reset(f"rl:hook:{app['id']}")  # the signed ping above counted
+    # A-138: unsigned junk does not count against the app's limit, so it cannot block real pushes.
+    for _ in range(10):
+        assert client.post(hook_url, content=body, headers={"X-GitHub-Event": "push"}).status_code == 401
     other = push("refs/heads/feature", "b" * 40)
     assert other.status_code == 200 and other.json() == {"ignored": True}
     assert client.post(hook_url, content=body, headers={**headers, "X-GitHub-Event": "issues"}).json() == {

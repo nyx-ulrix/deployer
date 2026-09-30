@@ -8,9 +8,11 @@ from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import and_, or_, select
+from sqlalchemy.orm import Session
 
 from app.crypto import encrypt_secret
 from app.db import get_sessionmaker
@@ -785,27 +787,31 @@ async def read_body_capped(request: Request, limit: int) -> bytes:
 
 @router.post("/hooks/github/{app_id}")
 async def github_webhook(app_id: str, request: Request, db: DbSession) -> Any:
-    app = db.get(App, app_id)
+    # Async only to stream the capped body; the DB and Redis work runs in the threadpool (A-138).
+    app = await run_in_threadpool(db.get, App, app_id)
     if app is None:
         raise not_found("App")
-    allowed, retry_after = rate_limit.hit(f"rl:hook:{app_id}", deployments.WEBHOOK_LIMIT, deployments.WEBHOOK_WINDOW_S)
+    body = await read_body_capped(request, WEBHOOK_MAX_BODY)
+    if len(body) > WEBHOOK_MAX_BODY:
+        raise ApiError(413, "payload_too_large", f"Webhook payloads are limited to {WEBHOOK_MAX_BODY // 2**20} MB")
+    return await run_in_threadpool(_github_delivery, db, app, request.headers, body)
+
+
+def _github_delivery(db: Session, app: App, headers: Any, body: bytes) -> Any:
+    if not deployments.verify_signature(deployments.webhook_secret(app), body, headers.get("X-Hub-Signature-256")):
+        raise ApiError(401, "bad_signature", "X-Hub-Signature-256 does not match")
+    # Only signed deliveries count (A-138): unsigned junk must not use up the app's real pushes.
+    allowed, retry_after = rate_limit.hit(f"rl:hook:{app.id}", deployments.WEBHOOK_LIMIT, deployments.WEBHOOK_WINDOW_S)
     if not allowed:
         raise ApiError(
             429, "rate_limited", "Too many webhook deliveries; try again later", {"retry_after": retry_after}
         )
-    body = await read_body_capped(request, WEBHOOK_MAX_BODY)
-    if len(body) > WEBHOOK_MAX_BODY:
-        raise ApiError(413, "payload_too_large", f"Webhook payloads are limited to {WEBHOOK_MAX_BODY // 2**20} MB")
-    if not deployments.verify_signature(
-        deployments.webhook_secret(app), body, request.headers.get("X-Hub-Signature-256")
-    ):
-        raise ApiError(401, "bad_signature", "X-Hub-Signature-256 does not match")
     project = db.get(Project, app.project_id)
     owner = db.get(User, project.owner_id) if project else None
     if owner is None or not owner.is_active:
         # A-023: a disabled account's pushes must not keep deploying new code on this PC.
         raise ApiError(403, "account_disabled", "The account that owns this project has been disabled")
-    event = request.headers.get("X-GitHub-Event", "")
+    event = headers.get("X-GitHub-Event", "")
     if event == "ping":
         return {"ok": True}
     if event != "push":
