@@ -15,7 +15,7 @@ APT_OPTS=(-y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-co
 
 # --- WSL settings -------------------------------------------------------------------------------
 # This distro exists only to run Deployer, so the whole file is managed here.
-log "Writing /etc/wsl.conf (systemd on, root default user, no Windows PATH)"
+log "Writing /etc/wsl.conf (systemd on, root default user, no Windows interop)"
 cat > /etc/wsl.conf <<'EOF'
 # Managed by Deployer (installer/wsl/setup-engine.sh)
 [boot]
@@ -24,8 +24,10 @@ systemd=true
 [user]
 default=root
 
+# Nothing in this distro runs Windows programs, and interop would let root here start any .exe as
+# the (often elevated) Windows user. Windows -> distro calls (wsl -d deployer ...) are unaffected.
 [interop]
-enabled=true
+enabled=false
 # Keep Windows' docker.exe (e.g. Docker Desktop) out of this distro's PATH.
 appendWindowsPath=false
 

@@ -44,3 +44,7 @@ Assert-That ((Get-InstallerCliHint 'status') -eq "& 'C:\My Apps\Deployer\deploye
 $source = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\install.ps1'))
 $beforePath = $source.Substring(0, $source.IndexOf('Add-DeployerUserPath -Directory'))
 Assert-That ($beforePath -notmatch '[''"]deployer (logs|status)') 'no message before the PATH step tells the user to run a bare deployer command'
+
+# A-148: the wsl-engine distro turns Windows interop off (root in the VM must not launch Windows programs).
+$wslConf = [System.IO.File]::ReadAllText((Join-Path $PSScriptRoot '..\wsl\setup-engine.sh'))
+Assert-That ($wslConf -match '(?m)^\[interop\]\r?\n(#.*\r?\n)*enabled=false\r?$') 'setup-engine.sh writes [interop] enabled=false to wsl.conf'
