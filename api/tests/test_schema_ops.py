@@ -129,6 +129,26 @@ def test_render_default():
         schema_ops.render_default("a\\b", MY)
 
 
+def test_render_default_mysql_expressions_are_parenthesized():
+    # MySQL 8 rejects bare function defaults like DEFAULT UUID(); the parenthesized form works on MariaDB too.
+    assert schema_ops.render_default("uuid()", MY) == "(UUID())"
+    assert schema_ops.render_default("gen_random_uuid()", MY) == "(UUID())"
+    assert schema_ops.render_default("current_date", MY) == "(CURRENT_DATE)"
+    assert schema_ops.render_default("gen_random_uuid()", PG) == "gen_random_uuid()"
+    assert schema_ops.render_default("current_date", PG) == "CURRENT_DATE"
+    [ddl] = schema_ops.build_create_table(
+        {"name": "t", "columns": [{"name": "d", "type": "DATE", "default": "CURRENT_DATE"}]}, MY
+    )
+    assert "`d` DATE NULL DEFAULT (CURRENT_DATE)" in ddl
+
+
+def test_render_default_allows_unicode_text_but_not_quotes_or_controls():
+    assert schema_ops.render_default("Café 東京 ✓", MY) == "'Café 東京 ✓'"
+    for bad in ("l’été'", 'say "hi"', "a\\b", "line\nbreak", "tab\there", "sep x", "x" * 256):
+        with pytest.raises(ApiError):
+            schema_ops.render_default(bad, MY)
+
+
 def test_normalize_validator():
     assert schema_ops.normalize_validator(None) is None
     wrapped = schema_ops.normalize_validator({"bsonType": "object", "required": ["a"]})

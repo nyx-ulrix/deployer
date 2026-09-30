@@ -45,7 +45,9 @@ _DEFAULT_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 _DEFAULT_NUMBER = re.compile(r"^-?\d{1,30}(?:\.\d{1,30})?$")
-_DEFAULT_STRING = re.compile(r"^[A-Za-z0-9 _.,:;@/+#=()\[\]{}!?*&%<>|~^$-]{0,255}$")
+# ASCII punctuation allowlist plus any printable non-ASCII character (accents, CJK, emoji).
+# Quotes and backslashes stay out, so the literal never needs escaping.
+_DEFAULT_STRING = re.compile(r"^(?:[A-Za-z0-9 _.,:;@/+#=()\[\]{}!?*&%<>|~^$-]|[^\x00-\x7f]){0,255}$")
 
 ON_DELETE = {"cascade": "CASCADE", "set null": "SET NULL", "restrict": "RESTRICT"}
 
@@ -79,15 +81,20 @@ def render_default(value: Any, dialect: Any) -> str:
         raise ApiError(422, "invalid_default", "Default must be a string, number or boolean")
     v = value.strip()
     if _DEFAULT_KEYWORDS.fullmatch(v):
-        if dialect.name == "postgresql" and v.upper() == "UUID()":
-            return "gen_random_uuid()"
-        if dialect.name != "postgresql" and v.lower() == "gen_random_uuid()":
+        key = v.lower()
+        if dialect.name == "postgresql":
+            return "gen_random_uuid()" if key in ("uuid()", "gen_random_uuid()") else v.upper()
+        # MySQL 8 only accepts function defaults (other than CURRENT_TIMESTAMP/NOW) in parentheses;
+        # MariaDB accepts the same form.
+        if key in ("uuid()", "gen_random_uuid()"):
             return "(UUID())"
-        return v.upper() if not v.lower().startswith("gen_random") else v
+        if key == "current_date":
+            return "(CURRENT_DATE)"
+        return v.upper()
     if _DEFAULT_NUMBER.fullmatch(v):
         return v
-    if _DEFAULT_STRING.fullmatch(value):
-        return "'" + value.replace("'", "''") + "'"
+    if _DEFAULT_STRING.fullmatch(value) and value.isprintable():
+        return f"'{value}'"
     raise ApiError(422, "invalid_default", f"Unsupported default value: {value!r}")
 
 
