@@ -209,8 +209,9 @@ def test_backup_failed_message_is_plain(db):
     assert all("backup." not in m and "Settings > Backups" in m for m in (archive, platform))
 
 
-def test_backup_failed_only_for_backups_and_clears_on_a_later_snapshot(db):
-    """A-137: a failed restore / verify / prune / copy is not a failed backup, and a later snapshot clears it."""
+def test_backup_failed_only_for_backups_and_clears_when_that_task_succeeds(db):
+    """A-137: a failed restore / verify / prune / copy is not a failed backup. A later snapshot does not clear a
+    failing log save (it would resolve and reopen the alert every hour); the next successful log save does."""
     hour_ago = utcnow() - timedelta(hours=1)
     for t in ("restore", "verify", "prune", "copy"):
         db.add(Job(type=f"backup.{t}", status="failed", finished_at=hour_ago))
@@ -221,6 +222,12 @@ def test_backup_failed_only_for_backups_and_clears_on_a_later_snapshot(db):
     assert list(out) == ["backup:backup.archive_logs:platform"]
 
     db.add(Job(type="backup.snapshot", status="succeeded", finished_at=utcnow()))
+    db.commit()
+    out = {}
+    alerts._backup_rules(db, out)
+    assert list(out) == ["backup:backup.archive_logs:platform"]
+
+    db.add(Job(type="backup.archive_logs", status="succeeded", finished_at=utcnow()))
     db.commit()
     out = {}
     alerts._backup_rules(db, out)

@@ -129,13 +129,13 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
         if key in seen:
             continue
         seen.add(key)
-        # Any later snapshot of the same database clears it (a fresh full backup covers a failed log save).
-        cleared_by = {job.type} if job.type == "backup.platform_snapshot" else {job.type, "backup.snapshot"}
+        # Only the same job type succeeding clears it: a snapshot does not fix a failing log save, and
+        # clearing on one would resolve and reopen the alert (webhook + dropped snooze) every hour.
         recovered = db.scalar(
             select(func.count())
             .select_from(Job)
             .where(
-                Job.type.in_(cleared_by),
+                Job.type == job.type,
                 Job.data_source_id.is_(None)
                 if job.data_source_id is None
                 else Job.data_source_id == job.data_source_id,
@@ -152,8 +152,7 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
         out[f"backup:{job.type}:{job.data_source_id or 'platform'}"] = Condition(
             "backup_failed",
             "critical",
-            f"{what} failed. Open Settings > Backups for the reason; "
-            "this alert clears after the next successful backup",
+            f"{what} failed. Open Settings > Backups for the reason; this alert clears once it next succeeds",
         )
     # A job that never ends (a hung tool) fails nothing: alert when a scheduled database has had no
     # successful snapshot for twice its schedule. Held for an hour first, so a PC that just woke from
