@@ -598,6 +598,8 @@ function Invoke-Update {
     $work = Join-Path $env:TEMP 'deployer-update'
     $root = Get-DeployerSource -Repo $repo -Ref $target -WorkDir $work
     Copy-DeployerFiles -SourceRoot $root -InstallDir $InstallDir
+    # Installs from before A-067 left the WSL disk and logs readable by every local user.
+    Protect-DeployerDataDirs -InstallDir $InstallDir -UserSid ([string](Get-DeployerStateValue $ctx.State 'installUserSid' (Get-DeployerUserSid)))
 
     $mongo = [bool](Get-DeployerStateValue $ctx.State 'managedMongodb' $true)
     $bind = if ($ctx.Env['DEPLOYER_BIND']) { [string]$ctx.Env['DEPLOYER_BIND'] } else { '127.0.0.1' }

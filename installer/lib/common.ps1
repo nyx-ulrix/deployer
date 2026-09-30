@@ -2,7 +2,7 @@
 # Windows PowerShell 5.1 compatible. Keep this file ASCII-only (5.1 reads BOM-less files as ANSI).
 
 # Bumped when install.ps1 / deployer.ps1 need functions that older copies of this file lack.
-$script:DeployerLibVersion = 2
+$script:DeployerLibVersion = 3
 $script:DeployerDistro = 'deployer'
 $script:DeployerTaskName = 'Deployer'
 $script:DeployerTrayTaskName = 'Deployer Tray'
@@ -305,6 +305,16 @@ function Set-DeployerPrivateAcl {
         "*S-1-5-32-544:$($inherit)(F)", "*S-1-5-18:$($inherit)(F)", "*$($UserSid):$($inherit)(F)"
     )
     if ($r.ExitCode -ne 0) { throw "Could not restrict permissions on ${Path}: $($r.Output)" }
+}
+
+function Protect-DeployerDataDirs {
+    # backups (dumps + .env copy), logs (install transcripts) and wsl (ext4.vhdx = every database) must not
+    # inherit the Users:RX the install dir grants, or any local account could copy them and read them offline.
+    param([string]$InstallDir, [string]$UserSid = (Get-DeployerUserSid))
+    foreach ($name in @('backups', 'logs', 'wsl')) {
+        $path = Join-Path $InstallDir $name
+        if (Test-Path -LiteralPath $path) { Set-DeployerPrivateAcl -Path $path -UserSid $UserSid }
+    }
 }
 
 function Set-DeployerInstallDirAcl {

@@ -97,7 +97,7 @@ $script:InstallerExitCode = 0
 $script:PortWasGiven = $PSBoundParameters.ContainsKey('Port')
 $script:LanWasGiven = $PSBoundParameters.ContainsKey('EnableLan')
 $script:SleepWasGiven = $PSBoundParameters.ContainsKey('PreventSleep')
-$script:RequiredLibVersion = 2
+$script:RequiredLibVersion = 3
 $script:BootstrapRoot = $null
 $script:BootstrapRef = $null
 $script:TotalSteps = 10
@@ -486,6 +486,8 @@ function Install-WslEngine {
         $image = Get-UbuntuWslImage
         $diskDir = Join-Path $InstallDir 'wsl'
         New-Item -ItemType Directory -Path $diskDir -Force | Out-Null
+        # Private before the import, so ext4.vhdx (every database) is never created readable by Users.
+        Set-DeployerPrivateAcl -Path $diskDir
         Write-DeployerInfo "Creating WSL distro '$($script:DeployerDistro)' in $diskDir"
         $code = Invoke-DeployerStreaming -FilePath $wsl -ArgumentList @('--import', $script:DeployerDistro, $diskDir, $image, '--version', '2')
         if ($code -ne 0) {
@@ -904,7 +906,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
             if ($created) { Write-DeployerOk '.env created with freshly generated secrets (readable by Administrators, SYSTEM and you only)' }
             else { Write-DeployerOk '.env kept; new settings merged in' }
             foreach ($dir in @('backups', 'logs')) { New-Item -ItemType Directory -Path (Join-Path $InstallDir $dir) -Force | Out-Null }
-            Set-DeployerPrivateAcl -Path (Join-Path $InstallDir 'backups')
+            Protect-DeployerDataDirs -InstallDir $InstallDir
 
             $stateTable = ConvertTo-DeployerStateTable $state
             $stateTable['runtime'] = $chosen
