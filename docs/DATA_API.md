@@ -200,7 +200,8 @@ Every key-driven run is kept in the project's query log (visible to admins in th
 
 `GET /projects/{pid}/schema?source_id=&sample=200` returns every data source's tables/collections,
 columns/fields, relationships and the project's cross-database links; `source_id` narrows it to one
-source. `GET /projects/{pid}/schema/export?format=sql|mongo|bundle` downloads DDL, and
+source. `GET /projects/{pid}/schema/export?format=sql|mongo|bundle` downloads DDL (tables and indexes; the header lists
+views, triggers and routines it skipped), and
 `GET /projects/{pid}/schema/links` lists the links. Creating tables, collections or links needs a user login.
 
 ```bash

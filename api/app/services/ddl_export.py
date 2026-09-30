@@ -25,7 +25,9 @@ from app.services.introspection import DEFAULT_SAMPLE, _s, analyze_documents
 
 def topo_sort_tables(tables: list[str], deps: dict[str, set[str]]) -> list[str]:
     """Orders tables so referenced tables come first. Cycles / self references are tolerated:
-    remaining tables are appended alphabetically (FK checks are disabled around the script)."""
+    remaining tables are appended alphabetically. MariaDB/MySQL scripts disable FK checks, so that
+    order still loads there; PostgreSQL has no such switch, so a cyclic schema needs its foreign keys
+    moved to `ALTER TABLE` by hand."""
     remaining = {t: {d for d in deps.get(t, set()) if d != t and d in tables} for t in tables}
     ordered: list[str] = []
     while remaining:
@@ -49,16 +51,26 @@ def _comment_safe(value: str) -> str:
 
 
 def render_sql_script(
-    *, source_name: str, engine: str, database: str, statements: list[str], now: datetime | None = None
+    *,
+    source_name: str,
+    engine: str,
+    database: str,
+    statements: list[str],
+    now: datetime | None = None,
+    skipped: dict[str, list[str]] | None = None,
 ) -> str:
+    """`skipped`: objects the export does not script ({"views": [...], ...}), listed in the header."""
     mysql = engine in ("mariadb", "mysql")
     lines = [
         "-- Deployer schema export",
         f"-- Source: {_comment_safe(source_name)} ({engine})",
         f"-- Database: {_comment_safe(database)}",
         f"-- Generated: {_now_text(now)}",
-        "",
     ]
+    if skipped:
+        lines.append("-- Not exported (tables and indexes only) - recreate these by hand:")
+        lines += [f"--   {kind}: {_comment_safe(', '.join(names))}" for kind, names in skipped.items()]
+    lines.append("")
     if mysql:
         lines += ["SET FOREIGN_KEY_CHECKS=0;", ""]
     if not statements:
@@ -214,8 +226,10 @@ Generated: {generated}
 
 Files:
 
-- `schema.sql` - SQL DDL for every SQL data source (MariaDB/MySQL scripts disable foreign-key checks
-  while tables are created). Run it against an empty database, e.g.
+- `schema.sql` - tables and indexes of every SQL data source (MariaDB/MySQL scripts disable
+  foreign-key checks while tables are created). Views, triggers, routines and events are not
+  exported; each source's header lists the ones it skipped so you can recreate them by hand.
+  Run it against an empty database, e.g.
   `mysql -u <user> -p <database> < schema.sql` or `psql -d <database> -f schema.sql`.
 - `schema.mongo.js` - a mongosh script that creates collections, validators and indexes:
   `mongosh "<connection uri>" schema.mongo.js`.
@@ -262,6 +276,46 @@ def mysql_table_order(engine: Engine) -> list[str]:
     return topo_sort_tables(tables, deps)
 
 
+# Objects the SQL export does not script; listed in the script header instead of silently dropped.
+_SKIPPED_QUERIES = {
+    "mysql": [
+        ("views", "SELECT TABLE_NAME FROM information_schema.VIEWS WHERE TABLE_SCHEMA = DATABASE() ORDER BY 1"),
+        (
+            "triggers",
+            "SELECT TRIGGER_NAME FROM information_schema.TRIGGERS WHERE TRIGGER_SCHEMA = DATABASE() ORDER BY 1",
+        ),
+        (
+            "routines",
+            "SELECT DISTINCT ROUTINE_NAME FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = DATABASE() "
+            "ORDER BY 1",
+        ),
+        ("events", "SELECT EVENT_NAME FROM information_schema.EVENTS WHERE EVENT_SCHEMA = DATABASE() ORDER BY 1"),
+    ],
+    "postgresql": [
+        ("views", "SELECT table_name FROM information_schema.views WHERE table_schema = current_schema() ORDER BY 1"),
+        ("materialized views", "SELECT matviewname FROM pg_matviews WHERE schemaname = current_schema() ORDER BY 1"),
+        (
+            "triggers",
+            "SELECT DISTINCT trigger_name FROM information_schema.triggers "
+            "WHERE trigger_schema = current_schema() ORDER BY 1",
+        ),
+        (
+            # functions installed by extensions come back with CREATE EXTENSION, so they are not listed
+            "routines",
+            "SELECT DISTINCT p.proname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace "
+            "WHERE n.nspname = current_schema() AND NOT EXISTS "
+            "(SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e') ORDER BY 1",
+        ),
+    ],
+}
+
+
+def skipped_objects(conn: Any, dialect_name: str) -> dict[str, list[str]]:
+    queries = _SKIPPED_QUERIES.get("mysql" if dialect_name == "mariadb" else dialect_name, [])
+    found = {kind: [_s(r[0]) for r in conn.exec_driver_sql(sql)] for kind, sql in queries}
+    return {kind: names for kind, names in found.items() if names}
+
+
 def show_create_table(conn: Any, dialect: Any, table: str) -> str:
     q = dialect.identifier_preparer.quote_identifier(table).replace("%", "%%")
     row = conn.exec_driver_sql(f"SHOW CREATE TABLE {q}").first()
@@ -269,6 +323,7 @@ def show_create_table(conn: Any, dialect: Any, table: str) -> str:
 
 
 def sql_create_statements(engine: Engine) -> list[str]:
+    """Tables and their indexes only; see `skipped_objects` for what is left out."""
     if engine.dialect.name in ("mysql", "mariadb"):
         order = mysql_table_order(engine)
         with engine.connect() as conn:
@@ -291,12 +346,16 @@ def sql_create_statements(engine: Engine) -> list[str]:
 
 def export_sql_source(ds: DataSource, now: datetime | None = None) -> str:
     engine = connections.get_sql_engine(ds)
+    statements = sql_create_statements(engine)
+    with engine.connect() as conn:
+        skipped = skipped_objects(conn, engine.dialect.name)
     return render_sql_script(
         source_name=ds.name,
         engine=ds.engine,
         database=ds.database_name,
-        statements=sql_create_statements(engine),
+        statements=statements,
         now=now,
+        skipped=skipped,
     )
 
 

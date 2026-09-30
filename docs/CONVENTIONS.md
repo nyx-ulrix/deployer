@@ -56,7 +56,11 @@ as warnings in the viewer's *Conventions* panel (they never block anything).
 
 - **SQL** — `CREATE TABLE` statements in foreign-key dependency order, followed by indexes, wrapped
   with `SET FOREIGN_KEY_CHECKS=0/1` for MariaDB/MySQL. Uses the server's own `SHOW CREATE TABLE`
-  for MariaDB/MySQL and SQLAlchemy's dialect compiler for PostgreSQL.
+  for MariaDB/MySQL and SQLAlchemy's dialect compiler for PostgreSQL. Tables and indexes only:
+  views, triggers, routines and events (PostgreSQL: materialized views too) are not scripted; the
+  script header names each one it left out so you can recreate them by hand. PostgreSQL has no
+  foreign-key-checks switch, so a schema with circular foreign keys needs them moved to
+  `ALTER TABLE` by hand.
 - **MongoDB** — a `mongosh` script: `db.getSiblingDB(...)`, `db.createCollection(name, {validator})`
   (existing `$jsonSchema` validators kept; otherwise a validator inferred from samples is emitted
   commented-out), then `createIndex` for every non-`_id` index.

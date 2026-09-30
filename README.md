@@ -17,7 +17,8 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 - **SQL + NoSQL per project** - managed MariaDB and MongoDB databases on this PC, each with its own
   restricted database user, or attach **external** databases (MySQL, PostgreSQL, MariaDB, MongoDB Atlas...).
 - **Schema viewer** - ER diagrams (crow's-foot notation) across SQL and NoSQL, convention checks,
-  cross-database links, and **DDL export** (`.sql`, `mongosh` script, or a bundle).
+  cross-database links, and **DDL export** (`.sql`, `mongosh` script, or a bundle; SQL covers tables and indexes, and
+  names any views, triggers or routines it skipped).
 - **Data browser** for tables and collections.
 - **API keys** - give your apps a project-scoped key (`anon` read-only but reads all project data,
   `service` read/write) and use the same rows, documents, query and schema endpoints from curl,

@@ -53,6 +53,27 @@ def test_render_sql_script_postgres_has_no_fk_checks():
     assert "(no tables)" in text
 
 
+def test_sql_script_header_lists_skipped_objects():
+    class FakeConn:
+        def exec_driver_sql(self, sql):
+            if "VIEWS" in sql:
+                return [("active_users",), ("sales_summary",)]
+            return [(b"audit_insert",)] if "TRIGGERS" in sql else []
+
+    skipped = ddl_export.skipped_objects(FakeConn(), "mariadb")
+    assert skipped == {"views": ["active_users", "sales_summary"], "triggers": ["audit_insert"]}
+    text = ddl_export.render_sql_script(
+        source_name="main", engine="mariadb", database="app", statements=[], now=NOW, skipped=skipped
+    )
+    header = text.split("\n\n", 1)[0]
+    assert "-- Not exported (tables and indexes only)" in header
+    assert "--   views: active_users, sales_summary" in header
+    assert "--   triggers: audit_insert" in header
+    assert "Not exported" not in ddl_export.render_sql_script(
+        source_name="main", engine="mariadb", database="app", statements=[], now=NOW, skipped={}
+    )
+
+
 def test_inferred_json_schema():
     docs = [
         {"_id": ObjectId(), "name": "a", "age": 3, "address": {"city": "x"}},
