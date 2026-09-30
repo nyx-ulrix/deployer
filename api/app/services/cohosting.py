@@ -23,7 +23,7 @@ from app.models import (
     utcnow,
 )
 from app.serializers import iso
-from app.services import device_moves, device_rpc, jobs, source_sync
+from app.services import device_moves, device_rpc, jobs, provisioning, source_sync
 
 log = logging.getLogger(__name__)
 
@@ -199,7 +199,7 @@ def allocate_offset(db: Session, rep: SourceReplica) -> int:
 
 def _drop_device_copy(device_id: str, kind: str, database: str) -> None:
     try:
-        device_rpc.call(device_id, "datasource.drop", {"kind": kind, "database_name": database}, timeout=120)
+        provisioning.drop_on_device(device_id, kind, database)
     except ApiError as exc:
         if exc.code != "not_hosted":
             raise

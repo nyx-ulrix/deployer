@@ -226,7 +226,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-129 **[LOW][bug]** Cleanup of old moved copies retries hourly forever once the device is gone - `api/app/services/device_moves.py:342-358` - drop entries for missing devices. (not verified)
 - [x] A-130 **[LOW][bug]** The app.replicate progress callback is never called (wrong channel id) - `api/app/services/cohost_apps.py:293-300` - `progress_id=f"{device_id}:{job_id}"` or remove it. (not verified)
 - [x] A-131 **[LOW][cleanup]** Unused remote-job machinery and unused, over-powerful device RPC methods (storage.delete) - `api/app/services/device_host.py:609-613, 724-750, 763-766` - delete them. (not verified)
-- [ ] A-132 **[LOW][cleanup]** Small dead parameters and duplicate routes/helpers in the device code - `api/app/routers/device_local.py:114, 123` - remove them. (not verified)
+- [x] A-132 **[LOW][cleanup]** Small dead parameters and duplicate routes/helpers in the device code - `api/app/routers/device_local.py:114, 123` - remove them. (not verified)
 - [ ] A-133 **[LOW][bug]** Enrollment poll race can overwrite "approved" with "already used" - `api/app/routers/device_local.py:123-169` - make the lock outlive the HTTP timeout; treat consumed-with-link as success. (not verified)
 - [ ] A-134 **[LOW][test]** Missing tests for the risky device and co-hosting paths - `api/tests/test_devices_management.py:220-240` - one test each for A-008/A-009/A-011/A-127.
 

@@ -129,11 +129,6 @@ def enrollment_by_code_query(user: CurrentUser, db: DbSession, code: str = Query
     return devices.enrollment_out(row)
 
 
-@router.get("/devices/enrollments/by-code/{code}")
-def enrollment_by_code(code: str, user: CurrentUser, db: DbSession) -> dict:
-    return enrollment_by_code_query(user, db, code)
-
-
 def _enrollment_for_action(db: DbSession, enrollment_id: str, user_code: str | None) -> DeviceEnrollment:
     row = db.get(DeviceEnrollment, enrollment_id)
     if row is None:
@@ -469,7 +464,7 @@ def download_transfer(transfer_id: str, device: CurrentDevice) -> StreamingRespo
 # =============================================================================================
 
 
-def _record_hello(device_id: str, msg: dict, ip: str | None) -> bool:
+def _record_hello(device_id: str, msg: dict) -> bool:
     session = get_sessionmaker()()
     try:
         device = session.get(Device, device_id)
@@ -562,7 +557,6 @@ async def device_connect(websocket: WebSocket) -> None:
     conn_id = uuid.uuid4().hex
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=CALL_QUEUE_SIZE)
-    ip = websocket.client.host if websocket.client else None
 
     def enqueue(data: str | None) -> None:
         try:
@@ -597,7 +591,7 @@ async def device_connect(websocket: WebSocket) -> None:
         if not isinstance(hello, dict) or hello.get("type") != "hello":
             await websocket.close(code=1008)
             return
-        if not await run_in_threadpool(_record_hello, device_id, hello, ip):
+        if not await run_in_threadpool(_record_hello, device_id, hello):
             await websocket.close(code=4403)
             return
         await run_in_threadpool(device_rpc.mark_online, device_id, conn_id)

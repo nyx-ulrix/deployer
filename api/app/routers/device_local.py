@@ -121,7 +121,7 @@ def _primary_error(resp: httpx.Response) -> str:
         return f"HTTP {resp.status_code}"
 
 
-def poll_once(force: bool = False) -> dict:
+def poll_once() -> dict:
     state = _load_state()
     if state.get("status") != "pending":
         return state
@@ -130,7 +130,7 @@ def poll_once(force: bool = False) -> dict:
         _save_state(state)
         return state
     try:
-        if not get_redis().set(POLL_LOCK_KEY, "1", nx=True, px=int(POLL_INTERVAL * 1000) - 300) and not force:
+        if not get_redis().set(POLL_LOCK_KEY, "1", nx=True, px=int(POLL_INTERVAL * 1000) - 300):
             return state
     except Exception:  # noqa: BLE001
         return state

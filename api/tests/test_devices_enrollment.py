@@ -55,8 +55,9 @@ def test_full_enrollment_flow(client, db, owner, owner_headers, fake_redis):
     code = data["user_code"].lower().replace("-", "")
     resp = client.get("/v1/devices/enrollments", params={"code": code}, headers=owner_headers)
     assert resp.status_code == 200 and resp.json()["name"] == "Home PC"
-    resp = client.get(f"/v1/devices/enrollments/by-code/{data['user_code']}", headers=owner_headers)
     assert resp.json()["id"] == eid
+    # A-132: the duplicate path-style lookup is gone (the query form above is the only one).
+    assert client.get(f"/v1/devices/enrollments/by-code/{data['user_code']}", headers=owner_headers).status_code == 404
 
     # Wrong code for the id is rejected.
     resp = client.post(f"/v1/devices/enrollments/{eid}/approve", json={"user_code": "AAAA-AAAA"}, headers=owner_headers)

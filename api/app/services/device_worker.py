@@ -60,11 +60,8 @@ def install() -> None:
     from app.services import device_executor
 
     device_executor.register()
-    try:
-        from app import worker
-    except Exception:  # noqa: BLE001
-        log.warning("worker module unavailable; device agent not started", exc_info=True)
-        return
+    from app import worker  # this module is a worker plugin, so the worker is already loaded
+
     names = {name for name, _ in getattr(worker, "_tasks", [])}
     if "device-agent" not in names:
         worker.register_background_task("device-agent", agent_task)

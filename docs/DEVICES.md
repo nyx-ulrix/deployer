@@ -116,7 +116,7 @@ tokens are rejected there, device tokens are rejected on every user endpoint).
 |---|---|---|---|---|
 | POST | `/devices/enrollments` | none (20/h per IP) | `{name, hostname?, os?, version?, capabilities?}` | `{enrollment_id, user_code, verification_uri, poll_secret, expires_in:900, interval:5}` |
 | POST | `/devices/enrollments/{id}/poll` | poll secret | `{poll_secret}` | `{status:"pending"\|"denied"\|"expired"\|"consumed", interval}` or once `{status:"approved", device_id, device_token, device_name}`. Faster than every 4 s → 429 `slow_down`; wrong secret → 404 |
-| GET | `/devices/enrollments?code=ABCD-EFGH` (also `/devices/enrollments/by-code/{code}`) | user (30 lookups/10 min) | – | `DeviceEnrollment`; 404 if unknown |
+| GET | `/devices/enrollments?code=ABCD-EFGH` | user (30 lookups/10 min) | – | `DeviceEnrollment`; 404 if unknown |
 | POST | `/devices/enrollments/{id}/approve` | user | `{user_code?, name?, roles?:("database_host"\|"backup_storage")[], sharing_mode?:"my_projects"\|"selected", project_ids?:string[]}` | `Device` (owned by the caller); 409 `enrollment_not_pending`; 404 if `user_code` doesn't match |
 | POST | `/devices/enrollments/{id}/deny` | user | `{user_code?}` | `{ok:true}` |
 | GET | `/devices?scope=mine\|all` | user | `all` only for the instance owner (ignored otherwise) | `Device[]` |
