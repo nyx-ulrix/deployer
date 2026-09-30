@@ -204,7 +204,7 @@ class DockerCli:
         """Copies `path` out of `image` into the new directory `dest` (docs/CLOUD.md: a static site's
         build output). Symlinks are copied as links; callers must not follow them."""
         name = f"deployer-export-{uuid.uuid4().hex[:12]}"
-        self._run(["docker", "create", "--name", name, image])
+        self._run(["docker", "create", "--pull", "never", "--name", name, image])
         try:
             self._run(["docker", "cp", f"{name}:{path}/.", dest], timeout=600)
         finally:
@@ -235,6 +235,9 @@ class DockerCli:
             "docker",
             "run",
             "-d",
+            # A-139: images are only ever built here; a removed one must not fall back to Docker Hub.
+            "--pull",
+            "never",
             "--name",
             name,
             "--network",

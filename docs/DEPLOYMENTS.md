@@ -239,7 +239,9 @@ docker CLI (A-135).
 
 `live` means "currently routed"; when a newer deployment goes live the previous one becomes
 `superseded`. A rollback builds nothing: it re-runs the old `image_tag` as a new deployment with
-`trigger=rollback`, `rollback_of=<old id>`.
+`trigger=rollback`, `rollback_of=<old id>`. App containers run with `--pull never`: if that image
+was removed in the meantime the rollback fails with "The image was removed; redeploy instead"
+rather than looking for `deployer-app/<id>` on Docker Hub.
 
 ## Jobs
 

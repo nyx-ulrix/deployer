@@ -706,6 +706,8 @@ def _docker_failure(exc: DockerError, secrets: list[str | None]) -> str:
     # words, and "check the app's repository" would send the user the wrong way.
     if str(exc).startswith("git "):
         hint = _failure_hint(exc.output)
+    elif "No such image" in exc.output:  # A-139: `--pull never` on an image that was pruned
+        hint = "The image was removed; redeploy instead."
     else:  # A-070: an OOM-killed build otherwise shows only "exit code: 137"
         hint = _OOM_HINT if _OOM.search(f"{exc}\n{exc.output}") else ""
     # The hint comes before git's/docker's own lines so the 2000-character cap never cuts it off.

@@ -240,6 +240,27 @@ def test_rollback_reuses_the_image(db, docker, project):
     assert docker.calls[1] == ("run", c.container_name, a.image_tag)
 
 
+def test_rollback_to_a_removed_image_says_redeploy(db, docker, project):
+    """A-139: `--pull never` fails on a pruned image; the error says what to do instead."""
+    app = make_app(db, project)
+    a, _ = deploy(db, app)
+    jobs.run_queued()
+    db.expire_all()
+
+    def gone():
+        raise app_runner.DockerError(
+            "docker run failed (exit 125)", "docker: Error response from daemon: No such image: deployer-app/x:y."
+        )
+
+    docker.hooks["run"] = gone
+    c, _ = deployments.rollback(db, db.get(App, app.id), db.get(Deployment, a.id), user_id=None)
+    db.commit()
+    jobs.run_queued()
+    db.expire_all()
+    error = db.get(Deployment, c.id).error
+    assert error.startswith("docker run failed") and "The image was removed; redeploy instead." in error
+
+
 def test_queued_deployments_run_one_at_a_time(db, docker, project):
     app = make_app(db, project)
     first, job1 = deploy(db, app)
@@ -609,6 +630,9 @@ def test_real_docker_cli_argv_hardening_and_secrets_stay_out_of_argv(monkeypatch
         "NET_BIND_SERVICE",
     ]
     assert "-e APP_SECRET img:1" in joined and args[-1] == "img:1"
+    assert "--pull never" in joined  # A-139: never docker.io/deployer-app/<id>
+    cli.export_dir("img:1", "/site", "out")
+    assert "--pull never" in " ".join(calls[-3][0])  # the `docker create`
     assert secret not in joined and kw["env"]["APP_SECRET"] == secret
     # A-135: an app variable never configures the worker's docker CLI (saved before validation existed).
     calls.clear()
