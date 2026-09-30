@@ -160,7 +160,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-083 **[MEDIUM][usability]** The setup wizard asks a first-time user for a Tailscale/Cloudflare URL they can't have yet - `dashboard/src/features/setup/SetupWizard.tsx:385-395` - "Leave this as it is for now", and point to Domains & remote access.
 
 **Dashboard data features**
-- [ ] A-084 **[MEDIUM][bug]** Backup timeline "Kept"/"May be pruned" labels disagree with the server's retention rules - `dashboard/src/features/backups/timeline.ts:382-417` - return the server's gfs_keep reason per backup and render it.
+- [x] A-084 **[MEDIUM][bug]** Backup timeline "Kept"/"May be pruned" labels disagree with the server's retention rules - `dashboard/src/features/backups/timeline.ts:382-417` - return the server's gfs_keep reason per backup and render it.
 - [ ] A-085 **[MEDIUM][bug]** Policy dialog silently saves 0 when a Keep field is left blank (backup data loss) - `dashboard/src/features/backups/PolicyDialog.tsx:50-54, 97-101, 121-136` - validate like windowValid; warn when all are 0.
 - [ ] A-086 **[MEDIUM][bug]** Row editor drops keyboard focus when a value passes 80 characters - `dashboard/src/features/data/RowDialog.tsx:459-460` - pick the control from the column type and original value only.
 - [ ] A-087 **[MEDIUM][usability]** The Activity drawer shows raw or wrong names for most real job types - `dashboard/src/features/jobs/jobs.ts:4-20` - exact map of real type strings plus a test.

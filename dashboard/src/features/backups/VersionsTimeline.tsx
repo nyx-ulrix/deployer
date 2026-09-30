@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { errorMessage, saveBlob } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import type { Backup, BackupPolicy, DataSource } from "../../api/types";
+import type { Backup, DataSource } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -26,7 +26,7 @@ import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
 import { formatBytes, formatDateTime, formatTime, relativeTime } from "../../lib/format";
 import { CopyIcons, TriggerBadge } from "./BackupBits";
-import { groupByDay, RETENTION_LABELS, retentionReasons } from "./timeline";
+import { groupByDay, KEPT_AS_LABELS } from "./timeline";
 
 export type TimelineActions = {
   onCompare: (backup: Backup) => void;
@@ -37,7 +37,6 @@ export function VersionsTimeline({
   projectId,
   source,
   backups,
-  policy,
   can,
   deviceName,
   actions,
@@ -45,13 +44,11 @@ export function VersionsTimeline({
   projectId: string;
   source: DataSource;
   backups: Backup[];
-  policy: BackupPolicy | undefined;
   can: { developer: boolean; admin: boolean; owner: boolean };
   deviceName: (id: string | null) => string | null;
   actions: TimelineActions;
 }) {
   const groups = groupByDay(backups);
-  const reasons = policy ? retentionReasons(backups, policy) : null;
   const [labelling, setLabelling] = useState<Backup | null>(null);
   const [deleting, setDeleting] = useState<Backup | null>(null);
 
@@ -79,7 +76,6 @@ export function VersionsTimeline({
                   projectId={projectId}
                   source={source}
                   backup={b}
-                  keptAs={reasons?.get(b.id) ?? null}
                   can={can}
                   deviceName={deviceName}
                   onCompare={() => actions.onCompare(b)}
@@ -106,7 +102,6 @@ function VersionRow({
   projectId,
   source,
   backup: b,
-  keptAs,
   can,
   deviceName,
   onCompare,
@@ -117,7 +112,6 @@ function VersionRow({
   projectId: string;
   source: DataSource;
   backup: Backup;
-  keptAs: string[] | null;
   can: { developer: boolean; admin: boolean; owner: boolean };
   deviceName: (id: string | null) => string | null;
   onCompare: () => void;
@@ -147,8 +141,6 @@ function VersionRow({
     },
     onError: (e) => toast.error(errorMessage(e), "Download failed"),
   });
-
-  const pruneCandidate = ok && keptAs !== null && keptAs.length === 0;
 
   return (
     <article className="rounded-xl border border-border bg-surface p-3 shadow-xs">
@@ -189,12 +181,8 @@ function VersionRow({
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
             <span>{formatBytes(b.size_bytes)}</span>
             <CopyIcons copies={b.copies} deviceName={deviceName} />
-            {keptAs && keptAs.length > 0 && (
-              <span title="Why this version is kept (retention policy)">
-                Kept: {keptAs.map((r) => RETENTION_LABELS[r as keyof typeof RETENTION_LABELS] ?? r).join(", ")}
-              </span>
-            )}
-            {pruneCandidate && <span title="Not needed by the retention policy">May be pruned soon</span>}
+            {ok && b.kept_as && <span title="Why the retention policy keeps this version">Kept: {KEPT_AS_LABELS[b.kept_as]}</span>}
+            {ok && !b.kept_as && <span title="Not needed by the retention policy">May be pruned soon</span>}
             {b.expires_at && <span>Expires {relativeTime(b.expires_at)}</span>}
           </div>
         </div>
@@ -357,6 +345,8 @@ function DeleteVersionDialog({
     mutationFn: () => api.backups.remove(projectId, sourceId, backup.id),
     onSuccess: () => {
       queryClient.setQueryData<Backup[]>(qk.backups(projectId, sourceId), (list) => list?.filter((x) => x.id !== backup.id));
+      // Another version may now be the newest in the deleted one's bucket, so refetch the "Kept" reasons.
+      void queryClient.invalidateQueries({ queryKey: qk.backups(projectId, sourceId) });
       void queryClient.invalidateQueries({ queryKey: qk.recoveryWindow(projectId, sourceId) });
       toast.success("Version deleted.");
       onClose();

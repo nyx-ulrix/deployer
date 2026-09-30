@@ -243,6 +243,54 @@ def test_snapshot_lifecycle_label_download_delete(client, env, db, tmp_path):
     assert db.query(BackupCopy).count() == 0
 
 
+def test_list_reports_the_servers_retention_reason(client, env, db):
+    """kept_as is gfs_keep's reason, and exactly the versions without one are pruned (A-084)."""
+    ds = env["ds"]
+    client.put(
+        f"{env['base']}/backup-policy",
+        json={"keep_hourly": 0, "keep_daily": 1, "keep_weekly": 0, "keep_monthly": 0},
+        headers=env["admin"],
+    )
+    now = utcnow()
+
+    def add(key, age, trigger="scheduled", **kw):
+        b = Backup(
+            data_source_id=ds.id,
+            scope="source",
+            engine="mariadb",
+            trigger=trigger,
+            status="succeeded",
+            started_at=now - age,
+            **kw,
+        )
+        db.add(b)
+        db.flush()
+        return key, b.id
+
+    ids = dict(
+        [
+            # A safety snapshot never takes a GFS bucket, so the older scheduled one keeps "daily".
+            add("safety", timedelta(minutes=5), trigger="pre_drop"),
+            add("today", timedelta(minutes=10)),
+            add("today_older", timedelta(minutes=20)),
+            add("old", timedelta(days=3)),
+            add("pinned", timedelta(days=4), pinned=True),
+        ]
+    )
+    db.commit()
+    listed = {b["id"]: b["kept_as"] for b in client.get(f"{env['base']}/backups", headers=env["viewer"]).json()}
+    assert {k: listed[v] for k, v in ids.items()} == {
+        "safety": "safety",
+        "today": "daily",
+        "today_older": None,
+        "old": None,
+        "pinned": "pinned",
+    }
+    backups.prune_source(db, ds, utcnow())
+    db.commit()
+    assert {b.id for b in db.query(Backup).all()} == {v for v in ids.values() if listed[v]}
+
+
 def test_failed_snapshot_is_recorded(client, env, db):
     env["fake"].fail_snapshot = True
     backup_id = _snapshot(client, env)

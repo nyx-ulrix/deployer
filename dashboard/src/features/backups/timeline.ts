@@ -1,4 +1,4 @@
-import type { Backup, BackupPolicy, BackupSchedule, BackupTrigger } from "../../api/types";
+import type { Backup, BackupPolicy, BackupSchedule, BackupTrigger, KeptAs } from "../../api/types";
 
 export const TRIGGER_LABELS: Record<BackupTrigger, string> = {
   scheduled: "Scheduled",
@@ -22,10 +22,6 @@ const SCHEDULE_MS: Record<BackupSchedule, number> = {
   daily: 24 * 3_600_000,
 };
 
-export function isSafetyTrigger(trigger: BackupTrigger): boolean {
-  return trigger !== "scheduled" && trigger !== "manual";
-}
-
 function pad(n: number): string {
   return String(n).padStart(2, "0");
 }
@@ -33,25 +29,6 @@ function pad(n: number): string {
 /** Local calendar day, "YYYY-MM-DD". */
 export function dayKey(date: Date): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
-
-function hourKey(date: Date): string {
-  return `${dayKey(date)}T${pad(date.getHours())}`;
-}
-
-/** Local ISO-like week key (weeks start on Monday), e.g. "2026-W38". */
-export function weekKey(date: Date): string {
-  // Work in UTC on the local calendar date so DST changes can't shift the arithmetic.
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const weekday = d.getUTCDay() || 7; // Monday = 1 … Sunday = 7
-  d.setUTCDate(d.getUTCDate() + 4 - weekday); // Thursday of this week decides the year
-  const yearStart = Date.UTC(d.getUTCFullYear(), 0, 1);
-  const week = Math.ceil(((d.getTime() - yearStart) / 86_400_000 + 1) / 7);
-  return `${d.getUTCFullYear()}-W${pad(week)}`;
-}
-
-function monthKey(date: Date): string {
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
 }
 
 export type DayGroup = { key: string; label: string; items: Backup[] };
@@ -89,64 +66,18 @@ export function groupByDay(backups: readonly Backup[], now: Date = new Date()): 
   return groups;
 }
 
-export type RetentionReason = "hourly" | "daily" | "weekly" | "monthly" | "pinned" | "safety";
-
-export const RETENTION_LABELS: Record<RetentionReason, string> = {
+/** Labels for the server's retention reason (`Backup.kept_as`, from the same rules the prune job uses). */
+export const KEPT_AS_LABELS: Record<KeptAs, string> = {
+  pinned: "Pinned",
+  safety: "Safety (30 days)",
   hourly: "Hourly",
   daily: "Daily",
   weekly: "Weekly",
   monthly: "Monthly",
-  pinned: "Pinned",
-  safety: "Safety",
+  latest: "Latest",
+  running: "Running",
+  recent_failure: "Recent failure",
 };
-
-type RetentionPolicy = Pick<BackupPolicy, "keep_hourly" | "keep_daily" | "keep_weekly" | "keep_monthly">;
-
-const SAFETY_KEEP_MS = 30 * 86_400_000;
-
-/**
- * Grandfather-father-son retention as described in BACKUPS.md: a successful snapshot is kept if it is
- * the newest one in any of the most recent N hour/day/week/month buckets. Pinned versions and safety
- * snapshots from the last 30 days are always kept. Returns the reasons each version is kept; versions
- * missing from the map (or with no reasons) are candidates for pruning. The server is authoritative —
- * this is only used to explain the timeline.
- */
-export function retentionReasons(
-  backups: readonly Backup[],
-  policy: RetentionPolicy,
-  now: Date = new Date(),
-): Map<string, RetentionReason[]> {
-  const result = new Map<string, RetentionReason[]>();
-  const ok = backups
-    .filter((b) => b.status === "succeeded")
-    .sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at));
-  for (const b of ok) result.set(b.id, []);
-
-  const buckets: [RetentionReason, (d: Date) => string, number][] = [
-    ["hourly", hourKey, policy.keep_hourly],
-    ["daily", dayKey, policy.keep_daily],
-    ["weekly", weekKey, policy.keep_weekly],
-    ["monthly", monthKey, policy.keep_monthly],
-  ];
-  for (const [reason, keyOf, keep] of buckets) {
-    if (keep <= 0) continue;
-    const seen = new Set<string>();
-    for (const b of ok) {
-      const key = keyOf(new Date(b.started_at));
-      if (seen.has(key)) continue;
-      seen.add(key);
-      if (seen.size > keep) break;
-      result.get(b.id)?.push(reason);
-    }
-  }
-  for (const b of ok) {
-    const reasons = result.get(b.id);
-    if (!reasons) continue;
-    if (b.pinned) reasons.unshift("pinned");
-    if (isSafetyTrigger(b.trigger) && now.getTime() - Date.parse(b.started_at) < SAFETY_KEEP_MS) reasons.push("safety");
-  }
-  return result;
-}
 
 /** Latest successful version, if any. */
 export function lastSuccessful(backups: readonly Backup[]): Backup | null {

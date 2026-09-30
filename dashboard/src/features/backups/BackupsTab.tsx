@@ -282,7 +282,6 @@ function SourceBackups({ source }: { source: DataSource }) {
             projectId={project.id}
             source={source}
             backups={list}
-            policy={policy.data}
             can={{ developer: can("developer"), admin: can("admin"), owner: can("owner") }}
             deviceName={(id) => (id ? copyDeviceName(id) : null)}
             actions={{

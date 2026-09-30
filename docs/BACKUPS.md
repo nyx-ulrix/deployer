@@ -22,8 +22,11 @@ keyfile auth). MariaDB runs with `log_bin`, `binlog_format=ROW`, `server_id=1`, 
 ## Retention (grandfather-father-son)
 
 Default policy per data source: keep **24 hourly, 7 daily, 4 weekly, 12 monthly** snapshots.
-A snapshot is kept if it is the newest one in any bucket it qualifies for. **Pinned** (labelled)
-versions and safety snapshots from the last 30 days are never pruned automatically. Log segments are
+A scheduled or manual snapshot is kept if it is the newest one in any of the most recent N buckets
+(UTC hours/days/ISO weeks/months); the newest one is always kept. **Pinned** (labelled) versions and
+safety snapshots from the last 30 days are never pruned automatically; safety and final snapshots do
+not take a bucket. The versions list shows each one's reason (`kept_as`) from these same rules, or
+"May be pruned soon" when the next hourly prune will delete it. Log segments are
 kept for the PITR window plus the age of the oldest snapshot needed to replay into that window. Turning
 PITR off, or shortening the window, lets the next hourly prune delete the logs that fall outside it
 for good, so the policy dialog asks for confirmation before saving such a change.
@@ -179,6 +182,8 @@ type Backup = {
   copies: { location: "local" | "device" | "primary"; device_id: string | null; status: string }[];
   row_counts: Record<string, number> | null; expires_at: string | null; job_id: string | null;
   error: string | null;
+  // Why the next prune keeps it (the prune's own rules); null = it will be pruned.
+  kept_as: "pinned" | "safety" | "hourly" | "daily" | "weekly" | "monthly" | "latest" | "running" | "recent_failure" | null;
 };
 type Job = {
   id: string; type: string; status: "queued" | "running" | "succeeded" | "failed" | "cancelled";

@@ -583,7 +583,11 @@ export type Backup = {
   row_counts: Record<string, number> | null;
   expires_at: string | null;
   job_id: string | null;
+  /** Why the next prune keeps this version (server gfs_keep); null = it will be pruned. */
+  kept_as: KeptAs | null;
 };
+
+export type KeptAs = "pinned" | "safety" | "hourly" | "daily" | "weekly" | "monthly" | "latest" | "running" | "recent_failure";
 
 export type DiffChange = "added" | "removed" | "changed";
 

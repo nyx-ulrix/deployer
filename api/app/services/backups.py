@@ -254,7 +254,7 @@ def copies_by_artifact(db: Session, artifact_type: str, ids: Iterable[str]) -> d
     return out
 
 
-def backup_out(backup: Backup, copies: list[BackupCopy] | None = None) -> dict:
+def backup_out(backup: Backup, copies: list[BackupCopy] | None = None, kept_as: str | None = None) -> dict:
     return {
         "id": backup.id,
         "data_source_id": backup.data_source_id,
@@ -273,12 +273,28 @@ def backup_out(backup: Backup, copies: list[BackupCopy] | None = None) -> dict:
         "expires_at": iso(backup.expires_at),
         "job_id": backup.job_id,
         "error": backup.error,
+        "kept_as": kept_as,
     }
 
 
 def backups_out(db: Session, backups: list[Backup]) -> list[dict]:
     copies = copies_by_artifact(db, "backup", [b.id for b in backups])
-    return [backup_out(b, copies.get(b.id)) for b in backups]
+    keep = _kept_as(db, {b.data_source_id for b in backups})
+    return [backup_out(b, copies.get(b.id), keep.get(b.id)) for b in backups]
+
+
+def _kept_as(db: Session, source_ids: set[str]) -> dict[str, str]:
+    """Why the next prune keeps each version: the same gfs_keep over all of the source's snapshots, so the
+    timeline's "Kept"/"May be pruned" labels match what prune_source will do (A-084)."""
+    keep: dict[str, str] = {}
+    now = utcnow()
+    for sid in source_ids:
+        policy = db.get(BackupPolicy, sid)
+        if policy is None:
+            continue
+        snaps = list(db.scalars(select(Backup).where(Backup.data_source_id == sid, Backup.scope == "source")))
+        keep.update(gfs_keep(snaps, policy, now))
+    return keep
 
 
 def get_backup(db: Session, ds: DataSource, backup_id: str) -> Backup:

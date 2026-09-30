@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Backup } from "../../api/types";
-import { dayKey, groupByDay, lastSuccessful, nextScheduledAt, retentionReasons, weekKey } from "./timeline";
+import { dayKey, groupByDay, lastSuccessful, nextScheduledAt } from "./timeline";
 
 let seq = 0;
 function backup(at: Date, over: Partial<Backup> = {}): Backup {
@@ -20,6 +20,7 @@ function backup(at: Date, over: Partial<Backup> = {}): Backup {
     row_counts: null,
     expires_at: null,
     job_id: null,
+    kept_as: null,
     ...over,
   };
 }
@@ -49,51 +50,9 @@ describe("groupByDay", () => {
   });
 });
 
-describe("weekKey", () => {
-  it("uses Monday-start ISO weeks", () => {
-    expect(weekKey(new Date(2026, 8, 14))).toBe(weekKey(new Date(2026, 8, 20))); // Mon..Sun
-    expect(weekKey(new Date(2026, 8, 20))).not.toBe(weekKey(new Date(2026, 8, 21)));
-    expect(weekKey(new Date(2021, 0, 3))).toBe("2020-W53");
+describe("dayKey", () => {
+  it("uses the local calendar date", () => {
     expect(dayKey(new Date(2026, 0, 5))).toBe("2026-01-05");
-  });
-});
-
-describe("retentionReasons (GFS)", () => {
-  const policy = { keep_hourly: 2, keep_daily: 2, keep_weekly: 1, keep_monthly: 1 };
-
-  it("keeps the newest version per bucket for the most recent N buckets", () => {
-    const now = local(16, 12);
-    const items = [
-      backup(local(16, 11, 30), { id: "h11b" }),
-      backup(local(16, 11, 0), { id: "h11a" }),
-      backup(local(16, 10, 0), { id: "h10" }),
-      backup(local(16, 9, 0), { id: "h9" }),
-      backup(local(15, 9, 0), { id: "d15" }),
-      backup(local(14, 9, 0), { id: "d14" }),
-    ];
-    const r = retentionReasons(items, policy, now);
-    expect(r.get("h11b")).toEqual(["hourly", "daily", "weekly", "monthly"]);
-    expect(r.get("h11a")).toEqual([]);
-    expect(r.get("h10")).toEqual(["hourly"]);
-    expect(r.get("h9")).toEqual([]);
-    expect(r.get("d15")).toEqual(["daily"]);
-    expect(r.get("d14")).toEqual([]);
-  });
-
-  it("always keeps pinned versions and recent safety snapshots, ignores failed ones", () => {
-    const now = local(16, 12);
-    const items = [
-      backup(local(16, 11), { id: "new" }),
-      backup(local(16, 11, 5), { id: "failed", status: "failed" }),
-      backup(local(1, 11), { id: "pinned", pinned: true }),
-      backup(local(10, 11), { id: "safety", trigger: "pre_drop" }),
-      backup(local(1, 11, 0, 5), { id: "old-safety", trigger: "pre_restore" }),
-    ];
-    const r = retentionReasons(items, { keep_hourly: 1, keep_daily: 0, keep_weekly: 0, keep_monthly: 0 }, now);
-    expect(r.has("failed")).toBe(false);
-    expect(r.get("pinned")).toContain("pinned");
-    expect(r.get("safety")).toEqual(["safety"]);
-    expect(r.get("old-safety")).toEqual([]);
   });
 });
 

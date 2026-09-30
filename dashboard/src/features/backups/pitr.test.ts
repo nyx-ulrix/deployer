@@ -33,6 +33,7 @@ const snap = (id: string, at: Date, status: Backup["status"] = "succeeded"): Bac
   row_counts: null,
   expires_at: null,
   job_id: null,
+  kept_as: null,
 });
 
 describe("pitrBounds", () => {
