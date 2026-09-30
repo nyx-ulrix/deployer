@@ -165,6 +165,26 @@ def test_build_failure_gets_no_clone_hint(db, docker, project):
     assert error.startswith("docker build failed") and "access token" not in error
 
 
+def test_oom_build_failure_gets_memory_hint(db, docker, project):
+    """A-070: a build killed by the OOM killer says it ran out of memory, not only "exit code: 137"."""
+
+    def fail():
+        raise app_runner.DockerError(
+            "docker build failed (exit 1)",
+            'ERROR: process "/bin/sh -c npm run build" did not complete successfully: exit code: 137',
+        )
+
+    docker.hooks["build"] = fail
+    dep, _ = deploy(db, make_app(db, project))
+    jobs.run_queued()
+    db.expire_all()
+    error = db.get(Deployment, dep.id).error
+    assert error.startswith("docker build failed") and "Out of memory" in error and "half of this PC's RAM" in error
+    assert deployments._docker_failure(
+        app_runner.DockerError("docker build failed (exit 1)", "exit code: 1370"), []
+    ) == ("docker build failed (exit 1)\nexit code: 1370")
+
+
 def test_static_health_failure_has_no_listen_hint(db, docker, project):
     """The static preset's nginx is Deployer's own: telling the user to fix their listen address is wrong."""
     docker.fail_at = "health"

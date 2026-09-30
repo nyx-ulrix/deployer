@@ -279,6 +279,25 @@ namespace DeployerSetup
             }
         }
 
+        static string Gb(double gb)
+        {
+            return Math.Round(gb, gb < 10 ? 1 : 0).ToString(System.Globalization.CultureInfo.CurrentCulture) + " GB";
+        }
+
+        // A-070: WSL2 gives its VM only about half the PC's memory by default, and that half is what Deployer gets.
+        public static CheckResult MemoryCheck(double ramGb)
+        {
+            string ramText = Gb(ramGb), forDeployer = Gb(ramGb / 2);
+            if (ramGb <= 0)
+                return new CheckResult("memory", CheckStatus.Warn, "Couldn't read the amount of memory", "Deployer needs at least 4 GB of memory (8 GB recommended).");
+            if (ramGb < 3.6)
+                return new CheckResult("memory", CheckStatus.Warn, "Only " + ramText + " of memory",
+                    "About " + forDeployer + " is available to Deployer, below the 4 GB minimum. Expect at most 1 small app; builds may fail with \"exit code 137\" (out of memory). 8 GB is recommended.");
+            if (ramGb < 7.5)
+                return new CheckResult("memory", CheckStatus.Ok, ramText + " of memory: about " + forDeployer + " is available to Deployer; expect 1-2 small apps", null);
+            return new CheckResult("memory", CheckStatus.Ok, ramText + " of memory", null);
+        }
+
         public static SystemReport Run(string installDir, int port, int installedPort, bool includeInternet)
         {
             SystemReport report = new SystemReport();
@@ -374,16 +393,7 @@ namespace DeployerSetup
             catch (Exception)
             {
             }
-            string ramText = Math.Round(ramGb, ramGb < 10 ? 1 : 0).ToString(System.Globalization.CultureInfo.CurrentCulture) + " GB";
-            if (ramGb <= 0)
-                report.Items.Add(new CheckResult("memory", CheckStatus.Warn, "Couldn't read the amount of memory", "Deployer needs at least 4 GB of memory (8 GB recommended)."));
-            else if (ramGb < 3.6)
-                report.Items.Add(new CheckResult("memory", CheckStatus.Warn, "Only " + ramText + " of memory",
-                    "Deployer may be slow. 4 GB is the minimum and 8 GB is recommended. Closing other apps helps."));
-            else if (ramGb < 7.5)
-                report.Items.Add(new CheckResult("memory", CheckStatus.Ok, ramText + " of memory (enough; 8 GB is better for many projects)", null));
-            else
-                report.Items.Add(new CheckResult("memory", CheckStatus.Ok, ramText + " of memory", null));
+            report.Items.Add(MemoryCheck(ramGb));
 
             // Disk
             try

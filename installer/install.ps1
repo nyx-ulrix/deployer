@@ -242,10 +242,12 @@ function Invoke-Preflight {
         $script:VirtualizationMissing = $true
     }
 
+    # A-070: WSL2 gives its VM only about half the PC's RAM by default, and that half is what Deployer gets.
+    $forDeployer = [math]::Round($Facts.RamGB / 2, 1)
     if ($Facts.RamGB -lt 4) {
-        Write-CheckResult 'memory' 'warn' "Only $($Facts.RamGB) GB RAM. Deployer can run, but 4 GB is the minimum and 8 GB is recommended."
+        Write-CheckResult 'memory' 'warn' "Only $($Facts.RamGB) GB RAM: about $forDeployer GB is available to Deployer, which is below the 4 GB minimum. Expect at most 1 small app; builds may fail with 'exit code 137' (out of memory). 8 GB is recommended."
     } elseif ($Facts.RamGB -lt 8) {
-        Write-CheckResult 'memory' 'ok' "$($Facts.RamGB) GB RAM (works; 8 GB recommended for several projects)"
+        Write-CheckResult 'memory' 'ok' "$($Facts.RamGB) GB RAM: about $forDeployer GB is available to Deployer; expect 1-2 small apps (8 GB recommended for more)"
     } else {
         Write-CheckResult 'memory' 'ok' "$($Facts.RamGB) GB RAM"
     }

@@ -108,6 +108,8 @@ namespace DeployerSetup
             Check(ResetPasswordDialog.Check("short", "short") != null
                   && ResetPasswordDialog.Check("long-enough-1", "long-enough-2") != null
                   && ResetPasswordDialog.Check("long-enough-1", "long-enough-1") == null, "reset password checks");
+            Check(SystemChecks.MemoryCheck(4).Title.Contains("about 2 GB is available to Deployer; expect 1-2 small apps")
+                  && SystemChecks.MemoryCheck(3).Detail.Contains("exit code 137"), "memory check says how much WSL gives Deployer (A-070)");
         }
 
         /// <summary>Renders a form that is never shown: handles are created, nothing appears on screen.</summary>
@@ -211,7 +213,7 @@ namespace DeployerSetup
                 r.Items.Add(new CheckResult("virtualization", CheckStatus.Fail, "Virtualization is turned off",
                     "Restart the PC, open its BIOS/UEFI setup (usually F2, F10, Del or Esc while it starts) and turn on \"Intel Virtualization Technology\" (VT-x) or \"SVM Mode\" (AMD). Then run this setup again.")
                     .Link("How to turn on virtualization", SystemChecks.VirtualizationHelpUrl));
-                r.Items.Add(new CheckResult("memory", CheckStatus.Warn, "Only 3.9 GB of memory", "Deployer may be slow. 4 GB is the minimum and 8 GB is recommended. Closing other apps helps."));
+                r.Items.Add(SystemChecks.MemoryCheck(3.5));
             }
             else
             {

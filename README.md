@@ -65,7 +65,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/API.md](docs/API.md) 
 |---|---|
 | Windows | 64-bit Windows 10 version 2004 (build 19041) or newer, or Windows 11 |
 | CPU | Intel or AMD 64-bit (ARM PCs are not supported yet) with hardware virtualization enabled in BIOS/UEFI (Intel VT-x / AMD SVM) |
-| Memory | 4 GB RAM minimum, 8 GB recommended |
+| Memory | 4 GB RAM minimum, 8 GB recommended. WSL2 gives Deployer about half the PC's RAM, so a 4 GB PC has about 2 GB: expect 1-2 small apps. |
 | Disk | 10 GB free |
 | MongoDB | Managed MongoDB 5.0 needs a CPU with **AVX** (most CPUs since ~2011). Without AVX the installer turns managed MongoDB off; projects can still use an external MongoDB such as a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster. |
 
@@ -314,6 +314,7 @@ stored in the database and the encrypted backup versions. To restore the daily p
 | Setup stopped with an error | Click **Try again** - setup continues where it stopped and never overwrites your `.env`. **Copy details** puts the full log on the clipboard. Logs: `%ProgramData%\Deployer\logs`. |
 | *Restart needed* | Restart Windows and sign in again; setup continues on its own (approve the administrator prompt). |
 | Images can't be downloaded | Check your internet connection or proxy. On forks, make the GHCR packages public (see Development). |
+| A deploy fails with *exit code 137* / *Out of memory* | The build or app ran out of memory. WSL2 gives Deployer about half the PC's RAM; stop other apps or projects, or add RAM (8 GB is recommended). |
 | Deployer isn't responding | *Deployer Control → Restart*, then *View logs* (`deployer logs api`). `deployer status` shows every container. |
 | Docker Desktop was closed, crashed or the PC woke from sleep, and Deployer is down | `deployer start` (or *Deployer Control → Start*) starts Docker Desktop if needed, repairs it when it crashes on its leftover socket files, and brings Deployer back. With *Start Deployer when I sign in* on (`deployer autostart on`) this happens on its own at sign-in. |
 | *Docker Desktop cannot start until Windows is restarted* | After sleep/wake Windows sometimes can no longer create Docker Desktop's socket files (*"The file cannot be accessed by the system"*); Docker Desktop then crashes on every start. Restart Windows. To stop it recurring, run setup again and choose **Free Docker Engine** (WSL2): it does not use Docker Desktop at all. |

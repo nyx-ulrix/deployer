@@ -692,11 +692,22 @@ def listen_hint(app: App, port: int) -> str:
     )
 
 
+# BuildKit reports a step killed by the kernel's OOM killer as "exit code: 137"; `docker run` as "exit 137".
+_OOM = re.compile(r"exit(?: code:?)? 137\b")
+_OOM_HINT = (
+    "Out of memory (exit code 137). WSL2 gives Deployer only about half of this PC's RAM: "
+    "stop other apps or projects, or add RAM (8 GB is recommended)."
+)
+
+
 def _docker_failure(exc: DockerError, secrets: list[str | None]) -> str:
     tail = "\n".join(exc.output.strip().splitlines()[-5:])
     # Only git's own failures: a build's output (a private npm/pip git dependency) can hold the same
     # words, and "check the app's repository" would send the user the wrong way.
-    hint = _failure_hint(exc.output) if str(exc).startswith("git ") else ""
+    if str(exc).startswith("git "):
+        hint = _failure_hint(exc.output)
+    else:  # A-070: an OOM-killed build otherwise shows only "exit code: 137"
+        hint = _OOM_HINT if _OOM.search(f"{exc}\n{exc.output}") else ""
     # The hint comes before git's/docker's own lines so the 2000-character cap never cuts it off.
     text = f"{exc}" + (f"\n{hint}" if hint else "") + (f"\n{tail}" if tail else "")
     return redact(text, secrets, limit=2000)
