@@ -38,6 +38,7 @@ log = logging.getLogger(__name__)
 STATE_KEY = "device:enroll:state"
 POLL_LOCK_KEY = "device:enroll:polling"
 POLL_INTERVAL = 5.0
+POLL_LOCK_MS = 120_000
 STATUS_STALE_SECONDS = 90
 _poller_lock = threading.Lock()
 _poller: threading.Thread | None = None
@@ -129,10 +130,35 @@ def poll_once() -> dict:
         state.update(status="expired", message="The code expired; start again")
         _save_state(state)
         return state
+    redis = get_redis()
     try:
-        if not get_redis().set(POLL_LOCK_KEY, "1", nx=True, px=int(POLL_INTERVAL * 1000) - 300):
+        # A-133: held for longer than a slow poll can take (15 s timeouts, redirects), so an overlapping
+        # poll never sees the one-shot "approved" answer turned into "consumed".
+        if not redis.set(POLL_LOCK_KEY, "1", nx=True, px=POLL_LOCK_MS):
             return state
     except Exception:  # noqa: BLE001
+        return state
+    try:
+        return _poll_locked()
+    finally:
+        try:  # keep the lock a little longer so status requests do not hammer the main Deployer
+            redis.pexpire(POLL_LOCK_KEY, int(POLL_INTERVAL * 1000) - 300)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def _linked_to(primary_url: str) -> bool:
+    session = get_sessionmaker()()
+    try:
+        link = _link_or_none(session)
+    finally:
+        session.close()
+    return bool(link and link.get("primary_url") == primary_url and link.get("device_token"))
+
+
+def _poll_locked() -> dict:
+    state = _load_state()  # re-read: another poll may have finished while we waited for the lock
+    if state.get("status") != "pending":
         return state
     try:
         resp = primary_request(
@@ -171,6 +197,9 @@ def poll_once() -> dict:
         state.update(status="approved", message="Attached to the main Deployer", poll_secret=None)
     elif status in ("denied", "expired"):
         state.update(status=status, message=f"The enrollment was {status}")
+    elif status == "consumed" and _linked_to(state["primary_url"]):
+        # The token was already handed out and saved (e.g. by a poll whose state write we raced).
+        state.update(status="approved", message="Attached to the main Deployer", poll_secret=None)
     elif status == "consumed":
         state.update(status="error", message="This enrollment was already used")
     else:

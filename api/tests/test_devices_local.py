@@ -130,6 +130,31 @@ def test_enrollment_on_uninitialized_device(client, db, fake_primary, fake_redis
     assert resp.status_code == 409
 
 
+def test_enrollment_poll_race_keeps_approved(client, db, fake_primary, fake_redis, set_setting, monkeypatch):
+    """A-133: the lock outlives a slow poll, and "consumed" after our own saved link counts as attached."""
+    client.post("/v1/device/enroll/start", json={"primary_url": "https://main.example.com", "device_name": "PC"})
+    ttls = []
+
+    def slow_primary(primary_url, method, path, body=None):
+        ttls.append(fake_redis.pttl(device_local.POLL_LOCK_KEY))
+        return fake_primary(primary_url, method, path, body)
+
+    monkeypatch.setattr(device_local, "primary_request", slow_primary)
+    fake_primary.poll_result = {"status": "consumed"}
+    assert client.get("/v1/device/enroll/status").json()["status"] == "error"
+    assert ttls[-1] > 60_000  # longer than the 15 s HTTP timeout
+    assert fake_redis.pttl(device_local.POLL_LOCK_KEY) <= device_local.POLL_INTERVAL * 1000
+
+    client.post("/v1/device/enroll/cancel")
+    client.post("/v1/device/enroll/start", json={"primary_url": "https://main.example.com", "device_name": "PC"})
+    link = {"primary_url": "https://main.example.com", "device_id": "d1", "device_token": "dpd_x", "device_name": "PC"}
+    set_setting("device_link", json.dumps(link))
+    fake_redis.delete(device_local.POLL_LOCK_KEY)
+    approved = client.get("/v1/device/enroll/status").json()
+    assert approved["status"] == "approved"
+    assert json.loads(fake_redis.get(device_local.STATE_KEY))["poll_secret"] is None
+
+
 @pytest.mark.parametrize("uri", ["http://localhost:8080/devices/approve?code=ABCD-EFGH", "javascript:alert(1)", None])
 def test_verification_url_uses_typed_primary_url(client, fake_primary, fake_redis, monkeypatch, uri):
     # A default LAN install has PUBLIC_URL=http://localhost:8080, which on this PC is our own dashboard.
