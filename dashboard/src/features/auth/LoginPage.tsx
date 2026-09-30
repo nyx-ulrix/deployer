@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation } from "@tanstack/react-query";
 import { errorMessage, isApiError } from "../../api/client";
 import { api } from "../../api/endpoints";
-import { useProviders } from "../../api/hooks";
+import { useProviders, useSetupStatus } from "../../api/hooks";
 import { AuthShell } from "../../components/layout/AppLayout";
 import { Button } from "../../components/ui/Button";
 import { Field, Input } from "../../components/ui/Input";
@@ -16,7 +16,8 @@ export function LoginPage() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const redirect = safeRedirect(params.get("redirect"));
-  const urlError = oauthErrorMessage(params.get("error"));
+  const setup = useSetupStatus();
+  const urlError = oauthErrorMessage(params.get("error"), setup.data?.public_url);
   const providers = useProviders();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");

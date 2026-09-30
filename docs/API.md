@@ -108,8 +108,12 @@ OAuth callback redirects:
   dashboard then calls `POST /auth/refresh` to obtain an access token.
 - Success (link): 302 → `{public_url}<redirect>?linked=<provider>`.
 - Failure: 302 → `{public_url}/login?error=<code>` (login) or `{public_url}<redirect>?error=<code>` (link).
-  Codes: `oauth_failed`, `oauth_state_invalid`, `account_exists_link_required`, `identity_in_use`,
-  `signup_disabled`, `provider_not_configured`, `email_not_verified`.
+  Codes: `oauth_failed`, `oauth_state_invalid` (the state or the browser nonce cookie is missing, used
+  or expired; usually the flow was started on a different address than `public_url`, so start again from
+  `public_url`), `not_initialized`, `account_exists_link_required`, `identity_in_use`, `signup_disabled`,
+  `invite_invalid`, `invite_email_mismatch`, `provider_not_configured`, `email_not_verified`.
+- GitHub connect (deploys): 302 → `{public_url}/integrations/github/done?ok=1` or `?error=<code>`
+  (`oauth_failed`, `github_connect_user_mismatch`, `provider_not_configured`).
 
 Provider callback URLs (shown in the setup wizard):
 `{public_url}/v1/auth/oauth/google/callback`, `{public_url}/v1/auth/oauth/github/callback`.

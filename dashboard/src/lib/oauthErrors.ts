@@ -1,6 +1,8 @@
 const MESSAGES: Record<string, string> = {
   oauth_failed: "Sign-in with the provider failed. Please try again.",
-  oauth_state_invalid: "The sign-in attempt expired or was tampered with. Please start again.",
+  oauth_state_invalid:
+    "Sign-in has to start and finish at the same Deployer address, in the same browser. Open Deployer at {url} and try again.",
+  not_initialized: "This Deployer instance isn't set up yet. The owner has to finish the setup wizard first.",
   account_exists_link_required:
     "An account with this email already exists. Sign in with your password or the provider you used before, then link this one in Settings → Account.",
   identity_in_use: "That provider account is already linked to a different Deployer user.",
@@ -15,9 +17,11 @@ const MESSAGES: Record<string, string> = {
     "This browser is signed in to Deployer as someone else (or not at all). Sign in as yourself here and connect GitHub again.",
 };
 
-export function oauthErrorMessage(code: string | null | undefined): string | null {
+/** `publicUrl` (from /setup/status) names the address sign-in must start from; defaults to this page's. */
+export function oauthErrorMessage(code: string | null | undefined, publicUrl?: string | null): string | null {
   if (!code) return null;
-  return MESSAGES[code] ?? `Sign-in failed (${code}).`;
+  const text = MESSAGES[code] ?? `Sign-in failed (${code}).`;
+  return text.replace("{url}", publicUrl || window.location.origin);
 }
 
 export const PROVIDER_LABELS = { google: "Google", github: "GitHub" } as const;
