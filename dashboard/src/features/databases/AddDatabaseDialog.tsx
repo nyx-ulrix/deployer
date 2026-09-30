@@ -124,10 +124,12 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
   const configKey = JSON.stringify(mode === "external" ? { ...buildInput(), name: "" } : null);
   const testPassed = mode === "managed" || (test?.key === configKey && test.result.ok);
 
+  // A-117: the API defaults the database to the one named in the URI path (mongodb://host/<database>).
+  const uriDatabase = /^mongodb(?:\+srv)?:\/\/[^/?]*\/([^?]+)/.exec(uri.trim())?.[1] ?? "";
   const externalValid =
     kind === "sql"
       ? Boolean(host.trim() && username.trim() && database.trim()) && (!port || /^\d+$/.test(port))
-      : Boolean(uri.trim() && mongoDb.trim());
+      : Boolean(uri.trim() && (mongoDb.trim() || uriDatabase));
   const formValid = mode === "managed" ? !showHostOn || hostUsable : externalValid;
 
   const testMutation = useMutation({
@@ -357,9 +359,10 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
                   id={id}
                   value={mongoDb}
                   onChange={(e) => setMongoDb(e.target.value)}
+                  placeholder={uriDatabase ? `${uriDatabase} (from the URI)` : undefined}
                   autoCapitalize="off"
                   spellCheck={false}
-                  required
+                  required={!uriDatabase}
                 />
               )}
             </Field>
