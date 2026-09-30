@@ -93,7 +93,9 @@ snapshot was taken are marked failed instead of running again.
 The whole-PC dumps `deployer backup` writes to `backups\<timestamp>` (every MariaDB database, managed
 MongoDB and a copy of `.env`) go back with `deployer restore <timestamp>` (or the folder's path). It
 replaces all databases, offers a backup of the current ones first, and refuses a backup taken with a
-different `MASTER_KEY` unless `-Force`; run `deployer restart` afterwards.
+different `MASTER_KEY` unless `-Force`; run `deployer restart` afterwards. The dumps include the database
+accounts, so it only goes back onto the install that made it: a backup whose database passwords differ
+from `.env` is refused even with `-Force` (use the encrypted export to move to another PC).
 
 ## Jobs
 

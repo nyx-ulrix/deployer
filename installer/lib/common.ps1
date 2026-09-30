@@ -731,8 +731,17 @@ function Assert-DeployerRestoreFolder {
     }
     $backupEnv = Join-Path $Folder 'env.backup'
     if (Test-Path -LiteralPath $backupEnv) {
-        $old = [string](Read-DeployerEnvFile -Path $backupEnv)['MASTER_KEY']
-        $now = [string](Read-DeployerEnvFile -Path (Join-Path $InstallDir '.env'))['MASTER_KEY']
+        $oldEnv = Read-DeployerEnvFile -Path $backupEnv
+        $nowEnv = Read-DeployerEnvFile -Path (Join-Path $InstallDir '.env')
+        # The dumps carry the database accounts (mysql.global_priv, admin.system.users), so a backup from
+        # another install would replace the passwords Deployer signs in with. -Force does not skip this.
+        $accounts = @('MARIADB_USER', 'MARIADB_PASSWORD', 'MARIADB_ROOT_PASSWORD', 'MONGO_ROOT_USERNAME', 'MONGO_ROOT_PASSWORD') |
+            Where-Object { $oldEnv[$_] -and [string]$oldEnv[$_] -cne [string]$nowEnv[$_] }
+        if ($accounts) {
+            throw "This backup comes from another install: its $($accounts -join ', ') differ from $InstallDir\.env. Loading it would replace the database accounts Deployer signs in with and lock it out of its own databases, so a backup only goes back onto the install that made it. To move to another PC, use the encrypted export in the dashboard (Instance settings > Export)."
+        }
+        $old = [string]$oldEnv['MASTER_KEY']
+        $now = [string]$nowEnv['MASTER_KEY']
         if ($old -and $old -cne $now -and -not $Force) {
             throw "This backup was taken with a different MASTER_KEY, so the secrets in it could not be decrypted. Copy the MASTER_KEY line from $backupEnv into $InstallDir\.env and run 'deployer restart' first, or add -Force to restore anyway."
         }

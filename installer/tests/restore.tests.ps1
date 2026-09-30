@@ -48,6 +48,13 @@ try {
     Invoke-DeployerRestore -InstallDir $dir -Runtime 'docker-desktop' -Folder $backup -Mongo $false -Force
     Assert-That ($calls.Count -eq 2) '-Force restores it anyway'
 
+    Set-Content -LiteralPath (Join-Path $backup 'env.backup') -Value @('MASTER_KEY=other', 'MARIADB_PASSWORD=old')
+    Set-Content -LiteralPath (Join-Path $dir '.env') -Value @('MASTER_KEY=other', 'MARIADB_PASSWORD=new')
+    $script:calls = @()
+    $refused = $false
+    try { Invoke-DeployerRestore -InstallDir $dir -Runtime 'docker-desktop' -Folder $backup -Mongo $false -Force } catch { $refused = $_.Exception.Message -match 'MARIADB_PASSWORD differ' }
+    Assert-That ($refused -and $calls.Count -eq 0) 'a backup from another install (other database passwords) is refused, even with -Force'
+
     $refused = $false
     try { Invoke-DeployerRestore -InstallDir $dir -Runtime 'docker-desktop' -Folder $dir -Mongo $false } catch { $refused = $_.Exception.Message -match 'mariadb.sql is missing' }
     Assert-That $refused 'a folder without mariadb.sql is refused'

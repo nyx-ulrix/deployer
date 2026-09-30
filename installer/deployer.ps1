@@ -681,7 +681,7 @@ function Invoke-Backup {
         '',
         'Restore (replaces the current databases; offers a backup of them first):',
         "  deployer restore $stamp",
-        'It refuses a backup taken with a different MASTER_KEY: copy that line from env.backup into .env first.',
+        'It only goes back onto this install (same MASTER_KEY and database passwords as env.backup).',
         '',
         'For moving to another computer, prefer the encrypted export in the dashboard (Instance settings > Export).'
     )
