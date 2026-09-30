@@ -9,34 +9,21 @@ import { ProviderIcon } from "../../components/layout/Brand";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { CopyField } from "../../components/ui/CopyField";
+import { ExtLink } from "../../components/ui/ExtLink";
 import { Field, Input } from "../../components/ui/Input";
 import { Alert } from "../../components/ui/States";
 import { StepCard, type StepStatus } from "../../components/ui/StepCard";
 import { useToast } from "../../components/ui/toast-context";
 import { PROVIDER_LABELS } from "../../lib/oauthErrors";
+import { isLocalUrl } from "../../lib/url";
 import {
   callbackUrls,
   deriveSigninSteps,
   githubPrefillUrl,
   GITHUB_STEP_TITLES,
   GOOGLE_STEP_TITLES,
-  isLocalUrl,
   oauthValueError,
 } from "./signinSteps";
-
-function ExtLink({ href, children }: { href: string; children: ReactNode }) {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer noopener"
-      className="inline-flex items-center gap-0.5 font-medium text-accent hover:underline"
-    >
-      {children}
-      <ExternalLink className="size-3" />
-    </a>
-  );
-}
 
 /** "I've done this" for steps that happen in Google's/GitHub's console, where Deployer can't see progress. */
 function DoneButton({ status, onClick }: { status: StepStatus; onClick: () => void }) {

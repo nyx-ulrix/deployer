@@ -15,6 +15,7 @@ import { Alert, ErrorState } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
 import { MIN_PASSPHRASE, MIN_PASSWORD } from "../../lib/constants";
+import { normalizeUrl } from "../../lib/url";
 import { OAuthProviderCard } from "../settings/OAuthProviderCard";
 import { ImportSummaryList } from "../settings/ImportSummaryList";
 import { EnrollDeviceFlow } from "../devices/EnrollDeviceFlow";
@@ -404,7 +405,7 @@ function PublicUrlForm({ current, onDone }: { current: string; onDone: () => voi
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          if (valid) save.mutate(url.trim().replace(/\/+$/, ""));
+          if (valid) save.mutate(normalizeUrl(url));
         }}
       >
         <Field

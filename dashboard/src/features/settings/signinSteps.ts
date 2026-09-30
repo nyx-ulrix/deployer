@@ -1,5 +1,6 @@
 import type { ProviderName } from "../../api/types";
 import type { StepStatus } from "../../components/ui/StepCard";
+import { normalizeUrl } from "../../lib/url";
 
 export const GITHUB_STEP_TITLES = ["Create the OAuth app", "Generate a client secret", "Paste them here"] as const;
 
@@ -13,14 +14,8 @@ export const GOOGLE_STEP_TITLES = [
   "Paste them here",
 ] as const;
 
-const trim = (url: string) => url.trim().replace(/\/+$/, "");
-
-export function isLocalUrl(url: string): boolean {
-  return /^http:\/\/(localhost|127\.0\.0\.1|\[::1\])(:\d+)?(\/|$)/i.test(url.trim());
-}
-
 export function callbackUrl(provider: ProviderName, baseUrl: string): string {
-  return `${trim(baseUrl)}/v1/auth/oauth/${provider}/callback`;
+  return `${normalizeUrl(baseUrl)}/v1/auth/oauth/${provider}/callback`;
 }
 
 /**
@@ -39,7 +34,7 @@ export function callbackUrls(provider: ProviderName, publicUrl: string, localUrl
 export function githubPrefillUrl(publicUrl: string): string {
   const params = new URLSearchParams({
     "oauth_application[name]": "Deployer",
-    "oauth_application[url]": trim(publicUrl),
+    "oauth_application[url]": normalizeUrl(publicUrl),
     "oauth_application[callback_url]": callbackUrl("github", publicUrl),
   });
   return `https://github.com/settings/applications/new?${params.toString()}`;

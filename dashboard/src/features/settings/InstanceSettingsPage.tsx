@@ -15,6 +15,7 @@ import { Alert, Card, ErrorState, PageHeader } from "../../components/ui/States"
 import { useToast } from "../../components/ui/toast-context";
 import { formatDate } from "../../lib/format";
 import { PROVIDER_LABELS } from "../../lib/oauthErrors";
+import { normalizeUrl } from "../../lib/url";
 import { InstanceNav } from "./InstanceNav";
 import { OAuthProviderCard } from "./OAuthProviderCard";
 
@@ -58,7 +59,7 @@ function GeneralCard({ settings }: { settings: InstanceSettings }) {
   const [url, setUrl] = useState(settings.public_url);
   const [allowSignup, setAllowSignup] = useState(settings.allow_signup);
   const [ownerOnly, setOwnerOnly] = useState(settings.owner_only_projects);
-  const urlChanged = url.trim().replace(/\/+$/, "") !== settings.public_url.replace(/\/+$/, "");
+  const urlChanged = normalizeUrl(url) !== normalizeUrl(settings.public_url);
   const dirty = urlChanged || allowSignup !== settings.allow_signup || ownerOnly !== settings.owner_only_projects;
   const anyProvider = settings.google.configured || settings.github.configured;
 
@@ -73,7 +74,7 @@ function GeneralCard({ settings }: { settings: InstanceSettings }) {
   const save = useMutation({
     mutationFn: () =>
       api.instance.updateSettings({
-        public_url: url.trim().replace(/\/+$/, ""),
+        public_url: normalizeUrl(url),
         allow_signup: allowSignup,
         owner_only_projects: ownerOnly,
       }),

@@ -16,7 +16,8 @@ import { formatDateTime, relativeTime } from "../../lib/format";
 import { InstanceNav } from "../settings/InstanceNav";
 import { CloudflareSetup } from "./CloudflareSetup";
 import { PublicUrlResultDialog, UnlinkDialog } from "./PublicUrlDialogs";
-import { currentDomain, isLocalUrl, openedViaQuickTunnel, remoteAccessError } from "./remoteAccess";
+import { isLocalUrl } from "../../lib/url";
+import { currentDomain, openedViaQuickTunnel, remoteAccessError } from "./remoteAccess";
 import { sameUrl, tunnelHealthy } from "./steps";
 
 const MODE_LABELS: Record<RemoteAccessMode, string> = {

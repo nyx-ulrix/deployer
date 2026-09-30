@@ -10,6 +10,7 @@ import type {
   PlacementOption,
 } from "../../api/types";
 import { engineLabel, formatBytes } from "../../lib/format";
+import { isLocalHostname, normalizeUrl } from "../../lib/url";
 
 /** The primary marks a device offline after 60 s without a heartbeat (DEVICES.md). */
 export const OFFLINE_AFTER_MS = 60_000;
@@ -195,7 +196,7 @@ export function reachabilityWarning(url: string): string | null {
     return null;
   }
   const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost")) {
+  if (isLocalHostname(host)) {
     return "This URL points at localhost, so other PCs can't reach it. Set up a LAN, Tailscale or Cloudflare address first (Settings → Domains & remote access).";
   }
   if (u.protocol === "http:" && !isPrivateHost(host)) {
@@ -209,7 +210,7 @@ export function reachabilityWarning(url: string): string | null {
  * private/LAN hosts get http:// (the default install serves plain http on :8080), everything else https://.
  */
 export function normalizeDeployerUrl(input: string): string | null {
-  const raw = input.trim().replace(/\/+$/, "");
+  const raw = normalizeUrl(input);
   if (!raw) return null;
   try {
     let u = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);

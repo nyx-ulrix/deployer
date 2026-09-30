@@ -1,12 +1,13 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, CheckCircle2, ExternalLink, Globe, KeyRound, Link2, RefreshCw, Trash2, XCircle } from "lucide-react";
+import { Check, CheckCircle2, Globe, KeyRound, Link2, RefreshCw, Trash2, XCircle } from "lucide-react";
 import { api, qk } from "../../api/endpoints";
 import type { CloudflareVerifyResult, CloudflareZone, Domain, PublicUrlRequest, RemoteAccess } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { CopyButton, CopyField } from "../../components/ui/CopyField";
+import { ExtLink } from "../../components/ui/ExtLink";
 import { Field, Input, Select } from "../../components/ui/Input";
 import { StatusDot } from "../../components/ui/Progress";
 import { StepCard } from "../../components/ui/StepCard";
@@ -27,14 +28,6 @@ import {
 import { connectorHint, deriveSteps, sameUrl, STEP_TITLES, tunnelHealthy } from "./steps";
 
 const ext = "inline-flex items-center gap-1 font-medium text-accent hover:underline";
-
-function ExtLink({ href, children }: { href: string; children: ReactNode }) {
-  return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className={ext}>
-      {children} <ExternalLink className="size-3" />
-    </a>
-  );
-}
 
 export function CloudflareSetup({
   data,

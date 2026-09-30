@@ -90,12 +90,3 @@ export function currentDomain(data: RemoteAccess, location: Pick<Location, "host
 export function openedViaQuickTunnel(location: Pick<Location, "hostname"> = window.location): boolean {
   return location.hostname.toLowerCase().endsWith(".trycloudflare.com");
 }
-
-export function isLocalUrl(url: string): boolean {
-  try {
-    const h = new URL(url).hostname;
-    return h === "localhost" || h === "127.0.0.1" || h === "::1" || h === "[::1]";
-  } catch {
-    return false;
-  }
-}

@@ -1,5 +1,6 @@
 import type { RemoteAccess } from "../../api/types";
 import type { StepStatus } from "../../components/ui/StepCard";
+import { normalizeUrl } from "../../lib/url";
 
 export type { StepStatus };
 
@@ -23,7 +24,7 @@ export const STEP_TITLES = [
 ] as const;
 
 export function sameUrl(a: string, b: string): boolean {
-  return a.replace(/\/+$/, "").toLowerCase() === b.replace(/\/+$/, "").toLowerCase();
+  return normalizeUrl(a).toLowerCase() === normalizeUrl(b).toLowerCase();
 }
 
 export function tunnelHealthy(data: RemoteAccess): boolean {

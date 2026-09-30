@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { callbackUrls, deriveSigninSteps, githubPrefillUrl, isLocalUrl, oauthValueError } from "./signinSteps";
+import { callbackUrls, deriveSigninSteps, githubPrefillUrl, oauthValueError } from "./signinSteps";
 
 describe("callback URLs", () => {
   it("adds the localhost callback only when the public URL is elsewhere", () => {
@@ -15,13 +15,6 @@ describe("callback URLs", () => {
     expect(callbackUrls("github", "https://deployer.example.com", "http://localhost:9090")[1]).toBe(
       "http://localhost:9090/v1/auth/oauth/github/callback",
     );
-  });
-
-  it("recognises local addresses", () => {
-    expect(isLocalUrl("http://localhost:8080")).toBe(true);
-    expect(isLocalUrl("http://127.0.0.1")).toBe(true);
-    expect(isLocalUrl("http://localhost.example.com")).toBe(false);
-    expect(isLocalUrl("https://deployer.example.com")).toBe(false);
   });
 });
 

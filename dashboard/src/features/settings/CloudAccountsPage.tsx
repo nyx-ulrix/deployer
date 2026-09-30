@@ -1,6 +1,6 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Cloud, ExternalLink, RefreshCw, Trash2 } from "lucide-react";
+import { Check, Cloud, RefreshCw, Trash2 } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import { useProjects } from "../../api/hooks";
@@ -9,6 +9,7 @@ import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { CopyField } from "../../components/ui/CopyField";
+import { ExtLink } from "../../components/ui/ExtLink";
 import { Field, Input, Select, Textarea } from "../../components/ui/Input";
 import { PageSpinner } from "../../components/ui/Spinner";
 import { Alert, Card, ErrorAlert, ErrorState, PageHeader } from "../../components/ui/States";
@@ -141,15 +142,6 @@ function ConnectionsCard({ connections }: { connections: CloudConnection[] }) {
         />
       )}
     </Card>
-  );
-}
-
-function ExtLink({ href, children }: { href: string; children: ReactNode }) {
-  return (
-    <a href={href} target="_blank" rel="noreferrer noopener" className="inline-flex items-center gap-0.5 font-medium text-accent hover:underline">
-      {children}
-      <ExternalLink className="size-3" />
-    </a>
   );
 }
 
