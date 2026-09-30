@@ -30,6 +30,9 @@ jobs:
             api/requirements-dev.txt
       - name: Install dependencies
         run: pip install -r requirements.txt -r requirements-dev.txt
+      # A-194: the ruff config in pyproject.toml is enforced, not just advisory.
+      - name: Lint and format check (ruff)
+        run: ruff check . && ruff format --check .
       - name: Run tests
         # -rfEs also lists every skipped test with its reason (tests/integration runs in the job below).
         run: pytest -rfEs

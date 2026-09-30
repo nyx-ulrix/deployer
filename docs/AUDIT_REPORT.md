@@ -302,7 +302,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [ ] A-191 **[LOW][cleanup]** Dead code: unused constants and functions in the API and dashboard - `api/app/services/connections.py:32, 335` - delete them (overlaps A-109). (not verified)
 - [x] A-192 **[LOW][cleanup]** Shared fixtures are imported from other test modules; the DataSource factory is duplicated in 12 files - `api/tests/test_mcp.py:12` - move them to conftest; one make_source. (not verified)
 - [x] A-193 **[LOW][cleanup]** conftest leaks a temp directory with a SQLite DB on every test run - `api/tests/conftest.py:42` - `atexit.register(shutil.rmtree, ...)`. (not verified)
-- [ ] A-194 **[LOW][test]** ruff is configured but CI never runs it - `.github/workflows/ci.yml:31-34` - add `ruff check . && ruff format --check .`. (not verified)
+- [x] A-194 **[LOW][test]** ruff is configured but CI never runs it - `.github/workflows/ci.yml:31-34` - add `ruff check . && ruff format --check .`. (not verified)
 
 **Non-expert usability**
 - [ ] A-195 **[LOW][cleanup]** Deleted projects keep 30 days of snapshots that no screen can restore - `api/app/routers/projects.py:157-176` - a restore UI, or stop keeping them. (not verified)

@@ -32,7 +32,7 @@ docker compose -f deploy/docker-compose.yml up --build
 
 ## Checks (run before opening a PR - CI runs the same)
 
-- API: `cd api && pytest`
+- API: `cd api && ruff check . && ruff format --check . && pytest` (CI runs all three)
 - Dashboard: `cd dashboard && npm run lint && npm run typecheck && npm run test -- --run && npm run build`
 - Compose: `docker compose -f deploy/docker-compose.yml --env-file deploy/.env.example config`
   (also with `-f deploy/docker-compose.dev.yml`)
