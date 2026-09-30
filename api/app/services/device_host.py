@@ -44,9 +44,7 @@ from app.services import instance_settings, provisioning
 
 log = logging.getLogger(__name__)
 
-RESERVED_DATABASES = frozenset(
-    {"deployer", "mysql", "information_schema", "performance_schema", "sys", "admin", "local", "config", "test"}
-)
+RESERVED_DATABASES = provisioning.RESERVED_DATABASES
 _creds_lock = threading.RLock()
 
 

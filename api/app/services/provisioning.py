@@ -37,12 +37,28 @@ GENERATED_DB_NAME_RE = re.compile(r"^p_[a-z0-9_]{1,55}_[0-9a-f]{6}$")
 USER_RE = re.compile(r"^u_[0-9a-f]{12}$")
 PASSWORD_RE = re.compile(r"^[A-Za-z0-9]{32}$")
 _PASSWORD_ALPHABET = string.ascii_letters + string.digits
+# Platform and system databases on the shared servers: never created, dropped or re-granted as a
+# managed source (A-115), whatever a DataSource row or an import says.
+RESERVED_DATABASES = frozenset(
+    {"deployer", "mysql", "information_schema", "performance_schema", "sys", "admin", "local", "config", "test"}
+)
 
 
 def _check(regex: re.Pattern[str], value: str, what: str) -> str:
     if not regex.fullmatch(value):
         raise ValueError(f"Refusing to use invalid {what}: {value!r}")
     return value
+
+
+def is_reserved_database(name: str) -> bool:
+    return name in RESERVED_DATABASES or name == get_settings().mariadb_database
+
+
+def _check_db(name: str) -> str:
+    _check(DB_NAME_RE, name, "database name")
+    if is_reserved_database(name):
+        raise ValueError(f"Refusing to use reserved database name: {name!r}")
+    return name
 
 
 def generate_database_name(slug: str) -> str:
@@ -137,7 +153,7 @@ def mongo_database_exists(name: str) -> bool:
 
 
 def create_mariadb_database(database: str, username: str, password: str) -> dict[str, Any]:
-    _check(DB_NAME_RE, database, "database name")
+    _check_db(database)
     _check(USER_RE, username, "user name")
     _check(PASSWORD_RE, password, "password")
     s = get_settings()
@@ -189,7 +205,7 @@ def cap_mariadb_users() -> int:
 
 
 def drop_mariadb_database(database: str, username: str | None) -> None:
-    _check(DB_NAME_RE, database, "database name")
+    _check_db(database)
     with mariadb_root_engine().connect() as conn:
         conn.exec_driver_sql(f"DROP DATABASE IF EXISTS `{database}`")
         if username and USER_RE.fullmatch(username):
@@ -199,7 +215,7 @@ def drop_mariadb_database(database: str, username: str | None) -> None:
 def set_mariadb_read_only(database: str, username: str, read_only: bool) -> None:
     """Leaves the source's own user SELECT only (or gives ALL back). Database-level privileges only
     apply to a session on its next USE, so that user's open connections are closed either way."""
-    _check(DB_NAME_RE, database, "database name")
+    _check_db(database)
     _check(USER_RE, username, "user name")
     with mariadb_root_engine().connect() as conn:
         if read_only:
@@ -226,7 +242,7 @@ def mongo_uri(database: str, username: str, password: str) -> str:
 
 
 def create_mongo_database(database: str, username: str, password: str) -> dict[str, Any]:
-    _check(DB_NAME_RE, database, "database name")
+    _check_db(database)
     _check(USER_RE, username, "user name")
     _check(PASSWORD_RE, password, "password")
     try:
@@ -244,7 +260,7 @@ def create_mongo_database(database: str, username: str, password: str) -> dict[s
 
 
 def drop_mongo_database(database: str, username: str | None) -> None:
-    _check(DB_NAME_RE, database, "database name")
+    _check_db(database)
     client = mongo_root_client()
     if username and USER_RE.fullmatch(username):
         try:
@@ -257,7 +273,7 @@ def drop_mongo_database(database: str, username: str | None) -> None:
 
 def set_mongo_read_only(database: str, username: str, read_only: bool) -> None:
     """`read` instead of `dbOwner` for the source's own user (applies to its open connections too)."""
-    _check(DB_NAME_RE, database, "database name")
+    _check_db(database)
     _check(USER_RE, username, "user name")
     role = "read" if read_only else "dbOwner"
     mongo_root_client()[database].command("updateUser", username, roles=[{"role": role, "db": database}])
@@ -294,7 +310,9 @@ def provision_on_device(
 
     if kind not in ("sql", "nosql"):
         raise ApiError(422, "validation_error", f"Unknown data source kind: {kind}")
-    candidates = [preferred] if preferred and DB_NAME_RE.fullmatch(preferred) else []
+    candidates = (
+        [preferred] if preferred and DB_NAME_RE.fullmatch(preferred) and not is_reserved_database(preferred) else []
+    )
     candidates += [generate_database_name(project.slug) for _ in range(5)]
     for candidate in candidates:
         try:
@@ -306,7 +324,7 @@ def provision_on_device(
                 continue
             raise
         database = str(result.get("database_name") or candidate)
-        _check(DB_NAME_RE, database, "database name")
+        _check_db(database)
         config = device_source_config(kind, database, str(result.get("username") or ""))
         return database, config, "mariadb" if kind == "sql" else "mongodb"
     raise ApiError(500, "provisioning_failed", "Could not allocate a unique database name on the device")
@@ -324,7 +342,7 @@ def drop_on_device(device_id: str, kind: str, database: str) -> None:
 
 
 def _pick_database_name(slug: str, preferred: str | None, exists) -> str:
-    if preferred and DB_NAME_RE.fullmatch(preferred):
+    if preferred and DB_NAME_RE.fullmatch(preferred) and not is_reserved_database(preferred):
         try:
             if not exists(preferred):
                 return preferred
