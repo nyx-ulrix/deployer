@@ -125,7 +125,10 @@ function MembersCard() {
         <ul className="divide-y divide-border">
           {members.data.map((m) => {
             const isMe = m.user_id === me.id;
-            const editable = can("admin") && m.role !== "owner" && !isMe;
+            // Mirrors the API: only the owner changes or removes another admin (members.py).
+            const manageable =
+              can("admin") && m.role !== "owner" && (project.my_role === "owner" || m.role !== "admin");
+            const editable = manageable && !isMe;
             return (
               <li key={m.user_id} className="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5">
                 <Avatar name={m.display_name || m.email} src={m.avatar_url} />
@@ -175,7 +178,7 @@ function MembersCard() {
                     {ROLE_LABELS[m.role]}
                   </Badge>
                 )}
-                {m.role !== "owner" && (can("admin") || isMe) && (
+                {m.role !== "owner" && (manageable || isMe) && (
                   <Button
                     size="icon"
                     variant="ghost"
