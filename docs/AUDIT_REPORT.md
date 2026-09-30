@@ -285,7 +285,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-178 **[LOW][usability]** "Move" is offered on every managed database even when there is nowhere to move it - `dashboard/src/features/databases/DatabasesTab.tsx:214-218` - hide it unless more than one placement exists. (not verified)
 - [x] A-179 **[LOW][bug]** The app list nests an external `<a>` inside the row's `<Link>` - `dashboard/src/features/deploys/DeploysTab.tsx:66-87` - restructure the row. (not verified)
 - [x] A-180 **[LOW][bug]** The env editor tracks revealed secrets by row index, so reveals jump to other rows - `dashboard/src/features/deploys/EnvEditor.tsx:271-281, 298` - stable row ids. (not verified)
-- [ ] A-181 **[LOW][cleanup]** Redundant cache invalidations after adding or removing a database - `dashboard/src/features/databases/AddDatabaseDialog.tsx:142-145` - one shared helper. (not verified)
+- [x] A-181 **[LOW][cleanup]** Redundant cache invalidations after adding or removing a database - `dashboard/src/features/databases/AddDatabaseDialog.tsx:142-145` - one shared helper. (not verified)
 - [ ] A-182 **[LOW][test]** No tests for the job-label mapping or the row value converter - `dashboard/src/features/jobs/jobs.ts:17-20` - jobs.test.ts plus fromText tests. (not verified)
 
 **Docs / skill**

@@ -2,8 +2,8 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Cloud, Database, HardDrive, Leaf, XCircle } from "lucide-react";
 import { errorMessage } from "../../api/client";
-import { api, qk } from "../../api/endpoints";
-import { usePlacementOptions } from "../../api/hooks";
+import { api } from "../../api/endpoints";
+import { invalidateProjectSources, usePlacementOptions } from "../../api/hooks";
 import type { ConnectionTestResult, DataSourceInput, DataSourceKind, SqlExternalEngine } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
@@ -141,10 +141,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
   const create = useMutation({
     mutationFn: () => api.dataSources.create(projectId, buildInput()),
     onSuccess: (source) => {
-      void queryClient.invalidateQueries({ queryKey: qk.dataSources(projectId) });
-      void queryClient.invalidateQueries({ queryKey: qk.schema(projectId) });
-      void queryClient.invalidateQueries({ queryKey: qk.project(projectId) });
-      void queryClient.invalidateQueries({ queryKey: qk.projects });
+      invalidateProjectSources(queryClient, projectId);
       toast.success(`${source.name} added.`);
       onClose();
     },

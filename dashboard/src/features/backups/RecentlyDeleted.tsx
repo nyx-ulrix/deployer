@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArchiveRestore, Trash2 } from "lucide-react";
 import { api, qk } from "../../api/endpoints";
+import { invalidateProjectSources } from "../../api/hooks";
 import type { DeletedSource, Job } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
@@ -117,9 +118,7 @@ function RestoreDeletedDialog({
           jobId={job.id}
           title="Restoring database"
           onFinished={(j) => {
-            void queryClient.invalidateQueries({ queryKey: qk.dataSources(projectId) });
-            void queryClient.invalidateQueries({ queryKey: qk.deletedSources(projectId) });
-            void queryClient.invalidateQueries({ queryKey: qk.schema(projectId) });
+            invalidateProjectSources(queryClient, projectId);
             if (j.status === "succeeded") toast.success(`${source.name} restored.`);
           }}
           result={(j) => (

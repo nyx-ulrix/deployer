@@ -1,4 +1,4 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, type QueryClient } from "@tanstack/react-query";
 import { api, qk } from "./endpoints";
 import { isApiStarting } from "./client";
 import type { DataSource, JobStatus, JsonObject } from "./types";
@@ -21,6 +21,15 @@ export function useProviders() {
 
 export function useProjects() {
   return useQuery({ queryKey: qk.projects, queryFn: api.projects.list });
+}
+
+/**
+ * After a database is added, removed or restored (A-181): everything under the project (its sources,
+ * schema, deleted list, counts) plus the projects list itself, exact so other projects are left alone.
+ */
+export function invalidateProjectSources(queryClient: QueryClient, projectId: string) {
+  void queryClient.invalidateQueries({ queryKey: qk.project(projectId) });
+  void queryClient.invalidateQueries({ queryKey: qk.projects, exact: true });
 }
 
 export function useProject(projectId: string) {

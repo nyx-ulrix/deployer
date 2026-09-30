@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowRightLeft, Database, History, Leaf, Pencil, Plug, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { errorMessage, isDeviceOffline } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import { useCohostEligibility, useDataSourcesWithReplicas, usePlacementOptions } from "../../api/hooks";
+import { invalidateProjectSources, useCohostEligibility, useDataSourcesWithReplicas, usePlacementOptions } from "../../api/hooks";
 import type { CohostEligibility, DataSource } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -326,10 +326,7 @@ function DeleteSourceDialog({
   const remove = useMutation({
     mutationFn: () => api.dataSources.remove(projectId, source.id, drop),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: qk.dataSources(projectId) });
-      void queryClient.invalidateQueries({ queryKey: qk.schema(projectId) });
-      void queryClient.invalidateQueries({ queryKey: qk.project(projectId) });
-      void queryClient.invalidateQueries({ queryKey: qk.projects });
+      invalidateProjectSources(queryClient, projectId);
       toast.success(drop ? `${source.name} removed and its data dropped.` : `${source.name} removed from the project.`);
       onClose();
     },
