@@ -125,7 +125,9 @@ export function RowDialog({
         {columns.map((c) => {
           const f = fields.get(c);
           const cell = cells[c];
-          const long = (f?.data_type ?? "").match(/text|json|blob/i) || cell.text.length > 80;
+          // From the type and the original value only: keying on the live text would swap
+          // Input for Textarea mid-typing and drop focus at the 81st character.
+          const long = /text|json|blob/i.test(f?.data_type ?? "") || toText(row?.[c]).length > 80;
           const Control = long ? Textarea : Input;
           return (
             <div key={c} className="space-y-1">
