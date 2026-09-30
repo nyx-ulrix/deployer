@@ -179,6 +179,12 @@ function Invoke-Start {
         $log = Get-Item -LiteralPath $script:DeployerLogFile -ErrorAction SilentlyContinue
         if ($log -and $log.Length -gt 1MB) { Move-Item -LiteralPath $log.FullName -Destination "$($log.FullName).1" -Force }
         Write-DeployerLog 'INFO' "Autostart (runtime $($ctx.Runtime))"
+        # The first 'deployer update' from a pre-A-067 install runs the old script, which never locks
+        # the WSL disk and logs; the elevated sign-in task does it instead.
+        if (Test-DeployerIsAdmin) {
+            try { Protect-DeployerDataDirs -InstallDir $InstallDir -UserSid ([string](Get-DeployerStateValue $ctx.State 'installUserSid' (Get-DeployerUserSid))) }
+            catch { Write-DeployerLog 'WARN' "Data folder permissions not tightened: $($_.Exception.Message)" }
+        }
     }
     Write-DeployerStep 'Starting Deployer'
     Remove-Item -LiteralPath (Join-Path $InstallDir $script:DeployerStopMarker) -Force -ErrorAction SilentlyContinue
