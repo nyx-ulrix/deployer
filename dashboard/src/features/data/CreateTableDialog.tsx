@@ -22,7 +22,33 @@ type ColumnDraft = {
   refTable: string;
   refColumn: string;
   onDelete: ForeignKeyAction | "";
+  advanced: boolean;
 };
+
+// Plain-language column kinds shown first; the raw SQL type list stays under "Other (SQL type)".
+const FRIENDLY_MYSQL: [string, string][] = [
+  ["Text", "VARCHAR(255)"],
+  ["Long text", "TEXT"],
+  ["Whole number", "BIGINT"],
+  ["Decimal number (e.g. prices)", "DECIMAL(10,2)"],
+  ["Yes / No", "BOOLEAN"],
+  ["Date", "DATE"],
+  ["Date and time", "DATETIME"],
+  ["ID number", "BIGINT UNSIGNED"],
+  ["JSON data", "JSON"],
+];
+const FRIENDLY_PG: [string, string][] = [
+  ["Text", "VARCHAR(255)"],
+  ["Long text", "TEXT"],
+  ["Whole number", "BIGINT"],
+  ["Decimal number (e.g. prices)", "NUMERIC(10,2)"],
+  ["Yes / No", "BOOLEAN"],
+  ["Date", "DATE"],
+  ["Date and time", "TIMESTAMPTZ"],
+  ["Unique ID (UUID)", "UUID"],
+  ["JSON data", "JSONB"],
+];
+const ADVANCED = "__advanced";
 
 const TYPES_MYSQL = [
   "BIGINT UNSIGNED",
@@ -75,6 +101,7 @@ function newColumn(partial: Partial<ColumnDraft> = {}): ColumnDraft {
     refTable: "",
     refColumn: "",
     onDelete: "",
+    advanced: false,
     ...partial,
   };
 }
@@ -96,6 +123,11 @@ export function CreateTableDialog({
   const queryClient = useQueryClient();
   const listId = useId();
   const isPg = source.engine === "postgresql";
+  const friendly = isPg ? FRIENDLY_PG : FRIENDLY_MYSQL;
+  const isFriendly = (t: string) => friendly.some(([, v]) => v === t.trim().toUpperCase());
+  // A link column must have exactly the linked column's type (MySQL refuses the foreign key otherwise).
+  const refType = (table: string, column: string) =>
+    entities.find((e) => e.name === table)?.fields.find((f) => f.name === column)?.data_type.toUpperCase() ?? "";
   const idType = isPg ? "BIGINT" : "BIGINT UNSIGNED";
   const [name, setName] = useState("");
   const [timestamps, setTimestamps] = useState(true);
@@ -124,7 +156,7 @@ export function CreateTableDialog({
     else if (!SQL_NAME.test(n)) errors.push(`Column “${n}” has invalid characters.`);
     else if (names.indexOf(n) !== i) errors.push(`Duplicate column “${n}”.`);
     if (!c.type.trim()) errors.push(`Column ${n || i + 1} needs a type.`);
-    if (c.refTable && !c.refColumn) errors.push(`Choose the referenced column for ${n || `column ${i + 1}`}.`);
+    if (c.refTable && !c.refColumn) errors.push(`Choose which ${c.refTable} column ${n || `column ${i + 1}`} links to.`);
   });
   if (timestamps && (names.includes("created_at") || names.includes("updated_at"))) {
     errors.push("Remove created_at/updated_at columns or untick “Add timestamps”.");
@@ -215,7 +247,7 @@ export function CreateTableDialog({
             checked={timestamps}
             onChange={(e) => setTimestamps(e.target.checked)}
             label="Add timestamps"
-            description="created_at / updated_at"
+            description="created_at / updated_at, filled in automatically"
           />
         </div>
 
@@ -223,6 +255,7 @@ export function CreateTableDialog({
           <p className="text-sm font-medium">Columns</p>
           {columns.map((c, i) => {
             const refEntity = entities.find((e) => e.name === c.refTable);
+            const showRaw = c.advanced || !isFriendly(c.type);
             return (
               <fieldset key={c.key} className="rounded-xl border border-border bg-surface-2/50 p-3">
                 <legend className="sr-only">Column {i + 1}</legend>
@@ -236,19 +269,40 @@ export function CreateTableDialog({
                     autoCapitalize="off"
                     spellCheck={false}
                   />
-                  <Input
-                    aria-label="Column type"
-                    placeholder="type"
-                    list={listId}
-                    value={c.type}
-                    onChange={(e) => update(c.key, { type: e.target.value })}
-                    className="font-mono sm:col-span-3"
-                    autoCapitalize="characters"
-                    spellCheck={false}
-                  />
+                  <div className="space-y-2 sm:col-span-3">
+                    <Select
+                      aria-label="Kind of data"
+                      value={showRaw ? ADVANCED : c.type.trim().toUpperCase()}
+                      onChange={(e) =>
+                        update(
+                          c.key,
+                          e.target.value === ADVANCED ? { advanced: true } : { type: e.target.value, advanced: false },
+                        )
+                      }
+                    >
+                      {friendly.map(([label, t]) => (
+                        <option key={t} value={t}>
+                          {label}
+                        </option>
+                      ))}
+                      <option value={ADVANCED}>Other (SQL type)…</option>
+                    </Select>
+                    {showRaw && (
+                      <Input
+                        aria-label="Column type"
+                        placeholder="SQL type, e.g. VARCHAR(100)"
+                        list={listId}
+                        value={c.type}
+                        onChange={(e) => update(c.key, { type: e.target.value })}
+                        className="font-mono"
+                        autoCapitalize="characters"
+                        spellCheck={false}
+                      />
+                    )}
+                  </div>
                   <Input
                     aria-label="Default value"
-                    placeholder="default (optional)"
+                    placeholder="Default value (optional)"
                     value={c.default}
                     onChange={(e) => update(c.key, { default: e.target.value })}
                     className="font-mono sm:col-span-3"
@@ -280,50 +334,55 @@ export function CreateTableDialog({
                 </div>
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-2">
                   <Checkbox
-                    label="Primary key"
+                    label="Primary key (row ID)"
                     checked={c.primary_key}
                     onChange={(e) =>
                       update(c.key, { primary_key: e.target.checked, nullable: e.target.checked ? false : c.nullable })
                     }
                   />
                   <Checkbox
-                    label="Nullable"
+                    label="Can be empty"
                     checked={c.nullable && !c.primary_key}
                     disabled={c.primary_key}
                     onChange={(e) => update(c.key, { nullable: e.target.checked })}
                   />
-                  <Checkbox label="Unique" checked={c.unique} onChange={(e) => update(c.key, { unique: e.target.checked })} />
+                  <Checkbox label="No duplicates" checked={c.unique} onChange={(e) => update(c.key, { unique: e.target.checked })} />
                   <Checkbox
-                    label="Auto-increment"
+                    label="Auto-numbered"
                     checked={c.auto_increment}
                     onChange={(e) => update(c.key, { auto_increment: e.target.checked })}
                   />
                 </div>
                 <div className="mt-2 grid gap-2 sm:grid-cols-3">
                   <Select
-                    aria-label="References table"
+                    aria-label="Links to table"
                     value={c.refTable}
                     onChange={(e) => {
-                      const t = entities.find((x) => x.name === e.target.value);
-                      const pk = t?.fields.find((f) => f.primary_key)?.name ?? "";
-                      update(c.key, { refTable: e.target.value, refColumn: e.target.value ? pk : "" });
+                      const table = e.target.value;
+                      const t = entities.find((x) => x.name === table);
+                      const pk = table ? (t?.fields.find((f) => f.primary_key)?.name ?? "") : "";
+                      const type = pk ? refType(table, pk) : "";
+                      update(c.key, { refTable: table, refColumn: pk, ...(type ? { type, advanced: false } : {}) });
                     }}
                   >
-                    <option value="">No foreign key</option>
+                    <option value="">Not linked to another table</option>
                     {entities.map((e) => (
                       <option key={e.name} value={e.name}>
-                        → {e.name}
+                        Links to {e.name}
                       </option>
                     ))}
                   </Select>
                   {c.refTable && (
                     <>
                       <Select
-                        aria-label="References column"
+                        aria-label="Links to column"
                         value={c.refColumn}
-                        onChange={(e) => update(c.key, { refColumn: e.target.value })}
+                        onChange={(e) => {
+                          const type = refType(c.refTable, e.target.value);
+                          update(c.key, { refColumn: e.target.value, ...(type ? { type, advanced: false } : {}) });
+                        }}
                       >
-                        <option value="">Column…</option>
+                        <option value="">Which column…</option>
                         {refEntity?.fields.map((f) => (
                           <option key={f.name} value={f.name}>
                             {f.name} ({f.data_type})
@@ -331,18 +390,27 @@ export function CreateTableDialog({
                         ))}
                       </Select>
                       <Select
-                        aria-label="On delete"
+                        aria-label={`If a ${c.refTable} row is deleted`}
                         value={c.onDelete}
-                        onChange={(e) => update(c.key, { onDelete: e.target.value as ForeignKeyAction | "" })}
+                        onChange={(e) => {
+                          const onDelete = e.target.value as ForeignKeyAction | "";
+                          // "set null" needs a column that can be empty.
+                          update(c.key, onDelete === "set null" ? { onDelete, nullable: true } : { onDelete });
+                        }}
                       >
-                        <option value="">On delete: default</option>
-                        <option value="restrict">On delete: restrict</option>
-                        <option value="cascade">On delete: cascade</option>
-                        <option value="set null">On delete: set null</option>
+                        <option value="">If the {c.refTable} row is deleted: block it while rows link here</option>
+                        <option value="set null">If the {c.refTable} row is deleted: empty this column</option>
+                        <option value="cascade">If the {c.refTable} row is deleted: delete these rows too</option>
                       </Select>
                     </>
                   )}
                 </div>
+                {c.refTable && c.onDelete === "cascade" && (
+                  <Alert tone="warning" className="mt-2">
+                    Deleting a row in {c.refTable} will also permanently delete every row of this table that links to it,
+                    with no further prompt.
+                  </Alert>
+                )}
               </fieldset>
             );
           })}
@@ -351,7 +419,12 @@ export function CreateTableDialog({
           </Button>
         </div>
 
-        {noPk && <Alert tone="warning">Tables without a primary key can't be edited in the data browser (convention S1).</Alert>}
+        {noPk && (
+          <Alert tone="warning">
+            No column is ticked as the primary key (row ID). Without one, rows can't be edited or deleted in the data
+            browser; an auto-numbered id column is the usual choice.
+          </Alert>
+        )}
         {name && errors.length > 0 && (
           <Alert tone="danger">
             <ul className="list-disc pl-4">
