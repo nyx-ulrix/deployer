@@ -87,7 +87,8 @@ on WSL, setup tells you and continues automatically after you sign in again. Run
 `DeployerSetup.exe` first offers *Update Deployer to vX*, which also updates Deployer Control itself;
 *Deployer Control -> Settings -> Run setup again* (or `/setup`) repairs an installation. An update or
 repair keeps the folder, runtime, port, network access, keep-awake and sign-in choices; change those in
-*Deployer Control -> Settings*.
+*Deployer Control -> Settings* (the runtime cannot be changed there: see
+[Switching runtime](#switching-runtime)).
 
 ### Install with PowerShell (alternative)
 
@@ -137,7 +138,19 @@ Running it again later upgrades an existing installation and keeps your `.env` a
 `auto` (and the setup wizard) picks option 1 by default, even when Docker Desktop is installed: the
 free engine has no licensing conditions and, unlike Docker Desktop, keeps working after the PC sleeps
 and wakes. Choose `docker-desktop` or `existing` explicitly to use those instead. An existing
-installation keeps the runtime it was installed with unless you run setup again and pick another.
+installation keeps the runtime it was installed with; setup and updates never change it.
+
+#### Switching runtime
+
+Your databases live inside the runtime they were created in, so moving to another runtime starts
+empty. Carry your data over with an export:
+
+1. In the dashboard, *Settings -> Export & import -> Whole instance -> Export instance*. Keep the file and its
+   passphrase somewhere safe - it is the only copy the new runtime can read.
+2. Uninstall Deployer (*Uninstall* in Deployer Control, or `deployer uninstall`). Data it
+   keeps stays with the old runtime; it does not follow you.
+3. Install again, choosing the new runtime.
+4. On the first-run page, choose *Restore from export* and give it the file and passphrase.
 
 ## First run: the setup wizard
 

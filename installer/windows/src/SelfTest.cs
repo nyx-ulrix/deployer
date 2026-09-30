@@ -145,6 +145,16 @@ namespace DeployerSetup
                 Check(!up.portInput.Box.ReadOnly, "an update from an app-range port (before A-064) can still move the port (A-077)");
             }
 
+            using (WizardForm up = Wizard(1f, false))
+            {
+                up.installedDir = @"C:\ProgramData\Deployer";
+                up.page = WizardPage.Docker;
+                up.Rebuild();
+                string note = AllText(up);
+                Check(note.Contains("Export & import") && note.Contains("Restore from export") && !note.Contains("keeping your data"),
+                      "the runtime note says to export and restore when switching, not to keep the data (A-095)");
+            }
+
             string half = Path.Combine(Path.GetTempPath(), "DeployerSelfTest-" + Guid.NewGuid().ToString("N").Substring(0, 8));
             Directory.CreateDirectory(half);
             try
@@ -296,6 +306,13 @@ namespace DeployerSetup
             return w;
         }
 
+        static string AllText(Control c)
+        {
+            StringBuilder sb = new StringBuilder(c.Text).Append('\n');
+            foreach (Control child in c.Controls) sb.Append(AllText(child));
+            return sb.ToString();
+        }
+
         static int CountToggles(Control c)
         {
             int n = c is ToggleRow ? 1 : 0;
@@ -410,6 +427,13 @@ namespace DeployerSetup
             w.options.Runtime = "wsl-engine";
             w.Rebuild();
             Save(w, dir, "wizard-3-docker");
+
+            w = Wizard(scale, false);
+            w.ApplyReport(SampleReport(1));
+            w.installedDir = @"C:\ProgramData\Deployer";
+            w.page = WizardPage.Docker;
+            w.Rebuild();
+            Save(w, dir, "wizard-3-docker-update");
 
             w = Wizard(scale, false);
             w.ApplyReport(SampleReport(0));

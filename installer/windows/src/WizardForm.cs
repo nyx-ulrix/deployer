@@ -627,7 +627,8 @@ namespace DeployerSetup
             if (installedDir != null)
             {
                 y = Note(y, IconKind.Info, Theme.Accent, Theme.AccentSoft,
-                    "This update keeps the choice made when Deployer was installed. To switch, uninstall first (keeping your data), then install again.");
+                    "This update keeps the choice made when Deployer was installed. To switch, first export everything in the dashboard (Settings -> Export & import; keep the file and its passphrase), " +
+                    "then uninstall, install again with the new choice and pick \u201cRestore from export\u201d. Data kept by uninstall stays with the old choice.");
             }
             foreach (ChoiceCard c in cards)
             {

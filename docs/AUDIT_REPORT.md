@@ -177,7 +177,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-094 **[MEDIUM][test]** No unit test covers the real DockerCli argv (hardening flags, secrets out of argv) - `api/app/services/app_runner.py:59-68, 185-223` - monkeypatch `_run` and assert the flags and env.
 
 **Non-expert usability**
-- [ ] A-095 **[MEDIUM][docs]** Switching the Docker runtime: README and wizard contradict each other, and following either strands the data - `installer/windows/src/WizardForm.cs:605-613` (also `README.md:134-135, 304`) - one documented Export, Uninstall, Install, Restore path.
+- [x] A-095 **[MEDIUM][docs]** Switching the Docker runtime: README and wizard contradict each other, and following either strands the data - `installer/windows/src/WizardForm.cs:605-613` (also `README.md:134-135, 304`) - one documented Export, Uninstall, Install, Restore path.
 - [ ] A-096 **[MEDIUM][usability]** Backups live on the same disk and depend on MASTER_KEY, but the dashboard never says so - `dashboard/src/features/backups/InstanceBackupsPage.tsx:66-107` - info card, an Export button, "last export" display, and a 30-day alert.
 - [ ] A-097 **[MEDIUM][bug]** Data browser shows raw driver errors; typing "true" into a BOOLEAN (TINYINT(1)) column fails - `api/app/services/data_browser.py:71-90, 105-107` - coerce booleans; use a checkbox; plain messages for 1366/1062/1452/1048.
 - [ ] A-098 **[MEDIUM][usability]** The create-table dialog is all SQL jargon with no plain-language layer - `dashboard/src/features/data/CreateTableDialog.tsx:27-45, 281-342, 354` - friendly types first, rename the flags, explain cascade.
