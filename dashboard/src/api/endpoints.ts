@@ -61,7 +61,6 @@ import type {
   DataSourceInput,
   DocumentsResponse,
   Entity,
-  Health,
   InstanceProject,
   InstanceSettings,
   InstanceSettingsUpdate,
@@ -116,8 +115,6 @@ export function runQuery(projectId: string, sid: string, body: QueryRequest, sig
 }
 
 export const api = {
-  health: () => client.get<Health>("/health", { auth: false }),
-
   setup: {
     status: () => client.get<SetupStatus>("/setup/status", { auth: false }),
     createOwner: async (body: { email: string; password: string; display_name?: string }) => {
@@ -521,7 +518,6 @@ export const api = {
 export const qk = {
   setupStatus: ["setup-status"] as const,
   providers: ["auth-providers"] as const,
-  me: ["me"] as const,
   instanceSettings: ["instance", "settings"] as const,
   instanceUsers: ["instance", "users"] as const,
   instanceProjects: ["instance", "projects"] as const,

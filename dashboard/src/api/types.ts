@@ -119,14 +119,7 @@ export type ApiKeyConfig = {
   };
 };
 
-// ---- Health & setup ----
-
-/** HTTP 503 with status "degraded" while MariaDB or Redis is down. mongodb is null when switched off. */
-export type Health = {
-  status: "ok" | "degraded";
-  version: string;
-  services: { mariadb: boolean; mongodb: boolean | null; redis: boolean };
-};
+// ---- Setup ----
 
 export type SetupStatus = {
   initialized: boolean;
@@ -157,15 +150,6 @@ export type SetupImportResponse = { ok: true; summary: ImportSummary };
 // ---- Auth ----
 
 export type ProvidersResponse = { google: boolean; github: boolean; allow_signup: boolean };
-
-export type OAuthErrorCode =
-  | "oauth_failed"
-  | "oauth_state_invalid"
-  | "account_exists_link_required"
-  | "identity_in_use"
-  | "signup_disabled"
-  | "provider_not_configured"
-  | "email_not_verified";
 
 // ---- Instance ----
 
