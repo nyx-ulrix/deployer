@@ -3,7 +3,7 @@
 from datetime import datetime, timedelta
 
 from app.models import Backup, BackupLogSegment, BackupPolicy, new_id
-from app.services.backups import chain_from, gfs_keep, segments_to_prune
+from app.services.backups import SegmentChains, gfs_keep, segments_to_prune
 
 START = datetime(2025, 1, 1, 0, 30)
 
@@ -117,7 +117,7 @@ def test_chain_stops_at_the_restore_gap_marker():
     base = snap(START + timedelta(hours=4))  # anchored on mysql-bin.000005
     t = START + timedelta(hours=5)
     before, marker, after = seg(6, 6, t), seg(6, 6, t, gap=True), seg(7, 7, t + timedelta(hours=1))
-    chain = chain_from(base, [seg(5, 5, t), before, marker, after])
+    chain = SegmentChains([seg(5, 5, t), before, marker, after]).chain(base)
     assert [s.start_point["binlog_file"][-1] for s in chain] == ["5", "6"]
 
 
@@ -134,8 +134,8 @@ def test_snapshot_taken_in_the_restore_resume_file_does_not_replay_across_it():
         seg(7, 7, restored_at + timedelta(hours=1)),
         seg(8, 8, START + timedelta(hours=8)),
     ]
-    assert chain_from(safety, segments) == []
-    assert [s.start_point["binlog_file"][-1] for s in chain_from(follow, segments)] == ["7", "8"]
+    assert SegmentChains(segments).chain(safety) == []
+    assert [s.start_point["binlog_file"][-1] for s in SegmentChains(segments).chain(follow)] == ["7", "8"]
 
 
 def test_chains_over_a_week_of_segments_key_each_segment_once(monkeypatch):

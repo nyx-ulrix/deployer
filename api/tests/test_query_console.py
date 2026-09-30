@@ -65,7 +65,7 @@ def test_split_sql_respects_strings_and_comments():
     ],
 )
 def test_sql_read_only_accepts(statement):
-    assert query_console.sql_is_read_only([statement])
+    assert query_console.sql_read_only_refusal([statement]) is None
 
 
 @pytest.mark.parametrize(
@@ -96,7 +96,7 @@ def test_sql_read_only_accepts(statement):
     ],
 )
 def test_sql_read_only_refuses(statement):
-    assert not query_console.sql_is_read_only(query_console.split_sql(statement))
+    assert query_console.sql_read_only_refusal(query_console.split_sql(statement))
 
 
 def test_read_only_refusals_name_the_word():
@@ -134,7 +134,7 @@ def test_run_read_only_refusal_carries_the_word(sqlite_engine):
     ],
 )
 def test_mongo_read_only_accepts(code):
-    assert query_console.mongo_is_read_only(code)
+    assert query_console.mongo_read_only_refusal(code) is None
 
 
 @pytest.mark.parametrize(
@@ -182,7 +182,7 @@ def test_mongo_read_only_accepts(code):
     ],
 )
 def test_mongo_read_only_refuses(code):
-    assert not query_console.mongo_is_read_only(code)
+    assert query_console.mongo_read_only_refusal(code)
 
 
 # --- SQL runner (sqlite) -------------------------------------------------------------------------

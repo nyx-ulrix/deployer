@@ -260,8 +260,6 @@ export function createApiClient(options: ApiClientOptions = {}) {
   };
 }
 
-export type ApiClient = ReturnType<typeof createApiClient>;
-
 /** Trigger a browser download for a blob. */
 export function saveBlob({ blob, filename }: DownloadResult): void {
   const url = URL.createObjectURL(blob);

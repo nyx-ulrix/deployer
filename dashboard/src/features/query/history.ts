@@ -53,7 +53,3 @@ export function addHistoryEntry(projectId: string, sourceId: string, entry: Omit
   writeStorage(historyKey(projectId, sourceId), JSON.stringify(next));
   return next;
 }
-
-export function clearHistory(projectId: string, sourceId: string): void {
-  writeStorage(historyKey(projectId, sourceId), null);
-}

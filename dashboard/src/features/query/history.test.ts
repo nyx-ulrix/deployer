@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { addHistoryEntry, clearHistory, HISTORY_LIMIT, historyKey, loadHistory } from "./history";
+import { addHistoryEntry, HISTORY_LIMIT, historyKey, loadHistory } from "./history";
 import {
   DEFAULT_PREFS,
   loadDraft,
@@ -63,12 +63,6 @@ describe("query history", () => {
       JSON.stringify([{ id: "a", query: "SELECT 1", at: "t", duration_ms: null, ok: true }, { bogus: true }, 42]),
     );
     expect(loadHistory("p1", "s1").map((h) => h.query)).toEqual(["SELECT 1"]);
-  });
-
-  it("clears", () => {
-    addHistoryEntry("p1", "s1", run("SELECT 1"));
-    clearHistory("p1", "s1");
-    expect(loadHistory("p1", "s1")).toEqual([]);
   });
 });
 

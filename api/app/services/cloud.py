@@ -79,7 +79,6 @@ TARGETS: dict[str, dict] = {
         "uses_deployer_data": False,
     },
 }
-CLOUD_TARGETS = tuple(t for t in TARGETS if t != "local")
 STATIC_TARGETS = tuple(t for t, v in TARGETS.items() if v["kind"] == "static")
 CLOUD_ENV_NOTE = (
     "Cloud targets get only the app's own environment variables: no DEPLOYER_URL, DEPLOYER_API_KEY or "

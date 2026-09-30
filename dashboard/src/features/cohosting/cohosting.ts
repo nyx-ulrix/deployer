@@ -24,8 +24,6 @@ export function deviceOf(source: Pick<DataSource, "replicas">, replicaId: string
   return source.replicas?.find((r) => r.id === replicaId)?.device_name ?? "the co-host";
 }
 
-export const SIDE_LABELS: Record<SyncSide, string> = { primary: "Main server", replica: "Co-host" };
-
 // ---- replica status ----
 
 export const REPLICA_STATUS: Record<ReplicaStatus, { label: string; tone: BadgeTone }> = {

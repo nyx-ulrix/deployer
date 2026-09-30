@@ -33,9 +33,3 @@ export function previewUrl(sub: string, zone: string): string | null {
   if (!zone || validateSubdomain(sub, zone)) return null;
   return `https://${buildHostname(sub, zone)}`;
 }
-
-export function hostnameInZone(hostname: string, zone: string): boolean {
-  const h = hostname.toLowerCase();
-  const z = zone.toLowerCase();
-  return h === z || h.endsWith(`.${z}`);
-}

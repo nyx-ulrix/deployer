@@ -39,12 +39,6 @@ export function pitrBounds(window: RecoveryWindow | undefined | null): PitrBound
   return { earliest, latest };
 }
 
-export function clampToBounds(d: Date, bounds: PitrBounds): Date {
-  if (d < bounds.earliest) return new Date(bounds.earliest);
-  if (d > bounds.latest) return new Date(bounds.latest);
-  return d;
-}
-
 /**
  * min/max attributes for the date input and, for the chosen day, the time input. Seconds are rounded
  * inwards so any time accepted by the inputs lies inside the window.

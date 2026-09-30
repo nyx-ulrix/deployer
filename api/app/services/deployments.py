@@ -48,7 +48,6 @@ from app.services.remote_access import domain_out
 
 log = logging.getLogger(__name__)
 
-PRESETS = ("static", "node", "python", "dockerfile")
 PRESET_PORTS = {"static": 80, "node": 3000, "python": 8000}
 PORT_MIN, PORT_MAX = 8100, 8199
 IMAGE_PREFIX = "deployer-app"

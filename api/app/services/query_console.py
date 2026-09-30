@@ -239,10 +239,6 @@ def sql_read_only_refusal(statements: Iterable[str]) -> str | None:
     return None
 
 
-def sql_is_read_only(statements: Iterable[str]) -> bool:
-    return sql_read_only_refusal(statements) is None
-
-
 def _is_timeout(exc: BaseException) -> bool:
     args = getattr(exc, "args", ())
     if args and isinstance(args[0], int) and args[0] in _TIMEOUT_ERRNOS:
@@ -649,10 +645,6 @@ def mongo_read_only_refusal(code: str) -> str | None:
         f"`{match.group()}` is a write or admin command, so viewers cannot run this code "
         "(the check also matches inside strings and comments, e.g. a field value)"
     )
-
-
-def mongo_is_read_only(code: str) -> bool:
-    return mongo_read_only_refusal(code) is None
 
 
 def mongosh_command() -> list[str] | None:

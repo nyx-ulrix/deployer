@@ -801,10 +801,6 @@ class SegmentChains:
         return None if i is None else self.reach[i]
 
 
-def chain_from(backup: Backup, segments: list[BackupLogSegment]) -> list[BackupLogSegment]:
-    return SegmentChains(segments).chain(backup)
-
-
 def successful_snapshots(db: Session, data_source_id: str) -> list[Backup]:
     return list(
         db.scalars(

@@ -28,7 +28,6 @@ PERM_TUNNEL = "Account / Cloudflare Tunnel / Edit"
 PERM_ACCOUNT_SETTINGS = "Account / Account Settings / Read"
 PERM_DNS = "Zone / DNS / Edit"
 PERM_ZONE = "Zone / Zone / Read"
-REQUIRED_PERMISSIONS = [PERM_TUNNEL, PERM_ACCOUNT_SETTINGS, PERM_DNS, PERM_ZONE]
 
 # Cloudflare error codes that mean "this token is not valid" (rather than "not allowed").
 _AUTH_ERROR_CODES = {1000, 1001, 6003, 6103, 6111, 9103, 9106, 9107}

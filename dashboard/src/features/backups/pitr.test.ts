@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { Backup } from "../../api/types";
 import {
   baseSnapshotFor,
-  clampToBounds,
   combineLocal,
   inputConstraints,
   percentOf,
@@ -90,11 +89,6 @@ describe("validatePointInTime", () => {
     expect(validatePointInTime("2026-09-16", "11:45:11", bounds)).toMatchObject({ ok: false });
     expect(validatePointInTime("2026-09-12", "", bounds)).toMatchObject({ ok: false });
     expect(validatePointInTime("2026-09-12", "08:00", null)).toMatchObject({ ok: false });
-  });
-
-  it("clamps to the window", () => {
-    expect(clampToBounds(new Date(2020, 0, 1), bounds).getTime()).toBe(earliest.getTime());
-    expect(clampToBounds(new Date(2030, 0, 1), bounds).getTime()).toBe(latest.getTime());
   });
 });
 

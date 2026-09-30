@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildHostname, hostnameInZone, normalizeSubdomain, previewUrl, validateSubdomain } from "./hostname";
+import { buildHostname, normalizeSubdomain, previewUrl, validateSubdomain } from "./hostname";
 
 describe("hostname helpers", () => {
   it("normalizes pasted input", () => {
@@ -26,7 +26,5 @@ describe("hostname helpers", () => {
     expect(previewUrl("", "example.com")).toBe("https://example.com");
     expect(previewUrl("bad name", "example.com")).toBeNull();
     expect(buildHostname("a", "b.io")).toBe("a.b.io");
-    expect(hostnameInZone("Deployer.Example.com", "example.com")).toBe(true);
-    expect(hostnameInZone("notexample.com", "example.com")).toBe(false);
   });
 });
