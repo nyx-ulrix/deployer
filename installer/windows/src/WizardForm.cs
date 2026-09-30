@@ -134,7 +134,6 @@ namespace DeployerSetup
         internal SetupOptions options = new SetupOptions();
         internal SystemReport report;
         internal bool checking;
-        bool runtimeChosenByUser;
         bool portEditedByUser;
         internal string installedDir;
         internal int installedPort = -1;
@@ -152,7 +151,6 @@ namespace DeployerSetup
         internal bool showDetails;
         internal double progress;
         internal DateTime stepStarted = DateTime.Now;
-        internal DateTime installStarted = DateTime.Now;
         internal string errorMessage = "";
         internal string doneUrl = "";
         // From the done marker when LAN access is on: the addresses other devices use, and how many LAN networks are Public (A-075).
@@ -201,7 +199,6 @@ namespace DeployerSetup
                 try
                 {
                     options = SetupOptions.Load(file);
-                    runtimeChosenByUser = true;
                     portEditedByUser = true;
                     page = WizardPage.Install;
                 }
@@ -238,11 +235,7 @@ namespace DeployerSetup
                 IDictionary<string, object> state = Json.Parse(File.ReadAllText(Path.Combine(installedDir, "runtime.json"))) as IDictionary<string, object>;
                 if (state == null) return;
                 string rt = Json.Str(state, "runtime");
-                if (rt.Length > 0)
-                {
-                    options.Runtime = rt;
-                    runtimeChosenByUser = true;
-                }
+                if (rt.Length > 0) options.Runtime = rt;
                 object lan, keepAwake;
                 if (state.TryGetValue("lan", out lan)) options.EnableLan = Json.Bool(lan as IDictionary<string, object>, "enabled");
                 if (state.TryGetValue("keepAwake", out keepAwake)) options.KeepAwake = Json.Bool(keepAwake as IDictionary<string, object>, "enabled");
@@ -590,12 +583,6 @@ namespace DeployerSetup
         {
             checking = false;
             report = r;
-            if (!runtimeChosenByUser)
-            {
-                // Free Docker Engine in WSL2 by default, even when Docker Desktop is present: no licensing
-                // conditions, and it keeps working after sleep/wake (Docker Desktop's socket files do not).
-                options.Runtime = "wsl-engine";
-            }
             if (!portEditedByUser && !PortLocked()) options.Port = r.SuggestedPort;
             if (page == WizardPage.Checks) Rebuild();
         }
@@ -646,7 +633,6 @@ namespace DeployerSetup
                 {
                     if (!captured.Checked) return;
                     options.Runtime = (string)captured.Tag;
-                    runtimeChosenByUser = true;
                     foreach (ChoiceCard other in cards) if (other != captured) other.Checked = false;
                 };
                 y += c.LayoutAt(ContentLeft, y, ContentWidth) + ui.S(12);
@@ -966,7 +952,6 @@ namespace DeployerSetup
             sawReboot = false;
             log.Length = 0;
             stepNames = (string[])DefaultStepNames.Clone();
-            installStarted = DateTime.Now;
             stepStarted = DateTime.Now;
             page = WizardPage.Install;
             Rebuild();

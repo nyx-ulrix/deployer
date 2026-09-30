@@ -15,7 +15,6 @@ namespace DeployerSetup
         public static readonly Color AccentHover = Hex(0x4338CA);
         public static readonly Color AccentPressed = Hex(0x3730A3);
         public static readonly Color AccentSoft = Hex(0xEEF0FF);
-        public static readonly Color AccentBorder = Hex(0xC7CCFB);
         public static readonly Color Text = Hex(0x111827);
         public static readonly Color TextMuted = Hex(0x4B5563);
         public static readonly Color TextSubtle = Hex(0x6B7280);
@@ -212,16 +211,12 @@ namespace DeployerSetup
             public int Left, Top, Right, Bottom;
         }
 
-        [DllImport("user32.dll", SetLastError = true)]
-        [return: MarshalAs(UnmanagedType.Bool)]
-        public static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
-
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         public static extern bool MoveFileEx(string existing, string newName, int flags);
     }
 
-    enum IconKind { None, Check, Warn, Cross, Info, Restart, Lock, Heart, Clock, User, Key, Devices, Dot, Spinner }
+    enum IconKind { None, Check, Warn, Cross, Info, Restart, Lock, Heart, Clock, Devices, Dot, Spinner }
 
     static class Glyphs
     {
@@ -335,15 +330,6 @@ namespace DeployerSetup
                             g.DrawEllipse(thin, x + s * 0.27f, y + s * 0.27f, s * 0.46f, s * 0.46f);
                             g.DrawLines(thin, new PointF[] { P(x, y, s, 0.5f, 0.37f), P(x, y, s, 0.5f, 0.5f), P(x, y, s, 0.59f, 0.56f) });
                         }
-                        break;
-                    case IconKind.User:
-                        g.DrawEllipse(pen, x + s * 0.39f, y + s * 0.25f, s * 0.22f, s * 0.22f);
-                        g.DrawArc(pen, x + s * 0.28f, y + s * 0.53f, s * 0.44f, s * 0.36f, 180, 180);
-                        break;
-                    case IconKind.Key:
-                        g.DrawEllipse(pen, x + s * 0.24f, y + s * 0.38f, s * 0.24f, s * 0.24f);
-                        g.DrawLine(pen, P(x, y, s, 0.48f, 0.5f), P(x, y, s, 0.76f, 0.5f));
-                        g.DrawLine(pen, P(x, y, s, 0.68f, 0.5f), P(x, y, s, 0.68f, 0.62f));
                         break;
                     case IconKind.Devices:
                         using (GraphicsPath screen = Logo.RoundedRect(new RectangleF(x + s * 0.24f, y + s * 0.30f, s * 0.52f, s * 0.34f), s * 0.04f))

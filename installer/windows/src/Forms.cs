@@ -284,7 +284,7 @@ namespace DeployerSetup
         }
     }
 
-    /// <summary>Themed replacement for MessageBox with an icon, wrapped text and optional checkbox.</summary>
+    /// <summary>Themed replacement for MessageBox with an icon, wrapped text and an optional link.</summary>
     class MessageDialog : ThemedForm
     {
         readonly string title;
@@ -292,15 +292,11 @@ namespace DeployerSetup
         readonly IconKind icon;
         readonly Color iconColor;
         readonly List<DialogButton> buttons;
-        readonly string checkText;
-        readonly string checkDescription;
-        public bool CheckValue;
         public string LinkLabelText;
         public string LinkLabelUrl;
         const int DesignWidth = 500;
 
-        public MessageDialog(string title, string message, IconKind icon, Color iconColor, List<DialogButton> buttons,
-            string checkText, string checkDescription, float forcedScale)
+        public MessageDialog(string title, string message, IconKind icon, Color iconColor, List<DialogButton> buttons, float forcedScale)
             : base(forcedScale)
         {
             this.title = title;
@@ -308,8 +304,6 @@ namespace DeployerSetup
             this.icon = icon;
             this.iconColor = iconColor;
             this.buttons = buttons;
-            this.checkText = checkText;
-            this.checkDescription = checkDescription;
             Text = title;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
@@ -349,16 +343,6 @@ namespace DeployerSetup
                 y += ls.Height;
             }
 
-            if (!string.IsNullOrEmpty(checkText))
-            {
-                y += ui.S(18);
-                CheckOption opt = new CheckOption(ui, checkText, checkDescription);
-                opt.CheckColor = iconColor == Theme.Danger ? Theme.Danger : Theme.Accent;
-                opt.Checked = CheckValue;
-                opt.Changed += delegate { CheckValue = opt.Checked; };
-                y += opt.LayoutAt(left, y, tw);
-                Controls.Add(opt);
-            }
             y = Math.Max(y, pad + ui.S(44)) + pad;
 
             Panel footer = new Panel();
@@ -409,7 +393,7 @@ namespace DeployerSetup
                 new DialogButton(noText, ButtonStyle.Secondary, DialogResult.No),
                 new DialogButton(yesText, yesStyle, DialogResult.Yes)
             };
-            using (MessageDialog d = new MessageDialog(title, message, icon, color, buttons, null, null, 0))
+            using (MessageDialog d = new MessageDialog(title, message, icon, color, buttons, 0))
             {
                 d.PlaceCentered(owner as Form);
                 return owner != null ? d.ShowDialog(owner) : d.ShowDialog();
@@ -420,7 +404,7 @@ namespace DeployerSetup
         {
             if (Program.SelfTestMode) return;
             List<DialogButton> buttons = new List<DialogButton> { new DialogButton("OK", ButtonStyle.Primary, DialogResult.OK) };
-            using (MessageDialog d = new MessageDialog(title, message, IconKind.Info, Theme.Accent, buttons, null, null, 0))
+            using (MessageDialog d = new MessageDialog(title, message, IconKind.Info, Theme.Accent, buttons, 0))
             {
                 d.PlaceCentered(owner as Form);
                 if (owner != null) d.ShowDialog(owner); else d.ShowDialog();
@@ -442,7 +426,7 @@ namespace DeployerSetup
             };
             buttons.Add(copy);
             buttons.Add(new DialogButton("Close", ButtonStyle.Primary, DialogResult.OK));
-            MessageDialog d = new MessageDialog(title, message, IconKind.Cross, Theme.Danger, buttons, null, null, forcedScale);
+            MessageDialog d = new MessageDialog(title, message, IconKind.Cross, Theme.Danger, buttons, forcedScale);
             d.LinkLabelText = "Troubleshooting help";
             d.LinkLabelUrl = AppInfo.TroubleshootingUrl;
             d.Rebuild();

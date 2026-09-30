@@ -162,6 +162,8 @@ namespace DeployerSetup
 
         public SetupOptions()
         {
+            // Free Docker Engine in WSL2 by default, even when Docker Desktop is present: no licensing
+            // conditions, and it keeps working after sleep/wake (Docker Desktop's socket files do not).
             Runtime = "wsl-engine";
             InstallDir = AppInfo.DefaultInstallDir;
             Port = 8080;
@@ -653,15 +655,21 @@ namespace DeployerSetup
             if (includeInternet)
             {
                 string error;
-                if (Internet.CanReach("https://github.com/", out error))
-                    report.Items.Add(new CheckResult("internet", CheckStatus.Ok, "Connected to the internet", null));
-                else
-                    report.Items.Add(new CheckResult("internet", CheckStatus.Fail, "Can't reach github.com",
-                        "Setup downloads Deployer and Docker (about 1-2 GB). Check your internet connection, VPN or proxy, then click Check again."));
+                bool ok = Internet.CanReach("https://github.com/", out error);
+                report.Items.Add(InternetResult(ok, error));
             }
 
             report.Done = true;
             return report;
+        }
+
+        /// <summary>Keeps the connection error in the detail, so "Can't reach github.com" can be told apart (DNS, proxy, TLS, timeout).</summary>
+        internal static CheckResult InternetResult(bool ok, string error)
+        {
+            if (ok) return new CheckResult("internet", CheckStatus.Ok, "Connected to the internet", null);
+            return new CheckResult("internet", CheckStatus.Fail, "Can't reach github.com",
+                "Setup downloads Deployer and Docker (about 1-2 GB). Check your internet connection, VPN or proxy, then click Check again." +
+                (string.IsNullOrEmpty(error) ? "" : " (" + error + ")"));
         }
 
         public static void DetectDocker(SystemReport report)

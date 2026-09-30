@@ -35,6 +35,8 @@ namespace DeployerSetup
             Check(Payload.Names().Any(n => n.EndsWith("deploy/tunnel/Dockerfile")), "tracked deploy/ subfolders are embedded");
             Check(!Payload.Names().Any(n => n.EndsWith("/.env") || n.EndsWith("docker-compose.dev.yml")), "no .env or dev compose file is embedded");
             TestMarkers();
+            CheckResult offline = SystemChecks.InternetResult(false, "The remote name could not be resolved: 'github.com'");
+            Check(offline.Status == CheckStatus.Fail && offline.Detail.Contains("could not be resolved"), "internet check keeps the connection error");
 
             foreach (float scale in new[] { 1f, 1.5f })
             {
@@ -624,7 +626,7 @@ namespace DeployerSetup
             };
             Save(new MessageDialog("Stop the installation?",
                 "Deployer isn't fully installed yet. You can run setup again later and it continues where it left off.",
-                IconKind.Warn, Theme.Warn, buttons, null, null, scale), dir, "dialog-confirm");
+                IconKind.Warn, Theme.Warn, buttons, scale), dir, "dialog-confirm");
 
             LogWindow logs = new LogWindow(@"C:\ProgramData\Deployer", scale);
             logs.SetText(string.Join("\r\n", new[]

@@ -989,7 +989,7 @@ namespace DeployerSetup
             List<DialogButton> buttons = new List<DialogButton> { new DialogButton("OK", ButtonStyle.Primary, DialogResult.OK) };
             MessageDialog d = new MessageDialog("Diagnostics copied",
                 "Deployer's status, the last error and its recent log lines are on the clipboard. Paste them into your message when you ask for help. They can contain your projects' names and addresses, so share them only with someone you trust.",
-                IconKind.Check, Theme.Success, buttons, null, null, scale);
+                IconKind.Check, Theme.Success, buttons, scale);
             d.LinkLabelText = "Troubleshooting help";
             d.LinkLabelUrl = AppInfo.TroubleshootingUrl;
             d.Rebuild();
@@ -1118,7 +1118,7 @@ namespace DeployerSetup
                 buttons.Add(new DialogButton("Close", ButtonStyle.Primary, DialogResult.OK));
                 return new MessageDialog("This PC is a standalone Deployer",
                     "It isn't attached to another Deployer. To make it a host device for an existing Deployer, open the dashboard and go to Settings → Devices.",
-                    IconKind.Devices, Theme.Accent, buttons, null, null, scale);
+                    IconKind.Devices, Theme.Accent, buttons, scale);
             }
             bool connected = Json.Bool(d, "connected");
             int hosted = Json.List(d, "hosted_sources").Count;
@@ -1133,7 +1133,7 @@ namespace DeployerSetup
             buttons.Add(new DialogButton("Detach…", ButtonStyle.DangerGhost, DialogResult.Abort));
             buttons.Add(new DialogButton("Close", ButtonStyle.Primary, DialogResult.OK));
             return new MessageDialog("Host device", text.ToString(), IconKind.Devices, connected ? Theme.Success : Theme.Warn,
-                buttons, null, null, scale);
+                buttons, scale);
         }
 
         void ConfirmDetach(string primaryUrl, int hosted)
@@ -1469,7 +1469,7 @@ namespace DeployerSetup
             else if (p != originalPort && !Ports.IsFree(p))
                 error = "Port " + p + " is used by another program.";
             if (error == null) Port = p;
-            portHint.Text = error ?? "Deployer opens at http://localhost:" + (error == null ? p : originalPort);
+            portHint.Text = error ?? "Deployer opens at http://localhost:" + p;
             portHint.TextColor = error != null ? Theme.Danger : Theme.TextMuted;
             portHint.Invalidate();
             portInput.Invalid = error != null;

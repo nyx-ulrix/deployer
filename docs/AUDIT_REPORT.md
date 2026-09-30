@@ -261,7 +261,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-158 **[LOW][security]** The build embeds every untracked file under deploy\ into the exe - `installer/windows/build.ps1:98-104` - use `git ls-files deploy`. (not verified)
 - [x] A-159 **[LOW][bug]** Status refresh and Host device can stay "busy" forever if the scripts cannot be prepared - `installer/windows/src/ControlForm.cs:609-611, 889-892` - try/catch and reset the flags. (not verified)
 - [x] A-160 **[LOW][usability]** The "Not responding" state sends non-experts to raw container logs - `installer/windows/src/ControlForm.cs:434-437` - a "Copy diagnostics" action. (not verified)
-- [ ] A-161 **[LOW][cleanup]** Dead code and unused parameters in the C# app - `installer/windows/src/Ui.cs:18, 208-210, 332-340` - delete them; keep the internet-check error text. (not verified)
+- [x] A-161 **[LOW][cleanup]** Dead code and unused parameters in the C# app - `installer/windows/src/Ui.cs:18, 208-210, 332-340` - delete them; keep the internet-check error text. (not verified)
 - [ ] A-162 **[LOW][cleanup]** The same small helpers are copy-pasted across five forms - `installer/windows/src/ControlForm.cs:639-649, 723-736, 792-801` - move them to ThemedForm/Core. (not verified)
 - [ ] A-163 **[LOW][test]** /selftest does not cover the flows most likely to strand a user - `installer/windows/src/SelfTest.cs:26-51, 89-107` - routing, ValidateOptions, ReadLoop and Quote checks. (not verified)
 
