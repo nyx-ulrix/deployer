@@ -236,7 +236,7 @@ Format: `ID [SEVERITY][category] title - file:line - fix`. The IDs are in checkl
 - [x] A-137 **[LOW][bug]** A failed restore or verify raises a 24 h critical "backup failed" alert with jargon - `api/app/services/alerts.py:102-133` - limit to snapshot/archive types; plain words. (not verified)
 - [x] A-138 **[LOW][security]** GitHub webhook: rate limit counted before the signature check; sync DB calls in an async route - `api/app/routers/apps.py:751-767` - verify first; run_in_threadpool. (not verified)
 - [x] A-139 **[LOW][security]** `docker run` can fall back to pulling deployer-app/<id> from Docker Hub - `api/app/services/app_runner.py:185-223` - `--pull never` and a friendly error. (not verified)
-- [ ] A-140 **[LOW][cleanup]** Small cleanups in the deploy/monitoring code (dead return value, `_last_poll` leak, literal TABs) - `api/app/services/deployments.py:411-416, 943-975` - see table. (not verified)
+- [x] A-140 **[LOW][cleanup]** Small cleanups in the deploy/monitoring code (dead return value, `_last_poll` leak, literal TABs) - `api/app/services/deployments.py:411-416, 943-975` - see table. (not verified)
 - [ ] A-141 **[LOW][test]** No tests cover the riskiest runtime paths - `api/tests/test_deployments.py:1-440` - one test per bug (A-012, A-054, A-055, A-057, A-014). (not verified)
 
 **Infrastructure / installer**

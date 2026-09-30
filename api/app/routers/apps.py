@@ -45,6 +45,12 @@ _BRANCH_RE = re.compile(r"^[^\s~^:?*\[\\]+$")
 Target = Literal["local", "aws_static", "aws_app", "firebase_hosting", "firebase_app"]
 
 
+def _valid_branch(value: str | None) -> str | None:
+    if value is not None and (not _BRANCH_RE.match(value) or value.startswith("-")):
+        raise ValueError("is not a valid branch name")
+    return value
+
+
 def _one_line(value: str | None) -> str | None:
     if value is None:
         return None
@@ -108,9 +114,7 @@ class AppFields(BaseModel):
     @field_validator("branch")
     @classmethod
     def _branch(cls, value: str | None) -> str | None:
-        if value is not None and (not _BRANCH_RE.match(value) or value.startswith("-")):
-            raise ValueError("is not a valid branch name")
-        return value
+        return _valid_branch(value)
 
     @field_validator("root_dir")
     @classmethod
@@ -541,9 +545,7 @@ class DeployBody(BaseModel):
     @classmethod
     def _branch(cls, value: str | None) -> str | None:
         value = _one_line(value)
-        if value is not None and (not _BRANCH_RE.match(value) or value.startswith("-")):
-            raise ValueError("is not a valid branch name")
-        return value
+        return _valid_branch(value)
 
 
 @router.post(BASE + "/{app_id}/deploy", status_code=202)
@@ -656,7 +658,7 @@ def runtime_logs(
         lines = [str(line) for line in out.get("lines") or []][-tail:]
         return {"lines": lines, "container": out.get("container"), "device_id": device_id}
     live = db.get(Deployment, app.live_deployment_id) if app.live_deployment_id else None
-    lines, _ = deployments.runtime_logs(app, tail)
+    lines = deployments.runtime_logs(app, tail)
     return {"lines": lines, "container": live.container_name if live else None}
 
 

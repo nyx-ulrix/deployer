@@ -437,7 +437,11 @@ def test_runtime_logs_poll(db, docker, fake_redis, project):
     deployments.poll_logs(jobs.get_sessionmaker(), docker)
     assert docker.calls[-1][2] is not None  # --since the previous poll
     assert fake_redis.lrange(deployments.logs_key(app.id), -1, -1) == ["later"]
-    assert deployments.runtime_logs(app, 2)[0] == ["line 599", "later"]
+    assert deployments.runtime_logs(app, 2) == ["line 599", "later"]
+    # A-140: a container that is no longer live drops out of the --since cache instead of leaking.
+    deployments._last_poll["gone-container"] = "2020-01-01T00:00:00+00:00"
+    deployments.poll_logs(jobs.get_sessionmaker(), docker)
+    assert list(deployments._last_poll) == [db.get(Deployment, dep.id).container_name]
 
 
 def test_generate_dockerfile_presets(db, project):

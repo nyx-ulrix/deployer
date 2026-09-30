@@ -380,24 +380,24 @@ class DockerCli:
                 "ps",
                 "-a",
                 "--format",
-                '{{.Names}}	{{.Label "com.docker.compose.project"}}	{{.Label "com.docker.compose.service"}}'
-                '	{{.Label "deployer.app"}}',
+                '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}'
+                '\t{{.Label "deployer.app"}}',
             ],
             timeout=30,
         )
         rows: dict[str, dict] = {}
         for line in out.splitlines():
-            name, project, service, app_id = ([*line.split("	"), "", "", ""])[:4]
+            name, project, service, app_id = ([*line.split("\t"), "", "", ""])[:4]
             if name and (project == compose_project or app_id):
                 rows[name] = {"name": name, "service": service or None, "app_id": app_id or None}
         if not rows:
             return []
         fmt = (
-            "{{.Name}}	{{.State.Status}}	{{if .State.Health}}{{.State.Health.Status}}{{end}}"
-            "	{{.RestartCount}}	{{.State.StartedAt}}"
+            "{{.Name}}\t{{.State.Status}}\t{{if .State.Health}}{{.State.Health.Status}}{{end}}"
+            "\t{{.RestartCount}}\t{{.State.StartedAt}}"
         )
         for line in self._run(["docker", "inspect", "--format", fmt, *rows], timeout=30, check=False).splitlines():
-            name, status, health, restarts, started = ([*line.split("	"), "", "", "", ""])[:5]
+            name, status, health, restarts, started = ([*line.split("\t"), "", "", "", ""])[:5]
             row = rows.get(name.lstrip("/"))
             if row is not None:
                 row.update(

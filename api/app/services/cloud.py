@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.crypto import decrypt_json, encrypt_json
@@ -245,7 +245,7 @@ def connection_out(conn: CloudConnection, db: Session | None = None) -> dict:
             "client_email": (config.get("service_account") or {}).get("client_email"),
         }
     if db is not None:
-        out["apps_using"] = len(list(db.scalars(select(App.id).where(App.cloud_connection_id == conn.id))))
+        out["apps_using"] = db.scalar(select(func.count()).select_from(App).where(App.cloud_connection_id == conn.id))
     return out
 
 

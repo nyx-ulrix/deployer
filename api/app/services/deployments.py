@@ -439,12 +439,11 @@ def handle_push(db: Session, app: App, payload: dict) -> tuple[Deployment | None
     return start_deployment(db, app, trigger="webhook", user_id=None, commit_sha=sha, commit_message=message)
 
 
-def runtime_logs(app: App, tail: int) -> tuple[list[str], str | None]:
+def runtime_logs(app: App, tail: int) -> list[str]:
     try:
-        lines = get_redis().lrange(logs_key(app.id), -max(1, tail), -1)
+        return list(get_redis().lrange(logs_key(app.id), -max(1, tail), -1))
     except Exception:  # noqa: BLE001
-        lines = []
-    return list(lines), None
+        return []
 
 
 # =============================================================================================
@@ -1120,6 +1119,8 @@ def poll_logs(factory: jobs.SessionFactory, cli: DockerCli | None = None) -> int
         ]
     r = get_redis()
     added = 0
+    for gone in _last_poll.keys() - {name for _, name in live}:  # replaced/removed containers
+        del _last_poll[gone]
     for app_id, name in live:
         since = _last_poll.get(name)
         now = datetime.now(UTC).isoformat(timespec="seconds")

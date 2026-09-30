@@ -18,7 +18,7 @@ from typing import Any
 from urllib.parse import quote, urlsplit
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.crypto import decrypt_secret, encrypt_secret
@@ -115,7 +115,7 @@ def status_out(db: Session, user_id: str) -> dict:
 
 
 def apps_using(db: Session, user_id: str) -> int:
-    return len(list(db.scalars(select(App.id).where(App.github_connection_user_id == user_id))))
+    return db.scalar(select(func.count()).select_from(App).where(App.github_connection_user_id == user_id))
 
 
 # --- repositories --------------------------------------------------------------------------------
