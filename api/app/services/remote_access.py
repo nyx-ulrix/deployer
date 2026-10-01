@@ -36,8 +36,8 @@ from app.services.instance_settings import get_value, oauth_callback_url, public
 
 log = logging.getLogger(__name__)
 
-# Caddy listener reserved for the tunnel (deploy/Caddyfile): not published on the host, trusts
-# X-Forwarded-Proto and takes the client IP from Cf-Connecting-Ip.
+# Caddy listener reserved for the tunnel (deploy/Caddyfile): not published on the host; on connections
+# from the `tunnel` network only, it trusts X-Forwarded-Proto and takes the client IP from Cf-Connecting-Ip.
 ORIGIN_SERVICE = "http://caddy:8081"
 MODES = ("off", "cloudflare", "quick")
 QUICK_SUFFIX = ".trycloudflare.com"

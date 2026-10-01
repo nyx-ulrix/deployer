@@ -153,7 +153,7 @@ def rotate_refresh_token(db: Session, raw: str | None, request: Request | None =
 
 
 def cookie_secure(request: Request) -> bool:
-    """Secure only when this request came over https (uvicorn --proxy-headers applies Caddy's
+    """Secure only when this request came over https (main.CaddyProxyHeaders applies Caddy's
     X-Forwarded-Proto), not from public_url: after remote access is turned on, LAN users still
     open http://<ip>:8080 and a Secure cookie would never be sent back to them (A-021)."""
     return request.url.scheme == "https"
