@@ -10,7 +10,8 @@
 #   dashboard 64m (static nginx)           | caddy 128m
 #   tunnel 128m (cloudflared; idle unless remote access is enabled)
 #   worker 384m (backup jobs stream dumps; never buffers whole databases)
-# Roughly 2.6 GB worst case; typical idle usage is well under 1 GB. Deployed apps
+#   query-shell 512m (up to 4 mongosh query console shells at once)
+# Roughly 3.1 GB worst case; typical idle usage is well under 1 GB. Deployed apps
 # (docs/DEPLOYMENTS.md) run as extra containers, APP_MEM_LIMIT (512m) each, on top of that.
 #
 # MongoDB 8.0 needs a CPU with AVX. It only starts when COMPOSE_PROFILES contains `mongodb`
@@ -111,6 +112,8 @@ services:
       - ./mongodb/mongosh.conf:/etc/mongosh.conf:ro
     networks:
       - backend
+      # The query console's shells (query-shell) reach it here, without access to the backend network.
+      - query
     # Time for a clean shutdown (a killed mongod replays its journal on the next start).
     stop_grace_period: 60s
     healthcheck:
@@ -198,6 +201,8 @@ services:
       DEVICE_DISK_DRIVE: ${DEPLOYER_HOST_DRIVE:-}
       # Tests only: lets a device use http://host.docker.internal as its main Deployer URL.
       DEPLOYER_ALLOW_INSECURE_PRIMARY: ${DEPLOYER_ALLOW_INSECURE_PRIMARY:-}
+      # Query console (docs/QUERY_CONSOLE.md): MongoDB shell code runs in this sidecar, never here.
+      QUERY_SHELL_URL: http://query-shell:8090
     volumes:
       # Shared with the tunnel sidecar: desired.json (written by the API) / status.json.
       - tunnel_state:/tunnel
@@ -219,9 +224,10 @@ services:
       - "host.docker.internal:host-gateway"
     networks:
       # backend: databases (no internet access). public: Caddy + outbound calls
-      # (OAuth token exchange, external databases such as MongoDB Atlas).
+      # (OAuth token exchange, external databases such as MongoDB Atlas). query: the query-shell.
       - backend
       - public
+      - query
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/v1/health', timeout=4)"]
       interval: 15s
@@ -277,12 +283,51 @@ services:
       - public
       # Waits for a new app container's port before routing it (DockerCli.wait_tcp).
       - apps
+      # Device-hosted sources: the device's worker runs their query console shells (query-shell).
+      - query
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
       disable: true
     stop_grace_period: 30s
     mem_limit: ${WORKER_MEM_LIMIT:-384m}
+    logging: *default-logging
+
+  # Query console (docs/QUERY_CONSOLE.md, SECURITY.md "Query console"): runs the MongoDB shell code
+  # of project developers and service keys - full Node.js - away from every secret. Same image as the
+  # API, but no Deployer environment, no volumes, no Docker socket and a read-only filesystem; the
+  # API and worker send it a source's connection string and the code over the `query` network
+  # (app/shell_runner.py). Root only to run each shell under its own uid and clean up after it;
+  # every other capability is dropped. `query_egress` reaches external MongoDB servers (internet,
+  # this PC); nothing of Deployer is on it.
+  query-shell:
+    image: ${DEPLOYER_IMAGE_PREFIX:-ghcr.io/nyx-ulrix/deployer}-api:${DEPLOYER_VERSION:-latest}
+    restart: unless-stopped
+    entrypoint: []
+    command: ["python", "-m", "app.shell_runner"]
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - KILL
+      - SETGID
+      - SETUID
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    shm_size: 16m
+    pids_limit: 256
+    cpus: 1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      - query
+      - query_egress
+    mem_limit: ${QUERY_SHELL_MEM_LIMIT:-512m}
     logging: *default-logging
 
   dashboard:
@@ -357,6 +402,11 @@ networks:
   # Deployed apps (A-019): internet access for builds and outbound calls, but nothing of Deployer's
   # except Caddy (and the worker) is on it.
   apps: {}
+  # Query console (A-001): only api, worker and mongodb reach the query-shell sidecar.
+  query:
+    internal: true
+  # The query-shell's way out to external MongoDB servers; nothing else is on it.
+  query_egress: {}
 
 volumes:
   mariadb_data:

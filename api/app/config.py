@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     tunnel_state_dir: str = "/tunnel"
     deployer_http_port: int = 0
 
+    # docs/QUERY_CONSOLE.md: the secret-less sidecar that runs mongosh (app/shell_runner.py). Empty =
+    # MongoDB shell code cannot run (501 mongosh_unavailable); it never runs in this process.
+    query_shell_url: str = ""
+
     # docs/DEPLOYMENTS.md (worker only): generated Caddy site files (`caddy_apps` volume), the compose
     # network app containers join, their memory limit, and where checkouts are built (default: tmp).
     caddy_apps_dir: str = "/etc/caddy/apps"
@@ -115,7 +119,8 @@ def seal_process() -> None:
     """SECURITY.md "Query console": loads the Settings, then drops the secrets from `os.environ` (no
     child process inherits them) and marks the process non-dumpable. The kernel then makes
     /proc/<pid>/environ, /mem, /fd... root-owned and refuses ptrace, so another process of the same
-    uid (the mongosh query shell) cannot read the secrets the process started with. Linux only."""
+    uid (a tool it starts) cannot read the secrets the process started with. Defence in depth since
+    mongosh moved to the secret-less query-shell sidecar (app/shell_runner.py). Linux only."""
     get_settings()
     for key in SECRET_ENV:
         os.environ.pop(key, None)

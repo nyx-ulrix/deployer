@@ -256,7 +256,7 @@ def main() -> None:
         level=os.environ.get("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
-    seal_process()  # SECURITY.md "Query console": device-hosted mongosh queries run in this container
+    seal_process()  # SECURITY.md "Query console": no child process (git, builds, dumps) inherits the secrets
     log.info("worker %s starting", WORKER_ID)
     _load_plugins()
     try:

@@ -37,6 +37,8 @@ Browser / phone / AI agent
                     containers (root + /var/run/docker.sock, writes the Caddy app files); on a host
                     device also the outbound connection to the main Deployer
 
+  query-shell (query network with api, worker, mongodb) — runs query console mongosh code with no
+              secrets, volumes or Docker socket (QUERY_CONSOLE.md, SECURITY.md "Query console")
   tunnel (optional, public network only) — cloudflared connector for Cloudflare remote access
 ```
 

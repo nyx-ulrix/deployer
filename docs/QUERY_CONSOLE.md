@@ -18,8 +18,8 @@ Every role: MongoDB shell code may not name a Node.js escape hatch - `require`, 
 `child_process`, `fs`, `module`, `global`, `globalThis`, `eval`, `Function`, `constructor`, `Reflect`,
 `import`, `load`, `snippet` - matched as whole identifiers anywhere, strings and comments included
 (`{kind: "import"}` is refused too; `{kind: "imp" + "ort"}` is the workaround), otherwise
-`403 shell_code_refused`. The shell runs as the API's uid inside the API container, so this is a
-speed bump, not a sandbox (see [SECURITY.md](../SECURITY.md) "Query console").
+`403 shell_code_refused`. This is a speed bump; the boundary is the `query-shell` sidecar the shell
+runs in, which holds no Deployer secrets (below, and [SECURITY.md](../SECURITY.md) "Query console").
 
 Roles: **developer+** can run anything else. **viewer** may run only read-only queries, otherwise
 `403 read_only_role`. The classification below is textual and best effort, an early refusal. SQL runs
@@ -119,19 +119,38 @@ in the `error` field (HTTP 200), so earlier results and printed output are kept.
 ```
 
 The script runs in a real **`mongosh`** installed in the API image (2.11.1, official `.deb` from
-`downloads.mongodb.com`, SHA-256 verified in `api/Dockerfile`, amd64 only; report
-`501 mongosh_unavailable` when the binary is missing, e.g. on other architectures).
+`downloads.mongodb.com`, SHA-256 verified in `api/Dockerfile`, amd64 only), but never in the API or
+worker containers: it runs in the **`query-shell`** service of `deploy/docker-compose.yml`
+(`app/shell_runner.py`, same image, `python -m app.shell_runner` on port 8090). The API (and, for
+device-hosted sources, the device's worker) POSTs `{uri, database, code, marker, batch,
+timeout_seconds}` to `QUERY_SHELL_URL` (`http://query-shell:8090/run`) and parses the shell's
+output that comes back. The sidecar:
+
+- has no Deployer environment (no MASTER_KEY, JWT_SECRET, database root passwords or REDIS_URL), no
+  volumes, no Docker socket, a read-only root filesystem with a 64 MiB `/tmp`, all capabilities
+  dropped except CHOWN, DAC_OVERRIDE, KILL, SETUID and SETGID (to run each shell under its own uid and
+  clean up after it), `no-new-privileges`, 1 CPU, 512 MiB (`QUERY_SHELL_MEM_LIMIT`) and 256 processes;
+- is on the internal `query` network, shared only with the API, the worker and MongoDB (not MariaDB,
+  Redis or apps), plus `query_egress`, which only it joins, for external MongoDB servers (the
+  internet and `host.docker.internal`);
+- runs each shell as one of four slot users (uid 20001-20004, created in `api/Dockerfile`), so
+  concurrent shells cannot read each other's environment or memory, and the runner itself (root,
+  PID 1) is out of their reach; after every run all processes of that uid are killed and its files in
+  `/tmp` and `/dev/shm` removed, so a script cannot leave anything behind for the next one.
+
+`501 mongosh_unavailable` when the binary is missing in the image (e.g. on other architectures) or
+`QUERY_SHELL_URL` is not set; `503 mongosh_unavailable` when the sidecar cannot be reached.
 `/etc/mongosh.conf` turns telemetry, update checks and log files off. Execution, as verified against
-the real binary (`tests/integration/test_query_console.py`):
+the real binary in the sidecar (`tests/integration/test_query_console.py`):
 
 - `mongosh --nodb --quiet --norc --eval <wrapper>` with a private temporary directory as `HOME`
   (mongosh's own config/history land there and are deleted with it). The wrapper
-  (`query_console.WRAPPER_JS`) is a fixed script without secrets or user code; everything variable
+  (`shell_runner.WRAPPER_JS`) is a fixed script without secrets or user code; everything variable
   comes from the child's environment - `DEPLOYER_QUERY_URI` (the source's own URI, with connect /
   server-selection timeouts of 5 s added unless the URI sets them), `DEPLOYER_QUERY_DB`,
   `DEPLOYER_QUERY_FILE` (the user's code, written to a 0600 file in that directory),
-  `DEPLOYER_QUERY_MARKER`, `DEPLOYER_QUERY_BATCH` (`max_rows + 1`). Nothing else of the API's
-  environment is passed (a script can read `process.env`). The wrapper sets
+  `DEPLOYER_QUERY_MARKER`, `DEPLOYER_QUERY_BATCH` (`max_rows + 1`). Nothing else is passed (a
+  script can read `process.env`). The wrapper sets
   `config.set("displayBatchSize", max_rows + 1)`, does `db = connect(uri).getSiblingDB(db)`, deletes
   those variables from `process.env`, evaluates the user's code through the shell's own evaluator
   (`db.getMongo()._instanceState.evaluationListener.loadExternalCode`, the path `load()` uses, so
@@ -155,8 +174,8 @@ the real binary (`tests/integration/test_query_console.py`):
 - Errors of the script (syntax, runtime, server) are in-band: `error.message` is
   `<name>: <message>` plus ` [<codeName>]` for server errors; `result` is null and `output` keeps what
   was printed before. A connection or authentication failure is `503 database_unavailable`.
-- Kill the process at `timeout_seconds` → `504 query_timeout`. At most 4 concurrent shells per API
-  process (semaphore); more → `429 too_many_queries`. Output is capped at 8 MiB (1 MiB stderr): the
+- Kill the process at `timeout_seconds` → `504 query_timeout`. At most 4 concurrent shells per
+  sidecar (one per slot uid); more → `429 too_many_queries`. Output is capped at 8 MiB (1 MiB stderr): the
   shell is killed and the result is an in-band `query_failed` error whose message suggests
   `.limit(20)`, a projection or fewer rows.
 - The shell's stderr is appended to `output`. Output, error messages **and the result** are redacted
@@ -166,7 +185,7 @@ the real binary (`tests/integration/test_query_console.py`):
 
 Op `query` in `app/services/source_ops.py` (`OPS`, kind-agnostic): args
 `{query, max_rows, timeout_seconds, read_only}`; `run_local` runs the same SQL runner / mongosh
-runner with the local credentials (the device's API image contains mongosh too); remote goes through
+runner with the local credentials (MongoDB code runs in the device's own `query-shell`); remote goes through
 the existing `datasource.call` RPC with timeout `timeout_seconds + 15`. `read_only` is decided on the
 primary from the caller's role and defaults to true on the device. Documented in `docs/DEVICES.md`.
 

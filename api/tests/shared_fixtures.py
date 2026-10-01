@@ -4,7 +4,8 @@
 - `state_dir`      – tmp_path as the tunnel_state dir (remote access); `fake_cf` – a FakeCloudflare API.
 - `providers`      – fake Google/GitHub OAuth endpoints with both providers configured.
 - `sqlite_engine`  – a scratch SQLite engine with an `items` table (7 rows).
-- `fake_mongosh`   – query_console runs a fake mongosh (FAKE_MONGOSH) instead of the real shell.
+- `fake_mongosh`   – a query-shell sidecar (app/shell_runner.py) in a thread, running a fake mongosh
+                     (FAKE_MONGOSH) instead of the real shell; query_console is pointed at it.
 - `project_setup`  – project "Shop" with owner/dev/viewer headers and the data-sources base URL.
 - `make_source(project, kind="sql", *, config=None, **fields)` – inserts a committed DataSource; the one
                      DataSource factory (plain-function form: `add_source(db, project, ...)`).
@@ -13,14 +14,16 @@
 import functools
 import sys
 import textwrap
+import threading
 
 import pytest
 from sqlalchemy import create_engine
 
+from app import shell_runner
 from app.config import get_settings
 from app.crypto import encrypt_json
 from app.models import DataSource
-from app.services import app_runner, oauth, query_console
+from app.services import app_runner, oauth
 from app.services import cloudflare as cf
 from app.services import remote_access as ra
 from app.services.oauth import OAuthFlowError
@@ -44,7 +47,7 @@ def sqlite_engine(tmp_path):
 
 FAKE_MONGOSH = textwrap.dedent(
     r'''
-    """A stand-in for mongosh: speaks the wrapper protocol of app/services/query_console.py."""
+    """A stand-in for mongosh: speaks the wrapper protocol of app/shell_runner.py."""
     import json, os, sys, time
 
     env = os.environ
@@ -116,8 +119,14 @@ FAKE_MONGOSH = textwrap.dedent(
 def fake_mongosh(tmp_path, monkeypatch):
     script = tmp_path / "fake_mongosh.py"
     script.write_text(FAKE_MONGOSH, encoding="utf-8")
-    monkeypatch.setattr(query_console, "mongosh_command", lambda: [sys.executable, str(script)])
-    return script
+    monkeypatch.setattr(shell_runner, "mongosh_command", lambda: [sys.executable, str(script)])
+    runner = shell_runner.Runner(isolate=False)
+    server = shell_runner.make_server("127.0.0.1", 0, runner)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    monkeypatch.setattr(get_settings(), "query_shell_url", f"http://127.0.0.1:{server.server_address[1]}")
+    yield runner
+    server.shutdown()
+    server.server_close()
 
 
 def mongo_config() -> dict:

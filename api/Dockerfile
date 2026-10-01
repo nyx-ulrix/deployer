@@ -11,11 +11,18 @@ WORKDIR /app
 
 RUN groupadd --system --gid 10001 deployer \
     && useradd --system --uid 10001 --gid deployer --home-dir /app --no-create-home deployer
+# Query console (app/shell_runner.py, the `query-shell` service): each mongosh runs as one of these
+# slot users (app.shell_runner.SLOT_UIDS), so concurrent shells cannot read each other's connection strings.
+RUN for i in 1 2 3 4; do \
+        groupadd --gid "2000$i" "deployer-shell$i" \
+        && useradd --uid "2000$i" --gid "2000$i" --home-dir /nonexistent --no-create-home \
+            --shell /usr/sbin/nologin "deployer-shell$i"; \
+    done
 
 # Backup tools (docs/BACKUPS.md): MariaDB 11.8 client (mariadb, mariadb-dump, mariadb-binlog) from the
 # official MariaDB apt repository (signing key checked by fingerprint) and MongoDB Database Tools
 # (mongodump, mongorestore) from the official .deb, checked against a pinned SHA-256.
-# Query console (docs/QUERY_CONSOLE.md): MongoDB Shell (`mongosh`) from the official .deb
+# Query console (docs/QUERY_CONSOLE.md; run only by the `query-shell` service): MongoDB Shell (`mongosh`) from the official .deb
 # (https://downloads.mongodb.com/compass/, same file as the GitHub release), pinned SHA-256.
 # Push-to-deploy (docs/DEPLOYMENTS.md, worker only): git, the Docker CLI and BuildKit plugin from
 # Docker's apt repository (signing key checked by fingerprint). The image stays non-root; compose

@@ -65,17 +65,19 @@ Security fixes are made for the latest release. Update with `deployer update`.
   databases in its hosted-credentials list. A co-host PC serves the app's visitors: its owner can see
   and alter that traffic.
 - **Query console** ([docs/QUERY_CONSOLE.md](docs/QUERY_CONSOLE.md)): MongoDB shell code from project
-  developers and `service` keys runs in a real `mongosh` (full Node.js) inside the API container, as
-  the API's uid. Mitigations: the shell gets a minimal environment and no secrets on argv; code naming
-  `require`, `process`, `constructor`, `load`, ... is refused for every role (a textual filter, so
-  best effort); and the API process (and the worker, which runs device-hosted queries) removes its
-  secrets from its environment after loading them and marks itself non-dumpable
-  (`prctl(PR_SET_DUMPABLE, 0)`), so `/proc/1/environ` and `/proc/1/mem` are unreadable to the shell.
-  A script that gets past the filter can still read the files that uid can (`/backups`, `/tunnel`),
-  reach the internal networks, and see concurrent shells' environments; for a device-hosted source
-  the shell runs in that device's worker, which holds the Docker socket (root on that PC). Treat developer access to a
-  MongoDB source (and `service` keys) as trusted until the planned fix lands: running mongosh in a
-  separate container with no secrets and no volumes.
+  developers and `service` keys runs in a real `mongosh` (full Node.js), so it runs only in the
+  `query-shell` sidecar (`api/app/shell_runner.py`): a container with no Deployer secrets in its
+  environment, no volumes, no Docker socket, a read-only filesystem, all capabilities but the five it
+  needs to switch uids dropped, CPU/memory/process caps, and networks that reach only the API, the
+  worker, MongoDB and external MongoDB servers. The API and worker send it just the source's own
+  connection string and the code. Each shell runs under its own slot uid, so concurrent runs (other
+  projects) cannot read each other's connection strings, and the uid's processes and files are
+  removed after every run. What a script can still do: use the source's own credentials (its
+  project's database), reach the internet and this PC (`host.docker.internal`, for external servers),
+  and the managed MongoDB and the API's HTTP port on the `query` network (both need credentials). The
+  name filter (`require`, `process`, `constructor`, `load`, ... refused for every role) and the API
+  and worker sealing themselves (secrets removed from their environment after loading,
+  `prctl(PR_SET_DUMPABLE, 0)`) remain as extra layers.
 - **GitHub repository access** ([docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md) "Connect a Git repository"):
   connecting GitHub grants the instance's GitHub OAuth app the `repo` and `admin:repo_hook` scopes,
   which GitHub does not narrow further: read/write access to every repository the user can reach, and

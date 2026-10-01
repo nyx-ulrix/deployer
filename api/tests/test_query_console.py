@@ -7,13 +7,15 @@ import os
 import subprocess
 import sys
 import textwrap
-import threading
 import time
 
+import httpx
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.pool import QueuePool
 
+from app import shell_runner
+from app.config import get_settings
 from app.errors import ApiError
 from app.models import AuditLog
 from app.services import connections, device_rpc, query_console, source_ops
@@ -390,10 +392,26 @@ def run_fake(query, **kwargs):
 
 
 def test_mongosh_unavailable(monkeypatch):
-    monkeypatch.setattr(query_console, "mongosh_command", lambda: None)
+    # Never run in this process: without the query-shell sidecar MongoDB code is refused.
+    monkeypatch.setattr(get_settings(), "query_shell_url", "")
     with pytest.raises(ApiError) as err:
         run_fake("db.items.find()")
     assert err.value.status_code == 501 and err.value.code == "mongosh_unavailable"
+
+
+def test_mongosh_missing_in_sidecar_or_sidecar_down(fake_mongosh, monkeypatch):
+    monkeypatch.setattr(shell_runner, "mongosh_command", lambda: None)
+    with pytest.raises(ApiError) as err:
+        run_fake("db.items.find()")
+    assert err.value.status_code == 501 and err.value.code == "mongosh_unavailable"
+    url = get_settings().query_shell_url + "/run"
+    assert httpx.post(url, content=b"nope").status_code == 400
+    bad = httpx.post(url, json={"uri": "mongodb://h", "code": 1})
+    assert bad.status_code == 400 and bad.json()["code"] == "validation_error"
+    monkeypatch.setattr(get_settings(), "query_shell_url", "http://127.0.0.1:1")
+    with pytest.raises(ApiError) as err:
+        run_fake("db.items.find()")
+    assert err.value.status_code == 503 and err.value.code == "mongosh_unavailable"
 
 
 def test_mongosh_cursor_batch_and_truncation(fake_mongosh):
@@ -446,7 +464,7 @@ def test_mongosh_output_cap(fake_mongosh):
     out = run_fake("flood")
     assert out["error"]["code"] == "query_failed" and "8 MiB" in out["error"]["message"]
     assert ".limit(" in out["error"]["message"] and "projection" in out["error"]["message"]
-    assert out["result"] is None and len(out["output"]) <= query_console.MAX_SHELL_STDOUT
+    assert out["result"] is None and len(out["output"]) <= shell_runner.MAX_SHELL_STDOUT
 
 
 def test_mongosh_secrets_only_in_environment(fake_mongosh):
@@ -460,8 +478,8 @@ def test_mongosh_secrets_only_in_environment(fake_mongosh):
     assert env["HOME"] == cwd and env["DEPLOYER_QUERY_FILE"].startswith(cwd)
     assert env["DEPLOYER_QUERY_BATCH"] == "6"
     assert "MASTER_KEY" not in env and "JWT_SECRET" not in env
-    assert "--eval" in argv and query_console.WRAPPER_JS in argv and "argv" not in argv[-1]
-    assert "mongodb://" not in query_console.WRAPPER_JS
+    assert "--eval" in argv and shell_runner.WRAPPER_JS in argv and "argv" not in argv[-1]
+    assert "mongodb://" not in shell_runner.WRAPPER_JS
     # The shell's output is redacted as well.
     out = run_fake("secret")
     assert password not in out["output"] and "***" in out["output"]
@@ -511,17 +529,18 @@ def test_seal_process_drops_secrets_and_proc_access(tmp_path):
     assert done.returncode == 0 and done.stdout.strip() == "sealed", done.stderr
 
 
-def test_mongosh_read_only_and_concurrency(fake_mongosh, monkeypatch):
+def test_mongosh_read_only_and_concurrency(fake_mongosh):
     with pytest.raises(ApiError) as err:
         run_fake("db.items.insertOne({a: 1})", read_only=True)
     assert err.value.status_code == 403 and err.value.code == "read_only_role"
     assert run_fake("db.items.find()", read_only=True)["error"] is None
-    busy = threading.BoundedSemaphore(1)
-    busy.acquire()
-    monkeypatch.setattr(query_console, "_shells", busy)
+    taken = [fake_mongosh.slots.get_nowait() for _ in range(shell_runner.MAX_SHELLS)]
     with pytest.raises(ApiError) as err:
         run_fake("db.items.find()")
     assert err.value.status_code == 429 and err.value.code == "too_many_queries"
+    for slot in taken:
+        fake_mongosh.slots.put(slot)
+    assert run_fake("db.items.find()")["error"] is None
 
 
 def test_connect_uri_adds_timeouts_once():
@@ -597,7 +616,7 @@ def test_query_route_validation_and_not_found(
 
 
 def test_query_route_mongo_without_mongosh(client, db, project_setup, monkeypatch, make_source):
-    monkeypatch.setattr(query_console, "mongosh_command", lambda: None)
+    monkeypatch.setattr(get_settings(), "query_shell_url", "")
     ds = make_source(project_setup["project"], kind="nosql")
     url = f"{project_setup['base']}/{ds.id}/query"
     resp = client.post(url, json={"query": "db.x.find()"}, headers=project_setup["dev"])

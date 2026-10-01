@@ -65,7 +65,7 @@ class KeyRoutesCORS:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    seal_process()  # SECURITY.md "Query console": mongosh runs as this uid
+    seal_process()  # SECURITY.md "Query console": no child process inherits the secrets
     yield
 
 

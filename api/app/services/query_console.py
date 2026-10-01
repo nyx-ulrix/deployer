@@ -6,13 +6,11 @@ code against NoSQL data sources.
   as given (`exec_driver_sql`), nothing is ever interpolated into it, and the connection is
   invalidated afterwards so session state (`SET`, `USE`, temp tables, statement timeouts) never
   leaks back into the shared pool.
-- MongoDB: the code runs in a real `mongosh` process (`--nodb --quiet --norc --eval <wrapper>`).
-  The wrapper (`WRAPPER_JS`, no secrets, no user code) connects with the source's own credentials,
-  evaluates the user's code from a 0600 file through the shell's own evaluator (the path `load()`
-  uses, so the async rewriter applies) and prints one marker-prefixed relaxed Extended JSON line
-  with the result. URI, file path and marker reach the shell only through the child's environment
-  (never argv), HOME is a private temporary directory, the process is killed at the timeout, its
-  output is size-capped and at most `MAX_SHELLS` shells run per API process.
+- MongoDB: the code runs in a real `mongosh` process in the `query-shell` sidecar container, which
+  holds no Deployer secrets (app/shell_runner.py; this process only sends it the source's connection
+  string, database name, code and limits over HTTP). The sidecar's wrapper (`WRAPPER_JS`) connects
+  with the source's own credentials, evaluates the user's code and prints one marker-prefixed
+  relaxed Extended JSON line with the result; this module parses and redacts what comes back.
 - Every role: MongoDB code may not name Node.js escape hatches (`MONGO_ESCAPE_NAMES`).
 - Read-only role (viewers): statements / code must pass the textual classifiers below. They are
   best effort by design (`db.items["insert" + "One"]` slips through). SQL runs are also put in the
@@ -24,24 +22,21 @@ code against NoSQL data sources.
 from __future__ import annotations
 
 import json
-import os
 import re
 import secrets
-import shutil
-import subprocess
-import tempfile
 import threading
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import Any
 
+import httpx
 import sqlparse
 from sqlalchemy import Engine
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from sqlparse import sql as sqltree
 from sqlparse import tokens as T
 
+from app.config import get_settings
 from app.errors import ApiError
 from app.models import DataSource
 from app.services import connections
@@ -52,9 +47,7 @@ DEFAULT_MAX_ROWS = 500
 MAX_ROWS = 5000
 DEFAULT_TIMEOUT_SECONDS = 30
 MAX_TIMEOUT_SECONDS = 120
-MAX_SHELLS = 4
-MAX_SHELL_STDOUT = 8 * 1024 * 1024
-MAX_SHELL_STDERR = 1024 * 1024
+SHELL_HTTP_MARGIN = 15  # seconds the sidecar gets past the query timeout to kill, clean up and answer
 CONNECT_TIMEOUT_MS = 5000
 
 
@@ -546,10 +539,9 @@ MONGO_WRITE_NAMES = (
     "_runCursorCommand",
     "_runAdminCursorCommand",
 )
-# Node.js escape hatches refused for EVERY role (SECURITY.md "Query console"): the shell runs as the
-# API's uid next to /backups and /tunnel, so these would hand user code the API's files, processes
-# and network. Same matching as above. Best effort: string building (`this["req" + "uire"]`) still
-# gets through, which is why the API process is also sealed (config.seal_process).
+# Node.js escape hatches refused for EVERY role (SECURITY.md "Query console"). Same matching as above.
+# Best effort (string building, `this["req" + "uire"]`, gets through): the boundary is the query-shell
+# sidecar, which has no secrets, volumes or Docker socket and runs each shell under its own uid.
 MONGO_ESCAPE_NAMES = (
     "require",
     "process",
@@ -575,65 +567,6 @@ def _names_re(names: Iterable[str]) -> re.Pattern[str]:
 _MONGO_WRITE_RE = _names_re(MONGO_WRITE_NAMES + MONGO_ESCAPE_NAMES)
 _MONGO_ESCAPE_RE = _names_re(MONGO_ESCAPE_NAMES)
 _MONGO_URI_RE = re.compile(r"^(mongodb(?:\+srv)?://[^/?]*)(/[^?]*)?(\?.*)?$")
-_shells = threading.BoundedSemaphore(MAX_SHELLS)
-
-# The wrapper passed with `--eval` (docs/QUERY_CONSOLE.md). Everything variable comes from the
-# environment; it is deleted before the user's code runs. The user's code is evaluated through the
-# shell's own evaluator (`MongoshNodeRepl.loadExternalCode`, what `load()` uses, so the async
-# rewriter applies) and the raw result is turned into its printable form with the shell's
-# `asPrintable` hook - for cursors that is the first `displayBatchSize` documents. An async IIFE
-# because `--eval` scripts may not use top-level `await`; the shell awaits a Promise result before
-# it prints (nothing, for undefined) and exits. Verified against mongosh 2.11.1
-# (tests/integration/test_query_console.py).
-WRAPPER_JS = """(async () => {
-  const env = process.env;
-  const marker = String(env.DEPLOYER_QUERY_MARKER || "");
-  const emit = (obj) => { process.stdout.write(marker + EJSON.stringify(obj, { relaxed: true }) + "\\n"); };
-  const describe = (e) => ({
-    name: e && e.name ? String(e.name) : "Error",
-    message: e && e.message !== undefined ? String(e.message) : String(e),
-    code: e && e.code !== undefined ? e.code : null,
-    codeName: e && e.codeName ? String(e.codeName) : null,
-  });
-  const file = env.DEPLOYER_QUERY_FILE;
-  const uri = env.DEPLOYER_QUERY_URI;
-  const dbName = env.DEPLOYER_QUERY_DB;
-  const batch = parseInt(env.DEPLOYER_QUERY_BATCH, 10);
-  delete env.DEPLOYER_QUERY_URI;
-  delete env.DEPLOYER_QUERY_FILE;
-  delete env.DEPLOYER_QUERY_MARKER;
-  let code = null;
-  let connected = false;
-  try {
-    code = require("fs").readFileSync(file, "utf8");
-    await config.set("displayBatchSize", batch);
-    db = (await connect(uri)).getSiblingDB(dbName);
-    connected = true;
-  } catch (e) {
-    emit({ phase: "connect", error: describe(e) });
-  }
-  if (connected) {
-    const listener = db.getMongo()._instanceState.evaluationListener;
-    try {
-      let raw = await listener.loadExternalCode(code, "@(query)");
-      if (raw !== null && raw !== undefined && typeof raw.then === "function") raw = await raw;
-      const asPrintable = Symbol.for("@@mongosh.asPrintable");
-      let value = raw;
-      if (raw !== null && raw !== undefined && (typeof raw === "object" || typeof raw === "function")
-          && typeof raw[asPrintable] === "function") {
-        value = await raw[asPrintable]();
-      }
-      if (value !== null && typeof value === "object" && !Array.isArray(value)
-          && Array.isArray(value.documents) && typeof value.cursorHasMore === "boolean") {
-        value = value.documents;  // CursorIterationResult: the first batch of a cursor
-      }
-      emit({ phase: "done", value: value === undefined ? null : value });
-    } catch (e) {
-      emit({ phase: "error", error: describe(e) });
-    }
-  }
-})();
-"""
 
 
 def mongo_read_only_refusal(code: str) -> str | None:
@@ -645,88 +578,6 @@ def mongo_read_only_refusal(code: str) -> str | None:
         f"`{match.group()}` is a write or admin command, so viewers cannot run this code "
         "(the check also matches inside strings and comments, e.g. a field value)"
     )
-
-
-def mongosh_command() -> list[str] | None:
-    """The mongosh executable as an argv prefix, or None when it is not installed (tests replace it)."""
-    path = shutil.which("mongosh")
-    return [path] if path else None
-
-
-@dataclass
-class ProcessOutcome:
-    returncode: int | None
-    stdout: bytes
-    stderr: bytes
-    timed_out: bool
-    output_capped: bool
-    duration_ms: int
-
-
-def _kill(proc: subprocess.Popen) -> None:
-    try:
-        proc.kill()
-    except OSError:
-        pass
-
-
-def _run_process(args: list[str], env: dict[str, str], timeout_seconds: int, cwd: str) -> ProcessOutcome:
-    """Runs the shell with a hard timeout (kill) and output caps (kill when exceeded)."""
-    started = time.monotonic()
-    try:
-        proc = subprocess.Popen(  # noqa: S603 - argv list, no shell
-            args,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            env=env,
-            cwd=cwd,
-        )
-    except OSError as exc:
-        raise ApiError(501, "mongosh_unavailable", f"The MongoDB shell could not be started: {exc}") from exc
-    capped = threading.Event()
-
-    def pump(stream: Any, limit: int, sink: list[bytes]) -> None:
-        total = 0
-        try:
-            while True:
-                chunk = os.read(stream.fileno(), 65536)
-                if not chunk:
-                    return
-                if total < limit:
-                    sink.append(chunk[: limit - total])
-                total += len(chunk)
-                if total > limit and not capped.is_set():
-                    capped.set()
-                    _kill(proc)
-        except OSError:
-            return
-
-    out: list[bytes] = []
-    err: list[bytes] = []
-    threads = [
-        threading.Thread(target=pump, args=(proc.stdout, MAX_SHELL_STDOUT, out), daemon=True),
-        threading.Thread(target=pump, args=(proc.stderr, MAX_SHELL_STDERR, err), daemon=True),
-    ]
-    for thread in threads:
-        thread.start()
-    timed_out = False
-    try:
-        try:
-            proc.wait(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            _kill(proc)
-            proc.wait()
-        for thread in threads:
-            thread.join(timeout=5)
-    finally:
-        for stream in (proc.stdout, proc.stderr):
-            try:
-                stream.close()
-            except OSError:
-                pass
-    return ProcessOutcome(proc.returncode, b"".join(out), b"".join(err), timed_out, capped.is_set(), _ms(started))
 
 
 def _connect_uri(uri: str) -> str:
@@ -745,23 +596,6 @@ def _connect_uri(uri: str) -> str:
     if not extra:
         return uri
     return f"{base}{path or '/'}?{query + '&' if query else ''}{'&'.join(extra)}"
-
-
-def _child_env(home: str, values: dict[str, str]) -> dict[str, str]:
-    """A minimal environment: the API's own variables (MASTER_KEY, root passwords...) never reach the
-    shell, where user code could read them through `process.env`."""
-    env = {
-        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
-        "HOME": home,
-        "TMPDIR": home,
-        "LANG": "C.UTF-8",
-        "LC_ALL": "C.UTF-8",
-        **values,
-    }
-    if os.name == "nt":  # development on Windows: python (fake shell) and Node resolve their home from these
-        env["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")
-        env.update(USERPROFILE=home, APPDATA=home, LOCALAPPDATA=home, TEMP=home, TMP=home)
-    return env
 
 
 def parse_shell_output(stdout: str, marker: str) -> tuple[str, dict | None]:
@@ -799,6 +633,29 @@ def _shell_error_message(error: Any) -> str:
     return text
 
 
+def _call_shell(shell_url: str, payload: dict, timeout_seconds: int) -> dict:
+    """Runs the code in the query-shell sidecar (app/shell_runner.py); its refusals keep their status
+    and code (429 too_many_queries, 501 mongosh_unavailable)."""
+    try:
+        resp = httpx.post(
+            shell_url.rstrip("/") + "/run", json=payload, timeout=timeout_seconds + SHELL_HTTP_MARGIN, trust_env=False
+        )
+    except httpx.HTTPError as exc:
+        message = f"The MongoDB shell service (query-shell) is not reachable: {type(exc).__name__}"
+        raise ApiError(503, "mongosh_unavailable", message) from exc
+    try:
+        body = resp.json()
+    except ValueError:
+        body = None
+    if not isinstance(body, dict):
+        raise ApiError(502, "mongosh_unavailable", f"The MongoDB shell service answered {resp.status_code}")
+    if resp.status_code != 200:
+        raise ApiError(resp.status_code, str(body.get("code")), str(body.get("message")))
+    if body.get("timed_out") is None:
+        raise ApiError(502, "mongosh_unavailable", "The MongoDB shell service sent a malformed answer")
+    return body
+
+
 def run_mongosh(
     config: dict[str, Any], database: str, query: str, *, max_rows: int, timeout_seconds: int, read_only: bool
 ) -> dict:
@@ -813,9 +670,9 @@ def run_mongosh(
     refusal = mongo_read_only_refusal(query) if read_only else None
     if refusal:
         raise ApiError(403, "read_only_role", refusal)
-    command = mongosh_command()
-    if not command:
-        message = "The MongoDB shell (mongosh) is not installed in this Deployer image"
+    shell_url = get_settings().query_shell_url
+    if not shell_url:
+        message = "The MongoDB shell service (query-shell) is not configured on this Deployer"
         raise ApiError(501, "mongosh_unavailable", message)
     uri = str(config.get("uri") or "")
     if not uri:
@@ -824,47 +681,34 @@ def run_mongosh(
     timeout_seconds = _clamp(timeout_seconds, MAX_TIMEOUT_SECONDS, DEFAULT_TIMEOUT_SECONDS)
     secret_values = [config.get("password"), connections.mongo_uri_password(uri)]
     marker = f"@@deployer:{secrets.token_hex(12)}@@"
-    if not _shells.acquire(blocking=False):
-        raise ApiError(429, "too_many_queries", "Too many MongoDB shell queries are running; try again in a moment")
-    try:
-        with tempfile.TemporaryDirectory(prefix="deployer-query-", ignore_cleanup_errors=True) as home:
-            code_path = os.path.join(home, "query.js")
-            fd = os.open(code_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
-                fh.write(query)
-            env = _child_env(
-                home,
-                {
-                    "DEPLOYER_QUERY_URI": _connect_uri(uri),
-                    "DEPLOYER_QUERY_DB": database,
-                    "DEPLOYER_QUERY_FILE": code_path,
-                    "DEPLOYER_QUERY_MARKER": marker,
-                    "DEPLOYER_QUERY_BATCH": str(max_rows + 1),
-                },
-            )
-            args = [*command, "--nodb", "--quiet", "--norc", "--eval", WRAPPER_JS]
-            outcome = _run_process(args, env, timeout_seconds, home)
-    finally:
-        _shells.release()
-    if outcome.timed_out:
+    payload = {
+        "uri": _connect_uri(uri),
+        "database": database,
+        "code": query,
+        "marker": marker,
+        "batch": max_rows + 1,
+        "timeout_seconds": timeout_seconds,
+    }
+    outcome = _call_shell(shell_url, payload, timeout_seconds)
+    if outcome["timed_out"]:
         raise ApiError(504, "query_timeout", f"The MongoDB shell was stopped after {timeout_seconds} s")
     # Everything the shell wrote is redacted before parsing: printed text, errors and the result
     # itself (`db._mongo` would show the connection string).
-    stdout = outcome.stdout.decode("utf-8", "replace").replace("\r\n", "\n")
-    stderr = outcome.stderr.decode("utf-8", "replace").replace("\r\n", "\n")
+    stdout = str(outcome["stdout"]).replace("\r\n", "\n")
+    stderr = str(outcome["stderr"]).replace("\r\n", "\n")
     stdout = connections.redact(stdout, secret_values, limit=None)
     stderr = connections.redact(stderr, secret_values, limit=None)
     text, report = parse_shell_output(stdout, marker)
     error: dict | None = None
     value: Any = None
     if report is None:
-        if outcome.output_capped:
+        if outcome.get("output_capped"):
             detail = (
                 "The shell printed more than 8 MiB and was stopped. Add .limit(20) or a projection "
                 "to the query, or pick fewer rows"
             )
         else:
-            detail = _first_line(stderr) or f"The shell exited with status {outcome.returncode} without a result"
+            detail = _first_line(stderr) or f"The shell exited with status {outcome.get('returncode')} without a result"
         error = {"code": "query_failed", "message": connections.redact(detail, secret_values)}
     elif report.get("phase") == "connect":
         detail = connections.redact(_shell_error_message(report.get("error")), secret_values)
@@ -888,7 +732,7 @@ def run_mongosh(
     return {
         "kind": "nosql",
         "engine": "mongodb",
-        "duration_ms": outcome.duration_ms,
+        "duration_ms": int(outcome.get("duration_ms") or 0),
         "output": output,
         "result": value,
         "result_docs": docs,

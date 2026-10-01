@@ -29,3 +29,7 @@ services:
   worker:
     volumes:
       - ${DEPLOYER_SOURCE_DIR:-..}/api/app:/app/app:ro
+
+  query-shell:
+    volumes:
+      - ${DEPLOYER_SOURCE_DIR:-..}/api/app:/app/app:ro

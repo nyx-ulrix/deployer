@@ -2,20 +2,25 @@
 
 - SQL: a throwaway MariaDB 11, e.g. `docker run -d --rm -p 127.0.0.1:33071:3306 -e MARIADB_ROOT_PASSWORD=... mariadb:11`
   and `DEPLOYER_IT_MARIADB_URL=mysql://root:<password>@127.0.0.1:33071` (runs from the venv).
-- MongoDB: needs `mongosh` on PATH, so it normally runs inside the API image on a network shared with
-  a `mongo:8.0` container: `DEPLOYER_IT_MONGO_URI=mongodb://admin:<password>@mongo-host:27017/?authSource=admin`.
+- MongoDB: needs a `mongo:8.0` container and a query-shell sidecar on one network, the sidecar started
+  from the API image like the `query-shell` service of deploy/docker-compose.yml (root, capabilities
+  dropped, `python -m app.shell_runner`; .github/workflows/ci.yml):
+  `QUERY_SHELL_URL=http://query-shell:8090` and
+  `DEPLOYER_IT_MONGO_URI=mongodb://admin:<password>@mongo-host:27017/?authSource=admin`.
 
 Each part is skipped unless its URL is set. The tests create and drop their own database.
 """
 
+import json
 import os
 import re
-import shutil
 import time
 from urllib.parse import unquote, urlsplit
 
 import pytest
 
+from app import shell_runner
+from app.config import get_settings
 from app.errors import ApiError
 from app.services import connections, query_console
 
@@ -161,8 +166,8 @@ def test_mariadb_unavailable():
 def mongo():
     if not MONGO_URI:
         pytest.skip("set DEPLOYER_IT_MONGO_URI")
-    if not shutil.which("mongosh"):
-        pytest.skip("mongosh is not on PATH (run inside the API image)")
+    if not get_settings().query_shell_url:
+        pytest.skip("set QUERY_SHELL_URL (a query-shell sidecar, see the module docstring)")
     config = {"uri": MONGO_URI, "database": DATABASE}
     yield config
     query_console.run_mongosh(config, DATABASE, "db.dropDatabase()", max_rows=5, timeout_seconds=30, read_only=False)
@@ -235,7 +240,9 @@ def test_mongosh_timeout(mongo):
     assert time.monotonic() - started < 6
 
 
-def test_mongosh_secrets_stay_out_of_argv(mongo, monkeypatch):
+def test_mongosh_runs_isolated_in_the_sidecar(mongo, monkeypatch):
+    """A-001: what code that gets past the name filter can see. It runs in the query-shell sidecar
+    under a slot uid: no Deployer secrets, no access to the runner (PID 1), nothing left behind."""
     password = connections.mongo_uri_password(MONGO_URI)
     assert password
     with pytest.raises(ApiError) as err:
@@ -247,18 +254,34 @@ def test_mongosh_secrets_stay_out_of_argv(mongo, monkeypatch):
         mongo,
         "const fs = require('fs');\n"
         "const cmdline = fs.readFileSync('/proc/self/cmdline', 'utf8').split('\\0');\n"
-        "({cmdline, env: Object.keys(process.env).filter((k) => k.startsWith('DEPLOYER')),\n"
+        "let runner;\n"
+        "try { runner = fs.readFileSync('/proc/1/environ', 'utf8'); } catch (e) { runner = e.code; }\n"
+        "const child = require('child_process').spawn('sleep', ['300'], {detached: true, stdio: 'ignore'});\n"
+        "child.unref();\n"
+        "({cmdline, env: Object.keys(process.env).sort(),\n"
         "  uri: String(process.env.DEPLOYER_QUERY_URI), file: String(process.env.DEPLOYER_QUERY_FILE),\n"
-        "  home: process.env.HOME, cwd: process.cwd()})",
+        "  home: process.env.HOME, cwd: process.cwd(), uid: process.getuid(), runner, child: child.pid,\n"
+        "  docker: fs.existsSync('/var/run/docker.sock')})",
     )
     assert out["error"] is None, out
     result = out["result"]
     assert password not in " ".join(result["cmdline"]) and "mongodb://" not in " ".join(result["cmdline"])
-    assert sorted(result["env"]) == ["DEPLOYER_QUERY_BATCH", "DEPLOYER_QUERY_DB"]
+    deployer_env = [k for k in result["env"] if k.startswith("DEPLOYER")]
+    assert deployer_env == ["DEPLOYER_QUERY_BATCH", "DEPLOYER_QUERY_DB"]
+    assert not {"MASTER_KEY", "JWT_SECRET", "MONGO_ROOT_PASSWORD", "REDIS_URL"} & set(result["env"])
     assert result["uri"] == "undefined" and result["file"] == "undefined"
     assert result["home"].startswith("/tmp/deployer-query-") and result["cwd"] == result["home"]
-    # The shell's own log files and config stay in the private HOME (deleted with it).
-    assert not os.path.exists(result["home"])
+    assert result["uid"] in shell_runner.SLOT_UIDS and result["runner"] == "EACCES"
+    assert result["docker"] is False
+    # After the run the left-behind process is killed and the private HOME (the shell's own config
+    # and logs) deleted, as seen from the next run (possibly another slot uid: EPERM if still alive).
+    probe = sh(
+        mongo,
+        f"const fs = require('fs'); let alive;\n"
+        f"try {{ process.kill({int(result['child'])}, 0); alive = 'alive'; }} catch (e) {{ alive = e.code; }}\n"
+        f"({{alive, home: fs.existsSync({json.dumps(result['home'])})}})",
+    )
+    assert probe["result"] == {"alive": "ESRCH", "home": False}, probe
 
 
 def test_mongosh_read_only_and_connection_failures(mongo):

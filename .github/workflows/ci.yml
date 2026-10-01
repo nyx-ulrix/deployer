@@ -111,6 +111,14 @@ jobs:
             sleep 1
           done
           echo "::error::MongoDB did not become primary"; exit 1
+      # A-001: the query-shell service of deploy/docker-compose.yml (same user, capabilities, read-only
+      # filesystem and limits; tests/test_container_config.py keeps the capabilities in step).
+      - name: Start the query-shell sidecar
+        run: |
+          docker run -d --name query-shell --network it --user 0:0 --cap-drop ALL \
+            --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add KILL --cap-add SETGID --cap-add SETUID \
+            --security-opt no-new-privileges:true --read-only --tmpfs /tmp:size=64m --shm-size 16m \
+            --pids-limit 256 --memory 512m --entrypoint python deployer-api:ci -m app.shell_runner
       - name: Unit suite on MariaDB
         run: |
           docker run --rm --user root --network it -v "$PWD:/repo" -w /repo/api \
@@ -123,6 +131,7 @@ jobs:
             -v /var/run/docker.sock:/var/run/docker.sock \
             -e DEPLOYER_IT_MARIADB_URL="mysql://root:${IT_PW}@mariadb:3306" \
             -e DEPLOYER_IT_MONGO_URI="mongodb://admin:${IT_PW}@mongodb:27017/?authSource=admin" \
+            -e QUERY_SHELL_URL=http://query-shell:8090 \
             -e DEPLOYER_TEST_DOCKER=1 \
             --entrypoint sh deployer-api:ci -c 'pip install -q -r requirements-dev.txt && python -m pytest -p no:cacheprovider -rfEs tests/integration' \
             | tee "$RUNNER_TEMP/integration.log"
