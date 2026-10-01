@@ -293,6 +293,7 @@ def test_deploy_cancel_rollback_and_delete(client, env, db):
     assert client.delete(url, headers=env["dev"]).status_code == 403
     resp = client.delete(url, headers=env["admin"])
     assert resp.status_code == 200, resp.text
+    db.expire_all()  # the test session keeps loaded rows (expire_on_commit=False); re-read the deletes
     job = db.get(Job, resp.json()["job_id"])
     assert job.type == "app.remove" and job.params == {"app_id": app["id"], "slug": "my-shop"}
     assert db.get(deployments.App, app["id"]) is None and client.get(url, headers=env["dev"]).status_code == 404

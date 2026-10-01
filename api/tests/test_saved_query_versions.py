@@ -86,12 +86,8 @@ def test_two_developers_editing(client, db, project_setup, make_user, auth_heade
 
 def test_restore_and_permissions(client, db, project_setup):
     url, sq = _create(client, project_setup, text="v1 text")
-    assert (
-        client.patch(
-            f"{url}/{sq['id']}", json={"query_text": "v2 text", "version": 1}, headers=project_setup["dev"]
-        ).status_code
-        == 200
-    )
+    edit = client.patch(f"{url}/{sq['id']}", json={"query_text": "v2 text", "version": 1}, headers=project_setup["dev"])
+    assert edit.status_code == 200, edit.text
 
     stale = client.post(
         f"{url}/{sq['id']}/restore", json={"version": 1, "current_version": 1}, headers=project_setup["dev"]
