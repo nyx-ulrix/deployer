@@ -474,7 +474,7 @@ def test_cloud_run_app_gets_its_realtime_database(client, db, docker, team, gcp)
     conn = connection(db, "firebase")
     connect(client, team, conn, name="Live data")
     body = {"name": "Api", "repo_url": "https://github.com/acme/api", "preset": "node", "target": "firebase_app"}
-    body |= {"cloud_connection_id": conn.id, "database_access": True}
+    body |= {"cloud_connection_id": conn.id, "database_access": True, "confirm_billing": True}
     resp = client.post(f"{base(team)}/apps", json=body, headers=team["admin"])
     assert resp.status_code == 201, resp.text
     dep = deploy(db, db.get(App, resp.json()["id"]))

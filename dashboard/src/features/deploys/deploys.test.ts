@@ -14,6 +14,7 @@ import {
   emptyDraft,
   filterRepos,
   isActive,
+  movesToCloud,
   parseEnv,
   reachableSources,
   rowsToEnv,
@@ -299,10 +300,19 @@ describe("cloud targets (docs/CLOUD.md)", () => {
   it("cloud apps never send this PC's API key or database access, and need an account", () => {
     const d = { ...emptyDraft(), name: "Site", repo_url: "https://github.com/a/b", target: "aws_static" as const };
     expect(draftErrors(d).target).toMatch(/cloud account/);
-    const ready = { ...d, cloud_connection_id: "c1", api_key_id: "k1", database_access: true };
+    const unticked = { ...d, cloud_connection_id: "c1", api_key_id: "k1", database_access: true };
+    expect(draftErrors(unticked).target).toMatch(/Tick the box/); // billed to that account: confirmed first
+    const ready = { ...unticked, confirm_billing: true };
     expect(draftErrors(ready).target).toBeUndefined();
     const body = draftToInput(ready, []);
     expect(body).toMatchObject({ target: "aws_static", cloud_connection_id: "c1", api_key_id: null, database_access: false });
+    expect(body.confirm_billing).toBe(true);
+    // An app already on that target and account is not asked again; a local app sends no confirmation.
+    const saved = { ...unticked, saved_target: "aws_static" as const, saved_connection_id: "c1" };
+    expect(movesToCloud(saved)).toBe(false);
+    expect(draftErrors(saved).target).toBeUndefined();
+    expect(draftToInput(saved, []).confirm_billing).toBeUndefined();
+    expect(movesToCloud({ ...saved, cloud_connection_id: "c2" })).toBe(true);
     // App Runner keeps database access: it means the project's AWS databases (docs/CLOUD.md "C2").
     expect(draftToInput({ ...ready, target: "aws_app" }, [])).toMatchObject({ database_access: true, api_key_id: null });
     expect(draftToInput({ ...ready, target: "firebase_app" }, [])).toMatchObject({ database_access: true });

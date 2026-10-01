@@ -15,6 +15,7 @@ and the `deploy-website` skill.
 | **C2-4** | Firebase Realtime Database engine ("C2-4 as built") | **Built** (no migration) |
 | **C2-5** | MCP roles, data tools on every cloud engine, transfer, project delete keep / delete ("C2-5 as built") | **Built** (no migration) |
 | **C3** | GitHub Actions builds with OIDC, so pushes deploy with the PC off ("C3 as built") | **Built** (no migration) |
+| **Polish** | Billing confirmation for putting an app on a cloud target, MCP `set_app_target` ("C1 as built": Rules, MCP) | **Built** (no migration) |
 
 ## Principles
 
@@ -88,11 +89,14 @@ Secrets Manager / Google Secret Manager references). Images are built for the PC
 on typical PCs, which App Runner and Cloud Run need).
 
 **Rules** (`routers/apps.py`): only project **admins** choose or change a cloud target or connection
-(it is billed to that account; developers keep editing everything else and deploying); the connection
+(it is billed to that account; developers keep editing everything else and deploying); putting an app on a
+cloud target or another connection needs **`confirm_billing: true`** on `POST` / `PATCH .../apps` (`422
+billing_not_confirmed` with the target's cost note otherwise; the form's target chooser has the tick); the connection
 must be instance-wide or the app's project's, and of the target's provider; the static targets need
 the `static` preset; `database_access`, `cohost` and `api_key_id` are refused on cloud targets (and
 switched off when an app moves to one) - except `database_access` on `aws_app`, which since C2-1 means the
-project's AWS databases, and on `firebase_app`, which since C2-3 means the project's Firestore databases. Moving an app (target or connection) needs no running
+project's AWS databases, and on `firebase_app`, which since C2-3 / C2-4 means the project's Firestore and Realtime
+Databases. Moving an app (target or connection) needs no running
 deployment and no custom domains, enqueues `app.cloud_teardown` for the old target (or `app.remove` for
 the local container), marks the live deployment superseded and forgets old artifacts (no rollback
 across targets). Deleting an app enqueues the same teardown. The confirm dialogs list what will be
@@ -129,7 +133,8 @@ left, e.g. a certificate still attached while CloudFront updates, comes back as 
 
 `CloudConnection = {id, provider, name, project_id, status, status_message, account: {account_id,
 region, role_arn, access_key_id_last4} | {project_id, region, client_email}, apps_using?, created_at,
-updated_at}` - never a secret. Apps gain `target`, `cloud_connection_id` (create/PATCH) and
+updated_at}` - never a secret. Apps gain `target`, `cloud_connection_id` (create/PATCH, plus `confirm_billing:
+true` when the app moves onto a cloud target or connection) and
 `cloud: {provider, connection_name, url, resources} | null`; `local_url` is null on cloud targets;
 `PATCH` / `DELETE` return `teardown_job_id`; deployments gain `target_url`; domains gain `provider` and
 `dns_records: [{type, name, value, created, error}]`.
@@ -141,8 +146,9 @@ updated_at}` - never a secret. Apps gain `target`, `cloud_connection_id` (create
 - **New app / app Settings → "Where should this run?"**: one card per target (what it's for, "keeps
   serving when this PC is off", cost drivers), **Recommended** on the best connected target for the
   preset (static → Firebase Hosting, else AWS static; servers → App Runner, else Cloud Run), disabled
-  with the reason when the preset doesn't fit or no account is connected, then the account picker and
-  the environment note. API key and database-access fields are hidden for cloud targets.
+  with the reason when the preset doesn't fit or no account is connected, then the account picker,
+  the environment note and, when the app moves onto a cloud target or account, the tick *I understand AWS /
+  Google charges this cloud account for it* with the target's cost. API key and database-access fields are hidden for cloud targets.
 - **App page**: target badge, cloud URL, "keeps running when this PC is off", rollout status while a
   deployment runs; the build log shows every cloud step (App Runner / Cloud Run status changes, the
   preview link); runtime logs point to the provider's console. Settings: domains with their DNS
@@ -152,8 +158,10 @@ updated_at}` - never a secret. Apps gain `target`, `cloud_connection_id` (create
 
 `list_cloud_connections` (project admin, like its route - C2-5; no secrets), `list_cloud_targets` (targets with
 explanations and availability), and `get_app` / `list_apps` / `deploy_app` / `deployment_status` report
-`target` and the cloud URL (`cloud_url`, `target_url`). Choosing a target stays a dashboard action for
-project admins (it is billable). See MCP.md.
+`target` and the cloud URL (`cloud_url`, `target_url`). `set_app_target` (project admin, like changing it in the
+dashboard; `app_id`, `target`, `connection_id`, `confirm_billing`, `confirm_teardown`) moves an app between this PC
+and a cloud target: a cloud target needs `confirm_billing: true`, and moving an app off a cloud target where it has
+resources answers `teardown_not_confirmed` with the list until `confirm_teardown: true`. See MCP.md.
 
 ### Transfer (export / import)
 
@@ -194,7 +202,7 @@ The **Add database** dialog asks *Where should it live?* with four cards, each w
 what it means, what happens when the PC is off and the cost (`GET /projects/{id}/cloud/databases/options`,
 also the MCP tool `cloud_database_options`): **On this PC** (managed), **On another PC or server**
 (external), **In your AWS account** (RDS for SQL, below; DynamoDB for NoSQL, "C2-2"), **In your Firebase
-project** (shown as coming soon). In AWS the user picks the account (the project's AWS connections) and:
+project** (NoSQL: Firestore, "C2-3", and the Realtime Database, "C2-4"). In AWS the user picks the account (the project's AWS connections) and:
 
 - **Connect one you already have**: `GET .../cloud/connections/{cid}/databases` lists the region's RDS
   instances (not part of a cluster) and Aurora / RDS clusters (`rds:DescribeDBInstances`,
@@ -795,9 +803,16 @@ database dialog has the AWS / Firebase cards (`cloud_db.LOCATIONS`); cloud apps 
 settings through `cloud_deploy.cloud_env` (`cloud.DATABASE_TARGETS`); the MCP `create_cloud_database` tool
 and the `confirm_billing` rule are in place; a NoSQL engine without its own driver is one module with the
 functions of `services/dynamo.py` / `services/firestore.py` / `services/rtdb.py`, returned by `connections.cloud_engine`.
-Left: creating Firestore databases and their managed exports / scheduled
-backups from Deployer, and Secrets Manager / Secret Manager references instead of plain runtime
-environment.
+Left (not built; each is also noted in its section above):
+
+- creating Firestore databases, their managed exports to Cloud Storage and scheduled backups / point-in-time
+  recovery from Deployer (the Firebase console does them);
+- DynamoDB point-in-time recovery and restoring a backup from the dashboard (the AWS console does it);
+- deleting a cloud database over MCP or the API keys (dashboard only, with the name typed);
+- verifying the RDS server certificate (pinning the RDS CA bundle);
+- Secrets Manager / Secret Manager references instead of plain runtime environment;
+- a NAT gateway for App Runner apps linked to an RDS database that also call the internet (the user adds one);
+- a permissions boundary for the `deployer-app-*` / `deployer-gha-*` roles.
 
 ## C3 as built: GitHub Actions builds (pushes deploy with the PC off)
 

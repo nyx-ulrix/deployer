@@ -555,7 +555,7 @@ def test_app_runner_app_gets_its_tables_through_an_instance_role(client, db, doc
     conn = connection(db)
     source = connect(client, team, conn)
     body = {"name": "Api", "repo_url": "https://github.com/acme/api", "preset": "node", "target": "aws_app"}
-    body |= {"cloud_connection_id": conn.id, "database_access": True}
+    body |= {"cloud_connection_id": conn.id, "database_access": True, "confirm_billing": True}
     resp = client.post(f"{base(team)}/apps", json=body, headers=team["admin"])
     assert resp.status_code == 201, resp.text
     app = db.get(App, resp.json()["id"])
@@ -618,7 +618,7 @@ def test_app_with_rds_and_dynamodb_gets_a_gateway_endpoint(client, db, docker, t
     db.commit()
     aws.returns["ensure_vpc_connector"] = {"arn": "arn:connector", "group_id": "sg-conn"}
     body = {"name": "Api", "repo_url": "https://github.com/acme/api", "preset": "node", "target": "aws_app"}
-    body |= {"cloud_connection_id": conn.id, "database_access": True}
+    body |= {"cloud_connection_id": conn.id, "database_access": True, "confirm_billing": True}
     app = db.get(App, client.post(f"{base(team)}/apps", json=body, headers=team["admin"]).json()["id"])
     dep = deploy(db, app)
     assert dep.status == "live", dep.error

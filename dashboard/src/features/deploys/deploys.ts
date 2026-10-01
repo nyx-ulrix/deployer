@@ -195,6 +195,10 @@ export type AppDraft = {
   /** docs/CLOUD.md: where it runs ("" connection = none picked yet). */
   target: AppTarget;
   cloud_connection_id: string;
+  /** Where it runs now (new app: this PC): moving onto a cloud target or account needs `confirm_billing`. */
+  saved_target: AppTarget;
+  saved_connection_id: string;
+  confirm_billing: boolean;
 };
 
 export function emptyDraft(app?: App): AppDraft {
@@ -216,7 +220,15 @@ export function emptyDraft(app?: App): AppDraft {
     use_github_connection: false,
     target: app?.target ?? "local",
     cloud_connection_id: app?.cloud_connection_id ?? "",
+    saved_target: app?.target ?? "local",
+    saved_connection_id: app?.cloud_connection_id ?? "",
+    confirm_billing: false,
   };
+}
+
+/** docs/CLOUD.md: the draft puts the app on a cloud target or account it isn't billed to yet. */
+export function movesToCloud(d: AppDraft): boolean {
+  return d.target !== "local" && (d.target !== d.saved_target || d.cloud_connection_id !== d.saved_connection_id);
 }
 
 export function draftErrors(d: AppDraft): Partial<Record<keyof AppDraft, string>> {
@@ -228,6 +240,7 @@ export function draftErrors(d: AppDraft): Partial<Record<keyof AppDraft, string>
   for (const f of REQUIRED_FIELDS[d.preset] ?? []) if (!d[f].trim()) errors[f] = "Required for this preset.";
   if (!targetFits(d.target, d.preset)) errors.target = "This target serves static files: pick the Static site preset or a full-app target.";
   else if (d.target !== "local" && !d.cloud_connection_id) errors.target = "Pick the cloud account to deploy to.";
+  else if (movesToCloud(d) && !d.confirm_billing) errors.target = "Tick the box to confirm the cloud account pays for this.";
   if (d.preset === "dockerfile" && d.container_port.trim()) {
     const n = Number(d.container_port);
     if (!Number.isInteger(n) || n < 1 || n > 65535) errors.container_port = "Port must be 1–65535.";
@@ -259,6 +272,7 @@ export function draftToInput(d: AppDraft, env: EnvRow[]): AppInput {
     target: d.target,
     cloud_connection_id: d.target === "local" ? null : d.cloud_connection_id || null,
   };
+  if (movesToCloud(d)) body.confirm_billing = d.confirm_billing;
   if (d.use_github_connection) body.use_github_connection = true;
   else if (d.private_repo && d.repo_token.trim()) body.repo_token = d.repo_token.trim();
   return body;

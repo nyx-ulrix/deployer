@@ -1187,6 +1187,8 @@ export type AppInput = {
   /** docs/CLOUD.md (admin-only to change). */
   target?: AppTarget;
   cloud_connection_id?: string | null;
+  /** Required (true) when moving onto a cloud target or account: it is billed there. */
+  confirm_billing?: boolean;
 };
 
 /** `POST /apps` also returns what couldn't be set up automatically (e.g. the webhook). */

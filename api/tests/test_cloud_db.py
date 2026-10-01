@@ -354,7 +354,7 @@ def test_app_runner_app_gets_the_cloud_database(client, db, docker, team, aws):
     jobs.run_queued()
     # Database access is allowed on App Runner (it means the AWS databases), not on the other cloud targets.
     body = {"name": "Api", "repo_url": "https://github.com/acme/api", "preset": "node", "target": "aws_app"}
-    body |= {"cloud_connection_id": conn.id, "database_access": True}
+    body |= {"cloud_connection_id": conn.id, "database_access": True, "confirm_billing": True}
     resp = client.post(f"{base(team)}/apps", json=body, headers=team["admin"])
     assert resp.status_code == 201, resp.text
     static = {**body, "preset": "static", "target": "aws_static", "name": "Site"}

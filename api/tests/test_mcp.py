@@ -41,6 +41,7 @@ ADMIN_TOOLS = {
     "connect_cloud_database",
     "create_cloud_backup",
     "set_build_location",
+    "set_app_target",
 }
 WRITE_TOOLS = {
     "insert_row",
@@ -158,6 +159,7 @@ TOOL_ROUTES = {
     "get_app": [("GET", "/apps/{app_id}")],
     "deploy_app": [("POST", "/apps/{app_id}/deploy")],
     "set_build_location": [("PUT", "/apps/{app_id}/build")],
+    "set_app_target": [("PATCH", "/apps/{app_id}")],
     "list_github_runs": [("GET", "/apps/{app_id}/github-runs")],
     "deployment_status": [("GET", "/apps/{app_id}/deployments/{deployment_id}")],
     "app_logs": [("GET", "/apps/{app_id}/logs")],

@@ -158,9 +158,10 @@ Tools: `list_data_sources`, `get_schema`, `list_rows`, `list_documents`, `list_s
 `insert_/update_/delete_document`, `rtdb_write`, `export_documents`, `list_apps`, `get_app`, `deploy_app`,
 `deployment_status`, `app_logs`, `list_github_runs`, `list_cloud_targets`, `cloud_database_options` (service
 key). The cloud account tools - `list_cloud_connections`, `list_cloud_databases`, `create_cloud_database`,
-`create_cloud_backup` and `set_build_location` (all three billable: only with the user's yes and
-`confirm_billing: true`) and `connect_cloud_database` - need a project **admin** like their REST routes: a service key doesn't see them,
-so ask the user to add the database in the dashboard (*Add database → In your AWS account / In your Firebase
+`create_cloud_backup`, `set_build_location` and `set_app_target` (all four billable: only with the user's yes
+and `confirm_billing: true`; `set_app_target` also needs `confirm_teardown: true` to delete an app's resources
+on its old cloud target) and `connect_cloud_database` - need a project **admin** like their REST routes: a
+service key doesn't see them, so ask the user to add the database or pick the target in the dashboard (*Add database → In your AWS account / In your Firebase
 project*), then work on its data with the service key. App tools report each app's `target` and cloud URL;
 the data tools work on cloud databases exactly like on the PC's (RDS / Aurora are SQL sources).
 DynamoDB tables use the document tools (`collection` = table, page with `cursor`) and `run_query` takes
@@ -280,7 +281,9 @@ The same app, served from the user's own cloud account so it **keeps running whe
    user with the policy shown there, or a Firebase service account with the listed roles; Deployer
    validates it). Never ask for AWS keys or a service-account file in chat - the user pastes them there.
 2. **Target**: a project **admin** picks it under the app's *Where should this run?* (New app or app
-   Settings), or `target` + `cloud_connection_id` on `POST/PATCH .../apps`:
+   Settings, with a tick confirming the cloud account pays), MCP `set_app_target`, or `target` +
+   `cloud_connection_id` + `confirm_billing: true` on `POST/PATCH .../apps` (without it: `422
+   billing_not_confirmed`):
    - static sites (preset `static`): `aws_static` (S3 + CloudFront) or `firebase_hosting`;
    - servers (Node / Python / Dockerfile): `aws_app` (App Runner) or `firebase_app` (Cloud Run behind
      Firebase Hosting; needs the Blaze plan).

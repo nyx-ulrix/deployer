@@ -61,6 +61,7 @@ INSTRUCTIONS = (
     "Firestore database or its Realtime Database (connect_cloud_database / create_cloud_database; those and "
     "the other cloud account tools need a project admin, not a service key). A cloud app can build on GitHub "
     "Actions (set_build_location, admin, billable minutes) so pushes deploy while the PC is off. "
+    "An admin can also move an app between this PC and a cloud target (set_app_target, billable). "
     "Results are compact JSON, capped at 200 rows / 256 KB."
 )
 
@@ -246,6 +247,25 @@ def t_set_build_location(ctx: Ctx, args: dict) -> Any:
     body = apps_router.BuildBody(location=args["location"], confirm_billing=bool(args.get("confirm_billing")))
     app = apps_router.set_build_location(args["app_id"], body, ctx.request, ctx.access, ctx.db)
     return {"build": app["build"], "job_id": app["job_id"], "locations": github_actions.LOCATIONS}
+
+
+def t_set_app_target(ctx: Ctx, args: dict) -> Any:
+    app = deployments.get_app(ctx.db, ctx.access.project.id, args["app_id"])
+    target, connection = args["target"], args.get("connection_id")
+    moving = (target, connection if target != "local" else None) != (app.target, app.cloud_connection_id)
+    cloud_info = deployments.cloud_out(ctx.db, app)
+    if moving and cloud_info and cloud_info["resources"] and not args.get("confirm_teardown"):
+        raise ApiError(
+            422,
+            "teardown_not_confirmed",
+            "Moving the app deletes what it has on its current cloud target (listed in details.resources) and its "
+            "rollback history. Ask the user, then send confirm_teardown: true.",
+            {"resources": cloud_info["resources"]},
+        )
+    body = apps_router.AppFields(
+        target=target, cloud_connection_id=connection, confirm_billing=bool(args.get("confirm_billing"))
+    )
+    return apps_router.update_app(args["app_id"], body, ctx.request, ctx.access, ctx.db)
 
 
 def t_list_github_runs(ctx: Ctx, args: dict) -> Any:
@@ -532,6 +552,26 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         ),
         t_set_build_location,
     ),
+    "set_app_target": (
+        "admin",
+        "Where an app runs: local (this PC; stops serving when the PC is off) or a cloud target in the user's own "
+        "account that keeps serving when the PC is off - aws_static (S3 + CloudFront) / firebase_hosting for the "
+        "static preset, aws_app (App Runner) / firebase_app (Cloud Run) for servers (list_cloud_targets explains "
+        "each with its cost; connection_id from list_cloud_connections, of the target's provider). BILLABLE: a "
+        "cloud target creates resources in that account on the next deploy, so only call after the user agreed "
+        "to the cost, with confirm_billing: true. Moving an app off a cloud target deletes its resources there "
+        "(answered as teardown_not_confirmed with the list until confirm_teardown: true) and its rollback "
+        "history; it needs no running deployment and no custom domains. Deploy afterwards with deploy_app.",
+        _schema(
+            ["app_id", "target"],
+            app_id=APP,
+            target=_p("string", "local or a cloud target", enum=list(cloud.TARGETS)),
+            connection_id=_p("string", "Cloud targets: the cloud connection id (from list_cloud_connections)"),
+            confirm_billing=_p("boolean", "Cloud targets: must be true - the user agreed to the cloud charges"),
+            confirm_teardown=_p("boolean", "Must be true when the app's current cloud resources will be deleted"),
+        ),
+        t_set_app_target,
+    ),
     "list_github_runs": (
         "developer",
         "The newest GitHub Actions runs of an app that builds on GitHub (status, conclusion, commit, link), "
@@ -549,8 +589,8 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     "list_cloud_connections": (
         "admin",
         "The AWS / Firebase accounts this project's apps may deploy to: id, provider, name, account id / "
-        "project id, region, status. Never any credentials. Choosing one for an app is done by a project "
-        "admin in the dashboard (it is billed to that account).",
+        "project id, region, status. Never any credentials. Put an app on one with set_app_target (billed to "
+        "that account).",
         _schema(),
         t_list_cloud_connections,
     ),

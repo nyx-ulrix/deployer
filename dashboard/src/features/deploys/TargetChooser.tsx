@@ -4,9 +4,9 @@ import { Cloud, Monitor } from "lucide-react";
 import { api, qk } from "../../api/endpoints";
 import type { CloudTarget } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
-import { Field, Select } from "../../components/ui/Input";
+import { Checkbox, Field, Select } from "../../components/ui/Input";
 import { cn } from "../../lib/cn";
-import { recommendedTarget, targetFits, type AppDraft } from "./deploys";
+import { movesToCloud, recommendedTarget, targetFits, type AppDraft } from "./deploys";
 
 /**
  * docs/CLOUD.md "Where should this run?": this PC or one of the cloud targets, each explained in plain words
@@ -42,7 +42,7 @@ export function TargetChooser({
 
   const pick = (t: CloudTarget) => {
     const first = (connections.data ?? []).find((c) => c.provider === t.provider);
-    onChange({ target: t.id, cloud_connection_id: t.provider ? (first?.id ?? "") : "" });
+    onChange({ target: t.id, cloud_connection_id: t.provider ? (first?.id ?? "") : "", confirm_billing: false });
   };
 
   return (
@@ -102,7 +102,7 @@ export function TargetChooser({
           {isAdmin && (
             <Field label="Cloud account" error={error}>
               {(id) => (
-                <Select id={id} value={draft.cloud_connection_id} onChange={(e) => onChange({ cloud_connection_id: e.target.value })}>
+                <Select id={id} value={draft.cloud_connection_id} onChange={(e) => onChange({ cloud_connection_id: e.target.value, confirm_billing: false })}>
                   <option value="">Choose…</option>
                   {usable.map((c) => (
                     <option key={c.id} value={c.id}>
@@ -115,11 +115,21 @@ export function TargetChooser({
             </Field>
           )}
           <p className="text-xs text-muted">
-            Built on this PC, then served entirely from the cloud: it keeps running when this PC is off. The app gets only its own
-            environment variables — no <code className="font-mono">DEPLOYER_URL</code>, <code className="font-mono">DEPLOYER_API_KEY</code>{" "}
-            or this PC's databases, because those point at this PC. An App Runner app can instead get the project's AWS databases
-            (below), which stay up with the PC off. Deploying again, rollbacks and settings still need this PC on.
+            Served entirely from the cloud: it keeps running when this PC is off. The app gets only its own environment
+            variables — no <code className="font-mono">DEPLOYER_URL</code>, <code className="font-mono">DEPLOYER_API_KEY</code> or
+            this PC's databases, because those point at this PC. A full app can instead get the project's databases in the same
+            cloud account (below: AWS databases on App Runner, Firebase databases on Cloud Run), which stay up with the PC off. It
+            is built on this PC; after the first deploy you can let GitHub Actions build every push (Settings → Where it builds),
+            so pushes deploy with the PC off too. Rollbacks and settings still need this PC on.
           </p>
+          {isAdmin && movesToCloud(draft) && (
+            <Checkbox
+              checked={draft.confirm_billing}
+              onChange={(e) => onChange({ confirm_billing: e.target.checked })}
+              label={`I understand ${selected.provider === "aws" ? "AWS" : "Google"} charges this cloud account for it`}
+              description={`The first deploy creates the app's resources there. ${selected.cost}`}
+            />
+          )}
         </>
       )}
       {!selected?.provider && error && <p className="text-xs text-danger">{error}</p>}

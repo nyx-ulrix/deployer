@@ -82,6 +82,8 @@ class AppFields(BaseModel):
     # docs/CLOUD.md: where it runs (admin-only to change) and with which cloud connection.
     target: Target | None = None
     cloud_connection_id: str | None = Field(default=None, max_length=36)
+    # Putting the app on a cloud target (or another account) bills that account: the caller confirms it.
+    confirm_billing: bool = False
 
     @field_validator("install_command", "build_command", "start_command", "output_dir", "repo_token", "branch")
     @classmethod
@@ -254,6 +256,19 @@ def _check_target(db, app: App) -> None:
             )
 
 
+def _check_billing(app: App, body: AppFields) -> None:
+    """docs/CLOUD.md: a cloud target creates billable resources on the first deploy, so moving an app onto one
+    (or onto another cloud account) needs confirm_billing: true, like every other billable action."""
+    if app.target != "local" and not body.confirm_billing:
+        raise ApiError(
+            422,
+            "billing_not_confirmed",
+            f"{cloud.TARGETS[app.target]['label']} is billed to the cloud account: {cloud.TARGETS[app.target]['cost']} "
+            "Send confirm_billing: true.",
+            {"field": "confirm_billing"},
+        )
+
+
 def _switch_target(db, request: Request, access: ProjectAccess, app: App, before: tuple) -> str | None:
     """The target or connection changed: the old target's resources are torn down (job), the local
     container removed, deployments forget their artifacts (they belong to the old target). Returns the job id."""
@@ -356,6 +371,7 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
     if app.target != "local" and not access.at_least("admin"):
         raise forbidden("Only project admins can put an app on a cloud target (it is billed to the cloud account)")
     _check_target(db, app)
+    _check_billing(app, body)
     deployments.set_env(app, body.env or {})
     if body.repo_token:
         app.repo_token_encrypted = encrypt_secret(body.repo_token)
@@ -395,7 +411,7 @@ def get_app(app_id: str, access: Viewer, db: DbSession) -> dict:
 @router.patch(BASE + "/{app_id}")
 def update_app(app_id: str, body: AppFields, request: Request, access: Developer, db: DbSession) -> dict:
     app = deployments.get_app(db, access.project.id, app_id)
-    changed = sorted(body.model_fields_set)
+    changed = sorted(body.model_fields_set - {"confirm_billing"})
     if "database_access" in changed:
         _check_database_access(access, body.database_access and not app.database_access)
     access_before = app.database_access
@@ -454,11 +470,14 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
     teardown_job = None
     if app.target == "local":
         app.cloud_connection_id = None
-    if (app.target, app.cloud_connection_id) != target_before[:2]:
+    moved = (app.target, app.cloud_connection_id) != target_before[:2]
+    if moved:
         if not access.at_least("admin"):
             raise forbidden("Only project admins can change where an app runs")
         teardown_job = _switch_target(db, request, access, app, target_before)
     _check_target(db, app)
+    if moved:
+        _check_billing(app, body)
     build_job = github_actions.refresh_if_needed(db, app, changed, access.user.id)
     audit.record(
         db,

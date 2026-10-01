@@ -257,9 +257,18 @@ def test_target_rules(client, db, team, aws):
     other = connection(db, project_id=None)
     other.project_id = team["project"].id
     db.commit()
-    resp = client.post(team["base"], json=body, headers=team["admin"])
+    unconfirmed = client.post(team["base"], json=body, headers=team["admin"])
+    assert unconfirmed.status_code == 422 and unconfirmed.json()["error"]["code"] == "billing_not_confirmed"
+    assert "AWS account" in unconfirmed.json()["error"]["message"]  # the target's cost note
+    resp = client.post(team["base"], json={**body, "confirm_billing": True}, headers=team["admin"])
     assert resp.status_code == 201, resp.text
     app = resp.json()
+    # Another account bills someone else: confirmed again. Back to this PC needs no confirmation.
+    other_move = client.patch(
+        f"{team['base']}/{app['id']}", json={"cloud_connection_id": other.id}, headers=team["admin"]
+    )
+    assert other_move.json()["error"]["code"] == "billing_not_confirmed"
+    assert db.get(App, app["id"]).cloud_connection_id == conn.id
     assert app["target"] == "aws_static" and app["local_url"] is None and app["cloud"]["url"] is None
     # Developers may still edit a cloud app, not move it.
     patch = client.patch(f"{team['base']}/{app['id']}", json={"build_command": "npm run build"}, headers=team["dev"])
@@ -450,6 +459,31 @@ def test_switch_target_tears_down_old_resources(client, db, docker, aws, team):
     app = db.get(App, app.id)
     assert app.cloud_state is None and app.live_deployment_id is None
     assert db.get(Deployment, first.id).image_tag is None  # no rollback across targets
+
+
+def test_mcp_set_app_target_confirms_billing_and_teardown(client, db, docker, aws, team):
+    conn = connection(db)
+    app = make_app(db, team["project"], "Site", preset="static")
+    url = f"/v1/projects/{team['project'].id}/mcp"
+
+    def call(headers=team["admin"], **arguments):
+        body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call"}
+        body["params"] = {"name": "set_app_target", "arguments": {"app_id": app.id, **arguments}}
+        out = client.post(url, json=body, headers=headers).json()
+        if "error" in out:
+            return None, out["error"]
+        return out["result"]["isError"], json.loads(out["result"]["content"][0]["text"])
+
+    assert call(team["dev"], target="local")[1]["code"] == -32602  # admins only, like choosing it in the dashboard
+    is_error, out = call(target="aws_static", connection_id=conn.id)
+    assert is_error and out["error"]["code"] == "billing_not_confirmed"
+    is_error, out = call(target="aws_static", connection_id=conn.id, confirm_billing=True)
+    assert not is_error and out["target"] == "aws_static", out
+    deploy(db, db.get(App, app.id))
+    is_error, out = call(target="local")
+    assert is_error and out["error"]["code"] == "teardown_not_confirmed" and out["error"]["details"]["resources"]
+    is_error, out = call(target="local", confirm_teardown=True)
+    assert not is_error and out["target"] == "local" and out["teardown_job_id"]
 
 
 # --- custom domains ------------------------------------------------------------------------------
