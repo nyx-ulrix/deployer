@@ -255,6 +255,12 @@ function mongoCompletions(collections: readonly string[]) {
 }
 
 function placeholderFor(kind: DataSourceKind, engine: string, mode: EditorMode): string {
+  if (engine === "firebase_rtdb") {
+    // QUERY_CONSOLE.md "Realtime Database": one JSON request, Firebase's REST query parameters.
+    return mode === "terminal"
+      ? '{ "path": "users", "orderBy": "$key", "limitToFirst": 20 }'
+      : '{\n  "path": "users",\n  "orderBy": "age",\n  "startAt": 18,\n  "limitToFirst": 20\n}';
+  }
   if (engine === "firestore") {
     // QUERY_CONSOLE.md "Firestore": one JSON request, a subset of Firestore's structuredQuery.
     return mode === "terminal"

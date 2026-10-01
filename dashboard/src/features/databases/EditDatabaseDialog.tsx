@@ -22,8 +22,9 @@ export function EditDatabaseDialog({
   const toast = useToast();
   const queryClient = useQueryClient();
   const d = source.display;
-  // DynamoDB / Firestore have no connection settings of their own (their cloud account's key is used): rename only.
-  const external = source.mode === "external" && source.engine !== "dynamodb" && source.engine !== "firestore";
+  // DynamoDB / Firestore / Realtime Database have no connection settings of their own (their cloud account's key is
+  // used): rename only.
+  const external = source.mode === "external" && !["dynamodb", "firestore", "firebase_rtdb"].includes(source.engine);
   const sql = source.kind === "sql";
   const [name, setName] = useState(source.name);
   const [host, setHost] = useState(d.host ?? "");

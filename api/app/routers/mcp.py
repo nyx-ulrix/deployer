@@ -25,7 +25,7 @@ from app.routers import cloud as cloud_router
 from app.routers import data as data_router
 from app.routers import query as query_router
 from app.routers import schema as schema_router
-from app.services import audit, cloud, cloud_db, deployments, introspection, rate_limit, source_ops
+from app.services import audit, cloud, cloud_db, deployments, introspection, rate_limit, rtdb, source_ops
 from app.services.sources import get_source, project_sources
 
 log = logging.getLogger(__name__)
@@ -44,10 +44,11 @@ PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR =
 
 INSTRUCTIONS = (
     "Tools for one Deployer project: its databases (SQL tables, MongoDB collections, DynamoDB tables, "
-    "Firestore collections) and its apps (push-to-deploy websites). Start with list_data_sources and get_schema, "
-    "or list_apps. Ids come from those tools. Databases can also live in the user's own AWS account - RDS SQL or "
-    "DynamoDB (cloud_database_options; creating one is billable and needs the user's agreement) - or be the "
-    "user's Firebase project's Cloud Firestore database (connect_cloud_database). "
+    "Firestore collections, Firebase Realtime Database JSON trees - rtdb_read / rtdb_write) and its apps "
+    "(push-to-deploy websites). Start with list_data_sources and get_schema, or list_apps. Ids come from those "
+    "tools. Databases can also live in the user's own AWS account - RDS SQL or DynamoDB (cloud_database_options; "
+    "creating one is billable and needs the user's agreement) - or in the user's Firebase project: its Cloud "
+    "Firestore database or its Realtime Database (connect_cloud_database / create_cloud_database). "
     "Results are compact JSON, capped at 200 rows / 256 KB."
 )
 
@@ -66,7 +67,9 @@ def _p(type_: str, description: str, **extra: Any) -> dict:
 SOURCE = _p("string", "Data source id (from list_data_sources)")
 TABLE = _p("string", "SQL table name")
 COLLECTION = _p(
-    "string", "MongoDB collection, DynamoDB table, or Firestore collection path (users, or users/u1/orders)"
+    "string",
+    "MongoDB collection, DynamoDB table, or Firestore collection path (users, or users/u1/orders); "
+    "a Realtime Database has no collections (use rtdb_read / rtdb_write)",
 )
 DOC_ID = _p(
     "string",
@@ -167,9 +170,25 @@ def t_list_subcollections(ctx: Ctx, args: dict) -> Any:
 
 
 def t_export_documents(ctx: Ctx, args: dict) -> Any:
+    ds = get_source(ctx.db, ctx.access.project.id, args["source_id"])
+    if ds.engine == rtdb.ENGINE:
+        return cloud_router.export_rtdb(args["source_id"], ctx.request, ctx.access, ctx.db, path=args.get("path", ""))
     return cloud_router.export_firestore(
         args["source_id"], ctx.request, ctx.access, ctx.db, collection=args.get("collections"), limit=_limit(args, 200)
     )
+
+
+def t_rtdb_read(ctx: Ctx, args: dict) -> Any:
+    ds = data_router._rtdb_source(ctx.db, ctx.access, args["source_id"])
+    query = {k: args.get(k) for k in ("shallow", *rtdb.QUERY_PARAMS)}
+    if query["orderBy"] is not None and query["limitToFirst"] is None and query["limitToLast"] is None:
+        query["limitToFirst"] = MAX_ROWS  # the result cap: only what fits
+    return rtdb.read(ds, args.get("path", ""), query)
+
+
+def t_rtdb_write(ctx: Ctx, args: dict) -> Any:
+    ds = data_router._rtdb_source(ctx.db, ctx.access, args["source_id"])
+    return rtdb.write(ds, args["operation"], args.get("path", ""), args.get("value"))
 
 
 def t_insert_document(ctx: Ctx, args: dict) -> Any:
@@ -272,8 +291,10 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         'DynamoDB request as JSON ({"operation": "Query", "TableName": ..., plus AWS parameters with plain JSON '
         'values}) or one Firestore request as JSON ({"from": "orders", "where": [{"field": "status", "op": "==", '
         '"value": "open"}], "orderBy": [{"field": "total", "direction": "desc"}], "limit": 20}; operation count, '
-        f"get, create, update, delete) against a data source. Returns up to {MAX_ROWS} rows per statement. Viewer "
-        "sessions may only read (DynamoDB: Query, Scan, GetItem; Firestore: query, count, get).",
+        'get, create, update, delete) or one Realtime Database request as JSON ({"path": "users", "orderBy": '
+        '"age", "startAt": 18, "limitToFirst": 20}; operation set, update, push, delete with "value") against a '
+        f"data source. Returns up to {MAX_ROWS} rows per statement. Viewer sessions may only read (DynamoDB: "
+        "Query, Scan, GetItem; Firestore: query, count, get; Realtime Database: get).",
         _schema(
             ["source_id", "query"],
             source_id=SOURCE,
@@ -366,14 +387,52 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         "developer",
         "Firestore: every document of the top-level collections (or the given collection paths) as JSON, up to "
         f"`limit` documents (default 200, max {MAX_ROWS} here; the dashboard exports up to 10,000); `truncated` "
-        "says when more were left. Subcollections are exported by naming their path.",
+        "says when more were left. Subcollections are exported by naming their path. Realtime Database: the JSON "
+        "at `path` (default the whole database; results over 256 KB are cut, so export a smaller path).",
         _schema(
             ["source_id"],
             source_id=SOURCE,
             collections=_p("array", "Collection paths (default: every top-level collection)", items={"type": "string"}),
             limit=LIMIT,
+            path=_p("string", "Realtime Database: the path to export, e.g. users (default: the whole database)"),
         ),
         t_export_documents,
+    ),
+    "rtdb_read": (
+        "viewer",
+        "Firebase Realtime Database: read the JSON at a path (users/ann; empty for the root). shallow: true lists "
+        "only the children's keys (each value cut to true, or kept when plain) - use it to explore a big tree. "
+        'Filter with orderBy ("$key", "$value" or a child path such as "age") plus startAt / endAt / equalTo / '
+        f"limitToFirst / limitToLast (limitToFirst defaults to {MAX_ROWS} with orderBy); ordered reads also return "
+        "`children` as [{key, value}] in order. Ordering by a child needs an .indexOn rule in Firebase.",
+        _schema(
+            ["source_id"],
+            source_id=SOURCE,
+            path=_p("string", "Path in the tree, e.g. users or users/ann (default: the root)"),
+            shallow=_p("boolean", "Only the children's keys (not combinable with the filters)"),
+            orderBy=_p("string", '"$key", "$value", "$priority" or a child path such as "age"'),
+            startAt={"description": "Smallest value (or key) to include: text, number or boolean"},
+            endAt={"description": "Largest value (or key) to include: text, number or boolean"},
+            equalTo={"description": "Only children whose orderBy value equals this: text, number or boolean"},
+            limitToFirst=_p("integer", "Only the first N children (in orderBy order)", minimum=1),
+            limitToLast=_p("integer", "Only the last N children (in orderBy order)", minimum=1),
+        ),
+        t_rtdb_read,
+    ),
+    "rtdb_write": (
+        "developer",
+        "Firebase Realtime Database: write at a path. operation set replaces the value at path; update sets the "
+        'given children of path ({"name": "Ann", "address/city": "Oslo"}) and keeps the others; push adds value as '
+        "a new child with a Firebase-made, time-ordered key (returned as `key`); delete removes path and everything "
+        "under it. Setting or deleting the root is refused. Keys cannot contain . $ # [ ] /.",
+        _schema(
+            ["source_id", "operation", "path"],
+            source_id=SOURCE,
+            operation=_p("string", "set, update, push or delete", enum=list(rtdb.WRITE_OPERATIONS)),
+            path=_p("string", "Path in the tree, e.g. users/ann"),
+            value={"description": "Any JSON (set, push); an object of child paths to values (update)"},
+        ),
+        t_rtdb_write,
     ),
     "insert_document": (
         "developer",
@@ -466,7 +525,8 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         "developer",
         "The RDS / Aurora databases in an AWS connection's region (from list_cloud_connections), with which "
         "ones Deployer can connect to (`problem` says why not) and this PC's public IP, plus the region's "
-        "DynamoDB `tables`; for a Firebase connection, its project's Firestore databases (`firestore`).",
+        "DynamoDB `tables`; for a Firebase connection, its project's Firestore databases (`firestore`) and "
+        "Realtime Databases (`rtdb`, with their URLs).",
         _schema(["connection_id"], connection_id=CONNECTION),
         t_list_cloud_databases,
     ),
@@ -475,22 +535,29 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         "BILLABLE: create a new RDS database (MySQL, MariaDB or PostgreSQL; default db.t4g.micro, 20 GB, backups, "
         "deletion protection, encrypted; 5-15 minutes) or a DynamoDB table (engine dynamodb: on-demand billing, "
         "deletion protection; under a minute) in the user's AWS account. It stays up when the PC is off and AWS "
-        "bills the user (see cloud_database_options for the cost). Only call after the user agreed to the "
-        "cost, with confirm_billing: true. Returns the data source (status creating) and a job. Apps on aws_app "
-        "with database_access then get DEPLOYER_DB_<NAME>_*.",
+        "bills the user (see cloud_database_options for the cost). With a Firebase connection, engine "
+        "firebase_rtdb creates the project's default Realtime Database in `location` (or connects it when it "
+        "exists; free quota, then Google bills storage and downloads; ready at once, job is null). Only call "
+        "after the user agreed to the cost, with confirm_billing: true. Returns the data source (status creating "
+        "for AWS) and a job. Apps on aws_app / firebase_app with database_access then get DEPLOYER_DB_<NAME>_*.",
         _schema(
             ["connection_id", "name", "engine", "confirm_billing"],
             connection_id=CONNECTION,
             name=_p("string", "Data source name, unique in the project"),
             engine=_p(
                 "string",
-                "mysql, mariadb, postgresql or dynamodb",
-                enum=["mysql", "mariadb", "postgresql", "dynamodb"],
+                "mysql, mariadb, postgresql or dynamodb (AWS), firebase_rtdb (Firebase)",
+                enum=["mysql", "mariadb", "postgresql", "dynamodb", "firebase_rtdb"],
             ),
             instance_class=_p("string", "RDS: db.t4g.micro (default), db.t4g.small or db.t4g.medium"),
+            location=_p(
+                "string",
+                "Realtime Database: us-central1 (default), europe-west1 or asia-southeast1 - cannot change later",
+                enum=list(rtdb.LOCATIONS),
+            ),
             partition_key={**TABLE_KEY, "description": "DynamoDB: the partition key (default a text id)"},
             sort_key={**TABLE_KEY, "description": "DynamoDB: an optional sort key"},
-            confirm_billing=_p("boolean", "Must be true: the user agreed to the AWS charges"),
+            confirm_billing=_p("boolean", "Must be true: the user agreed to the cloud charges"),
         ),
         t_create_cloud_database,
     ),
@@ -499,9 +566,10 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         "Connect an existing RDS / Aurora database (resource_id from list_cloud_databases) with the user's "
         "database login, existing DynamoDB tables (tables from list_cloud_databases), or - with a Firebase "
         "connection - the project's Cloud Firestore database (database: (default) or a named one; free to "
-        "connect, Google bills reads and writes). Deployer only connects; it never changes that database, its "
+        "connect, Google bills reads and writes) or, with instance, its Realtime Database (an id from "
+        "list_cloud_databases' rtdb). Deployer only connects; it never changes that database, its "
         "firewall or the tables' settings. Apps on firebase_app with database_access then get "
-        "DEPLOYER_DB_<NAME>_PROJECT / _DATABASE.",
+        "DEPLOYER_DB_<NAME>_PROJECT / _DATABASE (Realtime Database: also _URL).",
         _schema(
             ["connection_id", "name"],
             connection_id=CONNECTION,
@@ -513,6 +581,7 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
                 "string", 'RDS: database name (defaults to the instance\'s own); Firestore: "(default)" or an id'
             ),
             tables=_p("array", "DynamoDB: table names (instead of resource_id)", items={"type": "string"}),
+            instance=_p("string", "Realtime Database: the instance id from list_cloud_databases (rtdb)"),
         ),
         t_connect_cloud_database,
     ),
@@ -572,9 +641,11 @@ def _check_args(schema: dict, args: Any) -> dict:
         prop = schema["properties"].get(key)
         if prop is None:
             raise RpcError(INVALID_PARAMS, f"Unknown argument: {key}")
-        expected = _TYPES[prop["type"]]
-        if value is not None and (
-            not isinstance(value, expected) or (isinstance(value, bool) and expected is not bool)
+        expected = _TYPES.get(prop.get("type"))  # untyped: any JSON (Realtime Database values)
+        if (
+            expected is not None
+            and value is not None
+            and (not isinstance(value, expected) or (isinstance(value, bool) and expected is not bool))
         ):
             raise RpcError(INVALID_PARAMS, f"Argument {key} must be of type {prop['type']}")
     return {k: v for k, v in args.items() if v is not None}

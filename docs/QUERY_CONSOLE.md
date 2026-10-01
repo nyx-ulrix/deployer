@@ -6,8 +6,8 @@ database from a selector; everything runs through the control plane with the pro
 
 ## API
 
-`POST /v1/projects/{project_id}/data-sources/{sid}/query` (SQL, MongoDB shell code, or one DynamoDB or
-Firestore request as JSON - "DynamoDB" and "Firestore" below)
+`POST /v1/projects/{project_id}/data-sources/{sid}/query` (SQL, MongoDB shell code, or one DynamoDB,
+Firestore or Realtime Database request as JSON - "DynamoDB", "Firestore" and "Realtime Database" below)
 
 | Field | Type | Notes |
 |---|---|---|
@@ -242,6 +242,36 @@ subset of Firestore's `structuredQuery` with plain JSON values (Firestore's own 
   `result` = `{documents}` / `{count}` / `{document}` / `{deleted}`, `output` = a one-line summary,
   `truncated` = more documents match. Bad requests and Firestore's errors - a query that needs a composite
   index comes back with the Firebase console link that creates it - are in-band `error`s (HTTP 200).
+
+### Realtime Database
+
+For a Firebase Realtime Database ([CLOUD.md](CLOUD.md) "C2-4") the query is **one JSON object** naming a
+**path** in the tree and, optionally, Firebase's REST query parameters (plain JSON values):
+
+```json
+{"path": "users", "orderBy": "age", "startAt": 18, "endAt": 65, "limitToFirst": 20}
+```
+
+- `path`: keys separated by `/` (`rooms/lobby/messages`; empty or missing = the root). Keys can't contain
+  `. $ # [ ] /`.
+- `get` (the default `operation`, every role): the value at `path`. `shallow: true` lists only the children's
+  keys (not combinable with the rest). `orderBy`: `"$key"`, `"$value"`, `"$priority"` or a child path
+  (`"age"`, `"address/city"`); with it, `startAt` / `endAt` (inclusive bounds), `equalTo` and `limitToFirst`
+  / `limitToLast` (one of them; without either, `max_rows + 1` is asked for to tell when there is more).
+  Ordering by a child needs `".indexOn": ["age"]` at that path in the database's rules (Firebase console ->
+  Realtime Database -> Rules); without it Firebase refuses and the error says so.
+- Writes, developer+ (`403 read_only_role` for viewers): `{"operation": "set", "path": "users/ann", "value":
+  {...}}` replaces the value, `update` sets the children named in `value` (keys may be child paths:
+  `{"address/city": "Oslo"}`) and keeps the others, `push` adds `value` under a new Firebase-made,
+  time-ordered key (in `output` and `result.key`), `delete` removes the path and everything under it. Setting
+  or deleting the root is refused. Query parameters only go with `get`; any other key is an in-band error.
+- Runs with the Firebase connection's service account (admin: the database's security rules don't apply)
+  in the API process. The answer has the MongoDB shape below: `engine: "firebase_rtdb"`, `result_docs` = the
+  children in Firebase's order (null, false, true, numbers, text, objects; keys that are whole numbers
+  first) as `{"_key": "ann", ...fields}` (a plain value as `{"_key", "_value"}`), `result` = `{path,
+  children}` / `{path, value}` for a plain value / the write's answer, `output` = a one-line summary,
+  `truncated` = more children than `max_rows`. Bad requests and Firebase's errors are in-band `error`s
+  (HTTP 200).
 
 ### Device-hosted sources
 

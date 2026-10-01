@@ -128,6 +128,15 @@ Security fixes are made for the latest release. Update with `deployer update`.
   database; viewers may only run `query` / `count` / `get` in the console. Deployer never creates, deletes or
   changes a Firestore database or its security rules. Cloud Run apps get no key: they use their own service
   account, to which the owner grants Cloud Datastore User (Deployer cannot grant IAM roles).
+  Realtime Databases ("C2-4") hold no credential either: Deployer calls the database's REST API with a token
+  for the `firebase.database` scope, sent only to a URL that matches a Firebase database host
+  (`<id>.firebaseio.com` / `<id>.<region>.firebasedatabase.app`, taken from Firebase's management API, never
+  typed by a user) with percent-encoded keys (no `.`, so a path can't climb out); answers over 32 MB are cut
+  off while streaming. That token is admin: the database's security rules don't apply to the dashboard, the
+  data API or MCP, so the project's roles are the gate (viewers and anon keys read, developers and service
+  keys write; the root can't be replaced or deleted). The role it needs (Firebase Realtime Database Admin)
+  also creates instances; Deployer only ever creates the project's default one, after the billing
+  confirmation, and never deletes one.
 - **Rate limits:** sign-in 10 attempts / 15 min per IP+email and 50 failed attempts / hour per email
   from any IP (so rotating or forging IPs doesn't buy more guesses; the flip side is that someone
   guessing can lock an account for up to an hour - `deployer reset-password` clears it), plus 30

@@ -219,6 +219,36 @@ await fetch(orders, { method: "POST", headers, body: JSON.stringify({ document: 
 An app on Firebase (Cloud Run) doesn't need this API: with *Database access* it gets
 `DEPLOYER_DB_<NAME>_PROJECT` / `_DATABASE` and uses the Firebase Admin SDK as its own service account.
 
+### Realtime Database (JSON tree)
+
+A Firebase Realtime Database ([CLOUD.md](CLOUD.md) "C2-4") is one JSON tree, read and written **by path**
+(`users/ann/name`; empty is the root) at `/projects/{pid}/data-sources/{sid}/rtdb` - the documents and
+collections endpoints answer `400 not_supported` for it. Keys can't contain `. $ # [ ] /`.
+
+- `GET ?path=users` -> `{"path": "users", "value": ...}`. `shallow=true` cuts each child to `true` (or keeps
+  a plain value) - list a big branch cheaply. Firebase's query parameters filter children: `orderBy` (`$key`,
+  `$value`, `$priority` or a child path such as `age` or `address/city`) with `startAt`, `endAt`, `equalTo`
+  (JSON - `18`, `true`, `"18"` - or plain text: `Oslo`), `limitToFirst`, `limitToLast`. Shallow and ordered
+  reads also return `children: [{"key", "value"}]` **in Firebase's order** (use it: `value` is an object, whose
+  key order JSON doesn't keep). Ordering by a child needs an `.indexOn` rule in the database's rules (else
+  `400 query_failed` says how to add it). Over 32 MB at a path is `413 too_large`.
+- `PUT` `{"path", "value"}` replaces the value at the path; `PATCH` `{"path", "value": {"name": "Ann",
+  "address/city": "Oslo"}}` sets those children and keeps the others; `POST` `{"path", "value"}` adds a child
+  under a Firebase-made, time-ordered key (returned as `key`; good for lists such as messages); `DELETE
+  ?path=` removes the path and everything under it. Replacing or deleting the root is refused (`400
+  root_write`).
+- Anon keys read; writes need a service key. Deployer's access is admin, so the database's own security
+  rules don't apply here - the project's roles do.
+
+```js
+const rt = `${base}/projects/${PID}/data-sources/${SID}/rtdb`;
+const adults = await fetch(`${rt}?path=users&orderBy=age&startAt=18&limitToFirst=20`, { headers }).then((r) => r.json());
+await fetch(rt, { method: "POST", headers, body: JSON.stringify({ path: "rooms/lobby/messages", value: { text: "hi" } }) });
+```
+
+A Firebase full app with *Database access* gets `DEPLOYER_DB_<NAME>_URL` / `_PROJECT` instead and uses the
+Firebase Admin SDK (`databaseURL`) as its own service account.
+
 ## Queries
 
 `POST /projects/{pid}/data-sources/{sid}/query` with `{"query": "...", "max_rows": 500, "timeout_seconds": 30}`

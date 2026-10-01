@@ -125,8 +125,8 @@ VERSION = 1
 MIN_PASSPHRASE = 12
 MAX_IMPORT_BYTES = 1024**3
 BATCH = 1000
-# Reached only through their cloud connection, no credentials of their own (docs/CLOUD.md "C2-2", "C2-3").
-CLOUD_ONLY_ENGINES = ("dynamodb", "firestore")
+# Reached only through their cloud connection, no credentials of their own (docs/CLOUD.md "C2-2".."C2-4").
+CLOUD_ONLY_ENGINES = ("dynamodb", "firestore", "firebase_rtdb")
 DEVICE_TIMEOUT = 6 * 3600
 # A host device's own link/credentials never travel in exports: a restored copy must not
 # impersonate the device (it would kick the real one off the main Deployer).

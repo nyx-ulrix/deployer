@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, CloudCog, Database, Flame, HardDrive, Leaf, Server, XCircle } from "lucide-react";
+import { CheckCircle2, CloudCog, Database, FileJson, Flame, HardDrive, Leaf, Network, Server, XCircle } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api } from "../../api/endpoints";
 import { invalidateProjectSources, usePlacementOptions } from "../../api/hooks";
@@ -22,6 +22,7 @@ import { HostOnSelect } from "../devices/HostOnSelect";
 import { AwsDatabaseSection } from "./AwsDatabaseSection";
 import { Choice } from "./Choice";
 import { FirestoreSection } from "./FirestoreSection";
+import { RtdbSection } from "./RtdbSection";
 
 type Mode = "managed" | "external";
 type Where = DatabaseLocation["id"];
@@ -42,6 +43,8 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
   // docs/CLOUD.md "C2": on this PC (managed), another server (external), the user's AWS or Firebase.
   const [where, setWhere] = useState<Where>("local");
   const mode: Mode = where === "local" ? "managed" : "external";
+  // docs/CLOUD.md "C2-3", "C2-4": a Firebase project has two databases; the user picks which one.
+  const [firebaseDb, setFirebaseDb] = useState<"firestore" | "rtdb">("firestore");
   const options = useQuery({
     queryKey: ["projects", projectId, "cloud", "databases", "options"],
     queryFn: () => api.cloud.databaseOptions(projectId),
@@ -101,7 +104,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
 
   function defaultName() {
     if (where === "aws") return kind === "sql" ? "AWS database" : "DynamoDB";
-    if (where === "firebase") return "Firestore";
+    if (where === "firebase") return firebaseDb === "rtdb" ? "Realtime Database" : "Firestore";
     if (mode === "managed") return kind === "sql" ? "MariaDB" : "MongoDB";
     return kind === "sql" ? { mariadb: "MariaDB", mysql: "MySQL", postgresql: "PostgreSQL" }[engine] : "MongoDB";
   }
@@ -186,7 +189,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
               selected={kind === "sql"}
               onClick={() => {
                 setKind("sql");
-                if (where === "firebase") setWhere("local"); // Firebase databases are NoSQL (Cloud Firestore)
+                if (where === "firebase") setWhere("local"); // Firebase databases are NoSQL
               }}
               icon={<Database className="size-4" />}
               title="SQL"
@@ -198,7 +201,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
               onClick={() => setKind("nosql")}
               icon={<Leaf className="size-4" />}
               title="NoSQL"
-              description="JSON documents: MongoDB (here or elsewhere), DynamoDB (in AWS) or Cloud Firestore (Firebase)."
+              description="JSON data: MongoDB (here or elsewhere), DynamoDB (in AWS), Cloud Firestore or Realtime Database (Firebase)."
               tone="nosql"
             />
           </div>
@@ -263,12 +266,38 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
         )}
 
         {where === "firebase" && kind === "nosql" && options.data && (
+          <div>
+            <p className="mb-2 text-sm font-medium">Which Firebase database?</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <Choice
+                selected={firebaseDb === "firestore"}
+                onClick={() => setFirebaseDb("firestore")}
+                icon={<FileJson className="size-4" />}
+                title="Cloud Firestore"
+                description={options.data.firestore.short}
+              />
+              <Choice
+                selected={firebaseDb === "rtdb"}
+                onClick={() => setFirebaseDb("rtdb")}
+                icon={<Network className="size-4" />}
+                title="Realtime Database"
+                description={options.data.rtdb.short}
+              />
+            </div>
+          </div>
+        )}
+
+        {where === "firebase" && kind === "nosql" && options.data && firebaseDb === "firestore" && (
           <FirestoreSection
             projectId={projectId}
             name={name.trim() || defaultName()}
             options={options.data.firestore}
             onDone={onClose}
           />
+        )}
+
+        {where === "firebase" && kind === "nosql" && options.data && firebaseDb === "rtdb" && (
+          <RtdbSection projectId={projectId} name={name.trim() || defaultName()} options={options.data.rtdb} onDone={onClose} />
         )}
 
         {where === "external" && kind === "sql" && (

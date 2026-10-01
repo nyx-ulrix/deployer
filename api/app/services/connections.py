@@ -325,7 +325,7 @@ def try_config(kind: str, engine_name: str, config: dict[str, Any]) -> tuple[boo
 
 def cloud_engine(engine: str):
     """The adapter module of an engine reached only through its cloud connection, with no driver or
-    credentials of its own (docs/CLOUD.md "C2-2", "C2-3"): services/dynamo.py or services/firestore.py, which
+    credentials of its own (docs/CLOUD.md "C2-2".."C2-4"): services/dynamo.py, firestore.py or rtdb.py, which
     share the same functions (check, display, connection_info, run_op, introspect, entity, export_script,
     run_console). None for every other engine."""
     if engine == "dynamodb":
@@ -336,6 +336,10 @@ def cloud_engine(engine: str):
         from app.services import firestore
 
         return firestore
+    if engine == "firebase_rtdb":
+        from app.services import rtdb
+
+        return rtdb
     return None
 
 

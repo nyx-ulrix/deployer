@@ -55,7 +55,7 @@ Results are text content holding compact JSON. API errors come back as tool resu
 |---|---|---|---|
 | `list_data_sources` | – | anon | databases: `id`, `name`, `kind`, `engine`, `status`, and `cloud` (`provider`, `service`, `created`, `resource_id`, `region`) for databases in the user's AWS account |
 | `get_schema` | `source_id?` | anon | tables/collections, columns/fields, keys, relationships (`GET /schema`) |
-| `run_query` | `source_id`, `query`, `max_rows?` | service | SQL script, `mongosh` code or one DynamoDB / Firestore request as JSON (the query console); a viewer session may only read |
+| `run_query` | `source_id`, `query`, `max_rows?` | service | SQL script, `mongosh` code or one DynamoDB / Firestore / Realtime Database request as JSON (the query console); a viewer session may only read |
 | `list_rows` | `source_id`, `table`, `limit?`, `offset?`, `filters?`, `sort?` | anon | rows + `total`; `filters` = `{column: value}` equality, ANDed; `sort` = `"column"` or `"-column"` |
 | `insert_row` | `source_id`, `table`, `values` | service | inserts a row, returns it |
 | `update_row` | `source_id`, `table`, `pk`, `values` | service | updates the row with that primary key |
@@ -65,17 +65,19 @@ Results are text content holding compact JSON. API errors come back as tool resu
 | `update_document` | `source_id`, `collection`, `document_id`, `set?`, `unset?` | service | `$set` / `$unset` on one document (DynamoDB: `document_id` is the item's key as JSON) |
 | `delete_document` | `source_id`, `collection`, `document_id` | service | deletes one document or DynamoDB item |
 | `list_subcollections` | `source_id`, `collection`, `document_id` | anon | Firestore: the collections under one document, as paths (`users/u1/orders`) the document tools take |
-| `export_documents` | `source_id`, `collections?`, `limit?` | service | Firestore: every document of the top-level collections (or the given paths) as JSON, up to `limit` (default 200); `truncated` when more were left |
+| `export_documents` | `source_id`, `collections?`, `limit?`, `path?` | service | Firestore: every document of the top-level collections (or the given paths) as JSON, up to `limit` (default 200); `truncated` when more were left. Realtime Database: the JSON at `path` (default the whole database; over 256 KB is cut) |
+| `rtdb_read` | `source_id`, `path?`, `shallow?`, `orderBy?`, `startAt?`, `endAt?`, `equalTo?`, `limitToFirst?`, `limitToLast?` | anon | Firebase Realtime Database ([CLOUD.md](CLOUD.md) "C2-4"): the JSON at a path; `shallow` lists only the children's keys; Firebase's query parameters filter children (`limitToFirst` defaults to 200 with `orderBy`) and add `children` in order |
+| `rtdb_write` | `source_id`, `operation`, `path`, `value?` | service | Realtime Database: `set` (replace), `update` (children by path), `push` (new child, returns `key`) or `delete` at a path; the root can't be replaced or deleted |
 | `list_apps` | – | service | the project's apps (push-to-deploy, [DEPLOYMENTS.md](DEPLOYMENTS.md)) with their `target` |
 | `get_app` | `app_id` | service | one app: settings, `target`, `cloud` (`url`, `resources`), URLs, hostnames, live deployment |
 | `deploy_app` | `app_id` | service | starts a deployment from the app's branch on the app's target; adds `target` and `cloud_url` |
 | `deployment_status` | `app_id`, `deployment_id` | service | status, error, `target`, `target_url` (the cloud URL it went live on), `cloud_url` and the last 100 log lines |
 | `list_cloud_connections` | – | service | the AWS / Firebase accounts the project's apps may use ([CLOUD.md](CLOUD.md)): `id`, `provider`, `name`, account id / project id, region, `status` - never credentials |
 | `list_cloud_targets` | – | service | where an app can run (`local`, `aws_static`, `aws_app`, `firebase_hosting`, `firebase_app`): what each is for, that cloud targets keep serving with the PC off, cost drivers, `available` for this project |
-| `cloud_database_options` | – | service | where a database can live (this PC, another server, the user's AWS account, Firebase) in plain language, and the sizes, cost and networking of a new AWS database ([CLOUD.md](CLOUD.md) "C2-1"), DynamoDB and Firestore (`firestore`: what it is, cost, how apps reach it) |
-| `list_cloud_databases` | `connection_id` | service | the RDS / Aurora databases in that AWS connection's region, `problem` when Deployer can't connect one, this PC's public IP, and the region's DynamoDB `tables`; for a Firebase connection the project's Firestore databases (`firestore`) |
+| `cloud_database_options` | – | service | where a database can live (this PC, another server, the user's AWS account, Firebase) in plain language, and the sizes, cost and networking of a new AWS database ([CLOUD.md](CLOUD.md) "C2-1"), DynamoDB, Firestore and the Realtime Database (`firestore` / `rtdb`: what each is, one sentence on how they differ, cost, how apps reach it) |
+| `list_cloud_databases` | `connection_id` | service | the RDS / Aurora databases in that AWS connection's region, `problem` when Deployer can't connect one, this PC's public IP, and the region's DynamoDB `tables`; for a Firebase connection the project's Firestore databases (`firestore`) and Realtime Databases (`rtdb`, with URLs) |
 | `create_cloud_database` | `connection_id`, `name`, `engine`, `instance_class?`, `partition_key?`, `sort_key?`, `confirm_billing` | service | **billable**: creates an RDS database (`mysql`, `mariadb`, `postgresql`) or a DynamoDB table (`dynamodb`, keys `{name, type: S\|N\|B}`, default a text `id`) in the user's AWS account (stays up with the PC off); refused unless `confirm_billing` is `true` - ask the user first. Returns the data source (`creating`) and the job |
-| `connect_cloud_database` | `connection_id`, `name`, `resource_id?`, `username?`, `password?`, `database?`, `tables?` | service | connects an existing RDS / Aurora database (`resource_id` + login), existing DynamoDB `tables`, or - with a Firebase `connection_id` - the project's Firestore database (`database`, default `(default)`; free to connect, Google bills reads and writes); never changes them |
+| `connect_cloud_database` | `connection_id`, `name`, `resource_id?`, `username?`, `password?`, `database?`, `tables?`, `instance?` | service | connects an existing RDS / Aurora database (`resource_id` + login), existing DynamoDB `tables`, or - with a Firebase `connection_id` - the project's Firestore database (`database`, default `(default)`; free to connect, Google bills reads and writes); never changes them |
 | `list_cloud_backups` | `source_id` | anon | a DynamoDB database's on-demand backups in AWS, newest first, and how to restore one |
 | `create_cloud_backup` | `source_id`, `table?`, `confirm_billing` | service | **billable** (about US$0.10 per GB per month until deleted in AWS): an on-demand backup of the tables (or one) - ask the user first |
 | `app_logs` | `app_id`, `tail?` | service | runtime log lines of the live container (1..500, default 100) |
@@ -101,7 +103,9 @@ project role decides the tools (viewer = anon's tools plus read-only `run_query`
   Putting an app on a cloud target (billed to that cloud account) is a dashboard action for project
   admins; agents can list the targets and connections and deploy apps already on one. A service key can
   create a database in the user's AWS account (`create_cloud_database`, billable, only with
-  `confirm_billing: true`) or connect an existing one (also a Firebase project's Firestore database), back
+  `confirm_billing: true`; with a Firebase connection, `engine: "firebase_rtdb"` creates the project's
+  default Realtime Database, same rule) or connect an existing one (also a Firebase project's Firestore
+  database or Realtime Database, `instance`), back
   up DynamoDB tables (`create_cloud_backup`, same rule) and export Firestore documents
   (`export_documents`); deleting one is a dashboard action.
 

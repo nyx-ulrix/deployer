@@ -271,8 +271,9 @@ def check_naming(source: dict) -> list[dict]:
     for entity in source.get("entities", []):
         ename = entity["name"]
         noun = "Table" if entity.get("type") == "table" else "Collection"
-        # DynamoDB table names are AWS resource names (Deployer's own are deployer-<name>-<id>).
-        aws_name = source.get("engine") == "dynamodb"
+        # DynamoDB table names are AWS resource names (Deployer's own are deployer-<name>-<id>); a Realtime
+        # Database's top-level keys are data, often push ids or user ids.
+        aws_name = source.get("engine") in ("dynamodb", "firebase_rtdb")
         if not aws_name and not SNAKE_CASE.match(ename):
             issues.append(_issue("N1", "warning", sid, ename, None, f"{noun} name '{ename}' is not snake_case"))
         if not aws_name and not is_plural(ename):

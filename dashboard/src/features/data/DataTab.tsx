@@ -19,6 +19,7 @@ import { CreateCollectionDialog } from "./CreateCollectionDialog";
 import { CreateTableDialog } from "./CreateTableDialog";
 import { downloadText } from "../query/csv";
 import { DocumentsView } from "./DocumentsView";
+import { RtdbView } from "./RtdbView";
 import { SqlTableView } from "./SqlTableView";
 
 export function DataTab() {
@@ -54,6 +55,8 @@ export function DataTab() {
     entities.find((e) => e.name === entityName) ??
     (firestore && entityName ? { name: entityName, type: "collection" as const, row_count: null, fields: [], indexes: [], validator: null } : null);
   const entityNoun = isSql || dynamo ? "table" : "collection";
+  // Realtime Database (docs/CLOUD.md "C2-4"): one JSON tree, browsed by path instead of tables / collections.
+  const rtdbSource = source.engine === "firebase_rtdb";
 
   const select = (next: { source?: string; entity?: string | null }) => {
     const p = new URLSearchParams();
@@ -79,7 +82,14 @@ export function DataTab() {
           ))}
         </Select>
 
-        {schema.isPending ? (
+        {rtdbSource ? (
+          <>
+            <p className="px-1 text-sm text-muted">
+              A Realtime Database is one JSON tree: open its branches on the right, or jump to a path.
+            </p>
+            <RtdbExportButton projectId={project.id} source={source} />
+          </>
+        ) : schema.isPending ? (
           <PageSpinner />
         ) : schema.isError ? (
           <ErrorState error={schema.error} onRetry={() => void schema.refetch()} />
@@ -144,7 +154,9 @@ export function DataTab() {
       </aside>
 
       <section className="min-w-0 flex-1">
-        {entity ? (
+        {rtdbSource ? (
+          <RtdbView key={source.id} source={source} />
+        ) : entity ? (
           isSql ? (
             <SqlTableView key={`${source.id}/${entity.name}`} source={source} entity={entity} onDropped={() => select({ entity: null })} />
           ) : (
@@ -231,6 +243,24 @@ function ExportButton({ projectId, source }: { projectId: string; source: DataSo
           ? `Exported the first ${out.documents} documents (the limit for one export).`
           : `Exported ${out.documents} documents.`,
       );
+    },
+    onError: (e) => toast.error(errorMessage(e), "Export failed"),
+  });
+  return (
+    <Button size="sm" variant="ghost" icon={<Download className="size-3.5" />} loading={exp.isPending} onClick={() => exp.mutate()}>
+      Export as JSON
+    </Button>
+  );
+}
+
+/** Realtime Database: the whole JSON tree as one file (docs/CLOUD.md "C2-4"). */
+function RtdbExportButton({ projectId, source }: { projectId: string; source: DataSource }) {
+  const toast = useToast();
+  const exp = useMutation({
+    mutationFn: () => api.cloud.rtdbExport(projectId, source.id),
+    onSuccess: (out) => {
+      downloadText(`${source.name}-realtime-database.json`, JSON.stringify(out.data, null, 2), "application/json");
+      toast.success("Exported the whole database (the same JSON Firebase's console exports and imports).");
     },
     onError: (e) => toast.error(errorMessage(e), "Export failed"),
   });

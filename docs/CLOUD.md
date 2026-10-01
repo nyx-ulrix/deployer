@@ -12,7 +12,7 @@ and the `deploy-website` skill.
 | **C2-1** | Cloud database groundwork + AWS RDS / Aurora ("C2-1 as built") | **Built** (migration `0013_cloud_databases`) |
 | **C2-2** | DynamoDB engine ("C2-2 as built") | **Built** (no migration) |
 | **C2-3** | Cloud Firestore engine ("C2-3 as built") | **Built** (no migration) |
-| C2 | Firebase Realtime Database | Planned ("C2 - cloud databases") |
+| **C2-4** | Firebase Realtime Database engine ("C2-4 as built") | **Built** (no migration) |
 | C3 | GitHub Actions builds, so pushes deploy with the PC off | Planned ("C3 - GitHub Actions builds") |
 
 ## Principles
@@ -27,7 +27,7 @@ and the `deploy-website` skill.
   (those point at the PC). The one addition: an App Runner app with database access gets
   `DEPLOYER_DB_<NAME>_*` for the project's databases **in the same AWS account** (C2-1, C2-2), which point at
   AWS, and a Cloud Run app with database access the project's Firestore databases **in the same Firebase
-  project** (C2-3). The dashboard says so next to the target chooser and in the Environment card. The
+  project** (C2-3) and its Realtime Databases (C2-4). The dashboard says so next to the target chooser and in the Environment card. The
   dashboard, deploys, rollbacks and settings run on the PC, so *managing* needs the PC on; *serving*
   does not.
 - **Same product surface.** Cloud apps are ordinary apps in the Deploys tab: deployments, build log,
@@ -473,7 +473,7 @@ there is no cleanup job and project deletion is not blocked by it.
 ### Add database -> In your Firebase project
 
 The **In your Firebase project** card is now available for **NoSQL** (`only: "nosql"` in
-`cloud_db.LOCATIONS`; the dialog greys it out for SQL and says Realtime Database is coming). The section
+`cloud_db.LOCATIONS`; the dialog greys it out for SQL; the Realtime Database joined it in C2-4). The section
 explains Firestore in one paragraph (documents in collections, a document can hold its own collections, no
 server to size, used with the Firebase / Google Cloud SDK), where the database comes from, how apps and this
 PC reach it and the cost (connecting is free; Google bills reads, writes and storage beyond the daily free
@@ -577,21 +577,157 @@ run against a live project: the exact REST shapes (cursors with `startAt`, the c
 update mask's quoting), whether `roles/datastore.user` includes `datastore.databases.list` (the dialog
 works either way), and Cloud Run reaching Firestore as the default compute service account.
 
-## C2 - cloud databases (planned)
+## C2-4 as built: Firebase Realtime Database
+
+### Data model
+
+A Realtime Database is an `external` data source with `kind: nosql`, `engine: firebase_rtdb` on a **Firebase**
+cloud connection: **one database instance** of the connection's Google project. No migration: `cloud_state`
+holds `{provider: firebase, service: rtdb, created: false, instance, url, project_id, location}` and
+`config_encrypted` is `{}` - no secret of its own. Every data call goes to the database's own REST API
+(`<url>/<path>.json`) through `cloud_gcp.GcpClient.rtdb(method, url, path, body, params)` - the seam tests fake -
+with an access token for the scopes `firebase.database` + `userinfo.email` from the same PyJWT service-account
+flow (tokens are now cached per key **and scope**). The seam only accepts a database URL matching
+`https://<id>.firebaseio.com` or `https://<id>.<region>.firebasedatabase.app` (the URL comes from Firebase's
+management API, never from the user) and paths of percent-encoded keys (no `.`, so no `..`), so the token only
+goes to a Firebase database host. Answers are read as a stream and refused over **32 MB** (`413 too_large`:
+read a smaller path or use shallow / limitToFirst), never buffered whole. `services/rtdb.py` is the adapter,
+returned by `connections.cloud_engine("firebase_rtdb")`. The service-account token has **admin access**: the
+database's security rules do not apply to it (like Firebase's Admin SDK); the dialog says so.
+
+- **The data is one JSON tree addressed by paths**: `users/ann/name`; `""` (or `/`) is the root. Keys are text
+  without `. $ # [ ] /` or control characters, at most 768 bytes, 32 levels deep (Firebase's limits, checked
+  before sending: `400 invalid_path` / `invalid_value`). Values are plain JSON; a server value such as
+  `{".sv": "timestamp"}` passes through.
+- **Deployer never deletes a Realtime Database.** Removing the source only forgets it, so there is no cleanup
+  job and project deletion is not blocked (`created` stays false even when Deployer created the default
+  instance: Firebase keeps a project's default database).
+
+### Add database -> In your Firebase project -> Realtime Database
+
+The Firebase card (NoSQL only) first asks **Which Firebase database?** with one plain sentence each
+(`options.firestore.short`, `options.rtdb.short`): *Cloud Firestore keeps separate documents in collections and
+can search them by several fields at once - the usual choice for a new app* / *Realtime Database keeps everything
+in one big JSON tree that apps read and write by path and that sends every change to open apps instantly - good
+for small, fast-changing data like chat or who is online.* The Realtime Database section explains it in one
+paragraph, how this PC and apps reach it (the dashboard bypasses the security rules; visitors go through them)
+and the cost, then lists the project's instances (`GET .../cloud/connections/{cid}/databases` returns `rtdb:
+[{id, url, location, type, state, problem}]` from the management API's `projects/<p>/locations/-/instances`,
+`rtdb_problem` when listing is refused):
+
+- **Connect** one (`POST .../cloud/databases/connect` with `instance`): it must be in the listing (so its URL is
+  Firebase's own) and answer a shallow read of its root; a disabled one is refused with the reason.
+- **Create the project's default database** when it has none (billable once used: cost note + ticked box; API
+  `engine: "firebase_rtdb"`, `location` = `us-central1` (default), `europe-west1` or `asia-southeast1` - it cannot
+  move later - and `confirm_billing: true`): `POST .../locations/<loc>/instances?databaseId=<project>-default-rtdb`
+  with `{type: DEFAULT_DATABASE}`. Synchronous - Firebase answers with the ready database - so there is no job
+  (`job: null`). When the project already has a default database (or one appears meanwhile, `409`) that one is
+  connected instead; a retry never creates a second one. Further (`USER_DATABASE`) instances are made in the
+  Firebase console (Blaze plan) and connected here.
+
+### Browsing, editing, querying
+
+- **Data tab**: a tree instead of the collections list. Each branch opens with one **shallow** read
+  (`shallow=true`: each child cut to `true`, or kept when it is a plain value), so a big database stays fast; up
+  to 200 children are listed per branch (more: open a deeper path or search in the Query tab). A path box opens
+  any path, **Up** goes to the parent. Developers **edit** a value as JSON (the full value is loaded first;
+  saving replaces it and everything under it), **add** a child (a typed key, or empty for a Firebase-made,
+  time-ordered key via push) and **delete** a path (confirmed). The root cannot be replaced or deleted (`400
+  root_write`). **Export as JSON** downloads the whole database (`format=export`, the JSON the Firebase console
+  imports).
+- **Data API** (viewer+ and anon keys read, developer+ and service keys write; DATA_API.md "Realtime Database"):
+  `GET .../data-sources/{sid}/rtdb?path=` with `shallow`, or Firebase's query parameters `orderBy` (`$key`,
+  `$value`, `$priority` or a child path) + `startAt` / `endAt` / `equalTo` (JSON, or plain text) / `limitToFirst`
+  / `limitToLast` -> `{path, value}` plus `children: [{key, value}]` in Firebase's order (the REST API answers
+  filtered results unordered; Deployer sorts them: null, false, true, numbers, text, objects; keys that are 32-bit
+  whole numbers first). `PUT` (set), `PATCH` (update: keys may be child paths such as `address/city`, the others
+  stay), `POST` (push -> `{key}`), `DELETE ?path=`. Ordering by a child needs an `.indexOn` rule; Firebase's
+  refusal comes back as `400 query_failed` with how to add it. The documents and collections routes answer `400
+  not_supported` for a Realtime Database.
+- **Query console**: one JSON request (QUERY_CONSOLE.md "Realtime Database"): `{"path", "orderBy", "startAt",
+  "endAt", "equalTo", "limitToFirst", "limitToLast", "shallow"}` for `get` (the default), or `"operation": "set"
+  | "update" | "push" | "delete"` with `"value"`. Viewers may only `get` (`403 read_only_role`). Ordered reads
+  without a limit get `limitToFirst = max_rows + 1`. Answers have the MongoDB console's shape; `result_docs` are
+  the children as `{_key, ...fields}` (plain values as `{_key, _value}`).
+- **Schema**: the top-level keys (up to 50) as collections, fields inferred from their first 20 children (whole
+  subtrees, so far fewer than for documents) with `_key` as the primary key, `row_count` null; naming conventions
+  are not checked (keys are data). The schema export lists the URL and top-level keys and says where the rules
+  and `.indexOn` indexes live (`database.rules.json`, `firebase deploy --only database`).
+- **Export**: `GET .../data-sources/{sid}/rtdb-export?path=` (viewer+, audited as `data_source.export`) ->
+  `{project_id, instance, url, path, exported_at, data}`, up to the 32 MB read cap.
+- **Connection details** show the URL (as the URI), project, database id and location - no user or password.
+- **Backups**: the "up to their provider" note; Firebase's daily Realtime Database backups (Blaze plan) are set
+  up in the Firebase console.
+
+### Apps on Cloud Run
+
+`database_access` on a `firebase_app` also gives the project's Realtime Databases on the same Firebase
+connection: `DEPLOYER_DB_<NAME>_URL` (the database URL the Firebase Admin SDK takes), `_PROJECT` and `_DATABASE`
+(the instance id) - **no credentials**. The app signs in as the project's default compute service account, which
+needs the **Firebase Realtime Database Admin** role (or Editor); the build log names the account and the role
+each of its databases needs.
+
+### Permissions added (Settings -> Cloud accounts guide)
+
+`cloud.GOOGLE_ROLES` + **Firebase Realtime Database Admin** (`roles/firebasedatabase.admin`: list and create
+instances, read and write their data), marked "only needed for Realtime Databases"; `GOOGLE_APIS` + **Firebase
+Realtime Database Management API** (`firebasedatabase.googleapis.com`, for listing and creating instances; the
+data REST API needs no API switched on). Google has no narrower predefined role that both creates the default
+instance and writes data; the Viewer role would leave the dashboard read-only.
+
+### API
+
+| Method | Path | Role | Body / Query | Response |
+|---|---|---|---|---|
+| POST | `/projects/{pid}/cloud/databases` | admin+ | `{connection_id (Firebase), name, engine: "firebase_rtdb", location?, confirm_billing: true}` | `{data_source, job: null}` (201) |
+| POST | `/projects/{pid}/cloud/databases/connect` | admin+ | `{connection_id (Firebase), name, instance}` | `DataSource` (201); `400 connection_failed` |
+| GET | `/projects/{pid}/data-sources/{sid}/rtdb` | viewer+ / API keys | `path?`, `shallow?`, `orderBy?`, `startAt?`, `endAt?`, `equalTo?`, `limitToFirst?`, `limitToLast?` | `{path, value, children?}` |
+| PUT | `/projects/{pid}/data-sources/{sid}/rtdb` | developer+ / service keys | `{path, value}` | `{path, value}` |
+| PATCH | `/projects/{pid}/data-sources/{sid}/rtdb` | developer+ / service keys | `{path, value: {child path: value}}` | `{path, value}` |
+| POST | `/projects/{pid}/data-sources/{sid}/rtdb` | developer+ / service keys | `{path, value}` | `{path, key}` |
+| DELETE | `/projects/{pid}/data-sources/{sid}/rtdb` | developer+ / service keys | `path` | `{path, deleted: true}` |
+| GET | `/projects/{pid}/data-sources/{sid}/rtdb-export` | viewer+ | `path?` | `{project_id, instance, url, path, exported_at, data}` |
+
+`GET .../cloud/databases/options` adds `rtdb: {short, what, connect, cost, network, locations}` and
+`firestore.short`; the connection listing adds `rtdb` / `rtdb_problem`; data sources' `cloud` adds `url`.
+Editing a Realtime Database source's connection settings is refused (rename only).
+
+### MCP
+
+`rtdb_read` (any key: `path`, `shallow`, the query parameters; `limitToFirst` defaults to 200 with `orderBy`),
+`rtdb_write` (service key: `operation` set / update / push / delete, `path`, `value`), `create_cloud_database`
+with `engine: "firebase_rtdb"` + `location` (billable, `confirm_billing`), `connect_cloud_database` with
+`instance`, `list_cloud_databases` returns `rtdb`, `export_documents` takes `path` for a Realtime Database and
+`run_query` the JSON request. See MCP.md.
+
+### Not verified against real clouds
+
+Tested against an in-memory Realtime Database behind the `rtdb` seam (`tests/test_rtdb.py`: paths, values, query
+parameters and Firebase's ordering; listing, connect, creating the default database with billing confirmation and
+its idempotence; shallow browsing, ordered / filtered reads, the missing-index error, set / update / push /
+delete, the root guard, roles and API keys, the size cap; the console and its read-only rule; schema; export; the
+Cloud Run app's environment and log; MCP) and the real client's URLs, scopes, error parsing, size cap and URL /
+path guards against `httpx.MockTransport`. Not yet run against a live project: the management API's exact shapes
+(creating the default instance on a Spark-plan project, the `locations/-` listing), whether every instance type
+accepts the `firebase.database` + `userinfo.email` token as admin, how Firebase's `shallow` renders plain
+children (the tree handles both readings), and Cloud Run reaching the database as the default compute service
+account.
+
+## C2 - cloud databases (what is left)
 
 | Provider | Engine | Support |
 |---|---|---|
 | AWS | **RDS / Aurora** MySQL, MariaDB, PostgreSQL | **built in C2-1** (above) |
 | AWS | **DynamoDB** | **built in C2-2** (above) |
 | Firebase | **Cloud Firestore** | **built in C2-3** (above) |
-| Firebase | **Realtime Database** | new engine: JSON tree browse/edit, path queries |
+| Firebase | **Realtime Database** | **built in C2-4** (above) |
 
-Seams left by C1 and C2-1..3: data sources carry `cloud_connection_id` / `cloud_state` and the Add
+Seams left by C1 and C2-1..4: data sources carry `cloud_connection_id` / `cloud_state` and the Add
 database dialog has the AWS / Firebase cards (`cloud_db.LOCATIONS`); cloud apps get their database
 settings through `cloud_deploy.cloud_env` (`cloud.DATABASE_TARGETS`); the MCP `create_cloud_database` tool
 and the `confirm_billing` rule are in place; a NoSQL engine without its own driver is one module with the
-functions of `services/dynamo.py` / `services/firestore.py`, returned by `connections.cloud_engine`.
-Left: the Realtime Database engine, creating Firestore databases and their managed exports / scheduled
+functions of `services/dynamo.py` / `services/firestore.py` / `services/rtdb.py`, returned by `connections.cloud_engine`.
+Left: creating Firestore databases and their managed exports / scheduled
 backups from Deployer, and Secrets Manager / Secret Manager references instead of plain runtime
 environment.
 

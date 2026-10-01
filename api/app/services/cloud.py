@@ -89,7 +89,8 @@ CLOUD_ENV_NOTE = (
     "DEPLOYER_DB_<NAME>_* for the project's databases in the same AWS account - pointing at AWS, never at this PC "
     "(DynamoDB tables: their names and region, used through an IAM role that may access only those tables). A "
     "Firebase full app (Cloud Run) with database access gets DEPLOYER_DB_<NAME>_PROJECT / _DATABASE for the "
-    "project's Firestore databases in the same Firebase project, reached as the app's own service account."
+    "project's Firestore databases (and _URL for its Realtime Databases) in the same Firebase project, reached as "
+    "the app's own service account."
 )
 
 _AWS_KEY_ID = re.compile(r"^(AKIA|ASIA)[A-Z0-9]{16}$")
@@ -344,6 +345,12 @@ GOOGLE_ROLES = [
         "why": "browse, edit and query Firestore databases (read and write documents only)",
         "only_for": "firestore",
     },
+    {
+        "role": "roles/firebasedatabase.admin",
+        "title": "Firebase Realtime Database Admin",
+        "why": "list and create the project's Realtime Database and read and write its data",
+        "only_for": "firebase_rtdb",
+    },
 ]
 GOOGLE_APIS = [
     {"api": "firebasehosting.googleapis.com", "title": "Firebase Hosting API"},
@@ -351,6 +358,11 @@ GOOGLE_APIS = [
     {"api": "run.googleapis.com", "title": "Cloud Run Admin API", "only_for": "firebase_app"},
     {"api": "artifactregistry.googleapis.com", "title": "Artifact Registry API", "only_for": "firebase_app"},
     {"api": "firestore.googleapis.com", "title": "Cloud Firestore API", "only_for": "firestore"},
+    {
+        "api": "firebasedatabase.googleapis.com",
+        "title": "Firebase Realtime Database Management API",
+        "only_for": "firebase_rtdb",
+    },
 ]
 
 

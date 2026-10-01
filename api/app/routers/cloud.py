@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.deps import DbSession, InstanceOwner, ProjectAccess, require_role
 from app.errors import ApiError
 from app.models import CloudConnection, Project
-from app.services import audit, cloud, cloud_db, dynamo, firestore, jobs
+from app.services import audit, cloud, cloud_db, dynamo, firestore, jobs, rtdb
 from app.services.sources import data_source_out, get_source
 
 router = APIRouter(tags=["cloud"])
@@ -137,8 +137,10 @@ class TableKey(BaseModel):
 class CloudDatabaseCreate(BaseModel):
     connection_id: str = Field(max_length=36)
     name: str = Field(min_length=1, max_length=63)
-    engine: Literal["mysql", "mariadb", "postgresql", "dynamodb"]
+    engine: Literal["mysql", "mariadb", "postgresql", "dynamodb", "firebase_rtdb"]
     instance_class: str = Field(default=cloud_db.DEFAULT_CLASS, max_length=40)
+    # Realtime Database only (a Firebase connection, docs/CLOUD.md "C2-4"): where the default database goes.
+    location: str = Field(default="us-central1", max_length=40)
     # DynamoDB only (docs/CLOUD.md "C2-2"): the table's key; default a text `id`.
     partition_key: TableKey | None = None
     sort_key: TableKey | None = None
@@ -158,6 +160,8 @@ class CloudDatabaseConnect(BaseModel):
     database: str | None = Field(default=None, max_length=128)
     # DynamoDB: the tables (from the connection's listing); set instead of resource_id.
     tables: list[str] | None = Field(default=None, max_length=100)
+    # Realtime Database (a Firebase connection, docs/CLOUD.md "C2-4"): the instance id from the listing.
+    instance: str | None = Field(default=None, max_length=100)
 
 
 class CloudBackupCreate(BaseModel):
@@ -209,14 +213,27 @@ def connection_databases(connection_id: str, access: Admin, db: DbSession) -> di
 def create_database(body: CloudDatabaseCreate, request: Request, access: Admin, db: DbSession) -> dict:
     dynamodb = body.engine == "dynamodb"
     if not body.confirm_billing:
-        cost = cloud_db.DYNAMODB_COST_NOTE if dynamodb else cloud_db.COST_NOTE
+        intro, cost = (
+            ("This creates a Realtime Database in your Firebase project.", cloud_db.RTDB_COST_NOTE)
+            if body.engine == rtdb.ENGINE
+            else ("This creates a database AWS bills to your account.", cloud_db.DYNAMODB_COST_NOTE)
+            if dynamodb
+            else ("This creates a database AWS bills to your account.", cloud_db.COST_NOTE)
+        )
         raise ApiError(
             422,
             "billing_not_confirmed",
-            "This creates a database AWS bills to your account. " + cost + " Send confirm_billing: true.",
+            f"{intro} {cost} Send confirm_billing: true.",
             {"field": "confirm_billing"},
         )
     name = _name(db, access.project.id, body.name)
+    if body.engine == rtdb.ENGINE:  # synchronous: Firebase answers with the ready database
+        ds = cloud_db.create_rtdb(
+            db, access.project.id, connection_id=body.connection_id, name=name, location=body.location
+        )
+        _audit(db, request, access, ds, "create")
+        db.commit()
+        return {"data_source": data_source_out(ds), "job": None}
     if dynamodb:
         ds, job = cloud_db.create_table(
             db,
@@ -247,7 +264,11 @@ def create_database(body: CloudDatabaseCreate, request: Request, access: Admin, 
 def connect_database(body: CloudDatabaseConnect, request: Request, access: Admin, db: DbSession) -> dict:
     name = _name(db, access.project.id, body.name)
     conn = db.get(CloudConnection, body.connection_id)
-    if conn is not None and conn.provider == "firebase":
+    if conn is not None and conn.provider == "firebase" and body.instance:
+        ds = cloud_db.connect_rtdb(
+            db, access.project.id, connection_id=body.connection_id, name=name, instance=body.instance
+        )
+    elif conn is not None and conn.provider == "firebase":
         ds = cloud_db.connect_firestore(
             db,
             access.project.id,
@@ -345,3 +366,31 @@ def export_firestore(
     )
     db.commit()
     return firestore.export_documents(ds, collection, limit)
+
+
+# --- Realtime Database export (docs/CLOUD.md "C2-4") -----------------------------------------------
+
+
+@router.get("/projects/{project_id}/data-sources/{source_id}/rtdb-export")
+def export_rtdb(
+    source_id: str,
+    request: Request,
+    access: Viewer,
+    db: DbSession,
+    path: Annotated[str, Query(max_length=4096)] = "",
+) -> dict:
+    """The JSON at `path` (default the whole database) as one object."""
+    ds = get_source(db, access.project.id, source_id)
+    if ds.engine != rtdb.ENGINE:
+        raise ApiError(400, "wrong_source_kind", "This export is for Realtime Databases")
+    audit.record(
+        db,
+        "data_source.export",
+        request=request,
+        user_id=access.user.id,
+        project_id=access.project.id,
+        data_source_id=ds.id,
+        path=path,
+    )
+    db.commit()
+    return rtdb.export(ds, path)

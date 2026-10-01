@@ -299,7 +299,11 @@ const FIREBASE_TITLES = [
 ];
 
 // What an API or role marked `only_for` is needed for (docs/CLOUD.md).
-const ONLY_FOR: Record<string, string> = { firebase_app: "only needed for full apps", firestore: "only needed for Firestore databases" };
+const ONLY_FOR: Record<string, string> = {
+  firebase_app: "only needed for full apps",
+  firestore: "only needed for Firestore databases",
+  firebase_rtdb: "only needed for Realtime Databases",
+};
 
 function FirebaseGuide({
   roles,
@@ -339,6 +343,11 @@ function FirebaseGuide({
             <span className="text-fg">Cloud Firestore database</span>: connect the project&apos;s Firestore database under Databases → Add
             database → In your Firebase project, browse and edit it here, and give it to full apps. Free daily quota, then billed per read
             and write.
+          </li>
+          <li>
+            <span className="text-fg">Realtime Database</span>: Firebase&apos;s JSON-tree database that pushes changes to apps instantly.
+            Connect it (or create the project&apos;s default one) the same way, browse it as a tree here, and give it to full apps. Free
+            quota, then billed per GB stored and downloaded.
           </li>
         </ul>
       </div>
@@ -387,8 +396,9 @@ function FirebaseGuide({
           <p className="text-muted">
             Full apps that use a Firestore database run on Cloud Run as the project&apos;s default compute service account (
             <code className="font-mono text-xs">PROJECT_NUMBER-compute@developer.gserviceaccount.com</code>, listed under IAM). Grant it{" "}
-            <strong>Cloud Datastore User</strong> too, unless it already has Editor. Already made the <code className="font-mono">deployer</code>{" "}
-            account for hosting? Add the Cloud Datastore User role to it (IAM → Edit principal) and turn on the Cloud Firestore API.
+            <strong>Cloud Datastore User</strong> too (and <strong>Firebase Realtime Database Admin</strong> for a Realtime Database), unless it
+            already has Editor. Already made the <code className="font-mono">deployer</code> account? Add the database roles to it (IAM → Edit
+            principal) and turn on the database APIs above.
           </p>
           <DoneButton status={steps[2]} onClick={() => ack(2)} />
         </div>

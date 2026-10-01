@@ -261,6 +261,8 @@ export function databaseEnvNames(source: Pick<DataSource, "name" | "kind"> & { e
       ? ["TABLE", "TABLES", "REGION", "DATABASE"]
       : source.engine === "firestore" // "C2-3": the Google project and database id; Cloud Run signs in as itself
         ? ["PROJECT", "DATABASE"]
+        : source.engine === "firebase_rtdb" // "C2-4": also the database URL the Firebase Admin SDK takes
+          ? ["PROJECT", "URL", "DATABASE"]
         : source.kind === "sql"
         ? ["HOST", "PORT", "USER", "PASSWORD", "DATABASE", "URL"]
         : ["URL", "DATABASE"];

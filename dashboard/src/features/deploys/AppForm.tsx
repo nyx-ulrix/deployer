@@ -219,12 +219,12 @@ function CloudDatabaseAccess({
   return (
     <div className="space-y-2">
       <Checkbox
-        label={firebase ? "Connect to this project's Firestore databases" : "Connect to this project's AWS databases"}
+        label={firebase ? "Connect to this project's Firebase databases" : "Connect to this project's AWS databases"}
         description={
           !isAdmin
             ? "Only project admins can change this; ask a project admin."
             : firebase
-              ? "Gives the app the Firestore databases in the same Firebase project (never the ones on this PC). The app signs in as its own Google service account, so there is no password to leak. Takes effect on the next deploy."
+              ? "Gives the app the Firestore and Realtime Databases in the same Firebase project (never the ones on this PC). The app signs in as its own Google service account, so there is no password to leak. Takes effect on the next deploy."
               : "Gives the app the databases in the same AWS account (never the ones on this PC): SQL databases through their private network, DynamoDB tables through an AWS role that may use only those tables. Takes effect on the next deploy."
         }
         checked={checked}
@@ -252,8 +252,9 @@ function CloudDatabaseAccess({
           <>
             Cloud Run runs the app as the project&apos;s default compute service account
             (PROJECT_NUMBER-compute@developer.gserviceaccount.com; the build log shows it). Give it the{" "}
-            <strong>Cloud Datastore User</strong> role in the Google Cloud console → IAM, unless it already has Editor, or
-            the app&apos;s Firestore calls are refused.
+            <strong>Cloud Datastore User</strong> role (Firestore) and the <strong>Firebase Realtime Database Admin</strong> role
+            (Realtime Database) in the Google Cloud console → IAM, unless it already has Editor, or the app&apos;s database
+            calls are refused.
           </>
         ) : (
           <>

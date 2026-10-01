@@ -38,6 +38,7 @@ export const ENGINE_LABELS: Record<string, string> = {
   mongodb: "MongoDB",
   dynamodb: "DynamoDB",
   firestore: "Firestore",
+  firebase_rtdb: "Realtime Database",
 };
 
 export function engineLabel(engine: string): string {

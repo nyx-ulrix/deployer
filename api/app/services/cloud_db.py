@@ -22,10 +22,16 @@ Cloud Firestore ("C2-3"): an `external` source with engine `firestore` on a Fire
 existing Firestore database of that project (`cloud_state.database`), only ever connected - Deployer never
 creates or deletes one. Data operations are in services/firestore.py.
 
+Firebase Realtime Database ("C2-4"): an `external` source with engine `firebase_rtdb` on a Firebase connection,
+one database instance of that project (`cloud_state.instance` / `.url`). Connected, or - when the project has
+none yet - the project's default instance is created first (billable once used, so confirmed). Deployer never
+deletes one. Data operations are in services/rtdb.py.
+
 Apps on `aws_app` with database access get `DEPLOYER_DB_<NAME>_*` for the project's databases on the
 same AWS connection through `cloud_deploy.cloud_env`, and reach them through the VPC connector (RDS) or
 their App Runner instance role, scoped to the tables' ARNs (DynamoDB). Apps on `firebase_app` get the
-project's Firestore databases on the same Firebase connection and reach them as their service account.
+project's Firestore and Realtime Databases on the same Firebase connection and reach them as their service
+account.
 """
 
 from __future__ import annotations
@@ -42,7 +48,7 @@ from sqlalchemy.orm import Session
 from app.crypto import decrypt_json, encrypt_json
 from app.errors import ApiError, CloudError, conflict
 from app.models import App, CloudConnection, DataSource, Job, utcnow
-from app.services import cloud, cloud_aws, cloud_gcp, connections, dynamo, firestore, jobs
+from app.services import cloud, cloud_aws, cloud_gcp, connections, dynamo, firestore, jobs, rtdb
 
 log = logging.getLogger(__name__)
 
@@ -100,13 +106,13 @@ LOCATIONS = [
     {
         "id": "firebase",
         "label": "In your Firebase project",
-        "what": "Google runs the database in your Firebase project: connect its Cloud Firestore database "
-        "(NoSQL documents, the database Firebase apps use).",
+        "what": "Google runs the database in your Firebase project: its Cloud Firestore database or its "
+        "Realtime Database (both NoSQL, the databases Firebase apps use).",
         "when_pc_off": "Stays up when this PC is off, so cloud apps keep working.",
-        "cost": "Free daily quota (50,000 reads, 20,000 writes, 1 GB stored), then billed by Google per read, "
-        "write and GB (Blaze plan).",
+        "cost": "Free quota (Firestore: 50,000 reads and 20,000 writes a day; Realtime Database: 1 GB stored and "
+        "10 GB downloaded a month), then billed by Google for what you use (Blaze plan).",
         "only": "nosql",
-        "note": "NoSQL only: Cloud Firestore. Realtime Database is coming soon.",
+        "note": "NoSQL only: Cloud Firestore or Realtime Database.",
     },
 ]
 COST_NOTE = (
@@ -160,6 +166,39 @@ FIRESTORE_NETWORK = (
     "full apps (Cloud Run) with Database access sign in as their own service account. Give that account (the "
     "project's default compute service account, PROJECT_NUMBER-compute@developer.gserviceaccount.com) the Cloud "
     "Datastore User role in the Google Cloud console -> IAM, unless it already has Editor."
+)
+# docs/CLOUD.md "C2-4": the two Firebase databases, one plain sentence each on how they differ.
+FIRESTORE_SHORT = (
+    "Cloud Firestore keeps separate documents in collections and can search them by several fields at once - "
+    "the usual choice for a new app."
+)
+RTDB_SHORT = (
+    "Realtime Database keeps everything in one big JSON tree that apps read and write by path and that sends "
+    "every change to open apps instantly - good for small, fast-changing data like chat or who is online."
+)
+RTDB_WHAT = (
+    "The Realtime Database is Firebase's original database: one JSON tree (nested data, like folders of values) "
+    "where every piece has a path such as users/ann/name. Apps listening to a path get each change at once. "
+    "Google runs it for you - nothing to size. Apps use the Firebase SDK (not SQL); queries sort and filter on "
+    "one child at a time."
+)
+RTDB_CONNECT = (
+    "Pick the database: most Firebase projects have one Realtime Database, the default one (<project>-default-rtdb). "
+    "If yours has none yet, Deployer can create it here - pick a location near your users (it cannot move later). "
+    "Removing it here only forgets it: the data stays in Firebase, and Deployer never deletes a Realtime Database."
+)
+RTDB_COST_NOTE = (
+    "Creating the database costs nothing by itself. The free quota covers 1 GB stored and 10 GB downloaded a month "
+    "(and 100 apps connected at once); beyond it, on the Blaze plan, Google bills about US$5 per GB stored and "
+    "US$1 per GB downloaded each month - including what this dashboard reads."
+)
+RTDB_NETWORK = (
+    "No firewall or password: Deployer reaches it with your Firebase connection's service account, which - like "
+    "Firebase's Admin SDK - is not limited by the database's security rules. Firebase full apps (Cloud Run) with "
+    "Database access sign in as their own service account: give it (the project's default compute service "
+    "account, PROJECT_NUMBER-compute@developer.gserviceaccount.com) the Firebase Realtime Database Admin role in "
+    "the Google Cloud console -> IAM, unless it already has Editor. Your website's visitors reach the database "
+    "only as the security rules you set in the Firebase console allow."
 )
 DYNAMODB_NETWORK = (
     "No firewall or password: Deployer reaches it with your AWS connection's key, and App Runner apps with "
@@ -218,11 +257,13 @@ def cloud_out(ds: DataSource, db: Session | None = None) -> dict | None:
         "resource_id": s.get("instance_id")
         or s.get("cluster_id")
         or next(iter(s.get("tables") or []), None)
-        or s.get("database"),
-        "resource_kind": {"dynamodb": "table", "firestore": "database"}.get(s.get("service"))
+        or s.get("database")
+        or s.get("instance"),
+        "resource_kind": {"dynamodb": "table", "firestore": "database", "rtdb": "database"}.get(s.get("service"))
         or ("cluster" if s.get("cluster_id") else "instance"),
         "tables": s.get("tables"),
         "project_id": s.get("project_id"),
+        "url": s.get("url"),  # Realtime Database
         "region": s.get("region") or s.get("location"),
         "instance_class": s.get("instance_class"),
         "allowed_ip": s.get("allowed_ip"),
@@ -245,10 +286,19 @@ def options() -> dict:
             "network": NETWORK_NOTE,
         },
         "firestore": {
+            "short": FIRESTORE_SHORT,
             "what": FIRESTORE_WHAT,
             "connect": FIRESTORE_CONNECT,
             "cost": FIRESTORE_COST_NOTE,
             "network": FIRESTORE_NETWORK,
+        },
+        "rtdb": {
+            "short": RTDB_SHORT,
+            "what": RTDB_WHAT,
+            "connect": RTDB_CONNECT,
+            "cost": RTDB_COST_NOTE,
+            "network": RTDB_NETWORK,
+            "locations": [{"id": k, "label": v} for k, v in rtdb.LOCATIONS.items()],
         },
         "dynamodb": {
             "what": DYNAMODB_WHAT,
@@ -283,10 +333,11 @@ def _cloud_call(fn, *args, **kwargs):
 
 def list_resources(db: Session, project_id: str, connection_id: str) -> dict:
     """RDS / Aurora databases and DynamoDB tables of an AWS connection's region, with whether Deployer can
-    connect to each - or a Firebase connection's Firestore databases (`firestore`)."""
+    connect to each - or a Firebase connection's Firestore databases (`firestore`) and Realtime Databases
+    (`rtdb`)."""
     conn, config = _connection(db, project_id, connection_id, provider=None)
     if conn.provider == "firebase":
-        return _firestore_listing(config)
+        return _firebase_listing(config)
     aws = cloud_aws.client(config)
     found = _cloud_call(aws.db_resources)
     try:
@@ -316,12 +367,18 @@ def list_resources(db: Session, project_id: str, connection_id: str) -> dict:
     }
 
 
-def _firestore_listing(config: dict) -> dict:
+def _firebase_listing(config: dict) -> dict:
+    gcp = cloud_gcp.client(config)
     found, problem = [], None
     try:
-        found = firestore.list_databases(cloud_gcp.client(config))
+        found = firestore.list_databases(gcp)
     except CloudError as exc:  # e.g. the role predates Firestore support: the dialog still takes a typed id
         problem = exc.message
+    instances, rtdb_problem = [], None
+    try:
+        instances = rtdb.instances(gcp)
+    except CloudError as exc:  # e.g. no Realtime Database role yet: the dialog says which one
+        rtdb_problem = exc.message
     return {
         "provider": "firebase",
         "project_id": config.get("project_id"),
@@ -332,6 +389,8 @@ def _firestore_listing(config: dict) -> dict:
         "tables_problem": None,
         "firestore": found,
         "firestore_problem": problem,
+        "rtdb": instances,
+        "rtdb_problem": rtdb_problem,
     }
 
 
@@ -502,6 +561,87 @@ def connect_firestore(db: Session, project_id: str, *, connection_id: str, name:
             "location": info.get("locationId"),
         },
     )
+    db.add(ds)
+    db.flush()
+    return ds
+
+
+def _rtdb_source(project_id: str, conn: CloudConnection, config: dict, name: str, inst: dict) -> DataSource:
+    """The (unsaved) source of a Realtime Database instance from `rtdb.instances`."""
+    return DataSource(
+        project_id=project_id,
+        name=name,
+        kind="nosql",
+        engine=rtdb.ENGINE,
+        mode="external",
+        database_name=inst["id"],
+        config_encrypted=encrypt_json({}),  # no secret of its own: the Firebase connection's key is used
+        status="ok",
+        status_message=f"Connected ({inst.get('location') or 'Realtime Database'})",
+        last_checked_at=utcnow(),
+        cloud_connection_id=conn.id,
+        cloud_state={
+            "provider": "firebase",
+            "service": "rtdb",
+            "created": False,  # Deployer never deletes a Realtime Database, even one it created
+            "instance": inst["id"],
+            "url": inst["url"],
+            "project_id": config.get("project_id"),
+            "location": inst.get("location"),
+        },
+    )
+
+
+def connect_rtdb(db: Session, project_id: str, *, connection_id: str, name: str, instance: str) -> DataSource:
+    """A Realtime Database source for an instance of the Firebase project (the caller checks the name and
+    commits). The instance must be in the project's listing, so its URL is Firebase's own."""
+    conn, config = _connection(db, project_id, connection_id, provider="firebase")
+    try:
+        found = rtdb.instances(cloud_gcp.client(config))
+    except CloudError as exc:
+        raise ApiError(400, "connection_failed", f"Couldn't list the Realtime Databases: {exc.message}") from None
+    inst = next((i for i in found if i["id"] == instance.strip()), None)
+    if inst is None or not inst.get("url"):
+        raise ApiError(
+            400,
+            "connection_failed",
+            f"No Realtime Database {instance!r} in this Firebase project: pick one from the list, or create the "
+            "default one",
+        )
+    if inst["problem"]:
+        raise ApiError(400, "connection_failed", inst["problem"])
+    ds = _rtdb_source(project_id, conn, config, name, inst)
+    ok, message, _ = rtdb.check(ds)
+    if not ok:
+        raise ApiError(400, "connection_failed", message)
+    db.add(ds)
+    db.flush()
+    return ds
+
+
+def create_rtdb(db: Session, project_id: str, *, connection_id: str, name: str, location: str) -> DataSource:
+    """Creates the Firebase project's default Realtime Database in `location` (or, when it already has one,
+    connects that) and returns its source. Synchronous: Firebase answers with the ready database."""
+    if location not in rtdb.LOCATIONS:
+        raise ApiError(422, "validation_error", f"Pick one of: {', '.join(rtdb.LOCATIONS)}", {"field": "location"})
+    conn, config = _connection(db, project_id, connection_id, provider="firebase")
+    gcp = cloud_gcp.client(config)
+    found = [i for i in _cloud_call(rtdb.instances, gcp) if i["type"] == "DEFAULT_DATABASE"]
+    if not found:
+        try:
+            gcp.create_rtdb_instance(location, f"{config.get('project_id')}-default-rtdb")
+        except CloudError as exc:
+            if exc.status != 409:  # 409: made meanwhile (another click, the console) - connect it below
+                raise ApiError(
+                    502,
+                    "cloud_error",
+                    f"{exc.message} - the service account needs the Firebase Realtime Database Admin role and the "
+                    "Firebase Realtime Database Management API turned on (Settings -> Cloud accounts).",
+                ) from None
+        found = [i for i in _cloud_call(rtdb.instances, gcp) if i["type"] == "DEFAULT_DATABASE"]
+        if not found:
+            raise ApiError(502, "cloud_error", "Firebase did not list the new database yet: try again in a minute")
+    ds = _rtdb_source(project_id, conn, config, name, found[0])
     db.add(ds)
     db.flush()
     return ds
@@ -1009,12 +1149,14 @@ def app_databases(db: Session, app: App) -> tuple[list[dict], list[str]]:
             notes.append(f"Database '{ds.name}' is still being created: deploy again once it is ready")
         else:
             state = dict(ds.cloud_state or {})
-            # DynamoDB / Firestore: no credentials; the app's own cloud identity is allowed in.
+            # DynamoDB / Firestore / Realtime Database: no credentials; the app's own cloud identity is allowed in.
             config = (
                 {"region": state.get("region"), "tables": state.get("tables") or []}
                 if ds.engine == dynamo.ENGINE
                 else {"project_id": state.get("project_id"), "database": firestore.database_of(ds)}
                 if ds.engine == firestore.ENGINE
+                else {"project_id": state.get("project_id"), "database": state.get("instance"), "url": rtdb.url_of(ds)}
+                if ds.engine == rtdb.ENGINE
                 else connections.load_config(ds)
             )
             out.append(

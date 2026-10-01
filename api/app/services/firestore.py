@@ -82,9 +82,7 @@ def gcp_for(ds: DataSource):
         conn = s.get(CloudConnection, ds.cloud_connection_id) if ds.cloud_connection_id else None
         config = cloud.config_of(conn) if conn is not None else None
     if config is None:
-        raise ApiError(
-            409, "cloud_connection_missing", "This Firestore database's Firebase project is no longer connected"
-        )
+        raise ApiError(409, "cloud_connection_missing", "This database's Firebase project is no longer connected")
     return cloud_gcp.client(config)
 
 

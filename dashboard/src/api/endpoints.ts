@@ -1,4 +1,4 @@
-import { client } from "./client";
+import { client, type QueryValue } from "./client";
 import type {
   ApiKey,
   ApiKeyConfig,
@@ -74,6 +74,8 @@ import type {
   InvitePreview,
   KeysToRotate,
   JsonObject,
+  JsonValue,
+  RtdbRead,
   Member,
   Ok,
   Project,
@@ -448,6 +450,20 @@ export const api = {
       ),
   },
 
+  /** docs/CLOUD.md "C2-4": a Firebase Realtime Database, read and written by path ("" is the root). */
+  rtdb: {
+    read: (pid: string, sid: string, path: string, query: Record<string, QueryValue> = {}) =>
+      client.get<RtdbRead>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`, { query: { path, ...query } }),
+    set: (pid: string, sid: string, path: string, value: JsonValue) =>
+      client.put<{ path: string }>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`, { path, value }),
+    update: (pid: string, sid: string, path: string, value: JsonObject) =>
+      client.patch<{ path: string }>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`, { path, value }),
+    push: (pid: string, sid: string, path: string, value: JsonValue) =>
+      client.post<{ path: string; key: string }>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`, { path, value }),
+    remove: (pid: string, sid: string, path: string) =>
+      client.del<{ path: string }>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`, { query: { path } }),
+  },
+
   // DEPLOYMENTS.md: apps built from a Git repo and served next to the project's databases.
   apps: {
     list: (pid: string) => client.get<App[]>(`/projects/${e(pid)}/apps`),
@@ -508,17 +524,26 @@ export const api = {
         instance_class?: string;
         partition_key?: { name: string; type: DynamoKeyType };
         sort_key?: { name: string; type: DynamoKeyType };
+        /** Realtime Database (`engine: "firebase_rtdb"`): where the project's default database is created. */
+        location?: string;
         confirm_billing: boolean;
       },
-    ) => client.post<{ data_source: DataSource; job: Job }>(`/projects/${e(pid)}/cloud/databases`, body),
+      // `job` is null for a Realtime Database: Firebase answers with the ready database.
+    ) => client.post<{ data_source: DataSource; job: Job | null }>(`/projects/${e(pid)}/cloud/databases`, body),
     /** RDS: `resource_id` + login; DynamoDB: `tables`; Firestore (a Firebase connection): `database`. */
     connectDatabase: (
       pid: string,
       body:
         | { connection_id: string; name: string; resource_id: string; username: string; password: string; database?: string }
         | { connection_id: string; name: string; tables: string[] }
-        | { connection_id: string; name: string; database: string },
+        | { connection_id: string; name: string; database: string }
+        | { connection_id: string; name: string; instance: string },
     ) => client.post<DataSource>(`/projects/${e(pid)}/cloud/databases/connect`, body),
+    /** Realtime Database: the JSON at a path (default the whole database) as one object (docs/CLOUD.md "C2-4"). */
+    rtdbExport: (pid: string, sid: string, path = "") =>
+      client.get<{ path: string; url: string; data: JsonValue }>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb-export`, {
+        query: { path },
+      }),
     /** Firestore: every document of the top-level collections as one JSON object (docs/CLOUD.md "C2-3"). */
     firestoreExport: (pid: string, sid: string) =>
       client.get<{ documents: number; truncated: boolean; collections: Record<string, JsonObject[]> }>(

@@ -54,8 +54,10 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
   *Settings → Cloud accounts* ([docs/CLOUD.md](docs/CLOUD.md)). Databases can live there too: create
   or connect an AWS RDS / Aurora database (SQL) or DynamoDB tables (NoSQL, browsed and queried like
   MongoDB, with on-demand backups) from *Add database → In your AWS account*, or connect your Firebase
-  project's Cloud Firestore database (collections, subcollections, JSON queries, JSON export) from *Add
-  database → In your Firebase project*; Firebase full apps get it with *Database access*.
+  project's Cloud Firestore database (collections, subcollections, JSON queries, JSON export) or its
+  Realtime Database (a JSON tree browsed branch by branch, edited by path, Firebase's path queries; the
+  default one can be created for you) from *Add database → In your Firebase project*; Firebase full apps
+  get them with *Database access*.
 - **Monitoring and alerts** - CPU, memory, disk, every container and app, API traffic and error
   rate on *Settings → Monitoring*; alerts for low disk, crash-looping containers, failed backups, a
   down tunnel and more, sent to your own webhook (Slack, Discord, ntfy)
@@ -494,7 +496,7 @@ The one roadmap for the project (docs link here rather than keeping their own co
    co-host PCs, email alerts, custom thresholds, a Prometheus endpoint.
 8. **Cloud hosting** on the owner's own AWS / Firebase accounts ([docs/CLOUD.md](docs/CLOUD.md)) -
    *(current)*: C1 connections + hosting targets done; C2-1 AWS RDS / Aurora databases, C2-2
-   DynamoDB and C2-3 Cloud Firestore done; Firebase Realtime Database and C3 GitHub Actions builds
+   DynamoDB, C2-3 Cloud Firestore and C2-4 Firebase Realtime Database done; C3 GitHub Actions builds
    planned.
 
 ## Security

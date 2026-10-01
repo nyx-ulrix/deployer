@@ -66,8 +66,9 @@ export type Invite = {
 
 export type DataSourceKind = "sql" | "nosql";
 /** `dynamodb`: tables in the user's AWS account (docs/CLOUD.md "C2-2"); `firestore`: a Firebase project's Cloud
- * Firestore database ("C2-3"). Both are browsed like MongoDB collections. */
-export type DataSourceEngine = "mariadb" | "mysql" | "postgresql" | "mongodb" | "dynamodb" | "firestore";
+ * Firestore database ("C2-3"), both browsed like MongoDB collections; `firebase_rtdb`: a Firebase Realtime Database
+ * ("C2-4"), one JSON tree browsed by path. */
+export type DataSourceEngine = "mariadb" | "mysql" | "postgresql" | "mongodb" | "dynamodb" | "firestore" | "firebase_rtdb";
 
 export type DataSource = {
   id: string;
@@ -104,8 +105,10 @@ export type DataSourceCloud = {
   resource_kind: "instance" | "cluster" | "table" | "database";
   /** DynamoDB: the tables this database holds. */
   tables?: string[] | null;
-  /** Firestore: the Google project the database is in. */
+  /** Firestore / Realtime Database: the Google project the database is in. */
   project_id?: string | null;
+  /** Realtime Database: its URL. */
+  url?: string | null;
   region: string | null;
   instance_class: string | null;
   /** This PC's public IP the database's firewall lets in (created databases). */
@@ -146,8 +149,23 @@ export type CloudDatabaseOptions = {
     cost: string;
     network: string;
   };
-  firestore: { what: string; connect: string; cost: string; network: string };
+  /** `short`: one plain sentence on how it differs from the other Firebase database. */
+  firestore: { short: string; what: string; connect: string; cost: string; network: string };
+  rtdb: { short: string; what: string; connect: string; cost: string; network: string; locations: { id: string; label: string }[] };
 };
+
+/** A Realtime Database of a Firebase project (`problem`: why Deployer can't use it). */
+export type RtdbInstance = {
+  id: string;
+  url: string | null;
+  location: string | null;
+  type: string | null;
+  state: string;
+  problem: string | null;
+};
+
+/** `GET .../rtdb`: the value at a path; `children` (in Firebase's order) for shallow or ordered reads. */
+export type RtdbRead = { path: string; value: JsonValue; children?: { key: string; value: JsonValue }[] };
 
 /** A Firestore database of a Firebase project (`problem`: why Deployer can't use it). */
 export type FirestoreDatabase = { id: string; location: string | null; type: string | null; problem: string | null };
@@ -190,6 +208,9 @@ export type CloudDbListing = {
   /** Firebase connections: the project's Firestore databases (`firestore_problem`: why they could not be listed). */
   firestore?: FirestoreDatabase[];
   firestore_problem?: string | null;
+  /** Firebase connections: the project's Realtime Databases (`rtdb_problem`: why they could not be listed). */
+  rtdb?: RtdbInstance[];
+  rtdb_problem?: string | null;
 };
 
 export type ApiKeyRole = "anon" | "service";
@@ -371,7 +392,7 @@ export type ConnectionDetails = {
   /** DynamoDB (docs/CLOUD.md "C2-2"). */
   region?: string | null;
   tables?: string[];
-  /** Firestore ("C2-3"): the Google project; `database` is the database id. */
+  /** Firestore ("C2-3") / Realtime Database ("C2-4"): the Google project; `database` is the database id. */
   project_id?: string | null;
 };
 
@@ -820,7 +841,7 @@ export type SqlQueryResponse = {
 export type MongoQueryResponse = {
   kind: "nosql";
   /** `dynamodb`: one JSON request (QUERY_CONSOLE.md "DynamoDB"), answered in the same shape. */
-  engine: "mongodb" | "dynamodb" | "firestore";
+  engine: "mongodb" | "dynamodb" | "firestore" | "firebase_rtdb";
   duration_ms: number;
   /** Text printed by the shell (print(), warnings, stderr). */
   output: string;

@@ -175,6 +175,11 @@ describe("database access", () => {
       "DEPLOYER_DB_APP_DATA_PROJECT",
       "DEPLOYER_DB_APP_DATA_DATABASE",
     ]);
+    expect(databaseEnvNames({ name: "Live", kind: "nosql", engine: "firebase_rtdb" })).toEqual([
+      "DEPLOYER_DB_LIVE_PROJECT",
+      "DEPLOYER_DB_LIVE_URL",
+      "DEPLOYER_DB_LIVE_DATABASE",
+    ]);
   });
   it("only managed sources on the main server are reachable", () => {
     const rows = [

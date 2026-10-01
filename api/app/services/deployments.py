@@ -826,6 +826,9 @@ def source_env(name: str, kind: str, engine: str, config: dict, database_name: s
         env[prefix + "REGION"] = str(config.get("region") or "")
     elif engine == "firestore":  # docs/CLOUD.md "C2-3": Cloud Run signs in as its service account
         env[prefix + "PROJECT"] = str(config.get("project_id") or "")
+    elif engine == "firebase_rtdb":  # "C2-4": the database URL; Cloud Run signs in as its service account
+        env[prefix + "PROJECT"] = str(config.get("project_id") or "")
+        env[prefix + "URL"] = str(config.get("url") or "")
     elif kind == "sql":
         env[prefix + "HOST"] = str(config.get("host") or "")
         env[prefix + "PORT"] = str(config.get("port") or 3306)

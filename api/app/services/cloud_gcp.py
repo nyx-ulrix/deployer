@@ -1,5 +1,6 @@
 """The Google REST calls behind the Firebase hosting targets and databases (docs/CLOUD.md): Firebase Hosting
-v1beta1, Cloud Run Admin v2, Artifact Registry v1 and Cloud Firestore v1, with a service-account key.
+v1beta1, Cloud Run Admin v2, Artifact Registry v1, Cloud Firestore v1 and the Firebase Realtime Database
+(management v1beta + the database's own REST API), with a service-account key.
 
 No Google SDK: the OAuth token is a JWT-bearer grant signed with the key's RSA private key (PyJWT +
 cryptography, already dependencies) and every call is plain httpx. Rules:
@@ -8,7 +9,9 @@ cryptography, already dependencies) and every call is plain httpx. Rules:
   must not be able to send a signed assertion anywhere else);
 - every URL is built from constants plus validated ids; the only URLs taken from a response are
   long-running operation names (checked against `_OPERATION`) and Hosting's upload URL (must start
-  with `UPLOAD_PREFIX`), so the bearer token only ever goes to Google;
+  with `UPLOAD_PREFIX`), so the bearer token only ever goes to Google; a Realtime Database URL (from the
+  management API, stored on the source) must match `_RTDB_URL` - a Firebase database host - before the
+  database-scoped token is sent to it;
 - the private key and access tokens are never logged or put in `CloudError` messages.
 
 `GcpClient` is replaced by a fake in tests (`set_factory`); the token exchange itself is tested with
@@ -18,6 +21,7 @@ cryptography, already dependencies) and every call is plain httpx. Rules:
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from collections.abc import Callable
@@ -36,6 +40,10 @@ HOSTING = "https://firebasehosting.googleapis.com/v1beta1"
 RUN = "https://run.googleapis.com/v2"
 REGISTRY = "https://artifactregistry.googleapis.com/v1"
 FIRESTORE = "https://firestore.googleapis.com/v1"
+RTDB_MANAGEMENT = "https://firebasedatabase.googleapis.com/v1beta"
+# The Realtime Database's own REST API takes a token with these scopes (docs/CLOUD.md "C2-4").
+RTDB_SCOPES = "https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email"
+RTDB_MAX_BYTES = 32 * 1024 * 1024  # one Realtime Database read: bigger answers are refused, not buffered
 UPLOAD_PREFIX = "https://upload-firebasehosting.googleapis.com/"
 TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 CHANNEL_TTL = "604800s"  # preview channels expire after 7 days
@@ -48,9 +56,15 @@ _VERSION = re.compile(r"^(projects/[\w-]+/)?sites/[a-z0-9-]+/versions/[\w-]+$")
 # A Firestore path under projects/<project>/ (segments already percent-encoded by services/firestore.py):
 # the database list, a database, or something under its documents / collection groups, plus a `:method`.
 _FIRESTORE_PATH = re.compile(r"^databases(/[\w()%.~-]+(/(documents|collectionGroups)(/[\w%.~-]+)*)?)?(:[A-Za-z]+)?$")
+# A Realtime Database: https://<id>.firebaseio.com (us-central1) or https://<id>.<region>.firebasedatabase.app.
+_RTDB_URL = re.compile(
+    r"^https://[a-z0-9][a-z0-9-]{0,62}(\.firebaseio\.com|\.[a-z]+-[a-z]+\d{1,2}\.firebasedatabase\.app)$"
+)
+# A path in it (segments percent-encoded by services/rtdb.py; keys never contain "."): "" is the root.
+_RTDB_PATH = re.compile(r"^(/[A-Za-z0-9_%~-]+)*$")
 
 _factory: Callable[[dict], Any] | None = None
-_tokens: dict[str, tuple[str, float]] = {}  # sha256(client email + key) -> (access token, expiry)
+_tokens: dict[str, tuple[str, float]] = {}  # sha256(client email + key + scopes) -> (access token, expiry)
 _transport: httpx.BaseTransport | None = None
 
 
@@ -76,6 +90,18 @@ def _name(value: str) -> str:
     return value
 
 
+def _api_error(status: int, body: Any) -> CloudError:
+    if isinstance(body, list) and body:  # streamed methods (Firestore runQuery) send errors as an array
+        body = body[0]
+    err = body.get("error") if isinstance(body, dict) else None
+    code = ""
+    if isinstance(err, dict):
+        message, code = str(err.get("message") or err.get("status") or ""), str(err.get("status") or "")
+    else:  # also the Realtime Database's {"error": "Permission denied"}
+        message = str(body.get("error_description") or err or "") if isinstance(body, dict) else ""
+    return CloudError(f"Google API error {status}: {message[:500]}", code=code, status=status)
+
+
 class GcpClient:
     def __init__(self, config: dict):
         sa = config["service_account"]
@@ -85,7 +111,7 @@ class GcpClient:
             raise CloudError("Invalid Firebase project id or region")
         self._email, self._key, self._key_id = sa["client_email"], sa["private_key"], sa.get("private_key_id")
         # Tokens live an hour: shared by every client of the same key (a database request is a new client).
-        self._cache_key = hashlib.sha256(f"{self._email} {self._key}".encode()).hexdigest()
+        self._cache_key = f"{self._email} {self._key}"
         self._http = httpx.Client(timeout=TIMEOUT, transport=_transport, follow_redirects=False)
 
     def __repr__(self) -> str:
@@ -93,12 +119,13 @@ class GcpClient:
 
     # --- plumbing --------------------------------------------------------------------------------
 
-    def access_token(self) -> str:
-        cached = _tokens.get(self._cache_key)
+    def access_token(self, scopes: str = SCOPES) -> str:
+        cache_key = hashlib.sha256(f"{self._cache_key} {scopes}".encode()).hexdigest()
+        cached = _tokens.get(cache_key)
         if cached and time.time() < cached[1] - 60:
             return cached[0]
         now = int(time.time())
-        claims = {"iss": self._email, "scope": SCOPES, "aud": TOKEN_URL, "iat": now, "exp": now + 3600}
+        claims = {"iss": self._email, "scope": scopes, "aud": TOKEN_URL, "iat": now, "exp": now + 3600}
         try:
             assertion = jwt.encode(
                 claims, self._key, algorithm="RS256", headers={"kid": self._key_id} if self._key_id else None
@@ -114,7 +141,7 @@ class GcpClient:
         token = body.get("access_token") if isinstance(body, dict) else None
         if not token:
             raise CloudError("Google returned no access token")
-        _tokens[self._cache_key] = (str(token), time.time() + float(body.get("expires_in") or 3600))
+        _tokens[cache_key] = (str(token), time.time() + float(body.get("expires_in") or 3600))
         return str(token)
 
     def _send(self, method: str, url: str, *, auth: bool = True, ok: tuple[int, ...] = (200,), **kwargs) -> Any:
@@ -131,15 +158,7 @@ class GcpClient:
             body = {}
         if resp.status_code in ok:
             return body
-        if isinstance(body, list) and body:  # streamed methods (Firestore runQuery) send errors as an array
-            body = body[0]
-        err = body.get("error") if isinstance(body, dict) else None
-        code = ""
-        if isinstance(err, dict):
-            message, code = str(err.get("message") or err.get("status") or ""), str(err.get("status") or "")
-        else:
-            message = str(body.get("error_description") or err or "") if isinstance(body, dict) else ""
-        raise CloudError(f"Google API error {resp.status_code}: {message[:500]}", code=code, status=resp.status_code)
+        raise _api_error(resp.status_code, body)
 
     def _json(self, method: str, url: str, body: dict | None = None, **kwargs) -> Any:
         return self._send(method, url, json=body if body is not None else {}, **kwargs)
@@ -160,6 +179,61 @@ class GcpClient:
         if body is None:
             return self._send(method, url, params=params)
         return self._json(method, url, body, params=params)
+
+    # --- Firebase Realtime Database (docs/CLOUD.md "C2-4") ----------------------------------------
+
+    def rtdb_instances(self) -> list[dict]:
+        """The project's Realtime Database instances (`{name, databaseUrl, type, state}`), every location."""
+        out, token = [], None
+        for _ in range(20):
+            params = {"pageSize": 100, **({"pageToken": token} if token else {})}
+            page = self._send("GET", f"{RTDB_MANAGEMENT}/projects/{self.project}/locations/-/instances", params=params)
+            out += page.get("instances") or []
+            token = page.get("nextPageToken")
+            if not token:
+                break
+        return out
+
+    def create_rtdb_instance(self, location: str, database_id: str) -> dict:
+        """Creates the project's default Realtime Database (`<project>-default-rtdb`) in `location`."""
+        if not REGION_RE.match(location) or not _NAME.match(database_id):
+            raise CloudError("Invalid Realtime Database location or id")
+        url = f"{RTDB_MANAGEMENT}/projects/{self.project}/locations/{location}/instances"
+        return self._json("POST", url, {"type": "DEFAULT_DATABASE"}, params={"databaseId": database_id})
+
+    def rtdb(self, method: str, base_url: str, path: str = "", body: Any = None, params: Any = None) -> Any:
+        """One call to a Realtime Database's REST API: `<base_url><path>.json`. services/rtdb.py builds every
+        path and body; this is the seam its tests fake. Answers over RTDB_MAX_BYTES are refused (code
+        TOO_LARGE) while reading, never buffered whole."""
+        if not _RTDB_URL.match(base_url) or not _RTDB_PATH.match(path):
+            raise CloudError("Refusing an unexpected Realtime Database URL")
+        kwargs: dict[str, Any] = {
+            "params": params,
+            "headers": {"Authorization": f"Bearer {self.access_token(RTDB_SCOPES)}"},
+        }
+        if body is not None:
+            kwargs["json"] = body
+        try:
+            with self._http.stream(method, f"{base_url}{path}.json", **kwargs) as resp:
+                raw = bytearray()
+                for chunk in resp.iter_bytes():
+                    raw += chunk
+                    if len(raw) > RTDB_MAX_BYTES:
+                        raise CloudError(
+                            f"More than {RTDB_MAX_BYTES // 1024 // 1024} MB of data at this path: read a smaller "
+                            "path, or use shallow / limitToFirst",
+                            code="TOO_LARGE",
+                            status=413,
+                        )
+        except httpx.HTTPError as exc:
+            raise CloudError(f"The Realtime Database could not be reached ({type(exc).__name__})") from None
+        try:
+            out = json.loads(bytes(raw)) if raw else None
+        except ValueError:
+            out = None
+        if resp.status_code == 200:
+            return out
+        raise _api_error(resp.status_code, out)
 
     # --- Hosting ---------------------------------------------------------------------------------
 

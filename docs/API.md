@@ -8,7 +8,7 @@ their design:
 | Host devices (enrollment, device management, placement, moving databases, device-local status) | [DEVICES.md](DEVICES.md) |
 | Backups, versions, point-in-time restore, jobs, recently deleted | [BACKUPS.md](BACKUPS.md) |
 | Cloudflare remote access & custom domains | [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
-| Query console (`POST /projects/{id}/data-sources/{sid}/query`: SQL scripts, MongoDB shell code or one DynamoDB / Firestore JSON request per data source; `api_keys: true`, service keys only) | [QUERY_CONSOLE.md](QUERY_CONSOLE.md) |
+| Query console (`POST /projects/{id}/data-sources/{sid}/query`: SQL scripts, MongoDB shell code or one DynamoDB / Firestore / Realtime Database JSON request per data source; `api_keys: true`, service keys only) | [QUERY_CONSOLE.md](QUERY_CONSOLE.md) |
 | Data API for apps: API keys on the data, query and schema routes, reveal / config download | [DATA_API.md](DATA_API.md) |
 | Query editor: query log (`/projects/{id}/query-log`) and saved queries (`/projects/{id}/saved-queries`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) |
 | Saved-query versions: strict version control (`/projects/{id}/saved-queries/{sid}/versions`, `/restore`, `409 version_conflict`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) "Phase 2 — versions" |
@@ -400,6 +400,8 @@ MongoDB (`kind = nosql`):
 |---|---|---|---|---|
 | GET | `/projects/{id}/data-sources/{sid}/collections/{name}/documents?filter={json}&limit=50&skip=0` | viewer+ | – | `{documents:object[], total:number}` (relaxed Extended JSON); DynamoDB tables page with `cursor` instead of `skip` and add `key`, `next_cursor` ([DATA_API.md](DATA_API.md) "DynamoDB tables"); Firestore: `{name}` is a collection path (`users/u1/orders`), `cursor` paging, `next_cursor` ([DATA_API.md](DATA_API.md) "Firestore collections") |
 | GET | `.../collections/{name}/documents/{doc_id}/collections` | viewer+ | – | Firestore: `{collections: string[]}`, the document's subcollections as paths |
+| GET | `/projects/{id}/data-sources/{sid}/rtdb?path=&shallow=` | viewer+ | – | Realtime Database ([CLOUD.md](CLOUD.md) "C2-4"): `{path, value, children?}`; also Firebase's `orderBy`, `startAt`, `endAt`, `equalTo`, `limitToFirst`, `limitToLast` |
+| PUT | `/projects/{id}/data-sources/{sid}/rtdb` | developer+ | `{path, value}` | Realtime Database: replaces the value at `path` (`PATCH` updates children, `POST` pushes a child -> `{key}`, `DELETE ?path=` removes) |
 | POST | `.../collections/{name}/documents` | developer+ | `{document:object}` | `{document:object}` |
 | PATCH | `.../collections/{name}/documents/{doc_id}` | developer+ | `{set:object, unset?:string[]}` | `{document:object}` |
 | DELETE | `.../collections/{name}/documents/{doc_id}` | developer+ | – | `{ok:true}` |

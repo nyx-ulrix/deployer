@@ -18,8 +18,8 @@ Cloud apps never get DEPLOYER_URL / DEPLOYER_API_KEY or anything pointing at thi
 working while it is off. An `aws_app` with database access gets `DEPLOYER_DB_<NAME>_*` for the
 project's cloud databases on the same AWS connection (services/cloud_db.py), reached through a VPC
 connector - those point at AWS, never at this PC. A `firebase_app` with database access gets the project's
-Firestore databases on the same Firebase connection (`DEPLOYER_DB_<NAME>_PROJECT` / `_DATABASE`), reached as
-the Cloud Run service's own service account.
+Firestore databases on the same Firebase connection (`DEPLOYER_DB_<NAME>_PROJECT` / `_DATABASE`) and its
+Realtime Databases (`_URL` too), reached as the Cloud Run service's own service account.
 """
 
 from __future__ import annotations
@@ -441,17 +441,23 @@ class Publish:
         self.save(vpc_connector_arn=connector["arn"])
         return connector["arn"]
 
-    def firestore_identity(self, gcp) -> None:
-        """docs/CLOUD.md "C2-3": the service runs as the project's default compute service account, which reaches
-        Firestore only with the Cloud Datastore User role (Deployer may not grant roles itself): say which one."""
+    def firebase_identity(self, gcp, databases: list[dict]) -> None:
+        """docs/CLOUD.md "C2-3", "C2-4": the service runs as the project's default compute service account, which
+        reaches Firestore only with Cloud Datastore User and a Realtime Database only with Firebase Realtime
+        Database Admin (Deployer may not grant roles itself): say which roles to give which account."""
         try:
             number = gcp.project_info().get("projectNumber")
         except CloudError:
             number = None
         account = f"{number}-compute@developer.gserviceaccount.com" if number else "the default compute service account"
+        roles = {
+            "firestore": "Firestore: Cloud Datastore User",
+            "firebase_rtdb": "Realtime Database: Firebase Realtime Database Admin",
+        }
+        needed = sorted({roles[d["engine"]] for d in databases if d["engine"] in roles})
         self.log.write(
-            f"The app reaches Firestore as {account}: it needs the Cloud Datastore User role (Google Cloud console -> "
-            "IAM -> Grant access), unless it already has Editor"
+            f"The app reaches its databases as {account}: it needs the role(s) {'; '.join(needed)} (Google Cloud "
+            "console -> IAM -> Grant access), unless it already has Editor"
         )
 
     def _hosting_site(self, gcp) -> str:
@@ -516,7 +522,7 @@ class Publish:
         databases = self.databases()
         env, dropped = cloud_env(self.app, databases)
         if databases:
-            self.firestore_identity(gcp)
+            self.firebase_identity(gcp, databases)
         if dropped:
             self.log.write("Not sent (set by Cloud Run itself): " + ", ".join(sorted(dropped)))
         self.log.write("Environment: " + (", ".join(sorted(env)) or "(none)") + " - nothing from Deployer itself")
