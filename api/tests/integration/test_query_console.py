@@ -242,7 +242,7 @@ def test_mongosh_timeout(mongo):
 
 def test_mongosh_runs_isolated_in_the_sidecar(mongo, monkeypatch):
     """A-001: what code that gets past the name filter can see. It runs in the query-shell sidecar
-    under a slot uid: no Deployer secrets, no access to the runner (PID 1), nothing left behind."""
+    under a slot uid: no Deployer secrets, no access to the runner (its parent), nothing left behind."""
     password = connections.mongo_uri_password(MONGO_URI)
     assert password
     with pytest.raises(ApiError) as err:
@@ -255,7 +255,7 @@ def test_mongosh_runs_isolated_in_the_sidecar(mongo, monkeypatch):
         "const fs = require('fs');\n"
         "const cmdline = fs.readFileSync('/proc/self/cmdline', 'utf8').split('\\0');\n"
         "let runner;\n"
-        "try { runner = fs.readFileSync('/proc/1/environ', 'utf8'); } catch (e) { runner = e.code; }\n"
+        "try { runner = fs.readFileSync(`/proc/${process.ppid}/environ`, 'utf8'); } catch (e) { runner = e.code; }\n"
         "const child = require('child_process').spawn('sleep', ['300'], {detached: true, stdio: 'ignore'});\n"
         "child.unref();\n"
         "({cmdline, env: Object.keys(process.env).sort(),\n"

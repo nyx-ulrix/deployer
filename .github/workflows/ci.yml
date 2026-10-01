@@ -115,7 +115,7 @@ jobs:
       # filesystem and limits; tests/test_container_config.py keeps the capabilities in step).
       - name: Start the query-shell sidecar
         run: |
-          docker run -d --name query-shell --network it --user 0:0 --cap-drop ALL \
+          docker run -d --name query-shell --network it --init --user 0:0 --cap-drop ALL \
             --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add KILL --cap-add SETGID --cap-add SETUID \
             --security-opt no-new-privileges:true --read-only --tmpfs /tmp:size=64m --shm-size 16m \
             --pids-limit 256 --memory 512m --entrypoint python deployer-api:ci -m app.shell_runner

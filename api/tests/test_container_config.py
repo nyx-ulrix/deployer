@@ -41,7 +41,7 @@ def test_query_shell_sidecar_holds_no_secrets():
     shell = services["query-shell"]
     assert not {"environment", "env_file", "volumes", "build"} & set(shell)
     assert shell["command"] == ["python", "-m", "app.shell_runner"] and shell["entrypoint"] == []
-    assert shell["cap_drop"] == ["ALL"] and shell["read_only"] is True
+    assert shell["cap_drop"] == ["ALL"] and shell["read_only"] is True and shell["init"] is True
     assert "no-new-privileges:true" in shell["security_opt"]
     assert shell["networks"] == ["query", "query_egress"] and compose["networks"]["query"]["internal"] is True
     on = {
@@ -53,7 +53,7 @@ def test_query_shell_sidecar_holds_no_secrets():
     assert services["api"]["environment"]["QUERY_SHELL_URL"] == url
     assert services["worker"]["environment"]["QUERY_SHELL_URL"] == url
     ci = read(".github/workflows/ci.yml")
-    assert re.findall(r"--cap-add (\w+)", ci) == shell["cap_add"]
+    assert re.findall(r"--cap-add (\w+)", ci) == shell["cap_add"] and " --init " in ci
     dockerfile = read("api/Dockerfile")
     assert "for i in 1 2 3 4; do" in dockerfile and '--uid "2000$i"' in dockerfile
     assert shell_runner.SLOT_UIDS == (20001, 20002, 20003, 20004)

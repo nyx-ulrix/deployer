@@ -305,6 +305,9 @@ services:
     restart: unless-stopped
     entrypoint: []
     command: ["python", "-m", "app.shell_runner"]
+    # An init as PID 1 reaps the processes a script left behind once the slot cleanup kills them
+    # (the runner does not, so their zombies would use up pids_limit).
+    init: true
     user: "0:0"
     cap_drop:
       - ALL

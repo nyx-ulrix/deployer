@@ -134,9 +134,10 @@ output that comes back. The sidecar:
   Redis or apps), plus `query_egress`, which only it joins, for external MongoDB servers (the
   internet and `host.docker.internal`);
 - runs each shell as one of four slot users (uid 20001-20004, created in `api/Dockerfile`), so
-  concurrent shells cannot read each other's environment or memory, and the runner itself (root,
-  PID 1) is out of their reach; after every run all processes of that uid are killed and its files in
-  `/tmp` and `/dev/shm` removed, so a script cannot leave anything behind for the next one.
+  concurrent shells cannot read each other's environment or memory, and the runner itself (root)
+  is out of their reach; after every run all processes of that uid are killed (an init, `init: true`,
+  reaps them) and its files in `/tmp` and `/dev/shm` removed, so a script cannot leave anything
+  behind for the next one.
 
 `501 mongosh_unavailable` when the binary is missing in the image (e.g. on other architectures) or
 `QUERY_SHELL_URL` is not set; `503 mongosh_unavailable` when the sidecar cannot be reached.
