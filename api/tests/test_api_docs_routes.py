@@ -1,6 +1,6 @@
 """Every endpoint the docs name must exist in the router (A-189).
 
-Checked: `| METHOD | path |` table rows in docs/*.md, and inline `METHOD /v1/...` references in
+Checked: `| METHOD | path |` table rows in docs/*.md, and inline `METHOD [<url>]/v1/...` references in
 docs/*.md, README.md and the deploy-website skill.
 
 Tables often give paths relative to a prefix stated above them ("All under /v1/projects/{id}",
@@ -20,11 +20,12 @@ from app.main import app
 ROOT = Path(__file__).resolve().parents[2]
 DOCS = [*sorted((ROOT / "docs").glob("*.md")), ROOT / "README.md", ROOT / "skills/deploy-website/SKILL.md"]
 ROW = re.compile(r"^\|\s*(GET|POST|PUT|PATCH|DELETE|WS)\s*\|\s*`([^`]+)`")
-INLINE = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|WS) +`?(/v1/[^\s`)\"',;]+)")
+# `GET /v1/...`, and `GET <url>/v1/...` as the skill writes its availability probes
+INLINE = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|WS) +`?(?:<\w+>)?(/v1/[^\s`)\"',;]+)")
 
 
 def _norm(path: str) -> str:
-    return re.sub(r"\{[^}]*\}", "{}", path)
+    return re.sub(r"\{[^}]*\}|<\w+>", "{}", path)  # `{id}` and `<project_id>` placeholders
 
 
 def _paths(route) -> list[str]:
@@ -58,7 +59,7 @@ def test_documented_endpoints_exist():
     routes = _routes()
     rows = list(_documented())
     assert len(rows) > 150  # the parser still finds the tables
-    assert sum(w.startswith("SKILL.md") for w, _, _ in rows) > 5  # ...and the inline references
+    assert sum(w.startswith("SKILL.md") for w, _, _ in rows) > 10  # ...and the inline references
     missing = [
         f"{where} {method} {path}"
         for where, method, path in rows
