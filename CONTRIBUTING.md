@@ -10,7 +10,8 @@ developers, so reliability, low resource use and clear error messages matter as 
 - Nothing phones home.
 - The dashboard, webhooks and AI agents all go through the HTTP API (`docs/API.md`). Keep the API
   contract and the docs in sync in the same pull request (`api/tests/test_api_docs_routes.py` fails
-  when a `| METHOD | path |` row in `docs/*.md` names a route that does not exist).
+  when a `| METHOD | path |` row in `docs/*.md`, or an inline `METHOD /v1/...` reference there, in
+  `README.md` or in `skills/deploy-website/SKILL.md`, names a route that does not exist).
 
 ## Layout
 

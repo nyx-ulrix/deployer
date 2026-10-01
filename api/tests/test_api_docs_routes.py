@@ -1,4 +1,7 @@
-"""Every endpoint in the docs' Method | Path tables must exist in the router (A-189).
+"""Every endpoint the docs name must exist in the router (A-189).
+
+Checked: `| METHOD | path |` table rows in docs/*.md, and inline `METHOD /v1/...` references in
+docs/*.md, README.md and the deploy-website skill.
 
 Tables often give paths relative to a prefix stated above them ("All under /v1/projects/{id}",
 ".../tables/{table}/rows"), so a documented path matches any route that ends with it. A path
@@ -14,8 +17,10 @@ from starlette.routing import WebSocketRoute
 
 from app.main import app
 
-DOCS = Path(__file__).resolve().parents[2] / "docs"
+ROOT = Path(__file__).resolve().parents[2]
+DOCS = [*sorted((ROOT / "docs").glob("*.md")), ROOT / "README.md", ROOT / "skills/deploy-website/SKILL.md"]
 ROW = re.compile(r"^\|\s*(GET|POST|PUT|PATCH|DELETE|WS)\s*\|\s*`([^`]+)`")
+INLINE = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|WS) +`?(/v1/[^\s`)\"',;]+)")
 
 
 def _norm(path: str) -> str:
@@ -40,10 +45,10 @@ def _routes() -> set[tuple[str, str]]:
 
 
 def _documented():
-    for doc in sorted(DOCS.glob("*.md")):
+    for doc in DOCS:
         for n, line in enumerate(doc.read_text(encoding="utf-8").splitlines(), 1):
-            if m := ROW.match(line):
-                path = m.group(2).split("?")[0].removeprefix("...")
+            for m in filter(None, [ROW.match(line), *INLINE.finditer(line)]):
+                path = m.group(2).split("?")[0].rstrip(".:").removeprefix("...")
                 head, _, last = path.rpartition("/")
                 for alt in last.split("\\|"):  # `.../{rid}/pause\|resume\|recopy`
                     yield f"{doc.name}:{n}", m.group(1), _norm(f"{head}/{alt}")
@@ -53,6 +58,7 @@ def test_documented_endpoints_exist():
     routes = _routes()
     rows = list(_documented())
     assert len(rows) > 150  # the parser still finds the tables
+    assert sum(w.startswith("SKILL.md") for w, _, _ in rows) > 5  # ...and the inline references
     missing = [
         f"{where} {method} {path}"
         for where, method, path in rows
