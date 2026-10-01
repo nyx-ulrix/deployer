@@ -39,7 +39,9 @@ Browser / phone / AI agent
 
   query-shell (query network with api, worker, mongodb) — runs query console mongosh code with no
               secrets, volumes or Docker socket (QUERY_CONSOLE.md, SECURITY.md "Query console")
-  tunnel (optional, public network only) — cloudflared connector for Cloudflare remote access
+  appdb (internal: mariadb, mongodb) — joined by app containers with database access (DEPLOYMENTS.md)
+  tunnel (optional, tunnel network with caddy only) — cloudflared connector for Cloudflare remote
+         access; Caddy's :8081 trusts Cf-Connecting-Ip only from this network (SECURITY.md)
 ```
 
 | Path | Contents |

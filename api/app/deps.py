@@ -181,6 +181,6 @@ def require_role(minimum: str, *, api_keys: bool = False):
 
 
 def client_ip(request: Request) -> str | None:
-    """The peer address. Behind Caddy, uvicorn's --proxy-headers has already set it from the one
+    """The peer address. Behind Caddy, main.CaddyProxyHeaders has already set it from the one
     X-Forwarded-For entry Caddy sends; never read the header here, anyone can send one (A-019)."""
     return request.client.host if request.client else None

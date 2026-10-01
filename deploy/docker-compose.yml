@@ -77,6 +77,8 @@ services:
       - mariadb_conf:/etc/mysql/conf.d
     networks:
       - backend
+      # Apps with database access reach it here, without access to the backend network (A-019).
+      - appdb
     healthcheck:
       test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
@@ -114,6 +116,7 @@ services:
       - backend
       # The query console's shells (query-shell) reach it here, without access to the backend network.
       - query
+      - appdb
     # Time for a clean shutdown (a killed mongod replays its journal on the next start).
     stop_grace_period: 60s
     healthcheck:
@@ -255,8 +258,9 @@ services:
       # (`apps`: only caddy and the worker join it, so apps can't reach the API directly - A-019).
       APP_MEM_LIMIT: ${APP_MEM_LIMIT:-512m}
       APP_NETWORK: deployer_apps
-      # Joined only by apps an admin gave database access (docs/DEPLOYMENTS.md "Database access").
-      APP_DB_NETWORK: deployer_backend
+      # Joined only by apps an admin gave database access (docs/DEPLOYMENTS.md "Database access"):
+      # just mariadb and mongodb are on it, never the API or Redis (A-019).
+      APP_DB_NETWORK: deployer_appdb
       CADDY_APPS_DIR: /etc/caddy/apps
       MARIADB_CONF_DIR: /mariadb-conf
     volumes:
@@ -361,16 +365,39 @@ services:
       - caddy_apps:/etc/caddy/apps
       - caddy_data:/data
       - caddy_config:/config
+    # A-019: :8081 (the tunnel's origin) takes the visitor IP from Cf-Connecting-Ip and the scheme from
+    # X-Forwarded-Proto only on connections from the `tunnel` network (caddy and tunnel only), whatever
+    # subnet Docker gave it: before Caddy starts this writes that subnet into the `servers :8081`
+    # options the Caddyfile imports. If it can't, :8081 trusts no forwarded headers at all. CI runs it
+    # with `caddy adapt` to check the result (.github/workflows/ci.yml).
+    entrypoint:
+      - sh
+      - -c
+      - |
+        f=/etc/caddy/tunnel-trust.caddy
+        rm -f "$$f"
+        addr=$$(getent hosts caddy-tunnel-origin | awk '{ print $$1; exit }')
+        net=$$(ip addr | awk -v a="$$addr/" '$$1 == "inet" && index($$2, a) == 1 { print $$2; exit }')
+        if [ -n "$$addr" ] && [ -n "$$net" ]; then
+          printf 'servers :8081 {\n\ttrusted_proxies static %s\n\tclient_ip_headers Cf-Connecting-Ip\n}\n' "$$net" > "$$f"
+        else
+          echo "caddy: tunnel network not found; :8081 trusts no forwarded headers" >&2
+        fi
+        exec caddy "$$@"
+      - caddy
+    command: ["run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
     networks:
-      - public
+      public: {}
       # Deployed app containers (docs/DEPLOYMENTS.md); the API, dashboard and tunnel stay off it.
-      - apps
+      apps: {}
+      tunnel:
+        aliases: [caddy-tunnel-origin]
     mem_limit: ${CADDY_MEM_LIMIT:-128m}
     logging: *default-logging
 
   # Cloudflare Tunnel connector (docs/REMOTE_ACCESS.md). Idle until the owner enables remote access
   # in the dashboard; follows /tunnel/desired.json. No ports, no Docker socket; only outbound
-  # connections to Cloudflare and caddy:8081 on the public network.
+  # connections to Cloudflare and caddy:8081 on the `tunnel` network, which nothing else joins.
   tunnel:
     image: ${DEPLOYER_IMAGE_PREFIX:-ghcr.io/nyx-ulrix/deployer}-tunnel:${DEPLOYER_VERSION:-latest}
     build:
@@ -387,7 +414,7 @@ services:
     volumes:
       - tunnel_state:/tunnel
     networks:
-      - public
+      - tunnel
     read_only: true
     tmpfs:
       - /tmp:size=16m,uid=10001,gid=10001,mode=0700
@@ -405,6 +432,12 @@ networks:
   # Deployed apps (A-019): internet access for builds and outbound calls, but nothing of Deployer's
   # except Caddy (and the worker) is on it.
   apps: {}
+  # Apps with database access (A-019): only the databases, so such an app can't reach the API or Redis.
+  appdb:
+    internal: true
+  # cloudflared -> caddy:8081 (A-019): the only network whose clients :8081 trusts; internet access
+  # for the connector.
+  tunnel: {}
   # Query console (A-001): only api, worker and mongodb reach the query-shell sidecar.
   query:
     internal: true

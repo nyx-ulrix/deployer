@@ -511,7 +511,7 @@ def test_database_env_and_network(db, docker, project):
     dep = db.get(Deployment, dep.id)
     assert dep.status == "live", dep.error
     assert docker.steps() == ["clone", "build", "rm", "run", "connect", "health", "reload", "rm"]
-    assert docker.calls[4] == ("connect", "deployer_backend", dep.container_name)
+    assert docker.calls[4] == ("connect", "deployer_appdb", dep.container_name)
     env = docker.containers[dep.container_name]["env"]
     assert env["DEPLOYER_DB_SHOP_DB_HOST"] == "override"  # the app's own variable wins
     assert (env["DEPLOYER_DB_SHOP_DB_PORT"], env["DEPLOYER_DB_SHOP_DB_USER"]) == ("3306", "u_sql")
@@ -542,7 +542,7 @@ def test_database_env_and_network(db, docker, project):
     jobs.run_queued()
     db.expire_all()
     assert db.get(Deployment, rb.id).status == "live"
-    assert ("connect", "deployer_backend", db.get(Deployment, rb.id).container_name) in docker.calls
+    assert ("connect", "deployer_appdb", db.get(Deployment, rb.id).container_name) in docker.calls
 
 
 def test_env_prefix():
@@ -673,6 +673,8 @@ def test_worker_moves_old_app_containers_off_the_api_network(monkeypatch):
         calls.append(args)
         if args[:2] == ["docker", "ps"] and "network=deployer_public" in args and "label=deployer.app" in args:
             return "old-app\nstuck-app\n"
+        if args[:2] == ["docker", "ps"] and "network=deployer_backend" in args and "label=deployer.app" in args:
+            return "db-app\n"
         if args[:3] == ["docker", "network", "connect"] and args[-1] == "stuck-app":
             raise app_runner.DockerError("docker network failed (exit 1)")
         return ""
@@ -684,6 +686,14 @@ def test_worker_moves_old_app_containers_off_the_api_network(monkeypatch):
     # A container that couldn't join the new network keeps the old one, so it stays reachable.
     assert ["docker", "network", "disconnect", "deployer_public", "stuck-app"] not in calls
     assert any("label=deployer.cohost_app" in c for c in calls)
+    # A-019 follow-up: apps with database access sat on the API's backend network; they move to appdb.
+    assert ["docker", "network", "connect", "deployer_appdb", "db-app"] in calls
+    assert ["docker", "network", "disconnect", "deployer_backend", "db-app"] in calls
+
+    calls.clear()
+    monkeypatch.setattr(get_settings(), "app_db_network", "deployer_backend")  # an older compose file
+    deployments.move_legacy_app_containers(cli)
+    assert not any("network=deployer_backend" in c for c in calls)
 
     def no_apps_network(args, **kw):
         calls.append(args)

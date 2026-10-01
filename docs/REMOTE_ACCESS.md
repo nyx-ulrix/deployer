@@ -73,9 +73,14 @@ https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%
    visitor IP from `Cf-Connecting-Ip` (per-IP rate limits, audit log); the LAN-facing `:8080` listener
    trusts no forwarded headers, so every LAN and localhost client shows up there as one address (the
    WSL relay / port-forwarding gateway): per-IP limits are shared by the whole LAN and the audit log
-   shows that address, not the device (SECURITY.md). `:8081` trusts any private address, and deployed app containers can
-   reach it too, so an app can forge that IP: the sign-in limit that matters, 50 failed attempts per
-   email per hour, counts every IP together for that reason (SECURITY.md).
+   shows that address, not the device (SECURITY.md). `:8081` trusts those headers only on
+   connections from the compose `tunnel` network, which only `caddy` and `tunnel` join: deployed app
+   containers can reach `:8081` too (from the `apps` network) but can't forge the visitor IP there.
+   Docker picks that network's subnet, so the caddy service's entrypoint writes it into
+   `/etc/caddy/tunnel-trust.caddy` (imported by the Caddyfile) when Caddy starts; if it can't (the
+   container log says "tunnel network not found"), `:8081` trusts no forwarded headers and remote
+   visitors all show up as the tunnel's address. The sign-in limit that matters, 50 failed attempts
+   per email per hour, counts every IP together anyway (SECURITY.md).
 4. When the connector reports healthy, the owner can click **Use as public URL**: `public_url` changes
    to `https://<hostname>`, and the dashboard lists the new Google/GitHub callback URLs to paste into
    their OAuth apps (both old and new URLs can be registered during the switch). Requires an `active`

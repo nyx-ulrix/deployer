@@ -1,12 +1,14 @@
-import re
 from pathlib import Path
 
+import anyio
 import jwt
 import pytest
+import yaml
 
 from app.config import get_settings
 from app.crypto import sha256_hex
 from app.errors import ApiError
+from app.main import CaddyProxyHeaders
 from app.models import AuditLog, RefreshToken, User, UserIdentity
 from app.services import rate_limit
 from app.services.tokens import REFRESH_COOKIE
@@ -451,9 +453,53 @@ def test_shared_lan_ip_lockout_is_cleared_by_reset_and_lan_cannot_forge_ips():
     rate_limit.reset_logins()
     rate_limit.check_login("172.18.0.1", "owner@example.com")
 
-    # Only the tunnel-only :8081 listener may take a client IP from a header; :8080 trusts none.
-    caddyfile = (Path(__file__).resolve().parents[2] / "deploy" / "Caddyfile").read_text(encoding="utf-8")
+    # Only :8081 may take a client IP from a header, and only from the tunnel network (A-019 follow-up:
+    # `private_ranges` let any app container forge Cf-Connecting-Ip); :8080 trusts none.
+    deploy = Path(__file__).resolve().parents[2] / "deploy"
+    caddyfile = (deploy / "Caddyfile").read_text(encoding="utf-8")
     active = "\n".join(line.split("#", 1)[0] for line in caddyfile.splitlines())
-    assert active.count("trusted_proxies") == 1
-    assert active.count("client_ip_headers") == 1
-    assert re.search(r"servers :8081 \{[^}]*trusted_proxies[^}]*client_ip_headers", active)
+    assert "trusted_proxies" not in active and "client_ip_headers" not in active
+    assert "import /etc/caddy/tunnel-trust*.caddy" in active
+    caddy = yaml.safe_load((deploy / "docker-compose.yml").read_text(encoding="utf-8"))["services"]["caddy"]
+    script = caddy["entrypoint"][2]
+    assert '> "$$f"' in script and "f=/etc/caddy/tunnel-trust.caddy" in script
+    assert "getent hosts caddy-tunnel-origin" in script and caddy["networks"]["tunnel"]["aliases"] == [
+        "caddy-tunnel-origin"
+    ]
+    assert r"servers :8081 {\n\ttrusted_proxies static %s\n\tclient_ip_headers Cf-Connecting-Ip\n}" in script
+    assert "private_ranges" not in caddyfile + script
+
+
+def _through(middleware, peer: str, headers: dict[str, str]) -> tuple[str, str]:
+    seen = {}
+
+    async def inner(scope, receive, send):
+        seen.update(client=scope["client"][0], scheme=scope["scheme"])
+
+    middleware.app = middleware.trusting.app = inner
+    scope = {
+        "type": "http",
+        "scheme": "http",
+        "client": (peer, 1234),
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+    }
+    anyio.run(middleware, scope, None, None)
+    return seen["client"], seen["scheme"]
+
+
+def test_forwarded_headers_count_only_from_caddy(monkeypatch):
+    # A-019 follow-up: uvicorn ran --forwarded-allow-ips=*, so anything that could reach api:8000 (the
+    # query console's shells, apps with database access) could forge X-Forwarded-For.
+    lookups = []
+    mw = CaddyProxyHeaders(None)
+    monkeypatch.setattr(mw, "lookup", lambda: lookups.append(1) or frozenset({"172.20.0.5"}))
+    forged = {"X-Forwarded-For": "203.0.113.9", "X-Forwarded-Proto": "https"}
+    assert _through(mw, "172.20.0.5", forged) == ("203.0.113.9", "https")
+    assert _through(mw, "172.22.0.7", forged) == ("172.22.0.7", "http")
+    assert _through(mw, "172.22.0.7", forged) == ("172.22.0.7", "http")
+    assert len(lookups) == 1  # other peers don't cost a DNS lookup per request
+    mw.resolved_at -= mw.RESOLVE_EVERY_S  # Caddy recreated with a new address: found on a later lookup
+    monkeypatch.setattr(mw, "lookup", lambda: frozenset({"172.20.0.9"}))
+    assert _through(mw, "172.20.0.9", forged) == ("203.0.113.9", "https")
+    assert _through(mw, "172.20.0.5", forged) == ("172.20.0.5", "http")
+    assert CaddyProxyHeaders(None, host="no-such-host.invalid").lookup() == frozenset()

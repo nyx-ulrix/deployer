@@ -1140,23 +1140,26 @@ def poll_logs(factory: jobs.SessionFactory, cli: DockerCli | None = None) -> int
     return added
 
 
-# Where app containers ran before A-019 (next to the API); the worker moves them to app_network.
+# Where app containers ran before A-019, on networks the API listens on; the worker moves them to
+# app_network (all apps) and app_db_network (apps with database access).
 LEGACY_APP_NETWORK = "deployer_public"
+LEGACY_APP_DB_NETWORK = "deployer_backend"
 APP_CONTAINER_LABELS = ("deployer.app", "deployer.cohost_app")  # device_apps.LABEL_APP
 
 
 def move_legacy_app_containers(cli: DockerCli) -> None:
-    """Worker startup: app containers still on the network the API shares join app_network and leave
-    the old one; Caddy (on both) keeps routing to them by name."""
-    new = get_settings().app_network
-    if new == LEGACY_APP_NETWORK:
-        return
-    try:
-        for label in APP_CONTAINER_LABELS:
-            for name in cli.move_network(label, LEGACY_APP_NETWORK, new):
-                log.info("moved app container %s to %s", name, new)
-    except DockerError as exc:
-        log.warning("could not move app containers off %s: %s", LEGACY_APP_NETWORK, exc)
+    """Worker startup: app containers still on a network the API shares join the new one and leave
+    the old one; Caddy and the databases (on both) keep being reachable by name."""
+    s = get_settings()
+    for old, new in ((LEGACY_APP_NETWORK, s.app_network), (LEGACY_APP_DB_NETWORK, s.app_db_network)):
+        if new == old:  # an older compose file still names the old network
+            continue
+        try:
+            for label in APP_CONTAINER_LABELS:
+                for name in cli.move_network(label, old, new):
+                    log.info("moved app container %s to %s", name, new)
+        except DockerError as exc:
+            log.warning("could not move app containers off %s: %s", old, exc)
 
 
 def logs_loop(stop) -> None:

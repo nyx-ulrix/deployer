@@ -29,13 +29,15 @@ Security fixes are made for the latest release. Update with `deployer update`.
   containers get no volumes, no extra capabilities, `no-new-privileges`, memory / CPU / pid limits and
   are reachable only through Caddy's per-app port and the app's hostnames. They run on their own
   `apps` network, shared only with Caddy and the worker, so they cannot call the API directly (only
-  through Caddy, like any other client). They can still reach Caddy's internal `:8081` listener,
-  which takes the client IP from `Cf-Connecting-Ip`, so an app can make its requests appear to come
-  from any IP there: IP-based limits and the IPs in the audit log are not proof of origin.
+  through Caddy, like any other client). They can reach Caddy's internal `:8081` listener too, but
+  it takes the client IP from `Cf-Connecting-Ip` (and the scheme from `X-Forwarded-Proto`) only on
+  connections from the `tunnel` network, which only Caddy and the cloudflared sidecar join; the API
+  honours `X-Forwarded-For` only from the `caddy` container. On `:8080` every LAN client still shares
+  one address, so IP-based limits there are per LAN, not per device.
 - **App database access** ([docs/DEPLOYMENTS.md](docs/DEPLOYMENTS.md) "Database access"): by default
-  app containers cannot reach the internal `backend` network. A project admin can opt an app in; the
-  worker then connects its container to `backend`, which also carries Redis (password-protected),
-  the platform MariaDB and the API itself (so such an app can also call the API directly). The app receives only its project's managed sources' own restricted
+  app containers cannot reach any database. A project admin can opt an app in; the worker then
+  connects its container to the internal `appdb` network, which carries only the platform MariaDB
+  and MongoDB (never the API, Redis or the worker). The app receives only its project's managed sources' own restricted
   credentials (per-database users, never root), passed through the process environment, never argv
   or the deployment log. Treat enabling it as trusting that app's code with network reach to those
   services; developers can switch it off but not on.

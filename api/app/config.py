@@ -70,7 +70,7 @@ class Settings(BaseSettings):
     # its auto_increment step/offset there so they survive MariaDB restarts. Empty = runtime only.
     mariadb_conf_dir: str = ""
     app_network: str = "deployer_apps"  # only caddy and the worker share it (A-019)
-    app_db_network: str = "deployer_backend"  # joined only by apps with database access
+    app_db_network: str = "deployer_appdb"  # apps with database access: only the databases are on it (A-019)
     app_mem_limit: str = "512m"
     app_build_dir: str = ""
     # docs/MONITORING.md: containers of this compose project (plus deployed apps) are sampled.

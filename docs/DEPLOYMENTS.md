@@ -87,12 +87,13 @@ Cloudflare when linked) instead of the tunnel. Details, API and permissions: [CL
 
 Off by default. An app normally reaches its project's data only through the data API
 (`DEPLOYER_API_KEY`): app containers sit on the compose `apps` network, while `mariadb` and
-`mongodb` live on `backend` (`internal: true`). Apps that talk to their managed databases directly
-(e.g. Flask + PyMySQL / PyMongo) need `apps.database_access` (migration `0007_app_database_access`).
+`mongodb` live on `backend` (`internal: true`) and on `appdb` (`internal: true`, nothing else on it).
+Apps that talk to their managed databases directly (e.g. Flask + PyMySQL / PyMongo) need
+`apps.database_access` (migration `0007_app_database_access`).
 
-- **Why opt-in:** the `backend` network also carries Redis (password-protected) and the platform
-  MariaDB (the server that holds Deployer's own schema next to the managed databases). Joining it
-  only makes those hosts routable; each app still needs a source's own restricted credentials
+- **Why opt-in:** the platform MariaDB also holds Deployer's own schema next to the managed
+  databases. Joining `appdb` only makes `mariadb` and `mongodb` routable (not the API or Redis); each
+  app still needs a source's own restricted credentials
   (a per-database MariaDB user / Mongo `dbOwner` user), never the root ones.
 - **Who:** only project **admins** can switch it on (on create or PATCH; developers get 403
   `forbidden` "Only project admins can give an app database access"). Developers may still edit an
@@ -100,7 +101,9 @@ Off by default. An app normally reaches its project's data only through the data
   `app.database_access` with `enabled`.
 - **Worker:** on every deploy and rollback of such an app, after `docker run` on the `apps` network,
   `docker network connect <APP_DB_NETWORK> <container>` (setting `app_db_network`, compose worker env
-  `APP_DB_NETWORK=deployer_backend`). The log says "Connected to the project's databases network" and
+  `APP_DB_NETWORK=deployer_appdb`: only `mariadb` and `mongodb` are on it, so the app can't reach the
+  API or Redis; on startup the worker moves app containers that older versions connected to
+  `deployer_backend`). The log says "Connected to the project's databases network" and
   lists the injected variable **names**; passwords and URLs are redacted from the log.
 - **Injected environment** (the app's own variables with the same name win), for each non-deleted
   managed source of the project on the main server, `NAME` = source name upper-cased with every

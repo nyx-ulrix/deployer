@@ -57,3 +57,21 @@ def test_query_shell_sidecar_holds_no_secrets():
     dockerfile = read("api/Dockerfile")
     assert "for i in 1 2 3 4; do" in dockerfile and '--uid "2000$i"' in dockerfile
     assert shell_runner.SLOT_UIDS == (20001, 20002, 20003, 20004)
+
+
+def test_untrusted_containers_share_no_network_with_the_api():
+    """A-019: apps (and apps with database access) never share a network with the API, and only the
+    tunnel shares one with Caddy that :8081 trusts. App networks come from the worker's environment."""
+    compose = yaml.safe_load(read("deploy/docker-compose.yml"))
+    services = compose["services"]
+    on = {
+        net: {name for name, svc in services.items() if net in (svc.get("networks") or [])}
+        for net in compose["networks"]
+    }
+    assert on["apps"] == {"caddy", "worker"} and on["tunnel"] == {"caddy", "tunnel"}
+    assert on["appdb"] == {"mariadb", "mongodb"} and compose["networks"]["appdb"]["internal"] is True
+    env = services["worker"]["environment"]
+    assert (env["APP_NETWORK"], env["APP_DB_NETWORK"]) == ("deployer_apps", "deployer_appdb")
+    assert not {"apps", "appdb", "tunnel"} & set(services["api"]["networks"])
+    assert services["tunnel"]["networks"] == ["tunnel"]
+    assert "--forwarded-allow-ips" not in read("api/Dockerfile") + read("deploy/docker-compose.dev.yml")
