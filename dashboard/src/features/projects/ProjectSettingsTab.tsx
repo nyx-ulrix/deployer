@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Download, Trash2 } from "lucide-react";
-import { errorMessage, saveBlob } from "../../api/client";
+import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import type { Project } from "../../api/types";
 import { Button } from "../../components/ui/Button";
@@ -10,7 +10,9 @@ import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Field, Input, Textarea } from "../../components/ui/Input";
 import { Alert, Card } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
+import { JobProgressPanel } from "../jobs/JobProgress";
 import { PassphraseFields } from "../settings/PassphraseFields";
+import { DownloadExportButton } from "../settings/TransferJobs";
 import { usePassphrase } from "../settings/usePassphrase";
 import { useProjectContext } from "./project-context";
 
@@ -73,12 +75,12 @@ function GeneralCard({ project }: { project: Project }) {
 function ExportCard({ project }: { project: Project }) {
   const toast = useToast();
   const pass = usePassphrase();
+  const [jobId, setJobId] = useState<string | null>(null);
   const exportMutation = useMutation({
-    mutationFn: () => api.projects.export([project.id], pass.passphrase),
-    onSuccess: (file) => {
-      saveBlob(file);
+    mutationFn: () => api.transfers.exportProjects([project.id], pass.passphrase),
+    onSuccess: (res) => {
+      setJobId(res.job.id);
       pass.reset();
-      toast.success(`Downloaded ${file.filename}.`);
     },
     onError: (e) => toast.error(errorMessage(e), "Export failed"),
   });
@@ -111,6 +113,21 @@ function ExportCard({ project }: { project: Project }) {
           </Link>
         </div>
       </form>
+      {jobId && (
+        <JobProgressPanel
+          key={jobId}
+          className="mt-4"
+          projectId={project.id}
+          jobId={jobId}
+          title="Export project"
+          result={(job) => (
+            <div className="flex flex-wrap items-center gap-3">
+              <DownloadExportButton jobId={job.id} />
+              <span className="text-xs text-muted">Kept for 24 hours, also under Settings → Export &amp; import.</span>
+            </div>
+          )}
+        />
+      )}
     </Card>
   );
 }

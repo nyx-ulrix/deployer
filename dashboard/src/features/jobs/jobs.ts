@@ -21,6 +21,8 @@ export const JOB_LABELS: Record<string, string> = {
   "app.replicate": "Deploy app to device",
   "app.cloud_teardown": "Remove cloud deployment",
   "app.cloud_domain": "Check custom domain",
+  "transfer.export": "Export",
+  "transfer.import": "Import projects",
 };
 
 export function jobLabel(type: string): string {

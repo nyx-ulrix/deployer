@@ -400,3 +400,106 @@ def test_export_temp_file_deleted_when_client_is_gone(tmp_path):
     with pytest.raises(Exception):  # noqa: B017 - Starlette's ClientDisconnect
         asyncio.run(TempFileResponse(str(path), "x.json")(scope, receive, send))
     assert not path.exists()
+
+
+@pytest.fixture
+def inline_jobs(monkeypatch, tmp_path):
+    """Transfer jobs run in the request's thread, export files land in tmp_path."""
+    from app.routers import transfer as transfer_router
+
+    monkeypatch.setattr(transfer_router, "_spawn", transfer_router._run)
+    monkeypatch.setattr(transfer, "exports_dir", lambda: tmp_path)
+    return tmp_path
+
+
+def test_export_and_import_run_as_jobs(client, db, populated, make_user, auth_headers, set_setting, inline_jobs):
+    """A-044: the dashboard's export and import answer at once with a job; the file is downloaded after."""
+    owner_h = auth_headers(populated["owner"])
+    pid = populated["project"].id
+    started = client.post("/v1/projects/export/jobs", json={"project_ids": [pid], "passphrase": PASS}, headers=owner_h)
+    assert started.status_code == 200, started.text
+    job_id = started.json()["job"]["id"]
+    assert transfer._pending == {}  # the passphrase was handed to the job and dropped
+
+    [listed] = client.get("/v1/transfers", headers=owner_h).json()
+    assert listed["id"] == job_id and listed["status"] == "succeeded", listed
+    assert listed["result"]["counts"]["projects"] == 1
+    assert "passphrase" not in json.dumps(listed)
+    activity = client.get(f"/v1/projects/{pid}/jobs", headers=owner_h).json()
+    assert [j["id"] for j in activity] == [job_id]  # one project: also in its Activity drawer
+
+    member_h = auth_headers(populated["member"])
+    assert client.get(f"/v1/transfers/{job_id}/download", headers=member_h).status_code == 404
+    download = client.get(f"/v1/transfers/{job_id}/download", headers=owner_h)
+    assert download.status_code == 200
+    assert 'filename="deployer-projects-' in download.headers["content-disposition"]
+    exported = download.content
+    assert json.loads(exported)["scope"] == "projects"
+
+    set_setting("owner_only_projects", False)
+    importer = make_user("importer@example.com")
+    imp_h = auth_headers(importer)
+    bad = client.post(
+        "/v1/projects/import/jobs",
+        files={"file": ("x.json", exported)},
+        data={"passphrase": "nope nope nope"},
+        headers=imp_h,
+    )
+    assert bad.status_code == 400 and bad.json()["error"]["code"] == "bad_passphrase"  # answered before any job
+    ok = client.post(
+        "/v1/projects/import/jobs", files={"file": ("x.json", exported)}, data={"passphrase": PASS}, headers=imp_h
+    )
+    assert ok.status_code == 200, ok.text
+    [job] = client.get("/v1/transfers", headers=imp_h).json()
+    assert job["type"] == "transfer.import" and job["status"] == "succeeded", job
+    [project] = job["result"]["projects"]
+    assert project["name"] == "Shop" and project["id"] != pid
+    db.expire_all()
+    assert db.get(Project, project["id"]).owner_id == importer.id
+    assert client.get(f"/v1/transfers/{job_id}/download", headers=imp_h).status_code == 404
+
+    # Retention: the file goes after EXPORT_KEEP_SECONDS and the download says so.
+    old = inline_jobs / f"{job_id}.json"
+    os.utime(old, (0, 0))
+    assert transfer.prune_exports() == 1
+    gone = client.get(f"/v1/transfers/{job_id}/download", headers=owner_h)
+    assert gone.status_code == 410 and gone.json()["error"]["code"] == "export_expired"
+
+
+def test_transfer_job_without_its_request_fails_cleanly(db, populated):
+    """A job whose API process restarted (the passphrase only lived there) fails with a clear message."""
+    from app.services import jobs
+
+    job = jobs.enqueue(db, type=transfer.EXPORT_JOB, params={"scope": "instance", "filename": "x.json"})
+    db.commit()
+    assert jobs.run_job(job.id) == "failed"
+    db.expire_all()
+    assert "restarted" in db.get(type(job), job.id).error
+
+
+def test_cancelled_export_leaves_no_file(db, populated, tmp_path):
+    """A transfer.export job checks for cancel before each managed database and removes its files."""
+    from app.services import jobs
+
+    db.add(
+        DataSource(
+            project_id=populated["project"].id,
+            name="shop",
+            kind="sql",
+            engine="mariadb",
+            mode="managed",
+            database_name="p_shop",
+            config_encrypted=encrypt_json({}),
+        )
+    )
+    db.commit()
+
+    def cancel(index, total, name):
+        assert (index, total, name) == (0, 1, "shop")
+        raise jobs.JobCancelled()
+
+    with pytest.raises(jobs.JobCancelled):
+        transfer.build_export_file(
+            db, scope="projects", projects=[populated["project"]], passphrase=PASS, out_dir=tmp_path, on_source=cancel
+        )
+    assert list(tmp_path.iterdir()) == []

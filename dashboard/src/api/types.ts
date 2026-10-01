@@ -203,7 +203,8 @@ export type ProjectCreate = {
   provision?: { sql: boolean; nosql: boolean; device_id?: string | null };
 };
 
-export type ProjectsImportResponse = { ok: true; projects: Project[]; summary: ImportSummary };
+/** `result` of a finished `transfer.import` job (GET /transfers). */
+export type ImportJobResult = { projects: { id: string; name: string }[]; summary: ImportSummary };
 
 // ---- Invites ----
 

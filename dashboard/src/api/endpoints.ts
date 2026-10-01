@@ -75,7 +75,6 @@ import type {
   Project,
   ProjectCreate,
   ProjectSchema,
-  ProjectsImportResponse,
   ProviderName,
   ProvidersResponse,
   QueryLogPage,
@@ -166,8 +165,18 @@ export const api = {
     setUserActive: (userId: string, isActive: boolean) =>
       client.patch<User>(`/instance/users/${e(userId)}`, { is_active: isActive }),
     projects: () => client.get<InstanceProject[]>("/instance/projects"),
-    export: (passphrase: string) =>
-      client.download("POST", "/instance/export", "deployer-instance.json", { body: { passphrase } }),
+  },
+
+  /** Exports and imports run as jobs (A-044); the finished export is fetched with `download`. */
+  transfers: {
+    list: () => client.get<Job[]>("/transfers"),
+    exportInstance: (passphrase: string) => client.post<JobResponse>("/instance/export/jobs", { passphrase }),
+    exportProjects: (projectIds: string[], passphrase: string) =>
+      client.post<JobResponse>("/projects/export/jobs", { project_ids: projectIds, passphrase }),
+    importProjects: (file: File, passphrase: string) =>
+      client.upload<JobResponse>("/projects/import/jobs", importForm(file, passphrase)),
+    download: (jobId: string) => client.download("GET", `/transfers/${e(jobId)}/download`, "deployer-export.json"),
+    cancel: (jobId: string) => client.post<Job>(`/transfers/${e(jobId)}/cancel`),
   },
 
   projects: {
@@ -177,12 +186,6 @@ export const api = {
     update: (id: string, body: { name?: string; description?: string }) =>
       client.patch<Project>(`/projects/${e(id)}`, body),
     remove: (id: string, slug: string) => client.del<Ok>(`/projects/${e(id)}`, { query: { confirm: slug } }),
-    export: (projectIds: string[], passphrase: string) =>
-      client.download("POST", "/projects/export", "deployer-projects.json", {
-        body: { project_ids: projectIds, passphrase },
-      }),
-    import: (file: File, passphrase: string) =>
-      client.upload<ProjectsImportResponse>("/projects/import", importForm(file, passphrase)),
   },
 
   members: {
@@ -553,6 +556,7 @@ export const qk = {
   backupSchema: (id: string, sid: string, backupId: string) =>
     ["projects", id, "backups", sid, "schema", backupId] as const,
   jobs: (id: string) => ["projects", id, "jobs"] as const,
+  transfers: ["transfers"] as const,
   savedQueries: (id: string) => ["projects", id, "saved-queries"] as const,
   savedQueryVersions: (id: string, sqId: string) => ["projects", id, "saved-queries", sqId, "versions"] as const,
   savedQueryVersion: (id: string, sqId: string, n: number) => ["projects", id, "saved-queries", sqId, "versions", n] as const,

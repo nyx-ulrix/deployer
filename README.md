@@ -171,8 +171,9 @@ with a different `-Runtime` stops and points here).
 Your databases live inside the runtime they were created in, so moving to another runtime starts
 empty. Carry your data over with an export:
 
-1. In the dashboard, *Settings -> Export & import -> Whole instance -> Export instance*. Keep the file and its
-   passphrase somewhere safe - it is the only copy the new runtime can read.
+1. In the dashboard, *Settings -> Export & import -> Whole instance -> Export instance*, then *Download* it
+   under *Recent exports & imports* once it is ready. Keep the file and its passphrase somewhere safe - it
+   is the only copy the new runtime can read.
 2. Uninstall Deployer (*Uninstall* in Deployer Control, or `deployer uninstall`). Data it
    keeps stays with the old runtime; it does not follow you.
 3. Install again, choosing the new runtime.

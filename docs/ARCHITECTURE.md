@@ -132,12 +132,19 @@ unpacked payload (`413 file_too_large` with the current limit in `details.limit_
 source's `data` entry as a stream instead (`transfer.restore_file`: one batch of rows / documents in
 memory at a time), so they have no such limit.
 
-Time: exports and imports run inside the HTTP request, and the file is sent only once it is fully
-built. Through remote access (Cloudflare Tunnel) a request that has not answered within about 100
-seconds fails in the browser while the server keeps working, so export or import big instances from
-the PC itself (`http://localhost:8080`). An import that timed out in the browser may still finish:
-check the project list before trying again. An export's temp file is deleted even when the browser
-has given up.
+Time (A-044): the dashboard runs exports and imports as background jobs (`transfer.export` /
+`transfer.import`, API.md "Export / import jobs"), so the ~100 s limit of a request through remote
+access (Cloudflare Tunnel) no longer applies to them. The request only starts the job (an import first
+uploads, checks and decrypts the file, so a wrong passphrase answers at once); progress shows under
+*Settings → Export & import → Recent exports & imports* and, for a one-project export, in that
+project's Activity drawer; the finished export is downloaded from `GET /transfers/{job_id}/download`.
+These jobs run in a thread of the API process, not the worker: the passphrase and the decrypted import
+payload stay in that process's memory (never in the `jobs` row or Redis), imports keep the API's memory
+budget above, and the file is served by the container that wrote it. An API restart fails a running
+one ("worker stopped"); start it again. Finished export files are kept 24 hours, then deleted. The
+synchronous `POST /instance/export`, `/projects/export`, `/projects/import` and the setup wizard's
+`/setup/import` (a fresh install has no remote access yet) still work inside the request; through a
+tunnel use the job forms.
 
 - `scope: instance` — made by the instance owner; imported by the setup wizard on a fresh install
   ("Restore from export") and restores everything, including all users.

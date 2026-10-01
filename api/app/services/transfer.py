@@ -63,8 +63,9 @@ import os
 import re
 import tempfile
 import zlib
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from datetime import UTC, date, datetime
+from pathlib import Path
 from typing import IO, Any
 
 from bson import json_util
@@ -103,7 +104,16 @@ from app.models import (
     new_id,
     utcnow,
 )
-from app.services import backup_crypto, connections, ddl_export, device_host, device_rpc, provisioning
+from app.services import (
+    audit,
+    backup_crypto,
+    connections,
+    ddl_export,
+    device_host,
+    device_rpc,
+    jobs,
+    provisioning,
+)
 from app.services.data_browser import encode_value
 from app.services.introspection import _s
 from app.services.slugs import unique_slug
@@ -492,8 +502,17 @@ def _write_device_data(fh: IO[str], ds: DataSource) -> dict[str, Any]:
     }
 
 
-def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Project], created_at: str) -> dict[str, Any]:
-    """Streams the plaintext payload JSON to `fh`. Returns counts (+ `warnings` when objects were skipped)."""
+def write_payload(
+    fh: IO[str],
+    db: Session,
+    *,
+    scope: str,
+    projects: list[Project],
+    created_at: str,
+    on_source: Callable[[int, int, str], None] | None = None,
+) -> dict[str, Any]:
+    """Streams the plaintext payload JSON to `fh`. Returns counts (+ `warnings` when objects were skipped).
+    `on_source(index, total, name)` runs before each managed source's data (job progress / cancel)."""
     w = _Writer(fh)
     project_ids = [p.id for p in projects]
     counts: dict[str, Any] = {"users": 0, "projects": len(projects), "data_sources": 0, "rows": 0, "documents": 0}
@@ -565,9 +584,10 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
         w.field("domains", [model_to_dict(d) for d in db.scalars(select(Domain).where(Domain.app_id.in_(app_ids)))])
 
     w.open_field("data", "{")
-    for ds in sources:
-        if ds.mode != "managed":
-            continue
+    managed = [ds for ds in sources if ds.mode == "managed"]
+    for index, ds in enumerate(managed):
+        if on_source:
+            on_source(index, len(managed), ds.name)
         if connections.device_removed(ds):
             warnings.append(f"{ds.name}: {connections.DEVICE_REMOVED} Its data is not in this export.")
             continue
@@ -602,18 +622,27 @@ def write_payload(fh: IO[str], db: Session, *, scope: str, projects: list[Projec
     return counts
 
 
-def build_export_file(db: Session, *, scope: str, projects: list[Project], passphrase: str) -> tuple[str, dict]:
-    """Writes the encrypted export to a temp file. Returns (path, counts); caller deletes the file."""
+def build_export_file(
+    db: Session,
+    *,
+    scope: str,
+    projects: list[Project],
+    passphrase: str,
+    out_dir: str | os.PathLike | None = None,
+    on_source: Callable[[int, int, str], None] | None = None,
+) -> tuple[str, dict]:
+    """Writes the encrypted export to a temp file (in `out_dir`, else the temp directory). Returns
+    (path, counts); caller deletes the file."""
     check_passphrase(passphrase)
     now = datetime.now(UTC).replace(microsecond=0)
     created_at = now.replace(tzinfo=None).isoformat() + "Z"
-    fd, gz_path = tempfile.mkstemp(prefix="deployer-payload-", suffix=".json.gz")
+    fd, gz_path = tempfile.mkstemp(prefix="deployer-payload-", suffix=".json.gz", dir=out_dir)
     os.close(fd)
-    out_fd, out_path = tempfile.mkstemp(prefix="deployer-export-", suffix=".json")
+    out_fd, out_path = tempfile.mkstemp(prefix="deployer-export-", suffix=".json", dir=out_dir)
     os.close(out_fd)
     try:
         with gzip.open(gz_path, "wt", encoding="utf-8", compresslevel=6) as fh:
-            counts = write_payload(fh, db, scope=scope, projects=projects, created_at=created_at)
+            counts = write_payload(fh, db, scope=scope, projects=projects, created_at=created_at, on_source=on_source)
         with open(gz_path, "rb") as src, open(out_path, "w", encoding="utf-8") as out:
             header, payload_chunks = encrypt_stream_with_passphrase(src, passphrase)
             out.write("{")
@@ -1414,6 +1443,123 @@ def iter_file(path: str, chunk_size: int = 1 << 20) -> Iterator[bytes]:
                 yield chunk
     finally:
         _unlink(path)
+
+
+# =============================================================================================
+# background jobs (A-044): the dashboard's exports and imports run after the request has answered
+# =============================================================================================
+
+EXPORT_JOB = "transfer.export"
+IMPORT_JOB = "transfer.import"
+EXPORT_KEEP_SECONDS = 24 * 3600
+# Hand-off from the request to its job thread: the passphrase (export) or the decrypted payload (import)
+# stay in this process's memory and never reach the jobs table or Redis.
+# ponytail: one dict in one process; the API is a single uvicorn process (Dockerfile CMD).
+_pending: dict[str, dict[str, Any]] = {}
+
+
+def exports_dir() -> Path:
+    """Finished export files of the API process, until downloaded or EXPORT_KEEP_SECONDS old."""
+    path = Path(tempfile.gettempdir()) / "deployer-exports"
+    path.mkdir(mode=0o700, exist_ok=True)
+    return path
+
+
+def export_path(job_id: str) -> Path:
+    return exports_dir() / f"{job_id}.json"
+
+
+def prune_exports(max_age_seconds: int = EXPORT_KEEP_SECONDS) -> int:
+    """Deletes export files (and leftovers of interrupted ones) older than the retention period."""
+    removed = 0
+    cutoff = datetime.now(UTC).timestamp() - max_age_seconds
+    for item in exports_dir().iterdir():
+        try:
+            if item.stat().st_mtime < cutoff:
+                item.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def _take_pending(job_id: str) -> dict[str, Any]:
+    pending = _pending.pop(job_id, None)
+    if pending is None:
+        raise jobs.JobError("Deployer restarted before this job started. Start it again.")
+    return pending
+
+
+@jobs.job_handler(EXPORT_JOB)
+def run_export_job(ctx: jobs.JobContext) -> dict:
+    pending = _take_pending(ctx.job_id)
+    prune_exports()
+    db = ctx.db()
+    try:
+        scope = ctx.params["scope"]
+        if scope == "instance":
+            projects = list(db.scalars(select(Project).order_by(Project.created_at)))
+        else:
+            projects = [p for pid in ctx.params["project_ids"] if (p := db.get(Project, pid)) is not None]
+            if len(projects) != len(ctx.params["project_ids"]):
+                raise jobs.JobError("A project was deleted before the export started")
+
+        def on_source(index: int, total: int, name: str) -> None:
+            ctx.check_cancelled()
+            ctx.progress(index / total * 0.95, f"Exporting {name} ({index + 1} of {total})")
+
+        path, counts = build_export_file(
+            db,
+            scope=scope,
+            projects=projects,
+            passphrase=pending["passphrase"],
+            out_dir=exports_dir(),
+            on_source=on_source,
+        )
+        os.replace(path, export_path(ctx.job_id))
+        action = "instance.export" if scope == "instance" else "projects.export"
+        for project_id in [None] if scope == "instance" else [p.id for p in projects]:
+            audit.record(
+                db,
+                action,
+                request=pending.get("request"),
+                user_id=ctx.created_by_id,
+                project_id=project_id,
+                job_id=ctx.job_id,
+                **counts,
+            )
+        db.commit()
+    finally:
+        db.close()
+    return {"filename": ctx.params["filename"], "counts": counts}
+
+
+@jobs.job_handler(IMPORT_JOB)
+def run_import_job(ctx: jobs.JobContext) -> dict:
+    pending = _take_pending(ctx.job_id)
+    db = ctx.db()
+    try:
+        user = db.get(User, ctx.created_by_id) if ctx.created_by_id else None
+        if user is None:
+            raise jobs.JobError("The account that started this import no longer exists")
+        ctx.progress(0.05, "Importing projects and their data", force=True)
+        projects, summary = import_projects(db, pending.pop("payload"), user)
+        for project in projects:
+            audit.record(
+                db,
+                "projects.import",
+                request=pending.get("request"),
+                user_id=user.id,
+                project_id=project.id,
+                job_id=ctx.job_id,
+                data_sources=summary["data_sources"],
+                rows=summary["rows"],
+                documents=summary["documents"],
+            )
+        db.commit()
+        return {"projects": [{"id": p.id, "name": p.name} for p in projects], "summary": summary}
+    finally:
+        db.close()
 
 
 __all__ = [

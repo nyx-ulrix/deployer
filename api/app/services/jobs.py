@@ -15,7 +15,10 @@ Handlers::
     def run(ctx: JobContext) -> dict | None: ...      # return value -> jobs.result
 
 Handlers run in the main server's worker even for sources on a host device (they orchestrate and
-call `executors.executor_for(...)` or device RPCs for the work on the device).
+call `executors.executor_for(...)` or device RPCs for the work on the device). Exception: the
+dashboard's exports and imports (`transfer.export` / `transfer.import`) run in a thread of the API
+process that started them (`routers/transfer.py`), so the passphrase and the decrypted payload never
+leave that process and the export file is served by the same container.
 """
 
 from __future__ import annotations
@@ -95,7 +98,7 @@ def _load_builtin_handlers() -> None:
         return
     _builtin_loaded = True
     # Import side effect: modules register their handlers.
-    from app.services import backups, cloud_deploy, cohost_apps, cohosting, deployments  # noqa: F401
+    from app.services import backups, cloud_deploy, cohost_apps, cohosting, deployments, transfer  # noqa: F401
 
 
 # ---------------------------------------------------------------------------------------------

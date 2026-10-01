@@ -128,7 +128,8 @@ Provider callback URLs (shown in the setup wizard):
 | PATCH | `/instance/users/{id}` | `{is_active:boolean}` | `User`. Disabling signs the account out everywhere (refresh tokens revoked; access tokens are refused at the next request) and stops the API keys (401 `account_disabled`) and GitHub push deploys (403 `account_disabled`) of projects it owns; apps already running keep running. 400 `cannot_disable_owner` for the instance owner |
 | GET | `/instance/projects` | – | `(Project & {owner_email, member_count})[]`: every project, `my_role` null where the owner isn't a member |
 | GET | `/instance/audit?limit=100&before={id}&action=` | – | `{id, action, user_id, user_email, project_id, ip, user_agent, details, created_at}[]`, newest first (`limit` 1-500; `before` pages by id). Rows are kept 90 days (API key reveals/downloads and instance exports are kept); the worker also deletes refresh tokens a day after they expire |
-| POST | `/instance/export` | `{passphrase}` | file download `deployer-instance-YYYYMMDD-HHMM.json` |
+| POST | `/instance/export` | `{passphrase}` | file download `deployer-instance-YYYYMMDD-HHMM.json`, built inside the request (through remote access prefer the job below) |
+| POST | `/instance/export/jobs` | `{passphrase}` | `{job}` (`transfer.export`); see "Export / import jobs" |
 
 OAuth values are trimmed and checked before they are stored (the same check backs
 `python -m app.cli oauth set`). Any whitespace inside a value or a leading `ID`/`SECRET`/`Client ID:`
@@ -199,8 +200,21 @@ type Alert = { id: string; alert: string; severity: "warning" | "critical"; mess
 | GET | `/projects/{project_id}` | viewer+ | – | `Project` |
 | PATCH | `/projects/{project_id}` | admin+ | `{name?, description?}` | `Project` |
 | DELETE | `/projects/{project_id}?confirm=<slug>` | owner | – | `{ok:true}` (managed databases get a final snapshot, kept 30 days, then are dropped by a job; the project itself cannot be restored, the instance owner can download the snapshots — [BACKUPS.md](BACKUPS.md)) |
-| POST | `/projects/export` | owner of each | `{project_ids:string[], passphrase}` | file download `deployer-projects-YYYYMMDD-HHMM.json` |
+| POST | `/projects/export` | owner of each | `{project_ids:string[], passphrase}` | file download `deployer-projects-YYYYMMDD-HHMM.json`, built inside the request (through remote access prefer the job below) |
+| POST | `/projects/export/jobs` | owner of each | `{project_ids:string[], passphrase}` | `{job}` (`transfer.export`; with one project it also shows in that project's jobs) |
 | POST | `/projects/import` | as `POST /projects` | multipart: `file`, `passphrase` | `{ok:true, projects:Project[], summary}` (`scope` must be `projects`; 413 `file_too_large` as for `/setup/import`) |
+| POST | `/projects/import/jobs` | as `POST /projects` | multipart: `file`, `passphrase` | `{job}` (`transfer.import`). The file is checked and decrypted first (400 `bad_passphrase` / `invalid_export`, 413 `file_too_large` as above); the job recreates the projects |
+
+### Export / import jobs
+
+Exports and imports started with the `/jobs` forms above run in the background (A-044), so a request
+through remote access (~100 s limit) only has to start them. They are the caller's own: other users get 404.
+
+| Method | Path | Body | Response |
+|---|---|---|---|
+| GET | `/transfers` | – | `Job[]`: the caller's last 20 `transfer.export` / `transfer.import` jobs, newest first. A finished export's `result` is `{filename, counts}`; an import's is `{projects:[{id, name}], summary}` |
+| GET | `/transfers/{job_id}/download` | – | the export file (`Content-Disposition` with `params.filename`). 409 `export_not_ready` until the job succeeded; 410 `export_expired` after 24 hours |
+| POST | `/transfers/{job_id}/cancel` | – | `Job` (a running export stops before its next database) |
 
 ## Members & invites
 

@@ -140,8 +140,10 @@ Long operations (snapshot, log archive, restore, verify, copy, move, prune) are 
 jobs are orchestrated by the main server's **worker** (they own every platform row) and hand the
 byte-level work — dump, log archiving, restore, verify — to the host of the database: locally, or on a
 host device through `jobs.run` RPCs with `executor.<method>` types (DEVICES.md). Moves run in the API
-process. The worker also runs the scheduler (one leader via a Redis lock) that enqueues scheduled
-snapshots, log archiving, pruning and verification.
+process, and so do the dashboard's exports and imports (`transfer.export` / `transfer.import`, kept
+in the API process so the passphrase never leaves it; ARCHITECTURE.md "Export / import format"). The
+worker also runs the scheduler (one leader via a Redis lock) that enqueues scheduled snapshots, log
+archiving, pruning and verification.
 
 Job states: `queued → running → succeeded | failed | cancelled`, with `progress` (0–1) and `message`.
 

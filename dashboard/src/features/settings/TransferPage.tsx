@@ -1,11 +1,9 @@
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Download, FileUp, Server } from "lucide-react";
-import { errorMessage, saveBlob } from "../../api/client";
+import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import { useProjects } from "../../api/hooks";
-import type { ProjectsImportResponse } from "../../api/types";
 import { useCurrentUser } from "../../auth/auth-context";
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input } from "../../components/ui/Input";
@@ -13,9 +11,23 @@ import { PageSpinner } from "../../components/ui/Spinner";
 import { Alert, Card, EmptyState, ErrorState, PageHeader } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { MIN_PASSPHRASE } from "../../lib/constants";
-import { ImportSummaryList } from "./ImportSummaryList";
 import { PassphraseFields } from "./PassphraseFields";
+import { RecentTransfers } from "./TransferJobs";
 import { usePassphrase } from "./usePassphrase";
+
+/** Starting an export or import only queues a job; it shows up under "Recent exports & imports". */
+function useStartTransfer<T>(start: (input: T) => Promise<unknown>, what: string, onStarted: () => void) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: start,
+    onSuccess: () => {
+      onStarted();
+      void queryClient.invalidateQueries({ queryKey: qk.transfers });
+      toast.info(`${what} started. Follow it under “Recent exports & imports”.`);
+    },
+  });
+}
 
 export function TransferPage() {
   const user = useCurrentUser();
@@ -35,11 +47,11 @@ export function TransferPage() {
         recreate them from a SQL dump), backups and their version / point-in-time history, deployment history, query
         runs and the audit log. Imports are unpacked in memory, so one can hold at most a sixth of the API's free memory
         (roughly 80 MB with the default 768 MB API_MEM_LIMIT, never over 1 GB) — move bigger databases with a SQL dump.
-        Through remote access, a request that takes over about 100 seconds fails in the browser while the server keeps
-        working: export or import big projects on the PC itself (localhost), and check the project list before
-        retrying an import.
+        Exports and imports run in the background, also through remote access; uploading or downloading a big file
+        still takes as long as your connection needs.
       </Alert>
       <div className="space-y-5">
+        <RecentTransfers />
         {user.is_instance_owner && <InstanceExportCard />}
         <ProjectsExportCard />
         <ProjectsImportCard />
@@ -49,17 +61,8 @@ export function TransferPage() {
 }
 
 function InstanceExportCard() {
-  const toast = useToast();
   const pass = usePassphrase();
-  const exportMutation = useMutation({
-    mutationFn: () => api.instance.export(pass.passphrase),
-    onSuccess: (file) => {
-      saveBlob(file);
-      pass.reset();
-      toast.success(`Downloaded ${file.filename}.`);
-    },
-    onError: (e) => toast.error(errorMessage(e), "Export failed"),
-  });
+  const exportMutation = useStartTransfer((p: string) => api.transfers.exportInstance(p), "Export", pass.reset);
   return (
     <Card
       title={
@@ -73,10 +76,11 @@ function InstanceExportCard() {
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          if (pass.valid) exportMutation.mutate();
+          if (pass.valid) exportMutation.mutate(pass.passphrase);
         }}
       >
         <PassphraseFields state={pass} />
+        {exportMutation.error && <Alert tone="danger">{errorMessage(exportMutation.error)}</Alert>}
         <Button
           type="submit"
           variant="primary"
@@ -84,7 +88,7 @@ function InstanceExportCard() {
           loading={exportMutation.isPending}
           disabled={!pass.valid}
         >
-          {exportMutation.isPending ? "Exporting… (large databases take a while)" : "Export instance"}
+          Export instance
         </Button>
       </form>
     </Card>
@@ -93,21 +97,16 @@ function InstanceExportCard() {
 
 function ProjectsExportCard() {
   const user = useCurrentUser();
-  const toast = useToast();
   const projects = useProjects();
   const pass = usePassphrase();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const owned = projects.data?.filter((p) => p.my_role === "owner") ?? [];
 
-  const exportMutation = useMutation({
-    mutationFn: () => api.projects.export([...selected], pass.passphrase),
-    onSuccess: (file) => {
-      saveBlob(file);
-      pass.reset();
-      toast.success(`Downloaded ${file.filename}.`);
-    },
-    onError: (e) => toast.error(errorMessage(e), "Export failed"),
-  });
+  const exportMutation = useStartTransfer(
+    ({ ids, passphrase }: { ids: string[]; passphrase: string }) => api.transfers.exportProjects(ids, passphrase),
+    "Export",
+    pass.reset,
+  );
 
   const toggle = (id: string, on: boolean) =>
     setSelected((prev) => {
@@ -119,7 +118,7 @@ function ProjectsExportCard() {
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
-    if (pass.valid && selected.size > 0) exportMutation.mutate();
+    if (pass.valid && selected.size > 0) exportMutation.mutate({ ids: [...selected], passphrase: pass.passphrase });
   };
 
   return (
@@ -161,6 +160,7 @@ function ProjectsExportCard() {
             </ul>
           </div>
           <PassphraseFields state={pass} />
+          {exportMutation.error && <Alert tone="danger">{errorMessage(exportMutation.error)}</Alert>}
           <Button
             type="submit"
             variant="primary"
@@ -177,24 +177,19 @@ function ProjectsExportCard() {
 }
 
 function ProjectsImportCard() {
-  const queryClient = useQueryClient();
-  const toast = useToast();
   const [file, setFile] = useState<File | null>(null);
   const [passphrase, setPassphrase] = useState("");
-  const [result, setResult] = useState<ProjectsImportResponse | null>(null);
   const [inputKey, setInputKey] = useState(0);
 
-  const importMutation = useMutation({
-    mutationFn: () => api.projects.import(file as File, passphrase),
-    onSuccess: (res) => {
-      setResult(res);
+  const importMutation = useStartTransfer(
+    (input: { file: File; passphrase: string }) => api.transfers.importProjects(input.file, input.passphrase),
+    "Import",
+    () => {
       setFile(null);
       setPassphrase("");
       setInputKey((k) => k + 1);
-      void queryClient.invalidateQueries({ queryKey: qk.projects });
-      toast.success(`Imported ${res.projects.length} project${res.projects.length === 1 ? "" : "s"}.`);
     },
-  });
+  );
 
   return (
     <Card
@@ -209,7 +204,7 @@ function ProjectsImportCard() {
         className="space-y-4"
         onSubmit={(e) => {
           e.preventDefault();
-          if (file && passphrase.length >= MIN_PASSPHRASE) importMutation.mutate();
+          if (file && passphrase.length >= MIN_PASSPHRASE) importMutation.mutate({ file, passphrase });
         }}
       >
         <div className="grid gap-4 sm:grid-cols-2">
@@ -248,24 +243,9 @@ function ProjectsImportCard() {
           loading={importMutation.isPending}
           disabled={!file || passphrase.length < MIN_PASSPHRASE}
         >
-          Import
+          {importMutation.isPending ? "Uploading…" : "Import"}
         </Button>
       </form>
-      {result && (
-        <div className="mt-5 space-y-3 border-t border-border pt-4">
-          <h3 className="text-sm font-semibold">Import summary</h3>
-          <ImportSummaryList summary={result.summary} />
-          <ul className="space-y-1 text-sm">
-            {result.projects.map((p) => (
-              <li key={p.id}>
-                <Link to={`/projects/${p.id}`} className="font-medium text-accent hover:underline">
-                  {p.name}
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
     </Card>
   );
 }
