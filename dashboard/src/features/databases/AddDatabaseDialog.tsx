@@ -21,6 +21,7 @@ import { defaultPlacement, deviceIdFromValue, engineForKind, placementDisplay } 
 import { HostOnSelect } from "../devices/HostOnSelect";
 import { AwsDatabaseSection } from "./AwsDatabaseSection";
 import { Choice } from "./Choice";
+import { FirestoreSection } from "./FirestoreSection";
 
 type Mode = "managed" | "external";
 type Where = DatabaseLocation["id"];
@@ -100,6 +101,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
 
   function defaultName() {
     if (where === "aws") return kind === "sql" ? "AWS database" : "DynamoDB";
+    if (where === "firebase") return "Firestore";
     if (mode === "managed") return kind === "sql" ? "MariaDB" : "MongoDB";
     return kind === "sql" ? { mariadb: "MariaDB", mysql: "MySQL", postgresql: "PostgreSQL" }[engine] : "MongoDB";
   }
@@ -182,7 +184,10 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
           <div className="grid gap-2 sm:grid-cols-2">
             <Choice
               selected={kind === "sql"}
-              onClick={() => setKind("sql")}
+              onClick={() => {
+                setKind("sql");
+                if (where === "firebase") setWhere("local"); // Firebase databases are NoSQL (Cloud Firestore)
+              }}
               icon={<Database className="size-4" />}
               title="SQL"
               description="Tables, columns, foreign keys."
@@ -193,7 +198,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
               onClick={() => setKind("nosql")}
               icon={<Leaf className="size-4" />}
               title="NoSQL"
-              description="JSON documents: MongoDB (here or elsewhere) or DynamoDB (in AWS)."
+              description="JSON documents: MongoDB (here or elsewhere), DynamoDB (in AWS) or Cloud Firestore (Firebase)."
               tone="nosql"
             />
           </div>
@@ -207,7 +212,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
           ) : (
             <div className="grid gap-2 sm:grid-cols-2">
               {options.data.locations.map((loc) => {
-                const unavailable = loc.available === false;
+                const unavailable = loc.available === false || (loc.only !== undefined && loc.only !== kind);
                 return (
                   <Choice
                     key={loc.id}
@@ -253,6 +258,15 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
             name={name.trim() || defaultName()}
             options={options.data.aws}
             dynamodb={options.data.dynamodb}
+            onDone={onClose}
+          />
+        )}
+
+        {where === "firebase" && kind === "nosql" && options.data && (
+          <FirestoreSection
+            projectId={projectId}
+            name={name.trim() || defaultName()}
+            options={options.data.firestore}
             onDone={onClose}
           />
         )}

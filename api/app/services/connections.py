@@ -323,11 +323,25 @@ def try_config(kind: str, engine_name: str, config: dict[str, Any]) -> tuple[boo
     return try_mongo(config)
 
 
-def try_source(ds: DataSource) -> tuple[bool, str, str | None]:
-    if ds.engine == "dynamodb":  # docs/CLOUD.md "C2-2": through the AWS connection, no own credentials
+def cloud_engine(engine: str):
+    """The adapter module of an engine reached only through its cloud connection, with no driver or
+    credentials of its own (docs/CLOUD.md "C2-2", "C2-3"): services/dynamo.py or services/firestore.py, which
+    share the same functions (check, display, connection_info, run_op, introspect, entity, export_script,
+    run_console). None for every other engine."""
+    if engine == "dynamodb":
         from app.services import dynamo
 
-        return dynamo.check(ds)
+        return dynamo
+    if engine == "firestore":
+        from app.services import firestore
+
+        return firestore
+    return None
+
+
+def try_source(ds: DataSource) -> tuple[bool, str, str | None]:
+    if (adapter := cloud_engine(ds.engine)) is not None:
+        return adapter.check(ds)
     try:
         config = load_config(ds)
     except ApiError as exc:
@@ -401,9 +415,8 @@ def parse_mongo_uri(uri: str) -> dict[str, Any]:
 
 
 def display_for(ds: DataSource, config: dict[str, Any] | None = None) -> dict[str, Any]:
-    if ds.engine == "dynamodb":
-        region = (ds.cloud_state or {}).get("region")
-        return {"host": f"dynamodb.{region}.amazonaws.com", "port": 443, "username": None, "tls": True}
+    if (adapter := cloud_engine(ds.engine)) is not None:
+        return adapter.display(ds)
     try:
         config = config if config is not None else load_config(ds)
     except Exception:  # noqa: BLE001
@@ -435,25 +448,9 @@ def sql_app_uri(engine_name: str, config: dict[str, Any]) -> str:
 
 
 def connection_info(ds: DataSource) -> dict[str, Any]:
+    if (adapter := cloud_engine(ds.engine)) is not None:  # no password: apps use their cloud identity
+        return adapter.connection_info(ds)
     config = load_config(ds)
-    if ds.engine == "dynamodb":  # no password: apps use AWS credentials (App Runner: its instance role)
-        state = ds.cloud_state or {}
-        tables = list(state.get("tables") or [])
-        return {
-            "uri": None,
-            "host": f"dynamodb.{state.get('region')}.amazonaws.com",
-            "port": 443,
-            "username": None,
-            "password": None,
-            "database": tables[0] if tables else None,
-            "region": state.get("region"),
-            "tables": tables,
-            "external_hint": (
-                "DynamoDB has no password: use an AWS SDK with the region and table names. Apps on AWS App Runner "
-                "with Database access get DEPLOYER_DB_<NAME>_TABLE / _TABLES / _REGION and an IAM role allowed "
-                "to use exactly these tables. Anywhere else, use AWS credentials that may access them."
-            ),
-        }
     if ds.kind == "sql":
         info = {
             "uri": sql_app_uri(ds.engine, config),

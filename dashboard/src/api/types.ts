@@ -65,8 +65,9 @@ export type Invite = {
 };
 
 export type DataSourceKind = "sql" | "nosql";
-/** `dynamodb`: tables in the user's AWS account (docs/CLOUD.md "C2-2"), browsed like MongoDB collections. */
-export type DataSourceEngine = "mariadb" | "mysql" | "postgresql" | "mongodb" | "dynamodb";
+/** `dynamodb`: tables in the user's AWS account (docs/CLOUD.md "C2-2"); `firestore`: a Firebase project's Cloud
+ * Firestore database ("C2-3"). Both are browsed like MongoDB collections. */
+export type DataSourceEngine = "mariadb" | "mysql" | "postgresql" | "mongodb" | "dynamodb" | "firestore";
 
 export type DataSource = {
   id: string;
@@ -100,9 +101,11 @@ export type DataSourceCloud = {
   /** True: Deployer created it (and deletes it, after a final snapshot). False: an existing one connected. */
   created: boolean;
   resource_id: string | null;
-  resource_kind: "instance" | "cluster" | "table";
+  resource_kind: "instance" | "cluster" | "table" | "database";
   /** DynamoDB: the tables this database holds. */
   tables?: string[] | null;
+  /** Firestore: the Google project the database is in. */
+  project_id?: string | null;
   region: string | null;
   instance_class: string | null;
   /** This PC's public IP the database's firewall lets in (created databases). */
@@ -120,6 +123,8 @@ export type DatabaseLocation = {
   when_pc_off: string;
   cost: string;
   available?: boolean;
+  /** Only for this kind of database (Firebase: NoSQL, Cloud Firestore). */
+  only?: DataSourceKind;
   note?: string;
 };
 
@@ -141,7 +146,11 @@ export type CloudDatabaseOptions = {
     cost: string;
     network: string;
   };
+  firestore: { what: string; connect: string; cost: string; network: string };
 };
+
+/** A Firestore database of a Firebase project (`problem`: why Deployer can't use it). */
+export type FirestoreDatabase = { id: string; location: string | null; type: string | null; problem: string | null };
 
 /** DynamoDB key attribute types: text, number, binary. */
 export type DynamoKeyType = "S" | "N" | "B";
@@ -178,6 +187,9 @@ export type CloudDbListing = {
   /** DynamoDB tables of the region (`tables_problem`: why they could not be listed). */
   tables: string[];
   tables_problem: string | null;
+  /** Firebase connections: the project's Firestore databases (`firestore_problem`: why they could not be listed). */
+  firestore?: FirestoreDatabase[];
+  firestore_problem?: string | null;
 };
 
 export type ApiKeyRole = "anon" | "service";
@@ -357,8 +369,10 @@ export type ConnectionDetails = {
   database: string | null;
   external_hint?: string | null;
   /** DynamoDB (docs/CLOUD.md "C2-2"). */
-  region?: string;
+  region?: string | null;
   tables?: string[];
+  /** Firestore ("C2-3"): the Google project; `database` is the database id. */
+  project_id?: string | null;
 };
 
 // ---- Schema ----
@@ -806,7 +820,7 @@ export type SqlQueryResponse = {
 export type MongoQueryResponse = {
   kind: "nosql";
   /** `dynamodb`: one JSON request (QUERY_CONSOLE.md "DynamoDB"), answered in the same shape. */
-  engine: "mongodb" | "dynamodb";
+  engine: "mongodb" | "dynamodb" | "firestore";
   duration_ms: number;
   /** Text printed by the shell (print(), warnings, stderr). */
   output: string;
@@ -1040,7 +1054,7 @@ export type CloudConnectionInput = {
 export type CloudRequirements = {
   aws: { policy: unknown };
   firebase: {
-    roles: { role: string; title: string; why: string }[];
+    roles: { role: string; title: string; why: string; only_for?: string }[];
     apis: { api: string; title: string; only_for?: string }[];
   };
 };

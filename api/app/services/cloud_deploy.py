@@ -17,7 +17,9 @@ cloud artifact (S3 prefix, image URI or Hosting version), which is what a rollba
 Cloud apps never get DEPLOYER_URL / DEPLOYER_API_KEY or anything pointing at this PC: they must keep
 working while it is off. An `aws_app` with database access gets `DEPLOYER_DB_<NAME>_*` for the
 project's cloud databases on the same AWS connection (services/cloud_db.py), reached through a VPC
-connector - those point at AWS, never at this PC.
+connector - those point at AWS, never at this PC. A `firebase_app` with database access gets the project's
+Firestore databases on the same Firebase connection (`DEPLOYER_DB_<NAME>_PROJECT` / `_DATABASE`), reached as
+the Cloud Run service's own service account.
 """
 
 from __future__ import annotations
@@ -367,7 +369,7 @@ class Publish:
         for d in databases:
             self.secrets.append(d["config"].get("password") or "")
         if databases:
-            self.log.write("Databases (in your AWS account): " + ", ".join(d["name"] for d in databases))
+            self.log.write("Databases (in your cloud account): " + ", ".join(d["name"] for d in databases))
         return databases
 
     def instance_role(self, aws, databases: list[dict]) -> str | None:
@@ -439,6 +441,19 @@ class Publish:
         self.save(vpc_connector_arn=connector["arn"])
         return connector["arn"]
 
+    def firestore_identity(self, gcp) -> None:
+        """docs/CLOUD.md "C2-3": the service runs as the project's default compute service account, which reaches
+        Firestore only with the Cloud Datastore User role (Deployer may not grant roles itself): say which one."""
+        try:
+            number = gcp.project_info().get("projectNumber")
+        except CloudError:
+            number = None
+        account = f"{number}-compute@developer.gserviceaccount.com" if number else "the default compute service account"
+        self.log.write(
+            f"The app reaches Firestore as {account}: it needs the Cloud Datastore User role (Google Cloud console -> "
+            "IAM -> Grant access), unless it already has Editor"
+        )
+
     def _hosting_site(self, gcp) -> str:
         if not self.state.get("site"):
             site = site_id(self.app)
@@ -498,7 +513,10 @@ class Publish:
             image = f"{self.state['registry']}/{package}:{self.dep.id}"
             self.ctx.progress(0.75, "Pushing", force=True)
             self.push(image, gcp.docker_login())
-        env, dropped = cloud_env(self.app)
+        databases = self.databases()
+        env, dropped = cloud_env(self.app, databases)
+        if databases:
+            self.firestore_identity(gcp)
         if dropped:
             self.log.write("Not sent (set by Cloud Run itself): " + ", ".join(sorted(dropped)))
         self.log.write("Environment: " + (", ".join(sorted(env)) or "(none)") + " - nothing from Deployer itself")

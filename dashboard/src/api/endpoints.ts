@@ -441,6 +441,11 @@ export const api = {
       ),
     remove: (pid: string, sid: string, collection: string, docId: string) =>
       client.del<Ok>(`/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(collection)}/documents/${e(docId)}`),
+    /** Firestore: the collections under one document, as paths (`users/u1/orders`). */
+    subcollections: (pid: string, sid: string, collection: string, docId: string) =>
+      client.get<{ collections: string[] }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(collection)}/documents/${e(docId)}/collections`,
+      ),
   },
 
   // DEPLOYMENTS.md: apps built from a Git repo and served next to the project's databases.
@@ -506,13 +511,19 @@ export const api = {
         confirm_billing: boolean;
       },
     ) => client.post<{ data_source: DataSource; job: Job }>(`/projects/${e(pid)}/cloud/databases`, body),
-    /** RDS: `resource_id` + login; DynamoDB: `tables`. */
+    /** RDS: `resource_id` + login; DynamoDB: `tables`; Firestore (a Firebase connection): `database`. */
     connectDatabase: (
       pid: string,
       body:
         | { connection_id: string; name: string; resource_id: string; username: string; password: string; database?: string }
-        | { connection_id: string; name: string; tables: string[] },
+        | { connection_id: string; name: string; tables: string[] }
+        | { connection_id: string; name: string; database: string },
     ) => client.post<DataSource>(`/projects/${e(pid)}/cloud/databases/connect`, body),
+    /** Firestore: every document of the top-level collections as one JSON object (docs/CLOUD.md "C2-3"). */
+    firestoreExport: (pid: string, sid: string) =>
+      client.get<{ documents: number; truncated: boolean; collections: Record<string, JsonObject[]> }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/firestore/export`,
+      ),
     // DynamoDB on-demand backups (billable: confirm_billing).
     backups: (pid: string, sid: string) =>
       client.get<{ backups: CloudBackup[]; cost: string; restore: string }>(

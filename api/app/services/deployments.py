@@ -824,6 +824,8 @@ def source_env(name: str, kind: str, engine: str, config: dict, database_name: s
         env[prefix + "TABLE"] = tables[0] if tables else ""
         env[prefix + "TABLES"] = ",".join(tables)
         env[prefix + "REGION"] = str(config.get("region") or "")
+    elif engine == "firestore":  # docs/CLOUD.md "C2-3": Cloud Run signs in as its service account
+        env[prefix + "PROJECT"] = str(config.get("project_id") or "")
     elif kind == "sql":
         env[prefix + "HOST"] = str(config.get("host") or "")
         env[prefix + "PORT"] = str(config.get("port") or 3306)

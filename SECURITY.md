@@ -121,6 +121,13 @@ Security fixes are made for the latest release. Update with `deployer update`.
   get no key either, but an IAM role (`deployer-app-*`) whose only policy allows item operations on
   exactly the project's tables. The IAM policy may read and write items of any table (connected tables
   keep their own names) but create, change or delete only `deployer-*` tables.
+  Firestore databases ("C2-3") also hold no credential of their own: Deployer calls the Firestore REST API
+  with the Firebase connection's service-account token (requests only go to `firestore.googleapis.com`,
+  every id in a path is percent-encoded and the path checked, so a document id can't redirect a call); the
+  service account needs only Cloud Datastore User (documents, not databases or rules). A source reaches one
+  database; viewers may only run `query` / `count` / `get` in the console. Deployer never creates, deletes or
+  changes a Firestore database or its security rules. Cloud Run apps get no key: they use their own service
+  account, to which the owner grants Cloud Datastore User (Deployer cannot grant IAM roles).
 - **Rate limits:** sign-in 10 attempts / 15 min per IP+email and 50 failed attempts / hour per email
   from any IP (so rotating or forging IPs doesn't buy more guesses; the flip side is that someone
   guessing can lock an account for up to an hour - `deployer reset-password` clears it), plus 30

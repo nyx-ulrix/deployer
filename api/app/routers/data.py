@@ -8,7 +8,8 @@ from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel, Field
 
 from app.deps import DbSession, ProjectAccess, require_role
-from app.services import data_browser, source_ops
+from app.errors import ApiError
+from app.services import data_browser, firestore, source_ops
 from app.services.sources import get_source
 
 router = APIRouter(tags=["data"])
@@ -18,6 +19,8 @@ Developer = Annotated[ProjectAccess, Depends(require_role("developer", api_keys=
 
 TABLE_ROWS = "/projects/{project_id}/data-sources/{source_id}/tables/{table}/rows"
 COLLECTION_DOCS = "/projects/{project_id}/data-sources/{source_id}/collections/{name}/documents"
+# Routed with `{name:path}`: a Firestore subcollection is a path, `users/u1/orders` (docs/CLOUD.md "C2-3").
+DOCS_ROUTE = COLLECTION_DOCS.replace("{name}", "{name:path}")
 
 
 class RowInsert(BaseModel):
@@ -90,10 +93,10 @@ def delete_row(
     return source_ops.delete_row(_sql_source(db, access, source_id), table, body.pk)
 
 
-# --- MongoDB -----------------------------------------------------------------------------------
+# --- MongoDB, DynamoDB, Firestore ---------------------------------------------------------------
 
 
-@router.get(COLLECTION_DOCS)
+@router.get(DOCS_ROUTE)
 def list_documents(
     source_id: str,
     name: str,
@@ -102,24 +105,33 @@ def list_documents(
     filter: str | None = None,
     limit: Annotated[int, Query(ge=1, le=data_browser.MAX_LIMIT)] = 50,
     skip: Annotated[int, Query(ge=0)] = 0,
-    cursor: Annotated[str | None, Query(max_length=4096)] = None,  # DynamoDB: the previous page's next_cursor
+    cursor: Annotated[str | None, Query(max_length=4096)] = None,  # DynamoDB / Firestore: the last next_cursor
 ) -> dict:
     ds = _mongo_source(db, access, source_id)
     return source_ops.list_documents(ds, name, filter_json=filter, limit=limit, skip=skip, cursor=cursor)
 
 
-@router.post(COLLECTION_DOCS)
+@router.post(DOCS_ROUTE)
 def insert_document(source_id: str, name: str, body: DocumentInsert, access: Developer, db: DbSession) -> dict:
     return source_ops.insert_document(_mongo_source(db, access, source_id), name, body.document)
 
 
-@router.patch(COLLECTION_DOCS + "/{doc_id}")
+@router.patch(DOCS_ROUTE + "/{doc_id}")
 def update_document(
     source_id: str, name: str, doc_id: str, body: DocumentUpdate, access: Developer, db: DbSession
 ) -> dict:
     return source_ops.update_document(_mongo_source(db, access, source_id), name, doc_id, body.set, body.unset)
 
 
-@router.delete(COLLECTION_DOCS + "/{doc_id}")
+@router.delete(DOCS_ROUTE + "/{doc_id}")
 def delete_document(source_id: str, name: str, doc_id: str, access: Developer, db: DbSession) -> dict:
     return source_ops.delete_document(_mongo_source(db, access, source_id), name, doc_id)
+
+
+@router.get(DOCS_ROUTE + "/{doc_id}/collections")
+def list_subcollections(source_id: str, name: str, doc_id: str, access: Viewer, db: DbSession) -> dict:
+    """Firestore: the collections under one document, as paths the documents routes take."""
+    ds = _mongo_source(db, access, source_id)
+    if ds.engine != firestore.ENGINE:
+        raise ApiError(400, "not_supported", "Only Firestore documents have collections of their own")
+    return firestore.subcollections(ds, name, doc_id)

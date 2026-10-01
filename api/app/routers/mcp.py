@@ -22,6 +22,7 @@ from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import ApiError
 from app.routers import apps as apps_router
 from app.routers import cloud as cloud_router
+from app.routers import data as data_router
 from app.routers import query as query_router
 from app.routers import schema as schema_router
 from app.services import audit, cloud, cloud_db, deployments, introspection, rate_limit, source_ops
@@ -42,10 +43,11 @@ CALL_LIMIT, CALL_WINDOW_S = 60, 60  # tool calls per key (or user) per minute
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
 
 INSTRUCTIONS = (
-    "Tools for one Deployer project: its databases (SQL tables, MongoDB collections, DynamoDB tables) and "
-    "its apps (push-to-deploy websites). Start with list_data_sources and get_schema, or list_apps. "
-    "Ids come from those tools. Databases can also live in the user's own AWS account - RDS SQL or DynamoDB "
-    "(cloud_database_options; creating one is billable and needs the user's agreement). "
+    "Tools for one Deployer project: its databases (SQL tables, MongoDB collections, DynamoDB tables, "
+    "Firestore collections) and its apps (push-to-deploy websites). Start with list_data_sources and get_schema, "
+    "or list_apps. Ids come from those tools. Databases can also live in the user's own AWS account - RDS SQL or "
+    "DynamoDB (cloud_database_options; creating one is billable and needs the user's agreement) - or be the "
+    "user's Firebase project's Cloud Firestore database (connect_cloud_database). "
     "Results are compact JSON, capped at 200 rows / 256 KB."
 )
 
@@ -63,11 +65,14 @@ def _p(type_: str, description: str, **extra: Any) -> dict:
 
 SOURCE = _p("string", "Data source id (from list_data_sources)")
 TABLE = _p("string", "SQL table name")
-COLLECTION = _p("string", "MongoDB collection or DynamoDB table name")
+COLLECTION = _p(
+    "string", "MongoDB collection, DynamoDB table, or Firestore collection path (users, or users/u1/orders)"
+)
 DOC_ID = _p(
     "string",
     "MongoDB: the _id as ObjectId hex, an integer or the raw string. DynamoDB: the item's key as JSON "
-    '(e.g. {"pk": "a", "sk": 1}), or the plain partition key value when the table has no sort key',
+    '(e.g. {"pk": "a", "sk": 1}), or the plain partition key value when the table has no sort key. '
+    "Firestore: the document id (_id)",
 )
 TABLE_KEY = _p(
     "object",
@@ -152,6 +157,18 @@ def t_list_documents(ctx: Ctx, args: dict) -> Any:
         limit=_limit(args),
         skip=max(0, int(args.get("skip", 0))),
         **({"cursor": args["cursor"]} if args.get("cursor") else {}),
+    )
+
+
+def t_list_subcollections(ctx: Ctx, args: dict) -> Any:
+    return data_router.list_subcollections(
+        args["source_id"], args["collection"], args["document_id"], ctx.access, ctx.db
+    )
+
+
+def t_export_documents(ctx: Ctx, args: dict) -> Any:
+    return cloud_router.export_firestore(
+        args["source_id"], ctx.request, ctx.access, ctx.db, collection=args.get("collections"), limit=_limit(args, 200)
     )
 
 
@@ -251,18 +268,21 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     ),
     "run_query": (
         "viewer",
-        "Run SQL (a script, several statements allowed), MongoDB shell code (`db` is the database) or one "
+        "Run SQL (a script, several statements allowed), MongoDB shell code (`db` is the database), one "
         'DynamoDB request as JSON ({"operation": "Query", "TableName": ..., plus AWS parameters with plain JSON '
-        f"values}}) against a data source. Returns up to {MAX_ROWS} rows per statement. Viewer sessions may only "
-        "read (DynamoDB: Query, Scan, GetItem).",
+        'values}) or one Firestore request as JSON ({"from": "orders", "where": [{"field": "status", "op": "==", '
+        '"value": "open"}], "orderBy": [{"field": "total", "direction": "desc"}], "limit": 20}; operation count, '
+        f"get, create, update, delete) against a data source. Returns up to {MAX_ROWS} rows per statement. Viewer "
+        "sessions may only read (DynamoDB: Query, Scan, GetItem; Firestore: query, count, get).",
         _schema(
             ["source_id", "query"],
             source_id=SOURCE,
             query=_p(
                 "string",
-                "SQL, mongosh code such as db.orders.find({status: 'open'}), or a DynamoDB request such as "
+                "SQL, mongosh code such as db.orders.find({status: 'open'}), a DynamoDB request such as "
                 '{"operation": "Query", "TableName": "orders", "KeyConditionExpression": "customer = :c", '
-                '"ExpressionAttributeValues": {":c": "c1"}}',
+                '"ExpressionAttributeValues": {":c": "c1"}}, or a Firestore request such as '
+                '{"from": "orders", "where": {"field": "total", "op": ">", "value": 10}, "limit": 20}',
             ),
             max_rows=_p("integer", f"Max rows per statement (1-{MAX_ROWS})", minimum=1, maximum=MAX_ROWS),
         ),
@@ -318,9 +338,11 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     ),
     "list_documents": (
         "viewer",
-        "Read documents of a MongoDB collection (relaxed Extended JSON) or items of a DynamoDB table, with the "
-        "total count. DynamoDB: equality filters only (naming the partition key reads just that partition), "
-        "page with next_cursor -> cursor; `key` lists the table's key attributes.",
+        "Read documents of a MongoDB collection (relaxed Extended JSON), items of a DynamoDB table or documents "
+        "of a Firestore collection path, with the total count. DynamoDB / Firestore: equality filters only "
+        "(DynamoDB: naming the partition key reads just that partition; Firestore: dotted names reach into maps, "
+        "_id is the document id), page with next_cursor -> cursor; DynamoDB's `key` lists the table's key "
+        'attributes. Firestore values: {"$timestamp": ...}, {"$ref": "users/u1"}, {"$base64": ...}, {"$geo": ...}.',
         _schema(
             ["source_id", "collection"],
             source_id=SOURCE,
@@ -328,14 +350,36 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
             filter=_p("object", 'Query filter, e.g. {"status": "open"} (MongoDB: $where is refused)'),
             limit=LIMIT,
             skip=_p("integer", "MongoDB: documents to skip (default 0)", minimum=0),
-            cursor=_p("string", "DynamoDB: next_cursor of the previous page"),
+            cursor=_p("string", "DynamoDB / Firestore: next_cursor of the previous page"),
         ),
         t_list_documents,
     ),
+    "list_subcollections": (
+        "viewer",
+        "Firestore: the collections under one document, as collection paths (users/u1/orders) the document tools take.",
+        _schema(
+            ["source_id", "collection", "document_id"], source_id=SOURCE, collection=COLLECTION, document_id=DOC_ID
+        ),
+        t_list_subcollections,
+    ),
+    "export_documents": (
+        "developer",
+        "Firestore: every document of the top-level collections (or the given collection paths) as JSON, up to "
+        f"`limit` documents (default 200, max {MAX_ROWS} here; the dashboard exports up to 10,000); `truncated` "
+        "says when more were left. Subcollections are exported by naming their path.",
+        _schema(
+            ["source_id"],
+            source_id=SOURCE,
+            collections=_p("array", "Collection paths (default: every top-level collection)", items={"type": "string"}),
+            limit=LIMIT,
+        ),
+        t_export_documents,
+    ),
     "insert_document": (
         "developer",
-        "Insert a document into a MongoDB collection (returns it with its _id) or an item into a DynamoDB "
-        "table (it must contain the table's key; an existing key is refused).",
+        "Insert a document into a MongoDB collection (returns it with its _id), an item into a DynamoDB "
+        "table (it must contain the table's key; an existing key is refused) or a document into a Firestore "
+        "collection path (_id in the document picks its id, else Firestore generates one).",
         _schema(
             ["source_id", "collection", "document"],
             source_id=SOURCE,
@@ -346,7 +390,8 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     ),
     "update_document": (
         "developer",
-        "Set and/or unset fields of one MongoDB document or DynamoDB item; _id / the key cannot change.",
+        "Set and/or unset top-level fields of one MongoDB document, DynamoDB item or Firestore document; _id / "
+        "the key cannot change.",
         _schema(
             ["source_id", "collection", "document_id"],
             source_id=SOURCE,
@@ -359,7 +404,7 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     ),
     "delete_document": (
         "developer",
-        "Delete one MongoDB document or DynamoDB item.",
+        "Delete one MongoDB document, DynamoDB item or Firestore document (its subcollections stay).",
         _schema(
             ["source_id", "collection", "document_id"], source_id=SOURCE, collection=COLLECTION, document_id=DOC_ID
         ),
@@ -421,7 +466,7 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         "developer",
         "The RDS / Aurora databases in an AWS connection's region (from list_cloud_connections), with which "
         "ones Deployer can connect to (`problem` says why not) and this PC's public IP, plus the region's "
-        "DynamoDB `tables`.",
+        "DynamoDB `tables`; for a Firebase connection, its project's Firestore databases (`firestore`).",
         _schema(["connection_id"], connection_id=CONNECTION),
         t_list_cloud_databases,
     ),
@@ -452,8 +497,11 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     "connect_cloud_database": (
         "developer",
         "Connect an existing RDS / Aurora database (resource_id from list_cloud_databases) with the user's "
-        "database login, or existing DynamoDB tables (tables from list_cloud_databases). Deployer only "
-        "connects; it never changes that database, its firewall or the tables' settings.",
+        "database login, existing DynamoDB tables (tables from list_cloud_databases), or - with a Firebase "
+        "connection - the project's Cloud Firestore database (database: (default) or a named one; free to "
+        "connect, Google bills reads and writes). Deployer only connects; it never changes that database, its "
+        "firewall or the tables' settings. Apps on firebase_app with database_access then get "
+        "DEPLOYER_DB_<NAME>_PROJECT / _DATABASE.",
         _schema(
             ["connection_id", "name"],
             connection_id=CONNECTION,
@@ -461,7 +509,9 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
             resource_id=_p("string", "Instance or cluster id from list_cloud_databases"),
             username=_p("string", "Database user"),
             password=_p("string", "Database password"),
-            database=_p("string", "Database name (defaults to the instance's own)"),
+            database=_p(
+                "string", 'RDS: database name (defaults to the instance\'s own); Firestore: "(default)" or an id'
+            ),
             tables=_p("array", "DynamoDB: table names (instead of resource_id)", items={"type": "string"}),
         ),
         t_connect_cloud_database,

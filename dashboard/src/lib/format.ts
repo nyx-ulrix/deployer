@@ -37,6 +37,7 @@ export const ENGINE_LABELS: Record<string, string> = {
   postgresql: "PostgreSQL",
   mongodb: "MongoDB",
   dynamodb: "DynamoDB",
+  firestore: "Firestore",
 };
 
 export function engineLabel(engine: string): string {

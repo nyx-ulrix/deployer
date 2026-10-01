@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field, field_validator
 
 from app.deps import DbSession, InstanceOwner, ProjectAccess, require_role
 from app.errors import ApiError
-from app.models import Project
-from app.services import audit, cloud, cloud_db, dynamo, jobs
+from app.models import CloudConnection, Project
+from app.services import audit, cloud, cloud_db, dynamo, firestore, jobs
 from app.services.sources import data_source_out, get_source
 
 router = APIRouter(tags=["cloud"])
@@ -153,6 +153,8 @@ class CloudDatabaseConnect(BaseModel):
     resource_id: str | None = Field(default=None, max_length=63)
     username: str = Field(default="", max_length=128)
     password: str = Field(default="", max_length=500)
+    # RDS: the database name; Firestore (a Firebase connection, docs/CLOUD.md "C2-3"): the database id,
+    # default "(default)".
     database: str | None = Field(default=None, max_length=128)
     # DynamoDB: the tables (from the connection's listing); set instead of resource_id.
     tables: list[str] | None = Field(default=None, max_length=100)
@@ -198,7 +200,8 @@ def database_options(access: Viewer) -> dict:
 
 @router.get("/projects/{project_id}/cloud/connections/{connection_id}/databases")
 def connection_databases(connection_id: str, access: Admin, db: DbSession) -> dict:
-    """The RDS / Aurora databases of an AWS connection's region, to connect one (and this PC's public IP)."""
+    """The RDS / Aurora databases and DynamoDB tables of an AWS connection's region, to connect one (and this
+    PC's public IP), or the Firestore databases of a Firebase connection (`firestore`)."""
     return cloud_db.list_resources(db, access.project.id, connection_id)
 
 
@@ -243,7 +246,16 @@ def create_database(body: CloudDatabaseCreate, request: Request, access: Admin, 
 @router.post("/projects/{project_id}/cloud/databases/connect", status_code=201)
 def connect_database(body: CloudDatabaseConnect, request: Request, access: Admin, db: DbSession) -> dict:
     name = _name(db, access.project.id, body.name)
-    if body.tables is not None:
+    conn = db.get(CloudConnection, body.connection_id)
+    if conn is not None and conn.provider == "firebase":
+        ds = cloud_db.connect_firestore(
+            db,
+            access.project.id,
+            connection_id=body.connection_id,
+            name=name,
+            database=body.database or firestore.DEFAULT_DATABASE,
+        )
+    elif body.tables is not None:
         ds = cloud_db.connect_tables(
             db, access.project.id, connection_id=body.connection_id, name=name, tables=body.tables
         )
@@ -304,3 +316,32 @@ def create_cloud_backup(
     )
     db.commit()
     return {"backups": backups}
+
+
+# --- Firestore export (docs/CLOUD.md "C2-3") -------------------------------------------------------
+
+
+@router.get("/projects/{project_id}/data-sources/{source_id}/firestore/export")
+def export_firestore(
+    source_id: str,
+    request: Request,
+    access: Viewer,
+    db: DbSession,
+    collection: Annotated[list[str] | None, Query(max_length=50)] = None,
+    limit: Annotated[int, Query(ge=1, le=firestore.EXPORT_LIMIT)] = firestore.EXPORT_LIMIT,
+) -> dict:
+    """The documents of the top-level collections (or the given collection paths) as one JSON object."""
+    ds = get_source(db, access.project.id, source_id)
+    if ds.engine != firestore.ENGINE:
+        raise ApiError(400, "wrong_source_kind", "This export is for Firestore databases")
+    audit.record(
+        db,
+        "data_source.export",
+        request=request,
+        user_id=access.user.id,
+        project_id=access.project.id,
+        data_source_id=ds.id,
+        collections=collection,
+    )
+    db.commit()
+    return firestore.export_documents(ds, collection, limit)

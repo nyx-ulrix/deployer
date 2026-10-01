@@ -361,6 +361,28 @@ def delete_document(ds: DataSource, name: str, doc_id: str) -> dict:
     return {"ok": True}
 
 
+NO_COLLECTION_CHANGES = (
+    "Tables of a DynamoDB database are added in AWS: create one with Add database -> In your AWS account, or "
+    "create it in the AWS console and connect it. Delete tables in the AWS console, or remove this database."
+)
+
+
+def run_op(ds: DataSource, op: str, args: dict) -> Any:
+    """source_ops' documents operations on DynamoDB items (services/source_ops.py)."""
+    name = args.get("name") or ""
+    if op == "documents.list":
+        return list_documents(
+            ds, name, filter_json=args.get("filter"), limit=int(args.get("limit", 50)), cursor=args.get("cursor")
+        )
+    if op == "documents.insert":
+        return insert_document(ds, name, args.get("document"))
+    if op == "documents.update":
+        return update_document(ds, name, str(args.get("doc_id") or ""), args.get("set") or {}, args.get("unset"))
+    if op == "documents.delete":
+        return delete_document(ds, name, str(args.get("doc_id") or ""))
+    raise ApiError(400, "not_supported", NO_COLLECTION_CHANGES)
+
+
 # --- schema ------------------------------------------------------------------------------------------
 
 
@@ -519,6 +541,38 @@ def run_console(ds: DataSource, query: str, *, max_rows: int, read_only: bool) -
         lines.append("More items: send LastEvaluatedKey (above) as ExclusiveStartKey for the next page.")
     reads = operation in READ_OPERATIONS
     return out(result=result, docs=docs if reads or docs else None, output="\n".join(lines), truncated=more)
+
+
+# --- connection details ---------------------------------------------------------------------------------
+
+
+def display(ds: DataSource) -> dict:
+    region = (ds.cloud_state or {}).get("region")
+    return {"host": f"dynamodb.{region}.amazonaws.com", "port": 443, "username": None, "tls": True}
+
+
+def connection_info(ds: DataSource) -> dict:
+    """No password: apps use AWS credentials (App Runner: its instance role)."""
+    from app.services import connections
+
+    connections.load_config(ds)
+    state = ds.cloud_state or {}
+    tables = list(state.get("tables") or [])
+    return {
+        "uri": None,
+        "host": f"dynamodb.{state.get('region')}.amazonaws.com",
+        "port": 443,
+        "username": None,
+        "password": None,
+        "database": tables[0] if tables else None,
+        "region": state.get("region"),
+        "tables": tables,
+        "external_hint": (
+            "DynamoDB has no password: use an AWS SDK with the region and table names. Apps on AWS App Runner "
+            "with Database access get DEPLOYER_DB_<NAME>_TABLE / _TABLES / _REGION and an IAM role allowed "
+            "to use exactly these tables. Anywhere else, use AWS credentials that may access them."
+        ),
+    }
 
 
 # --- on-demand backups ---------------------------------------------------------------------------------

@@ -18,9 +18,14 @@ DynamoDB ("C2-2"): an `external` source with engine `dynamodb` holding one or mo
 on; deleting switches it off, takes a final on-demand backup and deletes the table. **Connected**: tables the
 user already has, only read and written, never deleted.
 
+Cloud Firestore ("C2-3"): an `external` source with engine `firestore` on a Firebase connection, one
+existing Firestore database of that project (`cloud_state.database`), only ever connected - Deployer never
+creates or deletes one. Data operations are in services/firestore.py.
+
 Apps on `aws_app` with database access get `DEPLOYER_DB_<NAME>_*` for the project's databases on the
 same AWS connection through `cloud_deploy.cloud_env`, and reach them through the VPC connector (RDS) or
-their App Runner instance role, scoped to the tables' ARNs (DynamoDB).
+their App Runner instance role, scoped to the tables' ARNs (DynamoDB). Apps on `firebase_app` get the
+project's Firestore databases on the same Firebase connection and reach them as their service account.
 """
 
 from __future__ import annotations
@@ -37,7 +42,7 @@ from sqlalchemy.orm import Session
 from app.crypto import decrypt_json, encrypt_json
 from app.errors import ApiError, CloudError, conflict
 from app.models import App, CloudConnection, DataSource, Job, utcnow
-from app.services import cloud, cloud_aws, connections, dynamo, jobs
+from app.services import cloud, cloud_aws, cloud_gcp, connections, dynamo, firestore, jobs
 
 log = logging.getLogger(__name__)
 
@@ -95,11 +100,13 @@ LOCATIONS = [
     {
         "id": "firebase",
         "label": "In your Firebase project",
-        "what": "Google runs the database (Cloud Firestore or Realtime Database) in your Firebase project.",
-        "when_pc_off": "Stays up when this PC is off.",
-        "cost": "Free quota, then billed by Google per read/write and storage (Blaze plan).",
-        "available": False,
-        "note": "Coming soon (phase C2, next step).",
+        "what": "Google runs the database in your Firebase project: connect its Cloud Firestore database "
+        "(NoSQL documents, the database Firebase apps use).",
+        "when_pc_off": "Stays up when this PC is off, so cloud apps keep working.",
+        "cost": "Free daily quota (50,000 reads, 20,000 writes, 1 GB stored), then billed by Google per read, "
+        "write and GB (Blaze plan).",
+        "only": "nosql",
+        "note": "NoSQL only: Cloud Firestore. Realtime Database is coming soon.",
     },
 ]
 COST_NOTE = (
@@ -132,6 +139,27 @@ DYNAMODB_COST_NOTE = (
     "writes and US$0.13 per million reads, plus about US$0.25 per GB stored per month (US region prices; the "
     "first 25 GB of storage are free every month). An idle table costs only its storage. On-demand backups cost "
     "about US$0.10 per GB per month until you delete them; deleting the table here keeps a final backup."
+)
+FIRESTORE_WHAT = (
+    "Cloud Firestore is Firebase's NoSQL database: documents (JSON-like records) grouped in collections, such as "
+    "users/ann, and a document can hold its own collections (users/ann/orders). Google runs it for you - nothing "
+    "to size or keep running. Apps use it with the Firebase or Google Cloud SDK (not SQL)."
+)
+FIRESTORE_CONNECT = (
+    "Pick the database: every Firebase project can have one called (default), made in the Firebase console under "
+    "Build -> Firestore Database -> Create database (choose production mode and a location near your users). "
+    "Deployer only connects: it never creates or deletes a Firestore database, and removing it here keeps the data."
+)
+FIRESTORE_COST_NOTE = (
+    "Connecting is free. Google bills reads, writes and storage to your Firebase project, including what you do in "
+    "this dashboard (each page of documents is a few reads): the free quota is 50,000 reads and 20,000 writes a "
+    "day and 1 GB stored; beyond it, about US$0.06 per 100,000 reads and US$0.18 per 100,000 writes (Blaze plan)."
+)
+FIRESTORE_NETWORK = (
+    "No firewall or password: Deployer reaches it with your Firebase connection's service account, and Firebase "
+    "full apps (Cloud Run) with Database access sign in as their own service account. Give that account (the "
+    "project's default compute service account, PROJECT_NUMBER-compute@developer.gserviceaccount.com) the Cloud "
+    "Datastore User role in the Google Cloud console -> IAM, unless it already has Editor."
 )
 DYNAMODB_NETWORK = (
     "No firewall or password: Deployer reaches it with your AWS connection's key, and App Runner apps with "
@@ -187,14 +215,15 @@ def cloud_out(ds: DataSource, db: Session | None = None) -> dict | None:
         "connection_name": conn.name if conn else None,
         "service": s.get("service", "rds"),
         "created": bool(s.get("created")),
-        "resource_id": s.get("instance_id") or s.get("cluster_id") or next(iter(s.get("tables") or []), None),
-        "resource_kind": "table"
-        if s.get("service") == "dynamodb"
-        else "cluster"
-        if s.get("cluster_id")
-        else "instance",
+        "resource_id": s.get("instance_id")
+        or s.get("cluster_id")
+        or next(iter(s.get("tables") or []), None)
+        or s.get("database"),
+        "resource_kind": {"dynamodb": "table", "firestore": "database"}.get(s.get("service"))
+        or ("cluster" if s.get("cluster_id") else "instance"),
         "tables": s.get("tables"),
-        "region": s.get("region"),
+        "project_id": s.get("project_id"),
+        "region": s.get("region") or s.get("location"),
         "instance_class": s.get("instance_class"),
         "allowed_ip": s.get("allowed_ip"),
         "job_id": s.get("job_id"),
@@ -215,6 +244,12 @@ def options() -> dict:
             "cost": COST_NOTE,
             "network": NETWORK_NOTE,
         },
+        "firestore": {
+            "what": FIRESTORE_WHAT,
+            "connect": FIRESTORE_CONNECT,
+            "cost": FIRESTORE_COST_NOTE,
+            "network": FIRESTORE_NETWORK,
+        },
         "dynamodb": {
             "what": DYNAMODB_WHAT,
             "keys": DYNAMODB_KEYS,
@@ -225,10 +260,14 @@ def options() -> dict:
     }
 
 
-def _aws_connection(db: Session, project_id: str, connection_id: str) -> tuple[CloudConnection, dict]:
+def _connection(
+    db: Session, project_id: str, connection_id: str, provider: str | None = "aws"
+) -> tuple[CloudConnection, dict]:
+    """A connection this project may use (of `provider`, when given), else 422."""
     conn = db.get(CloudConnection, connection_id) if connection_id else None
-    if conn is None or conn.project_id not in (None, project_id) or conn.provider != "aws":
-        raise ApiError(422, "validation_error", "Pick an AWS account this project may use", {"field": "connection_id"})
+    if conn is None or conn.project_id not in (None, project_id) or provider not in (None, conn.provider):
+        what = {"aws": "an AWS account", "firebase": "a Firebase project"}.get(provider or "", "a cloud account")
+        raise ApiError(422, "validation_error", f"Pick {what} this project may use", {"field": "connection_id"})
     return conn, cloud.config_of(conn)
 
 
@@ -243,8 +282,11 @@ def _cloud_call(fn, *args, **kwargs):
 
 
 def list_resources(db: Session, project_id: str, connection_id: str) -> dict:
-    """RDS / Aurora databases of the connection's region, with whether Deployer can connect to each."""
-    _, config = _aws_connection(db, project_id, connection_id)
+    """RDS / Aurora databases and DynamoDB tables of an AWS connection's region, with whether Deployer can
+    connect to each - or a Firebase connection's Firestore databases (`firestore`)."""
+    conn, config = _connection(db, project_id, connection_id, provider=None)
+    if conn.provider == "firebase":
+        return _firestore_listing(config)
     aws = cloud_aws.client(config)
     found = _cloud_call(aws.db_resources)
     try:
@@ -274,6 +316,25 @@ def list_resources(db: Session, project_id: str, connection_id: str) -> dict:
     }
 
 
+def _firestore_listing(config: dict) -> dict:
+    found, problem = [], None
+    try:
+        found = firestore.list_databases(cloud_gcp.client(config))
+    except CloudError as exc:  # e.g. the role predates Firestore support: the dialog still takes a typed id
+        problem = exc.message
+    return {
+        "provider": "firebase",
+        "project_id": config.get("project_id"),
+        "region": config.get("region"),
+        "pc_ip": None,
+        "databases": [],
+        "tables": [],
+        "tables_problem": None,
+        "firestore": found,
+        "firestore_problem": problem,
+    }
+
+
 def list_tables(aws, limit: int = 1000) -> list[str]:
     names, start = [], None
     while len(names) < limit:
@@ -297,7 +358,7 @@ def connect(
     database: str | None,
 ) -> DataSource:
     """A data source for an existing RDS / Aurora database (the caller checks the name and commits)."""
-    conn, config = _aws_connection(db, project_id, connection_id)
+    conn, config = _connection(db, project_id, connection_id)
     aws = cloud_aws.client(config)
     found = next((r for r in _cloud_call(aws.db_resources) if r["id"] == resource_id), None)
     if found is None:
@@ -359,7 +420,7 @@ def connect(
 def connect_tables(db: Session, project_id: str, *, connection_id: str, name: str, tables: list[str]) -> DataSource:
     """A DynamoDB source for tables the user already has (the caller checks the name and commits). Deployer
     only reads and writes their items; removing the source never deletes a table."""
-    conn, config = _aws_connection(db, project_id, connection_id)
+    conn, config = _connection(db, project_id, connection_id)
     tables = list(dict.fromkeys(t.strip() for t in tables if t and t.strip()))
     if not tables:
         raise ApiError(422, "validation_error", "Pick at least one table", {"field": "tables"})
@@ -395,6 +456,57 @@ def connect_tables(db: Session, project_id: str, *, connection_id: str, name: st
     return ds
 
 
+def connect_firestore(db: Session, project_id: str, *, connection_id: str, name: str, database: str) -> DataSource:
+    """A Firestore source for an existing database of the Firebase project (the caller checks the name and
+    commits). Deployer never creates or deletes the database itself."""
+    conn, config = _connection(db, project_id, connection_id, provider="firebase")
+    database = (database or firestore.DEFAULT_DATABASE).strip()
+    if not firestore.DATABASE_ID.match(database):
+        raise ApiError(
+            422,
+            "validation_error",
+            "That is not a Firestore database id: (default), or lowercase letters, digits and hyphens",
+            {"field": "database"},
+        )
+    try:
+        info = firestore.describe(cloud_gcp.client(config), database)
+    except ApiError as exc:
+        hint = (
+            " - no Firestore database with that id: create it in the Firebase console (Build -> Firestore "
+            "Database) first."
+            if exc.code == "not_found"
+            else ""
+        )
+        raise ApiError(400, "connection_failed", f"Database {database}: {exc.message}{hint}") from None
+    problem = firestore.database_problem(info)
+    if problem:
+        raise ApiError(400, "connection_failed", problem)
+    ds = DataSource(
+        project_id=project_id,
+        name=name,
+        kind="nosql",
+        engine=firestore.ENGINE,
+        mode="external",
+        database_name=database,
+        config_encrypted=encrypt_json({}),  # no secret of its own: the Firebase connection's key is used
+        status="ok",
+        status_message=f"Connected ({info.get('locationId') or 'Firestore'})",
+        last_checked_at=utcnow(),
+        cloud_connection_id=conn.id,
+        cloud_state={
+            "provider": "firebase",
+            "service": "firestore",
+            "created": False,
+            "database": database,
+            "project_id": config.get("project_id"),
+            "location": info.get("locationId"),
+        },
+    )
+    db.add(ds)
+    db.flush()
+    return ds
+
+
 def create_table(
     db: Session,
     project_id: str,
@@ -413,7 +525,7 @@ def create_table(
             raise ApiError(422, "validation_error", "Each key needs a name and a type (S, N or B)", {"field": "keys"})
     if sort_key and sort_key["name"].strip() == partition_key["name"].strip():
         raise ApiError(422, "validation_error", "The sort key must differ from the partition key", {"field": "keys"})
-    conn, config = _aws_connection(db, project_id, connection_id)
+    conn, config = _connection(db, project_id, connection_id)
     ds = DataSource(
         project_id=project_id,
         name=name,
@@ -501,7 +613,7 @@ def create(
         raise ApiError(422, "validation_error", "Pick MySQL, MariaDB or PostgreSQL", {"field": "engine"})
     if instance_class not in INSTANCE_CLASSES:
         raise ApiError(422, "validation_error", "Pick one of the offered sizes", {"field": "instance_class"})
-    conn, config = _aws_connection(db, project_id, connection_id)
+    conn, config = _connection(db, project_id, connection_id)
     port = connections.DEFAULT_PORTS[engine]
     database = db_name(name)
     ds = DataSource(
@@ -875,9 +987,10 @@ def refresh_pc_ips(factory: jobs.SessionFactory, *, force: bool = False) -> int:
 
 
 def app_databases(db: Session, app: App) -> tuple[list[dict], list[str]]:
-    """The project's cloud databases an `aws_app` with database access gets (same AWS connection, so
-    the same account and region), as `{name, engine, config, database_name, state}`, plus log notes."""
-    if app.target != "aws_app" or not app.database_access:
+    """The project's cloud databases an `aws_app` / `firebase_app` with database access gets (same cloud
+    connection, so the same account and region / Firebase project), as `{name, engine, config, database_name,
+    state}`, plus log notes."""
+    if app.target not in cloud.DATABASE_TARGETS or not app.database_access:
         return [], []
     out, notes = [], []
     sources = db.scalars(
@@ -896,14 +1009,20 @@ def app_databases(db: Session, app: App) -> tuple[list[dict], list[str]]:
             notes.append(f"Database '{ds.name}' is still being created: deploy again once it is ready")
         else:
             state = dict(ds.cloud_state or {})
-            dynamodb = {"region": state.get("region"), "tables": state.get("tables") or []}
+            # DynamoDB / Firestore: no credentials; the app's own cloud identity is allowed in.
+            config = (
+                {"region": state.get("region"), "tables": state.get("tables") or []}
+                if ds.engine == dynamo.ENGINE
+                else {"project_id": state.get("project_id"), "database": firestore.database_of(ds)}
+                if ds.engine == firestore.ENGINE
+                else connections.load_config(ds)
+            )
             out.append(
                 {
                     "name": ds.name,
                     "kind": ds.kind,
                     "engine": ds.engine,
-                    # DynamoDB: no credentials; the app's instance role may use these tables.
-                    "config": dynamodb if ds.engine == dynamo.ENGINE else connections.load_config(ds),
+                    "config": config,
                     "database_name": ds.database_name,
                     "state": state,
                 }

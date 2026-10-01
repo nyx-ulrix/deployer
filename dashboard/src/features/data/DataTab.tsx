@@ -1,10 +1,14 @@
 import { useState } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router-dom";
-import { Database, FileJson, History, Leaf, Plus, Table2 } from "lucide-react";
+import { Database, Download, FileJson, FolderOpen, History, Leaf, Plus, Table2 } from "lucide-react";
+import { errorMessage } from "../../api/client";
+import { api } from "../../api/endpoints";
 import { useDataSources, useSchema } from "../../api/hooks";
 import type { DataSource, Entity } from "../../api/types";
 import { Button } from "../../components/ui/Button";
-import { Select } from "../../components/ui/Input";
+import { Input, Select } from "../../components/ui/Input";
+import { useToast } from "../../components/ui/toast-context";
 import { PageSpinner } from "../../components/ui/Spinner";
 import { Alert, EmptyState, ErrorState } from "../../components/ui/States";
 import { cn } from "../../lib/cn";
@@ -13,6 +17,7 @@ import { useDeviceNames } from "../devices/useDeviceNames";
 import { useProjectContext } from "../projects/project-context";
 import { CreateCollectionDialog } from "./CreateCollectionDialog";
 import { CreateTableDialog } from "./CreateTableDialog";
+import { downloadText } from "../query/csv";
 import { DocumentsView } from "./DocumentsView";
 import { SqlTableView } from "./SqlTableView";
 
@@ -41,9 +46,13 @@ export function DataTab() {
   const sourceSchema = schema.data?.sources.find((s) => s.source_id === source.id);
   const entities: Entity[] = sourceSchema?.entities ?? [];
   const entityName = params.get("entity");
-  const entity = entities.find((e) => e.name === entityName) ?? null;
   const isSql = source.kind === "sql";
   const dynamo = source.engine === "dynamodb"; // tables of items; tables are added in AWS, not here
+  // Firestore (docs/CLOUD.md "C2-3"): any collection path opens, a subcollection or one with no documents yet.
+  const firestore = source.engine === "firestore";
+  const entity =
+    entities.find((e) => e.name === entityName) ??
+    (firestore && entityName ? { name: entityName, type: "collection" as const, row_count: null, fields: [], indexes: [], validator: null } : null);
   const entityNoun = isSql || dynamo ? "table" : "collection";
 
   const select = (next: { source?: string; entity?: string | null }) => {
@@ -115,7 +124,9 @@ export function DataTab() {
                 </button>
               ))}
             </nav>
-            {can("developer") && !dynamo && (
+            {firestore && <OpenCollection onOpen={(path) => select({ entity: path })} />}
+            {firestore && <ExportButton projectId={project.id} source={source} />}
+            {can("developer") && !dynamo && !firestore && (
               <Button icon={<Plus className="size-4" />} onClick={() => setCreating(true)}>
                 {isSql ? "Create table" : "Create collection"}
               </Button>
@@ -137,7 +148,13 @@ export function DataTab() {
           isSql ? (
             <SqlTableView key={`${source.id}/${entity.name}`} source={source} entity={entity} onDropped={() => select({ entity: null })} />
           ) : (
-            <DocumentsView key={`${source.id}/${entity.name}`} source={source} entity={entity} onDropped={() => select({ entity: null })} />
+            <DocumentsView
+              key={`${source.id}/${entity.name}`}
+              source={source}
+              entity={entity}
+              onDropped={() => select({ entity: null })}
+              onOpen={(path) => select({ entity: path })}
+            />
           )
         ) : (
           <EmptyState
@@ -170,5 +187,56 @@ export function DataTab() {
           />
         ))}
     </div>
+  );
+}
+
+/** Firestore: open a collection by its path (a new one appears with its first document). */
+function OpenCollection({ onOpen }: { onOpen: (path: string) => void }) {
+  const [path, setPath] = useState("");
+  const clean = path.trim().replace(/^\/+|\/+$/g, "");
+  const valid = clean !== "" && clean.split("/").length % 2 === 1 && !clean.split("/").includes("");
+  return (
+    <form
+      className="flex gap-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (valid) onOpen(clean);
+      }}
+    >
+      <Input
+        aria-label="Collection path"
+        placeholder="Open a collection path, e.g. users/u1/orders"
+        value={path}
+        onChange={(e) => setPath(e.target.value)}
+        spellCheck={false}
+        autoCapitalize="off"
+        className="min-w-0 flex-1 font-mono text-xs"
+      />
+      <Button type="submit" size="icon" aria-label="Open collection" title="Open (or start) this collection" disabled={!valid}>
+        <FolderOpen className="size-4" />
+      </Button>
+    </form>
+  );
+}
+
+/** Firestore: every document of the top-level collections as one JSON file (docs/CLOUD.md "C2-3"). */
+function ExportButton({ projectId, source }: { projectId: string; source: DataSource }) {
+  const toast = useToast();
+  const exp = useMutation({
+    mutationFn: () => api.cloud.firestoreExport(projectId, source.id),
+    onSuccess: (out) => {
+      downloadText(`${source.name}-firestore.json`, JSON.stringify(out, null, 2), "application/json");
+      toast.success(
+        out.truncated
+          ? `Exported the first ${out.documents} documents (the limit for one export).`
+          : `Exported ${out.documents} documents.`,
+      );
+    },
+    onError: (e) => toast.error(errorMessage(e), "Export failed"),
+  });
+  return (
+    <Button size="sm" variant="ghost" icon={<Download className="size-3.5" />} loading={exp.isPending} onClick={() => exp.mutate()}>
+      Export as JSON
+    </Button>
   );
 }

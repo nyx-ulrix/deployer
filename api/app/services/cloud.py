@@ -80,11 +80,16 @@ TARGETS: dict[str, dict] = {
     },
 }
 STATIC_TARGETS = tuple(t for t, v in TARGETS.items() if v["kind"] == "static")
+# Targets where "database access" means the project's databases in the same cloud account (docs/CLOUD.md "C2"):
+# App Runner -> RDS / DynamoDB on the AWS connection, Cloud Run -> Firestore on the Firebase connection.
+DATABASE_TARGETS = ("aws_app", "firebase_app")
 CLOUD_ENV_NOTE = (
     "Cloud targets get only the app's own environment variables: no DEPLOYER_URL or DEPLOYER_API_KEY, and "
     "nothing that points at this PC (which may be off). An App Runner app with database access gets "
     "DEPLOYER_DB_<NAME>_* for the project's databases in the same AWS account - pointing at AWS, never at this PC "
-    "(DynamoDB tables: their names and region, used through an IAM role that may access only those tables)."
+    "(DynamoDB tables: their names and region, used through an IAM role that may access only those tables). A "
+    "Firebase full app (Cloud Run) with database access gets DEPLOYER_DB_<NAME>_PROJECT / _DATABASE for the "
+    "project's Firestore databases in the same Firebase project, reached as the app's own service account."
 )
 
 _AWS_KEY_ID = re.compile(r"^(AKIA|ASIA)[A-Z0-9]{16}$")
@@ -333,12 +338,19 @@ GOOGLE_ROLES = [
     {"role": "roles/run.admin", "title": "Cloud Run Admin", "why": "deploy and make the app public"},
     {"role": "roles/artifactregistry.admin", "title": "Artifact Registry Administrator", "why": "image repository"},
     {"role": "roles/iam.serviceAccountUser", "title": "Service Account User", "why": "run the app as its identity"},
+    {
+        "role": "roles/datastore.user",
+        "title": "Cloud Datastore User",
+        "why": "browse, edit and query Firestore databases (read and write documents only)",
+        "only_for": "firestore",
+    },
 ]
 GOOGLE_APIS = [
     {"api": "firebasehosting.googleapis.com", "title": "Firebase Hosting API"},
     {"api": "firebase.googleapis.com", "title": "Firebase Management API"},
     {"api": "run.googleapis.com", "title": "Cloud Run Admin API", "only_for": "firebase_app"},
     {"api": "artifactregistry.googleapis.com", "title": "Artifact Registry API", "only_for": "firebase_app"},
+    {"api": "firestore.googleapis.com", "title": "Cloud Firestore API", "only_for": "firestore"},
 ]
 
 

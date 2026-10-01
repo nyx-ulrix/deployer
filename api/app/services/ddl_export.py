@@ -392,10 +392,10 @@ def export_mongo_source(ds: DataSource, now: datetime | None = None) -> str:
 
 
 def export_source(ds: DataSource, now: datetime | None = None) -> str:
-    if ds.engine == "dynamodb":
-        from app.services import dynamo
+    from app.services.connections import cloud_engine
 
-        return dynamo.export_script(ds)
+    if (adapter := cloud_engine(ds.engine)) is not None:  # DynamoDB, Firestore
+        return adapter.export_script(ds)
     return export_sql_source(ds, now) if ds.kind == "sql" else export_mongo_source(ds, now)
 
 

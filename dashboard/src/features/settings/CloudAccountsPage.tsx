@@ -298,7 +298,16 @@ const FIREBASE_TITLES = [
   "Paste and validate",
 ];
 
-function FirebaseGuide({ roles, apis }: { roles: { role: string; title: string; why: string }[]; apis: { api: string; title: string; only_for?: string }[] }) {
+// What an API or role marked `only_for` is needed for (docs/CLOUD.md).
+const ONLY_FOR: Record<string, string> = { firebase_app: "only needed for full apps", firestore: "only needed for Firestore databases" };
+
+function FirebaseGuide({
+  roles,
+  apis,
+}: {
+  roles: { role: string; title: string; why: string; only_for?: string }[];
+  apis: { api: string; title: string; only_for?: string }[];
+}) {
   const { steps, ack } = useGuide(FIREBASE_TITLES.length);
   const [form, setForm] = useState({ name: "Firebase", json: "", region: "us-central1", project_id: "" });
   const create = useCreate(() => setForm((f) => ({ ...f, json: "" })));
@@ -326,6 +335,11 @@ function FirebaseGuide({ roles, apis }: { roles: { role: string; title: string; 
             Google Cloud Run, reachable through Firebase Hosting's address. For APIs and server-rendered sites. Needs the Blaze
             (pay-as-you-go) plan; it scales to zero when nobody visits.
           </li>
+          <li>
+            <span className="text-fg">Cloud Firestore database</span>: connect the project&apos;s Firestore database under Databases → Add
+            database → In your Firebase project, browse and edit it here, and give it to full apps. Free daily quota, then billed per read
+            and write.
+          </li>
         </ul>
       </div>
       <StepCard n={1} title={FIREBASE_TITLES[0]} status={steps[0]} summary="Blaze plan only for full apps">
@@ -338,14 +352,14 @@ function FirebaseGuide({ roles, apis }: { roles: { role: string; title: string; 
           <DoneButton status={steps[0]} onClick={() => ack(0)} />
         </div>
       </StepCard>
-      <StepCard n={2} title={FIREBASE_TITLES[1]} status={steps[1]} summary="Four APIs, one click each">
+      <StepCard n={2} title={FIREBASE_TITLES[1]} status={steps[1]} summary={`${apis.length} APIs, one click each`}>
         <div className="space-y-3">
           <p className="text-muted">Open each one for your project and click <strong>Enable</strong>:</p>
           <ul className="list-disc space-y-1 pl-5">
             {apis.map((a) => (
               <li key={a.api}>
                 <ExtLink href={gcp(`apis/library/${a.api}`)}>{a.title}</ExtLink>
-                {a.only_for && <span className="text-xs text-muted"> — only needed for full apps</span>}
+                {a.only_for && <span className="text-xs text-muted"> — {ONLY_FOR[a.only_for] ?? a.only_for}</span>}
               </li>
             ))}
           </ul>
@@ -362,10 +376,20 @@ function FirebaseGuide({ roles, apis }: { roles: { role: string; title: string; 
             {roles.map((r) => (
               <li key={r.role}>
                 <span className="font-medium">{r.title}</span> <code className="font-mono text-xs text-muted">{r.role}</code>
-                <span className="text-xs text-muted"> — {r.why}</span>
+                <span className="text-xs text-muted">
+                  {" "}
+                  — {r.why}
+                  {r.only_for && ` (${ONLY_FOR[r.only_for] ?? r.only_for})`}
+                </span>
               </li>
             ))}
           </ul>
+          <p className="text-muted">
+            Full apps that use a Firestore database run on Cloud Run as the project&apos;s default compute service account (
+            <code className="font-mono text-xs">PROJECT_NUMBER-compute@developer.gserviceaccount.com</code>, listed under IAM). Grant it{" "}
+            <strong>Cloud Datastore User</strong> too, unless it already has Editor. Already made the <code className="font-mono">deployer</code>{" "}
+            account for hosting? Add the Cloud Datastore User role to it (IAM → Edit principal) and turn on the Cloud Firestore API.
+          </p>
           <DoneButton status={steps[2]} onClick={() => ack(2)} />
         </div>
       </StepCard>

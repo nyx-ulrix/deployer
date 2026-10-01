@@ -757,10 +757,10 @@ def run_query(ds: DataSource, query: str, *, max_rows: int, timeout_seconds: int
             timeout_seconds=timeout_seconds,
             read_only=read_only,
         )
-    if ds.engine == "dynamodb":  # one JSON request (docs/QUERY_CONSOLE.md "DynamoDB")
-        from app.services import dynamo
-
-        return dynamo.run_console(ds, query, max_rows=_clamp(max_rows, MAX_ROWS, DEFAULT_MAX_ROWS), read_only=read_only)
+    if (adapter := connections.cloud_engine(ds.engine)) is not None:  # one JSON request (QUERY_CONSOLE.md)
+        return adapter.run_console(
+            ds, query, max_rows=_clamp(max_rows, MAX_ROWS, DEFAULT_MAX_ROWS), read_only=read_only
+        )
     config = connections.load_config(ds)
     return run_mongosh(
         config,

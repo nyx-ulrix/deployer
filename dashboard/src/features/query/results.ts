@@ -152,6 +152,7 @@ function quoteIdent(engine: string, name: string): string {
 /** Starter query inserted from the entity sidebar. */
 export function starterQuery(kind: DataSourceKind, engine: string, name: string): string {
   if (engine === "dynamodb") return JSON.stringify({ operation: "Scan", TableName: name, Limit: 20 });
+  if (engine === "firestore") return JSON.stringify({ from: name, limit: 20 });
   if (kind === "nosql") return `db.getCollection(${JSON.stringify(name)}).find({}).limit(20)`;
   return `SELECT * FROM ${quoteIdent(engine, name)} LIMIT 100;`;
 }

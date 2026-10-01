@@ -191,6 +191,34 @@ await fetch(`${items}/${id}`, { method: "PATCH", headers, body: JSON.stringify({
 An app on AWS App Runner doesn't need this API for its own tables: with *Database access* it gets
 `DEPLOYER_DB_<NAME>_TABLE` / `_REGION` and an AWS role for the SDK, and keeps working when the PC is off.
 
+### Firestore collections
+
+A Firestore database ([CLOUD.md](CLOUD.md) "C2-3") uses the same documents endpoints with `{name}` = a
+**collection path**: `users`, or a subcollection `users/u1/orders` (URL-encode it as one segment or send
+the slashes as they are):
+
+- `GET`: `filter` = **equality** only (`{"status": "open"}`; dotted names reach into maps,
+  `{"address.city": "Oslo"}`; `{"_id": "u1"}` is the document id), `limit`, and **`cursor`** instead of
+  `skip`. Response: `{"documents": [...], "total": n, "next_cursor": "..." | null}` - documents are ordered
+  by id, `total` is an exact count (with the filter).
+- Documents are plain JSON with the id as `_id`; Firestore's own types are `{"$timestamp":
+  "2026-01-01T00:00:00Z"}`, `{"$ref": "users/u1"}`, `{"$base64": "..."}` and `{"$geo": {"latitude": 1.5,
+  "longitude": 2.5}}` - send the same shapes when writing. Whole numbers are stored as integers.
+- `POST` takes `_id` in the document to pick the id (else Firestore makes one; an existing id is `409
+  document_exists`); `PATCH .../documents/{doc_id}` sets / removes top-level fields (`_id` can't change);
+  an unknown document is `404 document_not_found`. Deleting a document leaves its subcollections.
+- `GET .../collections/{name}/documents/{doc_id}/collections` lists a document's subcollections as paths:
+  `{"collections": ["users/u1/orders"]}`.
+
+```js
+const orders = `${base}/projects/${PID}/data-sources/${SID}/collections/${encodeURIComponent("users/u1/orders")}/documents`;
+const page = await fetch(`${orders}?limit=50&filter=${encodeURIComponent('{"status":"open"}')}`, { headers }).then((r) => r.json());
+await fetch(orders, { method: "POST", headers, body: JSON.stringify({ document: { total: 9.5, at: { $timestamp: new Date().toISOString() } } }) });
+```
+
+An app on Firebase (Cloud Run) doesn't need this API: with *Database access* it gets
+`DEPLOYER_DB_<NAME>_PROJECT` / `_DATABASE` and uses the Firebase Admin SDK as its own service account.
+
 ## Queries
 
 `POST /projects/{pid}/data-sources/{sid}/query` with `{"query": "...", "max_rows": 500, "timeout_seconds": 30}`

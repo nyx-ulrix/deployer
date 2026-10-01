@@ -17,6 +17,7 @@ READ_TOOLS = {
     "list_rows",
     "list_documents",
     "list_cloud_backups",
+    "list_subcollections",
 }
 # App tools need a service key (or a developer+ session): anon keys only get the read-only data tools.
 APP_TOOLS = {
@@ -32,6 +33,7 @@ APP_TOOLS = {
     "create_cloud_database",
     "connect_cloud_database",
     "create_cloud_backup",
+    "export_documents",
 }
 WRITE_TOOLS = {"insert_row", "update_row", "delete_row", "insert_document", "update_document", "delete_document"}
 

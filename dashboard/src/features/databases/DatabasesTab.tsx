@@ -208,7 +208,9 @@ function SourceCard({
             ? "Created by Deployer in your AWS account"
             : source.engine === "dynamodb"
               ? "Your own DynamoDB tables, connected"
-              : "Your own AWS database, connected"}
+              : source.engine === "firestore"
+                ? `Your Firebase project's Firestore database ${source.cloud.resource_id ?? ""}, connected`
+                : "Your own AWS database, connected"}
           {source.cloud.connection_name ? ` (${source.cloud.connection_name})` : ""}. {source.cloud.when_pc_off}
           {source.cloud.allowed_ip ? ` Its firewall lets in this PC's IP ${source.cloud.allowed_ip}.` : ""}
           {source.cloud.tables?.length ? ` Tables: ${source.cloud.tables.join(", ")}.` : ""}
@@ -323,6 +325,13 @@ function ConnectionDialog({
               <CopyField label="Endpoint" value={conn.data.host} />
               <CopyField label="Tables" value={conn.data.tables.join(", ")} className="sm:col-span-2" />
             </div>
+          ) : conn.data.project_id ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <CopyField label="Project ID" value={conn.data.project_id} />
+              <CopyField label="Database ID" value={conn.data.database ?? ""} />
+              <CopyField label="Endpoint" value={conn.data.host} />
+              <CopyField label="Location" value={conn.data.region ?? ""} />
+            </div>
           ) : (
             <>
           <CopyField label="Connection URI" value={conn.data.uri ?? ""} secret />
@@ -388,6 +397,8 @@ function DeleteSourceDialog({
             ? "Deployer created this database in your AWS account, so it deletes it there too: AWS first saves a final snapshot (kept in your account and billed for storage until you delete it in the RDS console), then deletes the database and its firewall. Apps using it lose it on their next deploy."
             : source.cloud && source.engine === "dynamodb"
               ? "Deployer forgets these tables. They stay in your AWS account with their data (AWS keeps billing for their storage); delete them in the DynamoDB console if you no longer need them."
+            : source.engine === "firestore"
+              ? "Deployer forgets this database. It stays in your Firebase project with all of its data; Firebase apps using it keep working, and apps deployed from here lose it on their next deploy."
             : source.cloud
               ? "Deployer forgets this connection. The database keeps running in your AWS account (and AWS keeps billing for it); delete it in the RDS console if you no longer need it."
               : source.mode === "external"

@@ -1,5 +1,5 @@
-"""The Google REST calls behind the Firebase hosting targets (docs/CLOUD.md): Firebase Hosting v1beta1,
-Cloud Run Admin v2 and Artifact Registry v1, with a service-account key.
+"""The Google REST calls behind the Firebase hosting targets and databases (docs/CLOUD.md): Firebase Hosting
+v1beta1, Cloud Run Admin v2, Artifact Registry v1 and Cloud Firestore v1, with a service-account key.
 
 No Google SDK: the OAuth token is a JWT-bearer grant signed with the key's RSA private key (PyJWT +
 cryptography, already dependencies) and every call is plain httpx. Rules:
@@ -17,6 +17,7 @@ cryptography, already dependencies) and every call is plain httpx. Rules:
 
 from __future__ import annotations
 
+import hashlib
 import re
 import time
 from collections.abc import Callable
@@ -34,6 +35,7 @@ FIREBASE = "https://firebase.googleapis.com/v1beta1"
 HOSTING = "https://firebasehosting.googleapis.com/v1beta1"
 RUN = "https://run.googleapis.com/v2"
 REGISTRY = "https://artifactregistry.googleapis.com/v1"
+FIRESTORE = "https://firestore.googleapis.com/v1"
 UPLOAD_PREFIX = "https://upload-firebasehosting.googleapis.com/"
 TIMEOUT = httpx.Timeout(60.0, connect=10.0)
 CHANNEL_TTL = "604800s"  # preview channels expire after 7 days
@@ -43,8 +45,12 @@ REGION_RE = re.compile(r"^[a-z]+-[a-z]+\d{1,2}$")
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _OPERATION = re.compile(r"^projects/[\w.-]+/locations/[\w-]+/operations/[\w.-]+$")
 _VERSION = re.compile(r"^(projects/[\w-]+/)?sites/[a-z0-9-]+/versions/[\w-]+$")
+# A Firestore path under projects/<project>/ (segments already percent-encoded by services/firestore.py):
+# the database list, a database, or something under its documents / collection groups, plus a `:method`.
+_FIRESTORE_PATH = re.compile(r"^databases(/[\w()%.~-]+(/(documents|collectionGroups)(/[\w%.~-]+)*)?)?(:[A-Za-z]+)?$")
 
 _factory: Callable[[dict], Any] | None = None
+_tokens: dict[str, tuple[str, float]] = {}  # sha256(client email + key) -> (access token, expiry)
 _transport: httpx.BaseTransport | None = None
 
 
@@ -78,8 +84,8 @@ class GcpClient:
         if not PROJECT_RE.match(self.project) or not REGION_RE.match(self.region):
             raise CloudError("Invalid Firebase project id or region")
         self._email, self._key, self._key_id = sa["client_email"], sa["private_key"], sa.get("private_key_id")
-        self._token: str | None = None
-        self._token_exp = 0.0
+        # Tokens live an hour: shared by every client of the same key (a database request is a new client).
+        self._cache_key = hashlib.sha256(f"{self._email} {self._key}".encode()).hexdigest()
         self._http = httpx.Client(timeout=TIMEOUT, transport=_transport, follow_redirects=False)
 
     def __repr__(self) -> str:
@@ -88,8 +94,9 @@ class GcpClient:
     # --- plumbing --------------------------------------------------------------------------------
 
     def access_token(self) -> str:
-        if self._token and time.time() < self._token_exp - 60:
-            return self._token
+        cached = _tokens.get(self._cache_key)
+        if cached and time.time() < cached[1] - 60:
+            return cached[0]
         now = int(time.time())
         claims = {"iss": self._email, "scope": SCOPES, "aud": TOKEN_URL, "iat": now, "exp": now + 3600}
         try:
@@ -107,8 +114,8 @@ class GcpClient:
         token = body.get("access_token") if isinstance(body, dict) else None
         if not token:
             raise CloudError("Google returned no access token")
-        self._token, self._token_exp = str(token), time.time() + float(body.get("expires_in") or 3600)
-        return self._token
+        _tokens[self._cache_key] = (str(token), time.time() + float(body.get("expires_in") or 3600))
+        return str(token)
 
     def _send(self, method: str, url: str, *, auth: bool = True, ok: tuple[int, ...] = (200,), **kwargs) -> Any:
         headers = dict(kwargs.pop("headers", None) or {})
@@ -124,12 +131,15 @@ class GcpClient:
             body = {}
         if resp.status_code in ok:
             return body
+        if isinstance(body, list) and body:  # streamed methods (Firestore runQuery) send errors as an array
+            body = body[0]
         err = body.get("error") if isinstance(body, dict) else None
+        code = ""
         if isinstance(err, dict):
-            message = str(err.get("message") or err.get("status") or "")
+            message, code = str(err.get("message") or err.get("status") or ""), str(err.get("status") or "")
         else:
             message = str(body.get("error_description") or err or "") if isinstance(body, dict) else ""
-        raise CloudError(f"Google API error {resp.status_code}: {message[:500]}", status=resp.status_code)
+        raise CloudError(f"Google API error {resp.status_code}: {message[:500]}", code=code, status=resp.status_code)
 
     def _json(self, method: str, url: str, body: dict | None = None, **kwargs) -> Any:
         return self._send(method, url, json=body if body is not None else {}, **kwargs)
@@ -138,6 +148,18 @@ class GcpClient:
 
     def project_info(self) -> dict:
         return self._send("GET", f"{FIREBASE}/projects/{self.project}")
+
+    # --- Cloud Firestore (docs/CLOUD.md "C2-3") ---------------------------------------------------
+
+    def firestore(self, method: str, path: str, body: Any = None, params: Any = None) -> Any:
+        """One Firestore REST call under `projects/<project>/` (`databases/(default)/documents:runQuery`).
+        services/firestore.py builds every path and body; this is the seam its tests fake."""
+        if not _FIRESTORE_PATH.match(path) or "/../" in f"/{path}/" or "/./" in f"/{path}/":
+            raise CloudError("Refusing an unexpected Firestore path")
+        url = f"{FIRESTORE}/projects/{self.project}/{path}"
+        if body is None:
+            return self._send(method, url, params=params)
+        return self._json(method, url, body, params=params)
 
     # --- Hosting ---------------------------------------------------------------------------------
 

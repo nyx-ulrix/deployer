@@ -179,8 +179,9 @@ export function AppFormFields({
       {draft.target === "local" && (
         <DatabaseAccess projectId={projectId} checked={draft.database_access} onChange={(v) => onChange({ database_access: v })} isAdmin={isAdmin} disabled={disabled} />
       )}
-      {draft.target === "aws_app" && (
+      {(draft.target === "aws_app" || draft.target === "firebase_app") && (
         <CloudDatabaseAccess
+          firebase={draft.target === "firebase_app"}
           projectId={projectId}
           connectionId={draft.cloud_connection_id}
           checked={draft.database_access}
@@ -193,8 +194,10 @@ export function AppFormFields({
   );
 }
 
-/** docs/CLOUD.md "C2": an App Runner app gets the project's AWS databases (same account), never this PC's. */
+/** docs/CLOUD.md "C2": an App Runner app gets the project's AWS databases (same account), a Cloud Run app the
+ * Firestore databases of its Firebase project ("C2-3"); never this PC's. */
 function CloudDatabaseAccess({
+  firebase,
   projectId,
   connectionId,
   checked,
@@ -202,6 +205,7 @@ function CloudDatabaseAccess({
   isAdmin,
   disabled,
 }: {
+  firebase: boolean;
   projectId: string;
   connectionId: string;
   checked: boolean;
@@ -211,14 +215,17 @@ function CloudDatabaseAccess({
 }) {
   const sources = useDataSources(projectId);
   const cloud = cloudSourcesFor(sources.data ?? [], connectionId);
+  const where = firebase ? "Firebase project" : "AWS account";
   return (
     <div className="space-y-2">
       <Checkbox
-        label="Connect to this project's AWS databases"
+        label={firebase ? "Connect to this project's Firestore databases" : "Connect to this project's AWS databases"}
         description={
-          isAdmin
-            ? "Gives the app the databases in the same AWS account (never the ones on this PC): SQL databases through their private network, DynamoDB tables through an AWS role that may use only those tables. Takes effect on the next deploy."
-            : "Only project admins can change this; ask a project admin."
+          !isAdmin
+            ? "Only project admins can change this; ask a project admin."
+            : firebase
+              ? "Gives the app the Firestore databases in the same Firebase project (never the ones on this PC). The app signs in as its own Google service account, so there is no password to leak. Takes effect on the next deploy."
+              : "Gives the app the databases in the same AWS account (never the ones on this PC): SQL databases through their private network, DynamoDB tables through an AWS role that may use only those tables. Takes effect on the next deploy."
         }
         checked={checked}
         onChange={(e) => onChange(e.target.checked)}
@@ -234,14 +241,27 @@ function CloudDatabaseAccess({
                 <code className="font-mono">{databaseEnvNames(s).join(", ")}</code>
               </span>
             ))}
-            , pointing at AWS so they keep working when this PC is off.
+            , pointing at {firebase ? "Google" : "AWS"} so they keep working when this PC is off.
           </>
         ) : (
-          <>No databases in this AWS account yet: add one under Databases → Add database → In your AWS account.</>
+          <>
+            No databases in this {where} yet: add one under Databases → Add database → In your {where}.
+          </>
         )}{" "}
-        With a SQL (RDS) database, the app sends its outgoing internet traffic through that database's network, which has
-        no internet route by default: if the app also calls other online services, add a NAT gateway in the AWS VPC
-        console (about US$32/month). DynamoDB alone needs nothing extra.
+        {firebase ? (
+          <>
+            Cloud Run runs the app as the project&apos;s default compute service account
+            (PROJECT_NUMBER-compute@developer.gserviceaccount.com; the build log shows it). Give it the{" "}
+            <strong>Cloud Datastore User</strong> role in the Google Cloud console → IAM, unless it already has Editor, or
+            the app&apos;s Firestore calls are refused.
+          </>
+        ) : (
+          <>
+            With a SQL (RDS) database, the app sends its outgoing internet traffic through that database&apos;s network, which
+            has no internet route by default: if the app also calls other online services, add a NAT gateway in the AWS VPC
+            console (about US$32/month). DynamoDB alone needs nothing extra.
+          </>
+        )}
       </div>
     </div>
   );

@@ -232,7 +232,7 @@ export function draftToInput(d: AppDraft, env: EnvRow[]): AppInput {
     // Cloud targets never get this PC's data API key or databases (docs/CLOUD.md); on App Runner,
     // database access means the project's AWS databases instead.
     api_key_id: d.target === "local" ? d.api_key_id || null : null,
-    database_access: (d.target === "local" || d.target === "aws_app") && d.database_access,
+    database_access: (d.target === "local" || CLOUD_DATABASE_TARGETS.includes(d.target)) && d.database_access,
     target: d.target,
     cloud_connection_id: d.target === "local" ? null : d.cloud_connection_id || null,
   };
@@ -250,13 +250,18 @@ export function draftToPatch(d: AppDraft, app: App): AppPatch {
   return patch;
 }
 
+/** Cloud targets where "database access" means the project's databases in the same cloud account (docs/CLOUD.md "C2"). */
+export const CLOUD_DATABASE_TARGETS: AppTarget[] = ["aws_app", "firebase_app"];
+
 /** Variable names "database access" injects for a source (mirrors `deployments.database_env`). Values are never shown. */
 export function databaseEnvNames(source: Pick<DataSource, "name" | "kind"> & { engine?: string }): string[] {
   const prefix = `DEPLOYER_DB_${source.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_`;
   const suffixes =
     source.engine === "dynamodb" // docs/CLOUD.md "C2-2": table names and region; the app's IAM role grants access
       ? ["TABLE", "TABLES", "REGION", "DATABASE"]
-      : source.kind === "sql"
+      : source.engine === "firestore" // "C2-3": the Google project and database id; Cloud Run signs in as itself
+        ? ["PROJECT", "DATABASE"]
+        : source.kind === "sql"
         ? ["HOST", "PORT", "USER", "PASSWORD", "DATABASE", "URL"]
         : ["URL", "DATABASE"];
   return suffixes.map((s) => prefix + s);

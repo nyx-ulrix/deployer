@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Filter, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, CornerLeftUp, Filter, FolderTree, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import type { DataSource, Entity, JsonObject } from "../../api/types";
@@ -26,10 +26,13 @@ export function DocumentsView({
   source,
   entity,
   onDropped,
+  onOpen,
 }: {
   source: DataSource;
   entity: Entity;
   onDropped: () => void;
+  /** Firestore: open another collection path (a subcollection, or the parent collection). */
+  onOpen?: (path: string) => void;
 }) {
   const { project, can } = useProjectContext();
   const toast = useToast();
@@ -38,6 +41,10 @@ export function DocumentsView({
   const [skip, setSkip] = useState(0);
   // DynamoDB pages with cursors (docs/CLOUD.md "C2-2"): the cursors of the pages before this one.
   const dynamo = source.engine === "dynamodb";
+  // Firestore (docs/CLOUD.md "C2-3"): cursor pages too; collections are paths, users/u1/orders.
+  const firestore = source.engine === "firestore";
+  const cursorPaged = dynamo || firestore;
+  const parentPath = firestore ? entity.name.split("/").slice(0, -2).join("/") : "";
   const [cursors, setCursors] = useState<string[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const firstPage = () => {
@@ -59,7 +66,7 @@ export function DocumentsView({
   };
 
   const filterParse = parseJsonObject(filterText, { allowEmpty: true });
-  const params = dynamo ? { filter: appliedFilter, limit, cursor } : { filter: appliedFilter, limit, skip };
+  const params = cursorPaged ? { filter: appliedFilter, limit, cursor } : { filter: appliedFilter, limit, skip };
   const docs = useQuery({
     queryKey: qk.documents(project.id, source.id, entity.name, params),
     queryFn: () => api.documents.list(project.id, source.id, entity.name, params),
@@ -99,7 +106,7 @@ export function DocumentsView({
 
   const total = docs.data?.total ?? 0;
   // Deleting the last document on a page leaves skip past the end: step back a page.
-  if (!dynamo && docs.data && !docs.isPlaceholderData && clampOffset(skip, total, limit) !== skip) {
+  if (!cursorPaged && docs.data && !docs.isPlaceholderData && clampOffset(skip, total, limit) !== skip) {
     setSkip(clampOffset(skip, total, limit));
   }
 
@@ -107,6 +114,11 @@ export function DocumentsView({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <h2 className="mr-auto min-w-0 truncate font-mono text-base font-semibold">{entity.name}</h2>
+        {parentPath && onOpen && (
+          <Button size="sm" variant="ghost" icon={<CornerLeftUp className="size-3.5" />} onClick={() => onOpen(parentPath)}>
+            {parentPath}
+          </Button>
+        )}
         <Button
           size="sm"
           variant="ghost"
@@ -120,7 +132,7 @@ export function DocumentsView({
             Insert {noun}
           </Button>
         )}
-        {can("admin") && !dynamo && (
+        {can("admin") && !cursorPaged && (
           <Button size="sm" variant="outline-danger" icon={<Trash2 className="size-3.5" />} onClick={() => setDropping(true)}>
             Drop collection
           </Button>
@@ -154,11 +166,13 @@ export function DocumentsView({
             placeholder={
               dynamo
                 ? `Equal values, e.g. { "${key[0] ?? "id"}": "..." } (naming the ${key[0] ?? "partition key"} is fastest)`
-                : 'Filter, e.g. { "status": "active" }'
+                : firestore
+                  ? 'Equal values, e.g. { "status": "open" } or { "address.city": "Oslo" }'
+                  : 'Filter, e.g. { "status": "active" }'
             }
             spellCheck={false}
             autoCapitalize="off"
-            aria-label={dynamo ? "DynamoDB filter (JSON)" : "MongoDB filter (JSON)"}
+            aria-label={dynamo ? "DynamoDB filter (JSON)" : firestore ? "Firestore filter (JSON)" : "MongoDB filter (JSON)"}
             aria-invalid={!filterParse.ok}
             className={cn(
               "h-10 w-full rounded-lg border bg-surface pr-3 pl-8 font-mono text-base focus:ring-3 focus:ring-ring focus:outline-none sm:text-xs",
@@ -212,6 +226,9 @@ export function DocumentsView({
                   <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">
                     {dynamo ? "key" : "_id"}: {id ?? "—"}
                   </code>
+                  {firestore && id && onOpen && (
+                    <Subcollections source={source} collection={entity.name} docId={id} onOpen={onOpen} />
+                  )}
                   <CopyButton value={pretty(doc)} label="Copy JSON" className="size-7" />
                   {can("developer") && id && (
                     <>
@@ -245,6 +262,10 @@ export function DocumentsView({
               Page {cursors.length + 1}
               {docs.data.total !== null && ` · about ${formatNumber(docs.data.total)} in the table (AWS updates this every few hours)`}
             </span>
+          ) : firestore ? (
+            <span>
+              Page {cursors.length + 1} · {formatNumber(total)} {appliedFilter ? "matching" : "in the collection"}
+            </span>
           ) : (
             <span>
               {formatNumber(total === 0 ? 0 : skip + 1)}–{formatNumber(Math.min(skip + limit, total))} of {formatNumber(total)}
@@ -269,9 +290,9 @@ export function DocumentsView({
             <Button
               size="icon-sm"
               aria-label="Previous page"
-              disabled={dynamo ? cursors.length === 0 : skip === 0}
+              disabled={cursorPaged ? cursors.length === 0 : skip === 0}
               onClick={() => {
-                if (!dynamo) return setSkip(Math.max(0, skip - limit));
+                if (!cursorPaged) return setSkip(Math.max(0, skip - limit));
                 setCursor(cursors.at(-1) || undefined);
                 setCursors(cursors.slice(0, -1));
               }}
@@ -281,9 +302,9 @@ export function DocumentsView({
             <Button
               size="icon-sm"
               aria-label="Next page"
-              disabled={dynamo ? !docs.data.next_cursor : skip + limit >= total}
+              disabled={cursorPaged ? !docs.data.next_cursor : skip + limit >= total}
               onClick={() => {
-                if (!dynamo) return setSkip(skip + limit);
+                if (!cursorPaged) return setSkip(skip + limit);
                 setCursors([...cursors, cursor ?? ""]);
                 setCursor(docs.data.next_cursor ?? undefined);
               }}
@@ -300,6 +321,7 @@ export function DocumentsView({
           sourceId={source.id}
           collection={entity.name}
           itemKey={dynamo ? key : null}
+          firestore={firestore}
           doc={editing === "new" ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={() => void invalidate()}
@@ -330,11 +352,68 @@ export function DocumentsView({
   );
 }
 
+/** Firestore: a document's own collections, listed on demand (each one is a read). */
+function Subcollections({
+  source,
+  collection,
+  docId,
+  onOpen,
+}: {
+  source: DataSource;
+  collection: string;
+  docId: string;
+  onOpen: (path: string) => void;
+}) {
+  const { project } = useProjectContext();
+  const [open, setOpen] = useState(false);
+  const subs = useQuery({
+    queryKey: ["projects", project.id, "subcollections", source.id, collection, docId],
+    queryFn: () => api.documents.subcollections(project.id, source.id, collection, docId),
+    enabled: open,
+  });
+  return (
+    <span className="relative">
+      <Button
+        size="icon-sm"
+        variant="ghost"
+        aria-label="Collections inside this document"
+        title="Collections inside this document"
+        onClick={() => setOpen(!open)}
+      >
+        <FolderTree className="size-3.5" />
+      </Button>
+      {open && (
+        <span className="absolute right-0 z-10 mt-1 block w-64 rounded-lg border border-border bg-surface p-2 text-xs shadow-lg">
+          {subs.isPending ? (
+            "Looking…"
+          ) : subs.isError ? (
+            errorMessage(subs.error)
+          ) : subs.data.collections.length === 0 ? (
+            "No collections inside this document."
+          ) : (
+            subs.data.collections.map((path) => (
+              <button
+                key={path}
+                type="button"
+                className="block w-full truncate rounded px-1.5 py-1 text-left font-mono hover:bg-surface-2"
+                onClick={() => onOpen(path)}
+              >
+                {path.split("/").at(-1)}
+              </button>
+            ))
+          )}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function DocumentDialog({
   projectId,
   sourceId,
   collection,
   itemKey,
+  firestore,
   doc,
   onClose,
   onSaved,
@@ -344,6 +423,8 @@ function DocumentDialog({
   collection: string;
   /** DynamoDB: the key attributes, which identify the item and cannot be edited. */
   itemKey: string[] | null;
+  /** Firestore: plain JSON with `$` forms for its own types. */
+  firestore: boolean;
   doc: JsonObject | null;
   onClose: () => void;
   onSaved: () => void;
@@ -388,7 +469,9 @@ function DocumentDialog({
           ? isNew
             ? `Fill in the key (${itemKey.join(", ")}) and any other fields. Plain JSON; a set is { "$set": ["a", "b"] }, binary is { "$base64": "..." }.`
             : `Key ${docId} (it cannot change) — top-level fields you remove are deleted.`
-          : isNew
+          : isNew && firestore
+            ? 'Plain JSON. "_id" picks the document id (leave it out and Firestore makes one). Firestore types: { "$timestamp": "2026-01-01T00:00:00Z" }, { "$ref": "users/u1" }, { "$base64": "..." }, { "$geo": { "latitude": 1, "longitude": 2 } }.'
+            : isNew
             ? "Relaxed Extended JSON is supported, e.g. { \"createdAt\": { \"$date\": \"2026-01-01T00:00:00Z\" } }. Omit _id to generate one."
             : `_id ${docId} — top-level fields you remove are unset.`
       }

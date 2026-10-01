@@ -278,8 +278,8 @@ def update_data_source(source_id: str, body: DataSourceUpdate, access: Admin, db
     ds = get_source(db, access.project.id, source_id)
     if body.config is not None and ds.mode != "external":
         raise validation_error("Managed databases have no connection settings to edit")
-    if body.config is not None and ds.engine == "dynamodb":
-        raise validation_error("DynamoDB databases use their AWS account's key; connect other tables as a new one")
+    if body.config is not None and ds.engine in ("dynamodb", "firestore"):
+        raise validation_error("This database uses its cloud account's key; connect another one as a new database")
     name = (body.name or ds.name).strip()
     if not name:
         raise validation_error("name is required")

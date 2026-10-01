@@ -70,9 +70,13 @@ The dashboard is at the instance's public URL (default `http://localhost:8080`; 
    (docs/BACKUPS.md). The dialog asks *Where should it live?*: **On this PC**, **On another PC or
    server**, **In your AWS account** (SQL: RDS / Aurora; NoSQL: DynamoDB tables - create new or
    connect existing ones; it stays up when the PC is off - use it for apps on AWS App Runner) or **In
-   your Firebase project** (coming soon). Explain those four to the user in plain words (MCP
-   `cloud_database_options` has the texts and costs; DynamoDB = items found by a key you choose, no
-   server, the app uses the AWS SDK, not SQL). Creating an AWS database is **billed to the user's AWS
+   your Firebase project** (NoSQL: connect the project's Cloud Firestore database - `(default)` or a named
+   one, created in the Firebase console first; stays up when the PC is off - use it for Firebase full apps).
+   Explain those four to the user in plain words (MCP `cloud_database_options` has the texts and costs;
+   DynamoDB = items found by a key you choose, no server, the app uses the AWS SDK, not SQL; Firestore =
+   documents in collections, a document can hold its own collections, the app uses the Firebase / Google
+   Cloud SDK). Connecting Firestore creates nothing (free); Google bills its reads and writes beyond a
+   daily free quota. Creating an AWS database is **billed to the user's AWS
    account** (roughly US$15-20/month for the smallest RDS; a DynamoDB table is billed per read, write
    and GB, often cents): get an explicit yes before `create_cloud_database` /
    `POST /v1/projects/{id}/cloud/databases` with `confirm_billing: true` (docs/CLOUD.md "C2-1", "C2-2").
@@ -127,10 +131,15 @@ Tools: `list_data_sources`, `get_schema`, `list_rows`, `list_documents` (any key
 `insert_/update_/delete_row`, `insert_/update_/delete_document`, `list_apps`, `get_app`,
 `deploy_app`, `deployment_status`, `app_logs`, `list_cloud_connections`, `list_cloud_targets`,
 `cloud_database_options`, `list_cloud_databases`, `create_cloud_database` (billable: only with the
-user's yes and `confirm_billing: true`), `connect_cloud_database`, `list_cloud_backups` (any key) and
-`create_cloud_backup` (billable; service key only; app tools report each app's `target` and cloud URL).
+user's yes and `confirm_billing: true`), `connect_cloud_database`, `list_cloud_backups` and
+`list_subcollections` (any key), `create_cloud_backup` (billable; service key only) and `export_documents`
+(service key); app tools report each app's `target` and cloud URL.
 DynamoDB tables use the document tools (`collection` = table, page with `cursor`) and `run_query` takes
-one JSON request (`{"operation": "Query", "TableName": ..., ...}`; docs/QUERY_CONSOLE.md). Ask the user for an `anon` key
+one JSON request (`{"operation": "Query", "TableName": ..., ...}`; docs/QUERY_CONSOLE.md). Firestore
+databases use them too (`collection` = a path such as `users` or `users/u1/orders`, `_id` = the document
+id, page with `cursor`; `list_subcollections` finds a document's collections, `export_documents` dumps
+them as JSON) and `run_query` takes `{"from": "orders", "where": [{"field": "status", "op": "==",
+"value": "open"}], "limit": 20}`. Ask the user for an `anon` key
 unless they want the agent to change data or deploy; a `service` key can change production data.
 Limits: 200 rows / 256 KB per result, 60 tool calls a minute. Details: `docs/MCP.md`.
 
@@ -157,7 +166,8 @@ so check the dashboard tab or endpoint named below).
 | **Firebase hosting** through Deployer: Firebase Hosting (`firebase_hosting`), full apps on Cloud Run behind Hosting (`firebase_app`, Blaze plan), custom domains; keeps serving with the PC off | Available when `GET /v1/projects/{id}/cloud/targets` exists and lists them `available` (a Firebase account connected); not yet exercised against a live Google account | same as AWS |
 | **AWS databases** (RDS / Aurora MySQL, MariaDB, PostgreSQL): create a small one or connect an existing one; App Runner apps with database access get `DEPLOYER_DB_<NAME>_*` pointing at it; stays up with the PC off | Available when `GET /v1/projects/{id}/cloud/databases/options` exists; not yet exercised against a live AWS account | Databases → *Add database* → *In your AWS account* (admin); `docs/CLOUD.md` "C2-1" |
 | **DynamoDB** (NoSQL in AWS): create an on-demand table or connect existing ones, browse / edit items, JSON queries, on-demand backups; App Runner apps get the table names and an IAM role for them | Available when `GET /v1/projects/{id}/cloud/databases/options` returns `dynamodb`; not yet exercised against a live AWS account | Databases → *Add database* → NoSQL → *In your AWS account* (admin); `docs/CLOUD.md` "C2-2" |
-| Other cloud databases (DynamoDB, Firestore, Realtime Database) | **Not built** (planned, `docs/CLOUD.md` C2) - Firebase apps use their own database credentials under Environment for now | - |
+| **Cloud Firestore** (NoSQL in Firebase): connect the project's Firestore database, browse / edit documents and subcollections, JSON queries, schema, JSON export; Firebase full apps with database access get `DEPLOYER_DB_<NAME>_PROJECT` / `_DATABASE` (their service account needs the Cloud Datastore User role) | Available when `GET /v1/projects/{id}/cloud/databases/options` returns `firestore`; not yet exercised against a live Google account | Databases → *Add database* → NoSQL → *In your Firebase project* (admin); `docs/CLOUD.md` "C2-3" |
+| Firebase Realtime Database | **Not built** (planned, `docs/CLOUD.md` C2) - Firebase apps use their own database credentials under Environment for now | - |
 | Deploys that run without the PC (GitHub Actions builds) | **Not built** (planned, `docs/CLOUD.md` C3) - cloud apps serve with the PC off, but deploying needs it on | - |
 | Apps placed on a host device instead of the main PC | **Not built** - an app always runs on the main Deployer PC; with *Co-host this app* (phase 2 above) it **also** runs on the project's co-host PCs | - |
 
@@ -250,8 +260,13 @@ The same app, served from the user's own cloud account so it **keeps running whe
    private VPC connector. Tell the user: such an app's other outgoing internet calls need a NAT gateway
    in their VPC (about US$32/month). A DynamoDB database needs none of that: the app gets
    `DEPLOYER_DB_<NAME>_TABLE` / `_TABLES` / `_REGION` and runs as an AWS role allowed only those tables, so
-   the AWS SDK works without keys. Firebase apps set their own database credentials under
-   Environment (Firebase databases are not built yet).
+   the AWS SDK works without keys. On **Cloud Run** (`firebase_app`) connect the Firebase project's
+   Firestore database under *Add database → In your Firebase project* and tick *Connect to this project's
+   Firestore databases* (admin): the app gets `DEPLOYER_DB_<NAME>_PROJECT` / `_DATABASE` and signs in as
+   its own service account - tell the user to give that account (`<project number>-compute@developer.
+   gserviceaccount.com`, named in the build log) the **Cloud Datastore User** role in Google Cloud → IAM,
+   unless it already has Editor. Other Firebase databases (Realtime Database): the app sets its own
+   credentials under Environment.
 4. **Deploy** as above (*Deploy now*, `deploy_app`, push webhook). The build log shows the cloud steps
    (upload, rollout status); `deployment_status` returns `target_url`. First CloudFront rollouts take
    ~15 minutes to answer.

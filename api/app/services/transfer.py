@@ -125,6 +125,8 @@ VERSION = 1
 MIN_PASSPHRASE = 12
 MAX_IMPORT_BYTES = 1024**3
 BATCH = 1000
+# Reached only through their cloud connection, no credentials of their own (docs/CLOUD.md "C2-2", "C2-3").
+CLOUD_ONLY_ENGINES = ("dynamodb", "firestore")
 DEVICE_TIMEOUT = 6 * 3600
 # A host device's own link/credentials never travel in exports: a restored copy must not
 # impersonate the device (it would kick the real one off the main Deployer).
@@ -1264,9 +1266,9 @@ def import_instance(db: Session, payload: dict) -> dict:
                 # docs/CLOUD.md "C2": the cloud link (who owns and deletes the AWS instance) survives only
                 # when the connection exists here; otherwise it stays a plain external connection.
                 if not (ds.cloud_connection_id and db.get(CloudConnection, ds.cloud_connection_id)):
-                    if ds.engine == "dynamodb":  # reached only through its AWS connection
+                    if ds.engine in CLOUD_ONLY_ENGINES:  # reached only through its cloud connection
                         warnings.append(
-                            f"{ds.name}: its AWS connection is not on this Deployer; connect the tables again"
+                            f"{ds.name}: its cloud connection is not on this Deployer; connect the database again"
                         )
                         continue
                     ds.cloud_connection_id, ds.cloud_state = None, None
@@ -1399,11 +1401,11 @@ def import_projects(db: Session, payload: dict, user: User) -> tuple[list[Projec
                 )
                 if ds is None:
                     continue
-            elif row.get("engine") == "dynamodb":
-                # Same tables through the same AWS connection, but a copy never owns (or deletes) them.
+            elif row.get("engine") in CLOUD_ONLY_ENGINES:
+                # Same tables / database through the same connection, but a copy never owns (or deletes) them.
                 conn = db.get(CloudConnection, row.get("cloud_connection_id") or "")
                 if conn is None or conn.project_id not in (None, project.id):
-                    warnings.append(f"{row.get('name')}: DynamoDB tables need their AWS connection; not copied")
+                    warnings.append(f"{row.get('name')}: needs its cloud connection (not usable here); not copied")
                     continue
                 state = {**(row.get("cloud_state") or {}), "created": False}
                 db.add(

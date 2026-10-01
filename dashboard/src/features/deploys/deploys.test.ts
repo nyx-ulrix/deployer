@@ -171,6 +171,10 @@ describe("database access", () => {
       "DEPLOYER_DB_EVENTS_REGION",
       "DEPLOYER_DB_EVENTS_DATABASE",
     ]);
+    expect(databaseEnvNames({ name: "App data", kind: "nosql", engine: "firestore" })).toEqual([
+      "DEPLOYER_DB_APP_DATA_PROJECT",
+      "DEPLOYER_DB_APP_DATA_DATABASE",
+    ]);
   });
   it("only managed sources on the main server are reachable", () => {
     const rows = [
@@ -296,6 +300,8 @@ describe("cloud targets (docs/CLOUD.md)", () => {
     expect(body).toMatchObject({ target: "aws_static", cloud_connection_id: "c1", api_key_id: null, database_access: false });
     // App Runner keeps database access: it means the project's AWS databases (docs/CLOUD.md "C2").
     expect(draftToInput({ ...ready, target: "aws_app" }, [])).toMatchObject({ database_access: true, api_key_id: null });
+    expect(draftToInput({ ...ready, target: "firebase_app" }, [])).toMatchObject({ database_access: true });
+    expect(draftToInput({ ...ready, target: "firebase_hosting" }, [])).toMatchObject({ database_access: false });
     expect(draftErrors({ ...ready, preset: "node" }).target).toMatch(/static files/);
     expect(draftToInput({ ...ready, target: "local" }, []).cloud_connection_id).toBeNull();
   });

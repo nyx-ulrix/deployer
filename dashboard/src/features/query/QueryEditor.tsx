@@ -255,6 +255,12 @@ function mongoCompletions(collections: readonly string[]) {
 }
 
 function placeholderFor(kind: DataSourceKind, engine: string, mode: EditorMode): string {
+  if (engine === "firestore") {
+    // QUERY_CONSOLE.md "Firestore": one JSON request, a subset of Firestore's structuredQuery.
+    return mode === "terminal"
+      ? '{ "from": "orders", "limit": 20 }'
+      : '{\n  "from": "orders",\n  "where": [{ "field": "status", "op": "==", "value": "open" }],\n  "orderBy": [{ "field": "total", "direction": "desc" }],\n  "limit": 20\n}';
+  }
   if (engine === "dynamodb") {
     // QUERY_CONSOLE.md "DynamoDB": one JSON request, AWS's own parameter names with plain JSON values.
     return mode === "terminal"

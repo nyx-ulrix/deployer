@@ -6,8 +6,8 @@ database from a selector; everything runs through the control plane with the pro
 
 ## API
 
-`POST /v1/projects/{project_id}/data-sources/{sid}/query` (SQL, MongoDB shell code, or one DynamoDB request
-as JSON - "DynamoDB" below)
+`POST /v1/projects/{project_id}/data-sources/{sid}/query` (SQL, MongoDB shell code, or one DynamoDB or
+Firestore request as JSON - "DynamoDB" and "Firestore" below)
 
 | Field | Type | Notes |
 |---|---|---|
@@ -207,6 +207,41 @@ plus the AWS API's own parameters, with **plain JSON values** (numbers, strings,
 - Invalid JSON, an unknown operation or table, wrong parameters (botocore names them) and AWS errors
   (`ValidationException`, `ConditionalCheckFailedException`, `AccessDenied...`) are in-band `error`s
   (HTTP 200), like a MongoDB script error.
+
+### Firestore
+
+For a Firestore data source ([CLOUD.md](CLOUD.md) "C2-3") the query is **one JSON object**, a documented
+subset of Firestore's `structuredQuery` with plain JSON values (Firestore's own types as `{"$timestamp":
+"..."}`, `{"$ref": "users/u1"}`, `{"$base64": "..."}`, `{"$geo": {"latitude": .., "longitude": ..}}`):
+
+```json
+{"from": "orders",
+ "where": [{"field": "status", "op": "==", "value": "open"}, {"field": "total", "op": ">", "value": 10}],
+ "orderBy": [{"field": "total", "direction": "desc"}],
+ "select": ["status", "total"],
+ "limit": 20}
+```
+
+- `from`: a collection path (`"orders"`, a subcollection `"users/u1/orders"`) or `{"collectionId":
+  "orders"}` for **every** collection named `orders` (a collection-group query; `"allDescendants": false`
+  limits it to top-level ones).
+- `where`: one filter `{"field", "op", "value"}`, a list of them (AND), or `{"and": [...]}` / `{"or":
+  [...]}` (nestable). `op`: `==`, `!=`, `<`, `<=`, `>`, `>=`, `array-contains`, `array-contains-any`, `in`,
+  `not-in` (or Firestore's names, `EQUAL`, `GREATER_THAN`...), and the unary `IS_NULL`, `IS_NAN`,
+  `IS_NOT_NULL`, `IS_NOT_NAN` (no `value`). Dotted fields reach into maps (`address.city`); the document
+  id is `{"field": "__name__", "op": "==", "value": {"$ref": "orders/o1"}}`.
+- `orderBy`: field names or `{"field", "direction": "asc" | "desc"}`; `select`: field names; `limit`
+  (capped at `max_rows`); `offset` (the next page: `offset` + `limit`). Any other key is an in-band error
+  (typos are not ignored).
+- `operation` (default `query`): `count` (the same query, counted), `get` (`{"operation": "get", "path":
+  "users/u1"}`) - every role - and the writes, developer+ (`403 read_only_role` for viewers; the operation,
+  not the text, decides): `create` (`collection`, `id?`, `data`), `update` (`path`, `data`, `unset?`: sets /
+  removes top-level fields of an existing document) and `delete` (`path`).
+- Runs with the Firebase connection's service account in the API process (no shell). The answer has the
+  MongoDB shape below: `engine: "firestore"`, `result_docs` = the documents (`_id`, `_path`, fields),
+  `result` = `{documents}` / `{count}` / `{document}` / `{deleted}`, `output` = a one-line summary,
+  `truncated` = more documents match. Bad requests and Firestore's errors - a query that needs a composite
+  index comes back with the Firebase console link that creates it - are in-band `error`s (HTTP 200).
 
 ### Device-hosted sources
 

@@ -11,7 +11,8 @@ and the `deploy-website` skill.
 | **C1** | Cloud connections + hosting targets (this document, "C1 as built") | **Built** (migration `0011_cloud`) |
 | **C2-1** | Cloud database groundwork + AWS RDS / Aurora ("C2-1 as built") | **Built** (migration `0013_cloud_databases`) |
 | **C2-2** | DynamoDB engine ("C2-2 as built") | **Built** (no migration) |
-| C2 | The Firebase databases (Firestore, Realtime Database) | Planned ("C2 - cloud databases") |
+| **C2-3** | Cloud Firestore engine ("C2-3 as built") | **Built** (no migration) |
+| C2 | Firebase Realtime Database | Planned ("C2 - cloud databases") |
 | C3 | GitHub Actions builds, so pushes deploy with the PC off | Planned ("C3 - GitHub Actions builds") |
 
 ## Principles
@@ -25,7 +26,8 @@ and the `deploy-website` skill.
   their own environment variables**: never `DEPLOYER_URL`, `DEPLOYER_API_KEY` or this PC's databases
   (those point at the PC). The one addition: an App Runner app with database access gets
   `DEPLOYER_DB_<NAME>_*` for the project's databases **in the same AWS account** (C2-1, C2-2), which point at
-  AWS. The dashboard says so next to the target chooser and in the Environment card. The
+  AWS, and a Cloud Run app with database access the project's Firestore databases **in the same Firebase
+  project** (C2-3). The dashboard says so next to the target chooser and in the Environment card. The
   dashboard, deploys, rollbacks and settings run on the PC, so *managing* needs the PC on; *serving*
   does not.
 - **Same product surface.** Cloud apps are ordinary apps in the Deploys tab: deployments, build log,
@@ -89,7 +91,7 @@ on typical PCs, which App Runner and Cloud Run need).
 must be instance-wide or the app's project's, and of the target's provider; the static targets need
 the `static` preset; `database_access`, `cohost` and `api_key_id` are refused on cloud targets (and
 switched off when an app moves to one) - except `database_access` on `aws_app`, which since C2-1 means the
-project's AWS databases. Moving an app (target or connection) needs no running
+project's AWS databases, and on `firebase_app`, which since C2-3 means the project's Firestore databases. Moving an app (target or connection) needs no running
 deployment and no custom domains, enqueues `app.cloud_teardown` for the old target (or `app.remove` for
 the local container), marks the live deployment superseded and forgets old artifacts (no rollback
 across targets). Deleting an app enqueues the same teardown. The confirm dialogs list what will be
@@ -437,22 +439,161 @@ yet run against a live account: the exact request shapes (botocore validates par
 not), App Runner taking the instance role on an existing service, and the gateway endpoint on default
 VPCs.
 
+## C2-3 as built: Cloud Firestore
+
+### Data model
+
+A Firestore database is an `external` data source with `kind: nosql`, `engine: firestore` on a **Firebase**
+cloud connection: **one Firestore database** of the connection's Google project - `(default)` or a named
+one. No migration: `cloud_state` holds `{provider: firebase, service: firestore, created: false, database,
+project_id, location}` and `config_encrypted` is `{}` - like DynamoDB, the source has **no secret of its
+own**; every call is a Firestore REST v1 request (`https://firestore.googleapis.com/v1/projects/<project>/
+databases/<id>/...`) signed with the connection's service-account token (the existing PyJWT flow, no Google
+SDK). `cloud_gcp.GcpClient.firestore(method, path, body, params)` is the one seam: it only accepts paths
+under `databases/...` (each id percent-encoded, so `:` or `#` in an id never becomes a REST method) and
+the token only ever goes to `firestore.googleapis.com`. Access tokens are now cached per key for their
+hour (every request builds a client, so this saves a token exchange per call). `services/firestore.py` is
+the adapter, reached through `connections.cloud_engine(engine)` - the same function names as
+`services/dynamo.py`, so `source_ops`, `introspection`, `query_console`, `ddl_export` and `connections`
+branch once for both engines.
+
+Deployer **never creates or deletes** a Firestore database (create it in the Firebase console: Build ->
+Firestore Database -> Create database). Removing the source only forgets it; nothing in Google changes, so
+there is no cleanup job and project deletion is not blocked by it.
+
+- **Documents are plain JSON both ways**, with the document id as **`_id`** (a stored field literally
+  named `_id` is not shown): whole numbers are `integerValue`, other numbers `doubleValue`, and
+  Firestore's own types use `$` forms - `{"$timestamp": "2026-01-01T00:00:00Z"}`, `{"$base64": "..."}`
+  (bytes), `{"$ref": "users/u1"}` (a reference to a document of the same database), `{"$geo":
+  {"latitude": 1.5, "longitude": 2.5}}`; maps and arrays as themselves.
+- **Collections are paths**: `users`, or a subcollection `users/u1/orders`. The documents routes take the
+  path as `{name}` (routed as `{name:path}`; the dashboard sends it URL-encoded) and validate it (odd
+  segments for a collection, no empty / `.` / `..` segment).
+
+### Add database -> In your Firebase project
+
+The **In your Firebase project** card is now available for **NoSQL** (`only: "nosql"` in
+`cloud_db.LOCATIONS`; the dialog greys it out for SQL and says Realtime Database is coming). The section
+explains Firestore in one paragraph (documents in collections, a document can hold its own collections, no
+server to size, used with the Firebase / Google Cloud SDK), where the database comes from, how apps and this
+PC reach it and the cost (connecting is free; Google bills reads, writes and storage beyond the daily free
+quota, including what the dashboard reads). The user picks the Firebase connection and a database: the id
+field suggests the project's databases (`GET .../cloud/connections/{cid}/databases` returns `firestore:
+[{id, location, type, problem}]` for a Firebase connection, `problem` for a Datastore-mode database) and
+still takes a typed id when listing is refused (`firestore_problem`). Connecting checks `GET
+databases/<id>` (`400 connection_failed` with a hint to create it in the Firebase console when it does not
+exist, or that Datastore mode is not supported). No billing confirmation: nothing is created.
+
+### Browsing, editing, querying
+
+- **Data tab**: the sidebar lists the top-level collections (from the schema) plus **Open a collection
+  path** (a subcollection, or a new collection, which appears with its first document) and **Export as
+  JSON**. The documents view pages with **`cursor`** (`next_cursor`, the last document id; documents are
+  ordered by id), the filter box takes **equality** filters (`{"status": "open"}`, dotted names reach
+  into maps: `{"address.city": "Oslo"}`, `{"_id": "u1"}` is the document id) and `total` is an exact
+  count (a count aggregation, with the filter). Each document has a **Collections inside this document**
+  button (`GET .../collections/{name}/documents/{doc_id}/collections`, one `listCollectionIds` call) to
+  open a subcollection, and a subcollection has a button back to its parent collection. Insert takes an
+  optional `_id` (else Firestore makes one; an existing id is `409 document_exists`); edit sets / removes
+  top-level fields with an update mask of exactly those fields and `currentDocument.exists` (`404
+  document_not_found` for a missing one; `_id` can't change, `400 immutable_field`); delete likewise
+  (subcollections of a deleted document stay). Collections are not created or dropped here (`400
+  not_supported`).
+- **Query console**: one JSON request, a subset of Firestore's structuredQuery (QUERY_CONSOLE.md
+  "Firestore"): `from` (a collection path, or `{"collectionId": "orders"}` for every collection with
+  that name), `where` (`{field, op, value}`, lists AND-ed, `{"and": [...]}` / `{"or": [...]}`, unary
+  `IS_NULL` / `IS_NAN` / `IS_NOT_NULL` / `IS_NOT_NAN`), `orderBy`, `select`, `limit` (capped at
+  `max_rows`), `offset`; `operation` `count` and `get` read, `create`, `update`, `delete` write. Viewers
+  may only `query`, `count` and `get` (`403 read_only_role`). Answers have the MongoDB console's shape;
+  documents carry `_path`. Firestore's own errors (a missing composite index comes with the console link
+  that creates it) are in-band.
+- **Schema**: per top-level collection, fields inferred from up to `sample` documents (`_id` first as
+  the primary key; timestamps are `date`, bytes `binData`, references `string`), every field `indexed`
+  (Firestore indexes each field by itself unless exempted), indexes = the document id plus the
+  collection group's **composite indexes** (`GET databases/<id>/collectionGroups/-/indexes`; left out
+  when the service account may not list them), `row_count` = a count aggregation. The schema export
+  writes the collections and the composite indexes as `firestore.indexes.json` (deployable with `firebase
+  deploy --only firestore:indexes`) in comments.
+- **Export**: `GET .../data-sources/{sid}/firestore/export?collection=<path>&limit=` (viewer+, audited as
+  `data_source.export`) returns `{project_id, database, exported_at, documents, truncated, collections:
+  {path: [documents]}}` - every document of the top-level collections, or of the given collection paths
+  (subcollections are exported by naming their path), up to 10,000 documents per call (`truncated` says
+  when more were left). Plain JSON in the same `$` forms, so documents can be inserted again. A managed
+  export to a Cloud Storage bucket is not built (follow-up).
+- **Connection details** show the project id, database id, endpoint and location - no URI, user or password.
+- **Backups**: the Backups tab shows the "up to their provider" note; Firestore's own scheduled backups and
+  point-in-time recovery are set up in the Google Cloud console (not managed by Deployer yet).
+
+### Apps on Cloud Run
+
+`database_access` on a **`firebase_app`** now means the project's Firestore databases on the **same
+Firebase connection** (`cloud.DATABASE_TARGETS = ("aws_app", "firebase_app")`; `firebase_hosting` still
+refuses it). The app gets `DEPLOYER_DB_<NAME>_PROJECT` and `_DATABASE` (the database id) - **no
+credentials**: on Cloud Run the Google SDKs sign in as the service's own identity, the project's **default
+compute service account** (`<project number>-compute@developer.gserviceaccount.com`). That account needs
+the **Cloud Datastore User** role (it has it when the project still grants Editor to it by default); Deployer
+does not grant IAM roles itself (that would need project IAM admin rights), so the build log names the
+account (from the project's `projectNumber`) and the role, and the app form and the Settings guide say so.
+A Firestore database in another Firebase project is skipped with a log line; App Runner apps never get one.
+
+### Permissions added (Settings -> Cloud accounts guide)
+
+`cloud.GOOGLE_ROLES` + **Cloud Datastore User** (`roles/datastore.user`: read and write documents, list
+collections and indexes, count, get the database), marked "only needed for Firestore databases";
+`GOOGLE_APIS` + **Cloud Firestore API** (`firestore.googleapis.com`). Listing a project's databases may need
+`datastore.databases.list`; when the role refuses it the dialog says so and still takes a typed database id.
+The guide also tells owners who already made the `deployer` account to add the role, and to give it to the
+default compute service account for full apps.
+
+### API
+
+| Method | Path | Role | Body / Query | Response |
+|---|---|---|---|---|
+| POST | `/projects/{pid}/cloud/databases/connect` | admin+ | `{connection_id (Firebase), name, database?}` (default `(default)`) | `DataSource` (201); `400 connection_failed` |
+| GET | `/projects/{pid}/data-sources/{sid}/collections/{name}/documents` | viewer+ / API keys | `filter?`, `limit`, `cursor?` | `{documents, total, next_cursor}`; `{name}` may be a subcollection path |
+| GET | `/projects/{pid}/data-sources/{sid}/collections/{name}/documents/{doc_id}/collections` | viewer+ / API keys | – | `{collections: ["users/u1/orders"]}` |
+| GET | `/projects/{pid}/data-sources/{sid}/firestore/export` | viewer+ | `collection?` (repeatable), `limit?` (1-10000) | `{project_id, database, exported_at, documents, truncated, collections}` |
+
+`GET .../cloud/databases/options` adds `firestore: {what, connect, cost, network}` and the Firebase
+location's `only: "nosql"`; the connection listing adds `provider`, `project_id`, `firestore`,
+`firestore_problem` for Firebase connections; data sources' `cloud` adds `project_id` and `resource_kind:
+"database"`. Editing a Firestore source's connection settings is refused (rename only).
+
+### MCP
+
+`connect_cloud_database` takes a Firebase `connection_id` with `database`, `list_cloud_databases` returns
+`firestore`, the document tools take collection paths, `list_documents` pages with `cursor`, `run_query`
+takes the JSON request, plus `list_subcollections` (any key) and `export_documents` (service key; up to
+200 documents per call, the MCP result cap). See MCP.md.
+
+### Not verified against real clouds
+
+Tested against an in-memory Firestore behind the `firestore` seam (`tests/test_firestore.py`: values and
+paths, connect / listing / Datastore mode / missing database, paging, filters, subcollections, insert /
+update masks / delete, the console and its read-only rule, collection-group and OR queries, schema and
+composite indexes, both exports, the Cloud Run app's environment and the log naming its service account,
+MCP) and the real client's URL building, error parsing and token cache against `httpx.MockTransport`. Not yet
+run against a live project: the exact REST shapes (cursors with `startAt`, the count aggregation, the
+update mask's quoting), whether `roles/datastore.user` includes `datastore.databases.list` (the dialog
+works either way), and Cloud Run reaching Firestore as the default compute service account.
+
 ## C2 - cloud databases (planned)
 
 | Provider | Engine | Support |
 |---|---|---|
 | AWS | **RDS / Aurora** MySQL, MariaDB, PostgreSQL | **built in C2-1** (above) |
 | AWS | **DynamoDB** | **built in C2-2** (above) |
-| Firebase | **Cloud Firestore** | new NoSQL engine: collections/documents, queries, schema inference, export |
+| Firebase | **Cloud Firestore** | **built in C2-3** (above) |
 | Firebase | **Realtime Database** | new engine: JSON tree browse/edit, path queries |
 
-Seams left by C1, C2-1 and C2-2: data sources carry `cloud_connection_id` / `cloud_state` and the Add
+Seams left by C1 and C2-1..3: data sources carry `cloud_connection_id` / `cloud_state` and the Add
 database dialog has the AWS / Firebase cards (`cloud_db.LOCATIONS`); cloud apps get their database
-settings through `cloud_deploy.cloud_env`; the MCP `create_cloud_database` tool and the `confirm_billing`
-rule are in place; a NoSQL engine without its own driver plugs in like `services/dynamo.py` (branch on
-`engine` in `source_ops`, `introspection`, `query_console`, `ddl_export`, `connections`). Left: the
-Firestore / Realtime Database engines, Firebase databases for `firebase_app`, and Secrets Manager /
-Secret Manager references instead of plain runtime environment.
+settings through `cloud_deploy.cloud_env` (`cloud.DATABASE_TARGETS`); the MCP `create_cloud_database` tool
+and the `confirm_billing` rule are in place; a NoSQL engine without its own driver is one module with the
+functions of `services/dynamo.py` / `services/firestore.py`, returned by `connections.cloud_engine`.
+Left: the Realtime Database engine, creating Firestore databases and their managed exports / scheduled
+backups from Deployer, and Secrets Manager / Secret Manager references instead of plain runtime
+environment.
 
 ## C3 - GitHub Actions builds (planned)
 
