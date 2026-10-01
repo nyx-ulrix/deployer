@@ -790,12 +790,14 @@ def _delete_tables(ctx: jobs.JobContext, aws, s: dict) -> dict:
         for table in s.get("tables") or []:
             ctx.progress(0.1, f"Taking a final backup of {table}", force=True)
             try:
-                aws.ddb("UpdateTable", TableName=table, DeletionProtectionEnabled=False)
+                desc = aws.ddb("DescribeTable", TableName=table)["Table"]
             except CloudError as exc:
                 if exc.code != "ResourceNotFoundException":
                     raise
                 removed.append(f"DynamoDB table {table}")  # already gone
                 continue
+            if desc.get("DeletionProtectionEnabled"):  # a retried job already switched it off
+                aws.ddb("UpdateTable", TableName=table, DeletionProtectionEnabled=False)
             name = f"{table}-final-{datetime.now(UTC):%Y%m%d%H%M}"
             arn = aws.ddb("CreateBackup", TableName=table, BackupName=name)["BackupDetails"]["BackupArn"]
             started = time.monotonic()

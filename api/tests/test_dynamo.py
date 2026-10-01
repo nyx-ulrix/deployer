@@ -103,7 +103,7 @@ class FakeDynamo(KwFake):
         desc["TableStatus"] = "ACTIVE"  # a new table is ready on the second look
         return {"Table": out}
 
-    def _CreateTable(self, TableName, KeySchema, AttributeDefinitions, **p):
+    def _CreateTable(self, TableName, KeySchema, AttributeDefinitions, DeletionProtectionEnabled=False, **p):
         if TableName in self.tables:
             raise _missing("Table already exists", "ResourceInUseException")
         self.tables[TableName] = {
@@ -111,16 +111,21 @@ class FakeDynamo(KwFake):
             "TableStatus": "CREATING",
             "KeySchema": KeySchema,
             "AttributeDefinitions": AttributeDefinitions,
+            "DeletionProtectionEnabled": DeletionProtectionEnabled,
         }
         self.items[TableName] = []
         return {"TableDescription": self.tables[TableName]}
 
-    def _UpdateTable(self, TableName, **p):
-        self._table(TableName)
+    def _UpdateTable(self, TableName, DeletionProtectionEnabled):
+        desc = self._table(TableName)
+        if desc.get("DeletionProtectionEnabled", False) == DeletionProtectionEnabled:  # be strict: no no-op updates
+            raise _missing("Nothing to update", "ValidationException")
+        desc["DeletionProtectionEnabled"] = DeletionProtectionEnabled
         return {}
 
     def _DeleteTable(self, TableName):
-        self._table(TableName)
+        if self._table(TableName).get("DeletionProtectionEnabled"):
+            raise _missing("Deletion protection is on", "ValidationException")
         del self.tables[TableName], self.items[TableName]
         return {}
 
@@ -345,10 +350,22 @@ def test_delete_created_table_keeps_a_final_backup(client, db, team, aws):
     jobs.run_queued()
     job = db.get(Job, resp.json()["job"]["id"])
     assert job.status == "succeeded", job.error
-    assert aws.ops() == ["UpdateTable", "CreateBackup", "DescribeBackup", "DeleteTable"]
+    assert aws.ops() == ["DescribeTable", "UpdateTable", "CreateBackup", "DescribeBackup", "DeleteTable"]
     assert aws.params("UpdateTable")[0] == {"TableName": table, "DeletionProtectionEnabled": False}
     assert aws.params("CreateBackup")[0]["BackupName"].startswith(f"{table}-final-")
     assert table not in aws.tables and job.result["final_backups"]
+
+
+def test_retried_delete_skips_the_protection_switch(db, team, aws):
+    """A delete job that failed after switching deletion protection off (e.g. the backup timed out) can run
+    again: it does not repeat the switch, and a table already gone counts as removed."""
+    aws.add_table("deployer-gone-1", [("id", "S")])
+    aws.tables["deployer-gone-1"]["DeletionProtectionEnabled"] = False
+    out = cloud_db._delete_tables(
+        type("Ctx", (), {"progress": lambda *a, **k: None})(), aws, {"tables": ["deployer-gone-1", "missing"]}
+    )
+    assert "UpdateTable" not in aws.ops() and "deployer-gone-1" not in aws.tables
+    assert out["removed"] == ["DynamoDB table deployer-gone-1", "DynamoDB table missing"]
 
 
 def test_connect_lists_tables_and_never_deletes_them(client, db, team, aws):
@@ -651,6 +668,9 @@ def test_mcp_dynamodb_tools(client, db, team, aws):
 
 def test_policy_scopes_dynamodb():
     statements = {s["Sid"]: s for s in cloud.AWS_POLICY["Statement"]}
+    # ListBackups has no resource-level permissions: scoped to a table ARN, AWS would always deny it.
+    assert "dynamodb:ListBackups" in statements["DynamoDBList"]["Action"]
+    assert statements["DynamoDBList"]["Resource"] == "*"
     assert statements["DynamoDBTables"]["Resource"] == "arn:aws:dynamodb:*:*:table/deployer-*"
     assert "dynamodb:DeleteTable" in statements["DynamoDBTables"]["Action"]
     assert not {"dynamodb:DeleteTable", "dynamodb:CreateTable"} & set(statements["DynamoDBData"]["Action"])

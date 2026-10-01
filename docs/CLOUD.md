@@ -397,8 +397,9 @@ of the storage price; follow-up).
 
 ### Permissions added (`cloud.AWS_POLICY`)
 
-`dynamodb:ListTables` (`*`); `DescribeTable`, `GetItem`, `Query`, `Scan`, `PutItem`, `UpdateItem`,
-`DeleteItem`, `CreateBackup`, `ListBackups`, `DescribeBackup` on `table/*` and `table/*/backup/*` - any
+`dynamodb:ListTables`, `ListBackups` (`*`: AWS has no resource-level permissions for them);
+`DescribeTable`, `GetItem`, `Query`, `Scan`, `PutItem`, `UpdateItem`, `DeleteItem`, `CreateBackup`,
+`DescribeBackup` on `table/*` and `table/*/backup/*` - any
 table, because connected tables keep their own names (a source still only uses its own); `CreateTable`,
 `UpdateTable`, `DeleteTable`, `TagResource` only on `table/deployer-*`; `iam:GetRole`, `CreateRole`,
 `TagRole`, `PutRolePolicy`, `DeleteRolePolicy`, `DeleteRole`, `PassRole` only on `role/deployer-app-*`;

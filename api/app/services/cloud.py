@@ -255,7 +255,13 @@ AWS_POLICY = {
         # DynamoDB (docs/CLOUD.md "C2-2"): list tables to connect them; read / write items, schema and
         # on-demand backups of any table a source names (connected tables keep their own names); create,
         # change and delete only deployer-* tables.
-        {"Sid": "DynamoDBList", "Effect": "Allow", "Action": "dynamodb:ListTables", "Resource": "*"},
+        # ListTables and ListBackups have no resource-level permissions: AWS only accepts "*" for them.
+        {
+            "Sid": "DynamoDBList",
+            "Effect": "Allow",
+            "Action": ["dynamodb:ListTables", "dynamodb:ListBackups"],
+            "Resource": "*",
+        },
         {
             "Sid": "DynamoDBData",
             "Effect": "Allow",
@@ -268,7 +274,6 @@ AWS_POLICY = {
                 "dynamodb:UpdateItem",
                 "dynamodb:DeleteItem",
                 "dynamodb:CreateBackup",
-                "dynamodb:ListBackups",
                 "dynamodb:DescribeBackup",
             ],
             "Resource": ["arn:aws:dynamodb:*:*:table/*", "arn:aws:dynamodb:*:*:table/*/backup/*"],
