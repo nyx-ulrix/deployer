@@ -738,13 +738,22 @@ def read_mongo_changes(database: str, since: dict | None, limit: int = BATCH_LIM
                 if len(changes) >= limit or size >= MAX_BATCH_BYTES:
                     more = True
                     break
+                prev = stream.resume_token  # just before the event read next
                 event = stream.try_next()
                 if event is None:
                     break
                 change = _mongo_change(event)
-                if change is not None:
-                    size += len(json.dumps(change))
-                    changes.append(change)
+                if change is None:
+                    continue
+                n = len(json.dumps(change))
+                # a big document must not be piled onto an almost full batch (over the RPC cap, stuck for
+                # good): resume just before it, so it travels alone as the next batch's first change
+                if changes and size + n > MAX_BATCH_BYTES:
+                    if prev is not None:
+                        position = {"token": _dumps_token(prev)}
+                    return {"changes": changes, "position": position, "skipped_tables": [], "more": True}
+                size += n
+                changes.append(change)
             if stream.resume_token is not None:
                 position = {"token": _dumps_token(stream.resume_token)}
     except OperationFailure as exc:

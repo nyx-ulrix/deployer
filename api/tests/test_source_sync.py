@@ -542,6 +542,48 @@ def test_big_row_is_sent_in_a_batch_of_its_own(monkeypatch):
     assert batches == [[0, 1], [2]]
 
 
+def test_big_mongo_document_is_sent_in_a_batch_of_its_own(monkeypatch):
+    """A-011 follow-up: the change stream piled a big document onto an almost full batch (over the RPC
+    cap, the same batch re-read and refused every round). It now resumes just before it."""
+    from app.services import provisioning
+
+    monkeypatch.setattr(source_sync, "MAX_BATCH_BYTES", 400)
+    docs = [{"_id": str(i), "v": "x" * 1000 if i == 2 else ""} for i in range(4)]
+    events = [
+        {"_id": {"_data": str(d["_id"])}, "operationType": "insert", "ns": {"coll": "t"}}
+        | {"fullDocument": d, "documentKey": {"_id": d["_id"]}}
+        for d in docs
+    ]
+
+    class Stream:
+        def __init__(self, resume_after=None, **_):
+            self.i = int(resume_after["_data"]) + 1 if resume_after else 0
+            self.resume_token = resume_after
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def try_next(self):
+            if self.i >= len(events):
+                return None
+            self.i += 1
+            self.resume_token = events[self.i - 1]["_id"]
+            return events[self.i - 1]
+
+    monkeypatch.setattr(provisioning, "mongo_root_client", lambda: {"p_db": type("C", (), {"watch": Stream})()})
+    batches, position = [], None
+    while True:
+        out = source_sync.read_mongo_changes("p_db", position)
+        batches.append([c["key"]["_id"] for c in out["changes"]])
+        position = out["position"]
+        if not out["more"]:
+            break
+    assert batches == [["0", "1"], ["2"], ["3"]]
+
+
 def test_oversized_row_error_says_to_re_copy(db, world, monkeypatch):
     w = world()
 

@@ -85,7 +85,7 @@ error, warnings, created_by_id, created_at, updated_at`, unique `(data_source_id
   the dump already contained is a no-op). A failed copy drops the partial database. `recopy` drops
   and copies again; open conflicts then end with the main server's version.
 - **Engine** (`services/source_sync.py`): the worker's scheduler leader runs a round every 2 s per
-  copy (up to 4 copies at a time in a small thread pool, so one slow device doesn't delay the others): read changes on each side since its position (up to 1000 changes / 4 MB, a bigger row alone in its own batch; ending at a transaction boundary when it can; a bigger transaction such as a bulk UPDATE or CSV import is split across rounds, its position `{gtid, txn, skip}` resuming inside it),
+  copy (up to 4 copies at a time in a small thread pool, so one slow device doesn't delay the others): read changes on each side since its position (up to 1000 changes / 4 MB, a bigger row or document alone in its own batch; ending at a transaction boundary when it can; a bigger transaction such as a bulk UPDATE or CSV import is split across rounds, its position `{gtid, txn, skip}` resuming inside it),
   apply the main server's changes to the device, then the device's to the main server, row by row,
   and advance each position only after its changes were applied. Errors → `status=error` with the
   message, retried with backoff (4 s doubling to 5 min); a device that is offline (or drops mid-round)
