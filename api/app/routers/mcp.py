@@ -21,9 +21,10 @@ from app import __version__
 from app.deps import DbSession, ProjectAccess, require_role
 from app.errors import ApiError
 from app.routers import apps as apps_router
+from app.routers import cloud as cloud_router
 from app.routers import query as query_router
 from app.routers import schema as schema_router
-from app.services import audit, cloud, deployments, introspection, rate_limit, source_ops
+from app.services import audit, cloud, cloud_db, deployments, introspection, rate_limit, source_ops
 from app.services.sources import get_source, project_sources
 
 log = logging.getLogger(__name__)
@@ -43,7 +44,9 @@ PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR =
 INSTRUCTIONS = (
     "Tools for one Deployer project: its databases (SQL tables, MongoDB collections) and its apps "
     "(push-to-deploy websites). Start with list_data_sources and get_schema, or list_apps. "
-    "Ids come from those tools. Results are compact JSON, capped at 200 rows / 256 KB."
+    "Ids come from those tools. Databases can also live in the user's own AWS account "
+    "(cloud_database_options; creating one is billable and needs the user's agreement). "
+    "Results are compact JSON, capped at 200 rows / 256 KB."
 )
 
 
@@ -63,6 +66,7 @@ TABLE = _p("string", "SQL table name")
 COLLECTION = _p("string", "MongoDB collection name")
 DOC_ID = _p("string", "String form of the document's _id: ObjectId hex, an integer, or the raw string")
 APP = _p("string", "App id (from list_apps)")
+CONNECTION = _p("string", "Cloud connection id (from list_cloud_connections)")
 LIMIT = _p("integer", f"Max rows to return (1-{MAX_ROWS}, default 50)", minimum=1, maximum=MAX_ROWS)
 
 
@@ -83,10 +87,14 @@ def _mongo(ctx: Ctx, args: dict):
 
 
 def t_list_data_sources(ctx: Ctx, args: dict) -> Any:
-    return [
-        {"id": ds.id, "name": ds.name, "kind": ds.kind, "engine": ds.engine, "status": ds.status}
-        for ds in project_sources(ctx.db, ctx.access.project.id)
-    ]
+    out = []
+    for ds in project_sources(ctx.db, ctx.access.project.id):
+        row = {"id": ds.id, "name": ds.name, "kind": ds.kind, "engine": ds.engine, "status": ds.status}
+        if ds.cloud_connection_id or ds.cloud_state:  # docs/CLOUD.md "C2": where it lives
+            c = cloud_db.cloud_out(ds, ctx.db)
+            row["cloud"] = {k: c[k] for k in ("provider", "service", "created", "resource_id", "region")}
+        out.append(row)
+    return out
 
 
 def t_get_schema(ctx: Ctx, args: dict) -> Any:
@@ -181,6 +189,24 @@ def t_list_cloud_connections(ctx: Ctx, args: dict) -> Any:
 
 def t_list_cloud_targets(ctx: Ctx, args: dict) -> Any:
     return {"targets": cloud.targets_out(ctx.db, ctx.access.project.id), "note": cloud.CLOUD_ENV_NOTE}
+
+
+def t_cloud_database_options(ctx: Ctx, args: dict) -> Any:
+    return cloud_db.options()
+
+
+def t_list_cloud_databases(ctx: Ctx, args: dict) -> Any:
+    return cloud_db.list_resources(ctx.db, ctx.access.project.id, args["connection_id"])
+
+
+def t_create_cloud_database(ctx: Ctx, args: dict) -> Any:
+    body = cloud_router.CloudDatabaseCreate(**args)
+    return cloud_router.create_database(body, ctx.request, ctx.access, ctx.db)
+
+
+def t_connect_cloud_database(ctx: Ctx, args: dict) -> Any:
+    body = cloud_router.CloudDatabaseConnect(**args)
+    return cloud_router.connect_database(body, ctx.request, ctx.access, ctx.db)
 
 
 def t_app_logs(ctx: Ctx, args: dict) -> Any:
@@ -352,6 +378,53 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         _schema(),
         t_list_cloud_targets,
     ),
+    "cloud_database_options": (
+        "developer",
+        "Where a database can live (this PC, another server, the user's AWS account, Firebase) in plain "
+        "language - what each means, cost, and whether it stays up when the PC is off - plus the sizes, cost "
+        "and networking of a new AWS database. Explain these to the user before creating one.",
+        _schema(),
+        t_cloud_database_options,
+    ),
+    "list_cloud_databases": (
+        "developer",
+        "The RDS / Aurora databases in an AWS connection's region (from list_cloud_connections), with which "
+        "ones Deployer can connect to (`problem` says why not) and this PC's public IP.",
+        _schema(["connection_id"], connection_id=CONNECTION),
+        t_list_cloud_databases,
+    ),
+    "create_cloud_database": (
+        "developer",
+        "BILLABLE: create a new RDS database (MySQL, MariaDB or PostgreSQL; default db.t4g.micro, 20 GB, backups, "
+        "deletion protection, encrypted) in the user's AWS account. It stays up when the PC is off and AWS "
+        "bills the user (see cloud_database_options for the cost). Only call after the user agreed to the "
+        "cost, with confirm_billing: true. Returns the data source (status creating) and a job; creation "
+        "takes 5-15 minutes. Apps on aws_app with database_access then get DEPLOYER_DB_<NAME>_*.",
+        _schema(
+            ["connection_id", "name", "engine", "confirm_billing"],
+            connection_id=CONNECTION,
+            name=_p("string", "Data source name, unique in the project"),
+            engine=_p("string", "mysql, mariadb or postgresql", enum=["mysql", "mariadb", "postgresql"]),
+            instance_class=_p("string", "db.t4g.micro (default), db.t4g.small or db.t4g.medium"),
+            confirm_billing=_p("boolean", "Must be true: the user agreed to the AWS charges"),
+        ),
+        t_create_cloud_database,
+    ),
+    "connect_cloud_database": (
+        "developer",
+        "Connect an existing RDS / Aurora database (resource_id from list_cloud_databases) with the user's "
+        "database login. Deployer only connects; it never changes that database or its firewall.",
+        _schema(
+            ["connection_id", "name", "resource_id", "username"],
+            connection_id=CONNECTION,
+            name=_p("string", "Data source name, unique in the project"),
+            resource_id=_p("string", "Instance or cluster id from list_cloud_databases"),
+            username=_p("string", "Database user"),
+            password=_p("string", "Database password"),
+            database=_p("string", "Database name (defaults to the instance's own)"),
+        ),
+        t_connect_cloud_database,
+    ),
     "app_logs": (
         "developer",
         "Recent runtime log lines of an app's live container.",
@@ -377,7 +450,7 @@ class RpcError(Exception):
         self.code, self.message = code, message
 
 
-_TYPES = {"string": str, "integer": int, "object": dict, "array": list}
+_TYPES = {"string": str, "integer": int, "object": dict, "array": list, "boolean": bool}
 
 
 def _check_args(schema: dict, args: Any) -> dict:
@@ -391,7 +464,9 @@ def _check_args(schema: dict, args: Any) -> dict:
         if prop is None:
             raise RpcError(INVALID_PARAMS, f"Unknown argument: {key}")
         expected = _TYPES[prop["type"]]
-        if value is not None and (not isinstance(value, expected) or isinstance(value, bool)):
+        if value is not None and (
+            not isinstance(value, expected) or (isinstance(value, bool) and expected is not bool)
+        ):
             raise RpcError(INVALID_PARAMS, f"Argument {key} must be of type {prop['type']}")
     return {k: v for k, v in args.items() if v is not None}
 

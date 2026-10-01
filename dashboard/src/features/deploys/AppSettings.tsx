@@ -159,7 +159,7 @@ function EnvCard({ projectId, app, isAdmin }: Props) {
       description={
         app.target === "local"
           ? "Stored encrypted; PORT, DEPLOYER_URL and DEPLOYER_PROJECT_ID are always added."
-          : "Stored encrypted and sent to the cloud service as its environment: only these, nothing from Deployer (no DEPLOYER_* variables)."
+          : "Stored encrypted and sent to the cloud service as its environment: only these, plus DEPLOYER_DB_* for the AWS databases when an App Runner app has database access - nothing that points at this PC."
       }
       actions={
         isAdmin && rows === null ? (

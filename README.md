@@ -51,7 +51,8 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
   (static sites on S3 + CloudFront, full apps on App Runner) or Firebase (Hosting, full apps on Cloud
   Run). Cloud apps keep serving when this PC is off, get custom domains (DNS records created in
   Cloudflare when linked) and are billed by AWS / Google to you; connect an account under
-  *Settings → Cloud accounts* ([docs/CLOUD.md](docs/CLOUD.md)).
+  *Settings → Cloud accounts* ([docs/CLOUD.md](docs/CLOUD.md)). Databases can live there too: create
+  or connect an AWS RDS / Aurora database from *Add database → In your AWS account*.
 - **Monitoring and alerts** - CPU, memory, disk, every container and app, API traffic and error
   rate on *Settings → Monitoring*; alerts for low disk, crash-looping containers, failed backups, a
   down tunnel and more, sent to your own webhook (Slack, Discord, ntfy)
@@ -489,8 +490,8 @@ The one roadmap for the project (docs link here rather than keeping their own co
    [docs/SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md))* Not covered: metrics of host devices and
    co-host PCs, email alerts, custom thresholds, a Prometheus endpoint.
 8. **Cloud hosting** on the owner's own AWS / Firebase accounts ([docs/CLOUD.md](docs/CLOUD.md)) -
-   *(current)*: C1 connections + hosting targets done; C2 cloud databases and C3 GitHub Actions
-   builds planned.
+   *(current)*: C1 connections + hosting targets done; C2-1 AWS RDS / Aurora databases done; the other
+   cloud databases (DynamoDB, Firestore, Realtime Database) and C3 GitHub Actions builds planned.
 
 ## Security
 

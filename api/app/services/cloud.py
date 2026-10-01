@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.crypto import decrypt_json, encrypt_json
 from app.errors import ApiError, CloudError, conflict, not_found
-from app.models import App, CloudConnection
+from app.models import App, CloudConnection, DataSource
 from app.serializers import iso
 from app.services import cloud_aws, cloud_gcp
 
@@ -81,8 +81,9 @@ TARGETS: dict[str, dict] = {
 }
 STATIC_TARGETS = tuple(t for t, v in TARGETS.items() if v["kind"] == "static")
 CLOUD_ENV_NOTE = (
-    "Cloud targets get only the app's own environment variables: no DEPLOYER_URL, DEPLOYER_API_KEY or "
-    "DEPLOYER_DB_* (those point at this PC, which may be off). Cloud databases arrive in phase C2."
+    "Cloud targets get only the app's own environment variables: no DEPLOYER_URL or DEPLOYER_API_KEY, and "
+    "nothing that points at this PC (which may be off). An App Runner app with database access gets "
+    "DEPLOYER_DB_<NAME>_* for the project's databases in the same AWS account - pointing at AWS, never at this PC."
 )
 
 _AWS_KEY_ID = re.compile(r"^(AKIA|ASIA)[A-Z0-9]{16}$")
@@ -167,6 +168,8 @@ AWS_POLICY = {
                 "apprunner:AssociateCustomDomain",
                 "apprunner:DisassociateCustomDomain",
                 "apprunner:DescribeCustomDomains",
+                "apprunner:CreateVpcConnector",
+                "apprunner:ListVpcConnectors",
             ],
             "Resource": "*",
         },
@@ -177,11 +180,76 @@ AWS_POLICY = {
             "Resource": f"arn:aws:iam::*:role/{cloud_aws.ACCESS_ROLE}",
         },
         {
-            "Sid": "AppRunnerServiceLinkedRole",
+            "Sid": "ServiceLinkedRoles",
             "Effect": "Allow",
             "Action": "iam:CreateServiceLinkedRole",
             "Resource": "*",
-            "Condition": {"StringLike": {"iam:AWSServiceName": "apprunner.amazonaws.com"}},
+            "Condition": {
+                "StringLike": {
+                    "iam:AWSServiceName": [
+                        "apprunner.amazonaws.com",
+                        "networking.apprunner.amazonaws.com",
+                        "rds.amazonaws.com",
+                    ]
+                }
+            },
+        },
+        # Cloud databases (docs/CLOUD.md "C2"): list RDS / Aurora to connect one, create and delete
+        # deployer-* instances (the final snapshot needs CreateDBSnapshot), and the firewall around them.
+        {
+            "Sid": "DatabasesRead",
+            "Effect": "Allow",
+            "Action": [
+                "rds:DescribeDBInstances",
+                "rds:DescribeDBClusters",
+                "ec2:DescribeVpcs",
+                "ec2:DescribeSubnets",
+                "ec2:DescribeSecurityGroups",
+            ],
+            "Resource": "*",
+        },
+        {
+            "Sid": "Databases",
+            "Effect": "Allow",
+            "Action": [
+                "rds:CreateDBInstance",
+                "rds:ModifyDBInstance",
+                "rds:DeleteDBInstance",
+                "rds:CreateDBSnapshot",
+                "rds:AddTagsToResource",
+            ],
+            "Resource": [
+                "arn:aws:rds:*:*:db:deployer-*",
+                "arn:aws:rds:*:*:snapshot:deployer-*",
+                "arn:aws:rds:*:*:subgrp:default",
+                "arn:aws:rds:*:*:pg:default.*",
+                "arn:aws:rds:*:*:og:default:*",
+            ],
+        },
+        {
+            "Sid": "DatabaseFirewallCreate",
+            "Effect": "Allow",
+            "Action": "ec2:CreateSecurityGroup",
+            "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:security-group/*"],
+        },
+        {
+            # Only while creating a group: tagging an existing one would hand it to the next statement.
+            "Sid": "DatabaseFirewallTag",
+            "Effect": "Allow",
+            "Action": "ec2:CreateTags",
+            "Resource": "arn:aws:ec2:*:*:security-group/*",
+            "Condition": {"StringEquals": {"ec2:CreateAction": "CreateSecurityGroup"}},
+        },
+        {
+            "Sid": "DatabaseFirewallRules",
+            "Effect": "Allow",
+            "Action": [
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:RevokeSecurityGroupIngress",
+                "ec2:DeleteSecurityGroup",
+            ],
+            "Resource": "arn:aws:ec2:*:*:security-group/*",
+            "Condition": {"StringEquals": {"aws:ResourceTag/managed-by": "deployer"}},
         },
     ],
 }
@@ -245,6 +313,9 @@ def connection_out(conn: CloudConnection, db: Session | None = None) -> dict:
         }
     if db is not None:
         out["apps_using"] = db.scalar(select(func.count()).select_from(App).where(App.cloud_connection_id == conn.id))
+        out["databases_using"] = db.scalar(
+            select(func.count()).select_from(DataSource).where(DataSource.cloud_connection_id == conn.id)
+        )
     return out
 
 
@@ -372,6 +443,13 @@ def delete_connection(db: Session, conn: CloudConnection) -> None:
             "connection_in_use",
             "Move these apps to another target first (their cloud resources are removed then): " + ", ".join(names),
         )
+    sources = list(
+        db.scalars(
+            select(DataSource.name).where(DataSource.cloud_connection_id == conn.id, DataSource.deleted_at.is_(None))
+        )
+    )
+    if sources:
+        raise conflict("connection_in_use", "Remove these databases from their projects first: " + ", ".join(sources))
     db.delete(conn)
 
 

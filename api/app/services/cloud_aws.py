@@ -26,6 +26,10 @@ ACCESS_ROLE = "deployer-apprunner-ecr-access"  # shared by every App Runner serv
 ECR_ACCESS_POLICY = "arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess"
 CACHING_OPTIMIZED = "658327ea-f89d-4fab-a63d-7e88639e58f6"  # AWS managed cache policy
 CERT_REGION = "us-east-1"  # CloudFront only uses ACM certificates from us-east-1
+CHECKIP_URL = "https://checkip.amazonaws.com"
+# On every security group, RDS instance and VPC connector Deployer creates; the IAM policy only lets
+# Deployer change security groups that carry it (cloud.AWS_POLICY).
+TAG = {"Key": "managed-by", "Value": "deployer"}
 # CloudFront Function (viewer request): `/docs/` and `/docs` -> `/docs/index.html` like nginx's
 # `try_files $uri $uri/`; missing files fall back to /index.html through the 403/404 error responses.
 INDEX_FUNCTION = """function handler(event) {
@@ -438,8 +442,16 @@ class AwsClient:
             "AuthenticationConfiguration": {"AccessRoleArn": role_arn},
         }
 
+    @staticmethod
+    def _network(connector_arn: str | None) -> dict:
+        """Egress through the VPC connector when the app uses a cloud database, else App Runner's default."""
+        egress = {"EgressType": "VPC", "VpcConnectorArn": connector_arn} if connector_arn else {"EgressType": "DEFAULT"}
+        return {"EgressConfiguration": egress}
+
     @_wrap
-    def create_service(self, name: str, image: str, port: int, env: dict[str, str], role_arn: str) -> dict:
+    def create_service(
+        self, name: str, image: str, port: int, env: dict[str, str], role_arn: str, connector_arn: str | None = None
+    ) -> dict:
         ar = self._c("apprunner")
         for attempt in range(6):
             try:
@@ -447,6 +459,7 @@ class AwsClient:
                     ServiceName=name,
                     SourceConfiguration=self._source(image, port, env, role_arn),
                     InstanceConfiguration={"Cpu": "0.25 vCPU", "Memory": "0.5 GB"},
+                    NetworkConfiguration=self._network(connector_arn),
                 )
                 break
             except Exception as exc:  # noqa: BLE001
@@ -462,9 +475,13 @@ class AwsClient:
         }
 
     @_wrap
-    def update_service(self, arn: str, image: str, port: int, env: dict[str, str], role_arn: str) -> str:
+    def update_service(
+        self, arn: str, image: str, port: int, env: dict[str, str], role_arn: str, connector_arn: str | None = None
+    ) -> str:
         out = self._c("apprunner").update_service(
-            ServiceArn=arn, SourceConfiguration=self._source(image, port, env, role_arn)
+            ServiceArn=arn,
+            SourceConfiguration=self._source(image, port, env, role_arn),
+            NetworkConfiguration=self._network(connector_arn),
         )
         return out["OperationId"]
 
@@ -510,3 +527,180 @@ class AwsClient:
         except Exception as exc:  # noqa: BLE001
             if _code(exc) not in ("ResourceNotFoundException", "InvalidRequestException"):
                 raise
+
+    # --- RDS + the firewall around it (cloud databases, docs/CLOUD.md "C2") ---------------------------
+
+    def public_ip(self) -> str:
+        """This PC's public IPv4 address as AWS sees it (AWS's own checkip service, no credentials)."""
+        import ipaddress
+
+        import httpx
+
+        try:
+            resp = httpx.get(CHECKIP_URL, timeout=10)
+            resp.raise_for_status()
+            return str(ipaddress.IPv4Address(resp.text.strip()))
+        except (httpx.HTTPError, ValueError):
+            raise CloudError("Could not find this PC's public IP address (checkip.amazonaws.com)") from None
+
+    @_wrap
+    def db_resources(self) -> list[dict]:
+        """RDS instances (not part of a cluster) and Aurora / RDS clusters of the region."""
+        rds = self._c("rds")
+        instances = [i for page in rds.get_paginator("describe_db_instances").paginate() for i in page["DBInstances"]]
+        clusters = [c for page in rds.get_paginator("describe_db_clusters").paginate() for c in page["DBClusters"]]
+        out, cluster_net = [], {}
+        for i in instances:
+            vpc = (i.get("DBSubnetGroup") or {}).get("VpcId")
+            if i.get("DBClusterIdentifier"):
+                cluster_net.setdefault(i["DBClusterIdentifier"], (vpc, bool(i.get("PubliclyAccessible"))))
+                continue
+            endpoint = i.get("Endpoint") or {}
+            out.append(
+                {
+                    "id": i["DBInstanceIdentifier"],
+                    "kind": "instance",
+                    "engine": i["Engine"],
+                    "status": i.get("DBInstanceStatus"),
+                    "host": endpoint.get("Address"),
+                    "port": endpoint.get("Port"),
+                    "public": bool(i.get("PubliclyAccessible")),
+                    "vpc_id": vpc,
+                    "security_groups": [g["VpcSecurityGroupId"] for g in i.get("VpcSecurityGroups") or []],
+                    "database": i.get("DBName"),
+                    "username": i.get("MasterUsername"),
+                }
+            )
+        for c in clusters:
+            vpc, public = cluster_net.get(c["DBClusterIdentifier"], (None, False))
+            out.append(
+                {
+                    "id": c["DBClusterIdentifier"],
+                    "kind": "cluster",
+                    "engine": c["Engine"],
+                    "status": c.get("Status"),
+                    "host": c.get("Endpoint"),
+                    "port": c.get("Port"),
+                    "public": public,
+                    "vpc_id": vpc,
+                    "security_groups": [g["VpcSecurityGroupId"] for g in c.get("VpcSecurityGroups") or []],
+                    "database": c.get("DatabaseName"),
+                    "username": c.get("MasterUsername"),
+                }
+            )
+        return out
+
+    @_wrap
+    def db_instance(self, instance_id: str) -> dict | None:
+        """`{status, host, port}`, None once the instance is gone."""
+        try:
+            i = self._c("rds").describe_db_instances(DBInstanceIdentifier=instance_id)["DBInstances"][0]
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) == "DBInstanceNotFound":
+                return None
+            raise
+        endpoint = i.get("Endpoint") or {}
+        return {"status": i.get("DBInstanceStatus"), "host": endpoint.get("Address"), "port": endpoint.get("Port")}
+
+    @_wrap
+    def create_db_instance(self, params: dict) -> None:
+        try:
+            self._c("rds").create_db_instance(**params, Tags=[TAG])
+        except Exception as exc:  # noqa: BLE001 - an interrupted job already created it
+            if _code(exc) != "DBInstanceAlreadyExists":
+                raise
+
+    @_wrap
+    def delete_db_instance(self, instance_id: str, final_snapshot: str) -> bool:
+        """Switches deletion protection off and deletes with a final snapshot. False when already gone."""
+        rds = self._c("rds")
+        try:
+            rds.modify_db_instance(DBInstanceIdentifier=instance_id, DeletionProtection=False, ApplyImmediately=True)
+            rds.delete_db_instance(
+                DBInstanceIdentifier=instance_id,
+                SkipFinalSnapshot=False,
+                FinalDBSnapshotIdentifier=final_snapshot,
+                DeleteAutomatedBackups=True,  # the final snapshot is the copy that is kept
+            )
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) == "DBInstanceNotFound":
+                return False
+            raise
+        return True
+
+    @_wrap
+    def default_vpc(self) -> str | None:
+        vpcs = self._c("ec2").describe_vpcs(Filters=[{"Name": "isDefault", "Values": ["true"]}])["Vpcs"]
+        return vpcs[0]["VpcId"] if vpcs else None
+
+    @_wrap
+    def ensure_security_group(self, name: str, vpc_id: str, description: str) -> str:
+        ec2 = self._c("ec2")
+        try:
+            return ec2.create_security_group(
+                GroupName=name,
+                VpcId=vpc_id,
+                Description=description,
+                TagSpecifications=[{"ResourceType": "security-group", "Tags": [TAG]}],
+            )["GroupId"]
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) != "InvalidGroup.Duplicate":
+                raise
+        filters = [{"Name": "group-name", "Values": [name]}, {"Name": "vpc-id", "Values": [vpc_id]}]
+        return ec2.describe_security_groups(Filters=filters)["SecurityGroups"][0]["GroupId"]
+
+    @staticmethod
+    def _permission(port: int, cidr: str | None, source_group: str | None) -> list[dict]:
+        rule: dict[str, Any] = {"IpProtocol": "tcp", "FromPort": port, "ToPort": port}
+        if cidr:
+            rule["IpRanges"] = [{"CidrIp": cidr, "Description": "Deployer PC"}]
+        if source_group:
+            rule["UserIdGroupPairs"] = [{"GroupId": source_group, "Description": "Deployer App Runner apps"}]
+        return [rule]
+
+    @_wrap
+    def allow_ingress(self, group_id: str, port: int, *, cidr: str | None = None, source_group: str | None = None):
+        try:
+            self._c("ec2").authorize_security_group_ingress(
+                GroupId=group_id, IpPermissions=self._permission(port, cidr, source_group)
+            )
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) != "InvalidPermission.Duplicate":
+                raise
+
+    @_wrap
+    def revoke_ingress(self, group_id: str, port: int, *, cidr: str) -> None:
+        try:
+            self._c("ec2").revoke_security_group_ingress(
+                GroupId=group_id, IpPermissions=self._permission(port, cidr, None)
+            )
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) not in ("InvalidPermission.NotFound", "InvalidGroup.NotFound"):
+                raise
+
+    @_wrap
+    def delete_security_group(self, group_id: str) -> None:
+        try:
+            self._c("ec2").delete_security_group(GroupId=group_id)
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) != "InvalidGroup.NotFound":
+                raise
+
+    @_wrap
+    def ensure_vpc_connector(self, vpc_id: str) -> dict:
+        """`{arn, group_id}` of the App Runner VPC connector Deployer keeps per VPC (created once, shared
+        by every app of the account that uses a database in that VPC; connectors cost nothing)."""
+        name = f"deployer-{vpc_id}"[:40]
+        group = self.ensure_security_group(
+            f"deployer-apprunner-{vpc_id}", vpc_id, "Deployer: App Runner apps that use a database in this VPC"
+        )
+        ar = self._c("apprunner")
+        for page in ar.get_paginator("list_vpc_connectors").paginate():
+            for c in page.get("VpcConnectors") or []:
+                if c["VpcConnectorName"] == name and c.get("Status") == "ACTIVE":
+                    return {"arn": c["VpcConnectorArn"], "group_id": group}
+        subnets = self._c("ec2").describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["Subnets"]
+        out = ar.create_vpc_connector(
+            VpcConnectorName=name, Subnets=[s["SubnetId"] for s in subnets], SecurityGroups=[group], Tags=[TAG]
+        )
+        return {"arn": out["VpcConnector"]["VpcConnectorArn"], "group_id": group}

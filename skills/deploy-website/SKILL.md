@@ -67,7 +67,13 @@ The dashboard is at the instance's public URL (default `http://localhost:8080`; 
    used together; external databases can be linked too (one on the same PC: host = the PC's network
    IP, never `localhost`; `host.docker.internal` only with Docker Desktop; only the instance owner may
    use Docker names or `172.16-31.x` addresses). Managed ones are backed up automatically
-   (docs/BACKUPS.md).
+   (docs/BACKUPS.md). The dialog asks *Where should it live?*: **On this PC**, **On another PC or
+   server**, **In your AWS account** (RDS / Aurora: create a new one or connect an existing one; it
+   stays up when the PC is off - use it for apps on AWS App Runner) or **In your Firebase project**
+   (coming soon). Explain those four to the user in plain words (MCP `cloud_database_options` has the
+   texts and costs). Creating an AWS database is **billed to the user's AWS account** (roughly
+   US$15-20/month for the smallest): get an explicit yes before `create_cloud_database` /
+   `POST /v1/projects/{id}/cloud/databases` with `confirm_billing: true` (docs/CLOUD.md "C2-1").
 3. **Schema and data**: Schema tab (ER diagram, DDL export), Data tab (rows/documents), Query tab
    (notebook or terminal).
 4. **API key for the site**: API keys tab → *Create key*.
@@ -116,8 +122,10 @@ claude mcp add --transport http deployer <url>/v1/projects/<project_id>/mcp --he
 
 Tools: `list_data_sources`, `get_schema`, `list_rows`, `list_documents` (any key) plus `run_query`,
 `insert_/update_/delete_row`, `insert_/update_/delete_document`, `list_apps`, `get_app`,
-`deploy_app`, `deployment_status`, `app_logs`, `list_cloud_connections` and `list_cloud_targets`
-(service key only; app tools report each app's `target` and cloud URL). Ask the user for an `anon` key
+`deploy_app`, `deployment_status`, `app_logs`, `list_cloud_connections`, `list_cloud_targets`,
+`cloud_database_options`, `list_cloud_databases`, `create_cloud_database` (billable: only with the
+user's yes and `confirm_billing: true`) and `connect_cloud_database` (service key only; app tools report
+each app's `target` and cloud URL). Ask the user for an `anon` key
 unless they want the agent to change data or deploy; a `service` key can change production data.
 Limits: 200 rows / 256 KB per result, 60 tool calls a minute. Details: `docs/MCP.md`.
 
@@ -142,7 +150,8 @@ so check the dashboard tab or endpoint named below).
 | MCP server for AI agents (data, queries, schema, apps; anon = read-only tools, no queries) | Available when `POST /v1/projects/{id}/mcp` answers `initialize` | API keys → *Show usage* → *AI agents (MCP)*, `docs/MCP.md` |
 | **AWS hosting** through Deployer: static sites on S3 + CloudFront (`aws_static`), full apps on App Runner (`aws_app`), custom domains; keeps serving with the PC off | Available when `GET /v1/projects/{id}/cloud/targets` exists and lists them `available` (an AWS account connected); not yet exercised against a live AWS account | Settings → Cloud accounts (owner); app → *Where should this run?* (admin); `docs/CLOUD.md` |
 | **Firebase hosting** through Deployer: Firebase Hosting (`firebase_hosting`), full apps on Cloud Run behind Hosting (`firebase_app`, Blaze plan), custom domains; keeps serving with the PC off | Available when `GET /v1/projects/{id}/cloud/targets` exists and lists them `available` (a Firebase account connected); not yet exercised against a live Google account | same as AWS |
-| Cloud databases (RDS, DynamoDB, Firestore, Realtime Database) | **Not built** (planned, `docs/CLOUD.md` C2) - cloud apps use their own database credentials under Environment for now | - |
+| **AWS databases** (RDS / Aurora MySQL, MariaDB, PostgreSQL): create a small one or connect an existing one; App Runner apps with database access get `DEPLOYER_DB_<NAME>_*` pointing at it; stays up with the PC off | Available when `GET /v1/projects/{id}/cloud/databases/options` exists; not yet exercised against a live AWS account | Databases → *Add database* → *In your AWS account* (admin); `docs/CLOUD.md` "C2-1" |
+| Other cloud databases (DynamoDB, Firestore, Realtime Database) | **Not built** (planned, `docs/CLOUD.md` C2) - Firebase apps use their own database credentials under Environment for now | - |
 | Deploys that run without the PC (GitHub Actions builds) | **Not built** (planned, `docs/CLOUD.md` C3) - cloud apps serve with the PC off, but deploying needs it on | - |
 | Apps placed on a host device instead of the main PC | **Not built** - an app always runs on the main Deployer PC; with *Co-host this app* (phase 2 above) it **also** runs on the project's co-host PCs | - |
 
@@ -228,9 +237,13 @@ The same app, served from the user's own cloud account so it **keeps running whe
      Firebase Hosting; needs the Blaze plan).
    Each costs money on the user's account (the chooser explains the cost drivers) - confirm with the user.
 3. **Environment**: cloud apps get **only their own variables** - no `DEPLOYER_URL`,
-   `DEPLOYER_API_KEY` or `DEPLOYER_DB_*`, because the PC may be off. A cloud app that needs data must use
-   a database reachable from the cloud with credentials set under Environment (Deployer's own cloud
-   databases are not built yet).
+   `DEPLOYER_API_KEY` or this PC's databases, because the PC may be off. A cloud app that needs data
+   uses a database in the cloud: on **App Runner** (`aws_app`) add one under *Add database → In your
+   AWS account* and tick *Connect to this project's AWS databases* in the app (admin; `database_access:
+   true`) - it then gets `DEPLOYER_DB_<NAME>_*` pointing at AWS and reaches the database through a
+   private VPC connector. Tell the user: such an app's other outgoing internet calls need a NAT gateway
+   in their VPC (about US$32/month). Firebase apps set their own database credentials under
+   Environment (Firebase databases are not built yet).
 4. **Deploy** as above (*Deploy now*, `deploy_app`, push webhook). The build log shows the cloud steps
    (upload, rollout status); `deployment_status` returns `target_url`. First CloudFront rollouts take
    ~15 minutes to answer.

@@ -26,6 +26,10 @@ APP_TOOLS = {
     "deploy_app",
     "list_cloud_connections",
     "list_cloud_targets",
+    "cloud_database_options",
+    "list_cloud_databases",
+    "create_cloud_database",
+    "connect_cloud_database",
 }
 WRITE_TOOLS = {"insert_row", "update_row", "delete_row", "insert_document", "update_document", "delete_document"}
 

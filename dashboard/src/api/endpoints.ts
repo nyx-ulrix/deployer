@@ -19,6 +19,8 @@ import type {
   AppWebhook,
   CloudConnection,
   CloudConnectionInput,
+  CloudDatabaseOptions,
+  CloudDbListing,
   CloudRequirements,
   CloudTarget,
   AuthResponse,
@@ -229,8 +231,9 @@ export const api = {
       client.post<DataSource>(`/projects/${e(pid)}/data-sources/${e(sid)}/check`),
     connection: (pid: string, sid: string) =>
       client.get<ConnectionDetails>(`/projects/${e(pid)}/data-sources/${e(sid)}/connection`),
+    /** `job`: a database Deployer created in AWS is being deleted there (docs/CLOUD.md). */
     remove: (pid: string, sid: string, drop: boolean) =>
-      client.del<Ok>(`/projects/${e(pid)}/data-sources/${e(sid)}`, { query: { drop } }),
+      client.del<DropResult>(`/projects/${e(pid)}/data-sources/${e(sid)}`, { query: { drop } }),
     /** DEVICES.md: `POST .../data-sources/{sid}/move`. `device_id: null` = main server. */
     move: (pid: string, sid: string, deviceId: string | null) =>
       client.post<JobResponse>(`/projects/${e(pid)}/data-sources/${e(sid)}/move`, { device_id: deviceId }),
@@ -479,6 +482,19 @@ export const api = {
     remove: (id: string) => client.del<Ok>(`/instance/cloud/${e(id)}`),
     projectConnections: (pid: string) => client.get<CloudConnection[]>(`/projects/${e(pid)}/cloud/connections`),
     targets: (pid: string) => client.get<CloudTarget[]>(`/projects/${e(pid)}/cloud/targets`),
+    // docs/CLOUD.md "C2": databases in the user's own AWS account.
+    databaseOptions: (pid: string) => client.get<CloudDatabaseOptions>(`/projects/${e(pid)}/cloud/databases/options`),
+    connectionDatabases: (pid: string, cid: string) =>
+      client.get<CloudDbListing>(`/projects/${e(pid)}/cloud/connections/${e(cid)}/databases`),
+    /** Billable: `confirm_billing` must be true (the dialog asks with the cost note). */
+    createDatabase: (
+      pid: string,
+      body: { connection_id: string; name: string; engine: string; instance_class: string; confirm_billing: boolean },
+    ) => client.post<{ data_source: DataSource; job: Job }>(`/projects/${e(pid)}/cloud/databases`, body),
+    connectDatabase: (
+      pid: string,
+      body: { connection_id: string; name: string; resource_id: string; username: string; password: string; database?: string },
+    ) => client.post<DataSource>(`/projects/${e(pid)}/cloud/databases/connect`, body),
   },
 
   // DEPLOYMENTS.md "Connect a Git repository": the signed-in user's GitHub connection.

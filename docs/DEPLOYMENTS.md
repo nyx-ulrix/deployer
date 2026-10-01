@@ -77,8 +77,9 @@ the user's own AWS / Firebase account, which keeps serving when this PC is off:
 
 Cloud targets are built on this PC exactly like `local` apps (same presets, same build log), then
 published by `cloud_deploy.go_live` instead of `docker run` + Caddy. They never get `DEPLOYER_URL`,
-`DEPLOYER_API_KEY` or `DEPLOYER_DB_*` (so `api_key_id`, `database_access` and `cohost` are refused for
-them), only the app's own variables. Only project admins pick a target and its cloud connection
+`DEPLOYER_API_KEY` or this PC's `DEPLOYER_DB_*` (so `api_key_id`, `database_access` and `cohost` are
+refused for them), only the app's own variables - except `database_access` on `aws_app`, which gives the
+project's AWS databases instead (CLOUD.md "C2-1"). Only project admins pick a target and its cloud connection
 (`cloud_connection_id`); moving or deleting a cloud app tears down what Deployer created there (job
 `app.cloud_teardown`). Custom domains of cloud apps go to the cloud target (with DNS records created in
 Cloudflare when linked) instead of the tunnel. Details, API and permissions: [CLOUD.md](CLOUD.md).

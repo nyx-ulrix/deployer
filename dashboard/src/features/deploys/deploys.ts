@@ -229,9 +229,10 @@ export function draftToInput(d: AppDraft, env: EnvRow[]): AppInput {
     output_dir: fields.has("output_dir") ? blank(d.output_dir) : null,
     container_port: fields.has("container_port") && d.container_port.trim() ? Number(d.container_port) : null,
     env: rowsToEnv(env),
-    // Cloud targets never get this PC's data API key or databases (docs/CLOUD.md).
+    // Cloud targets never get this PC's data API key or databases (docs/CLOUD.md); on App Runner,
+    // database access means the project's AWS databases instead.
     api_key_id: d.target === "local" ? d.api_key_id || null : null,
-    database_access: d.target === "local" && d.database_access,
+    database_access: (d.target === "local" || d.target === "aws_app") && d.database_access,
     target: d.target,
     cloud_connection_id: d.target === "local" ? null : d.cloud_connection_id || null,
   };
@@ -259,6 +260,11 @@ export function databaseEnvNames(source: Pick<DataSource, "name" | "kind">): str
 /** Sources an app with database access can reach: managed, on the main server. */
 export function reachableSources<T extends Pick<DataSource, "mode" | "device_id">>(sources: T[]): T[] {
   return sources.filter((s) => s.mode === "managed" && !s.device_id);
+}
+
+/** docs/CLOUD.md "C2": the AWS databases an App Runner app on `connectionId` gets (same account). */
+export function cloudSourcesFor<T extends Pick<DataSource, "cloud">>(sources: T[], connectionId: string): T[] {
+  return sources.filter((s) => s.cloud && s.cloud.connection_id === connectionId);
 }
 
 // --- "Connect a Git repository" (docs/DEPLOYMENTS.md) -------------------------------------------

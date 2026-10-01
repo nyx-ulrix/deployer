@@ -4,7 +4,7 @@ import { useDataSources } from "../../api/hooks";
 import type { AppPreset } from "../../api/types";
 import { Checkbox, Field, Input, Select } from "../../components/ui/Input";
 import { TargetChooser } from "./TargetChooser";
-import { databaseEnvNames, FIELD_LABELS, PRESETS, reachableSources, REQUIRED_FIELDS, slugify, type AppDraft } from "./deploys";
+import { cloudSourcesFor, databaseEnvNames, FIELD_LABELS, PRESETS, reachableSources, REQUIRED_FIELDS, slugify, type AppDraft } from "./deploys";
 
 const PRESET_ORDER: AppPreset[] = ["static", "node", "python", "dockerfile"];
 
@@ -179,6 +179,69 @@ export function AppFormFields({
       {draft.target === "local" && (
         <DatabaseAccess projectId={projectId} checked={draft.database_access} onChange={(v) => onChange({ database_access: v })} isAdmin={isAdmin} disabled={disabled} />
       )}
+      {draft.target === "aws_app" && (
+        <CloudDatabaseAccess
+          projectId={projectId}
+          connectionId={draft.cloud_connection_id}
+          checked={draft.database_access}
+          onChange={(v) => onChange({ database_access: v })}
+          isAdmin={isAdmin}
+          disabled={disabled}
+        />
+      )}
+    </div>
+  );
+}
+
+/** docs/CLOUD.md "C2": an App Runner app gets the project's AWS databases (same account), never this PC's. */
+function CloudDatabaseAccess({
+  projectId,
+  connectionId,
+  checked,
+  onChange,
+  isAdmin,
+  disabled,
+}: {
+  projectId: string;
+  connectionId: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  isAdmin: boolean;
+  disabled: boolean;
+}) {
+  const sources = useDataSources(projectId);
+  const cloud = cloudSourcesFor(sources.data ?? [], connectionId);
+  return (
+    <div className="space-y-2">
+      <Checkbox
+        label="Connect to this project's AWS databases"
+        description={
+          isAdmin
+            ? "Gives the app the databases in the same AWS account (never the ones on this PC) and links the App Runner service to their private network. Takes effect on the next deploy."
+            : "Only project admins can change this; ask a project admin."
+        }
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        disabled={disabled || !isAdmin}
+      />
+      <div className="pl-7 text-xs text-muted">
+        {cloud.length > 0 ? (
+          <>
+            Injects:{" "}
+            {cloud.map((s, i) => (
+              <span key={s.id}>
+                {i > 0 && "; "}
+                <code className="font-mono">{databaseEnvNames(s).join(", ")}</code>
+              </span>
+            ))}
+            , pointing at AWS so they keep working when this PC is off.
+          </>
+        ) : (
+          <>No databases in this AWS account yet: add one under Databases → Add database → In your AWS account.</>
+        )}{" "}
+        Linked apps send their outgoing internet traffic through that network, which has no internet route by default: if
+        the app also calls other online services, add a NAT gateway in the AWS VPC console (about US$32/month).
+      </div>
     </div>
   );
 }

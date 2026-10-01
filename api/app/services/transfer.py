@@ -1260,7 +1260,12 @@ def import_instance(db: Session, payload: dict) -> dict:
                 if ds is None:
                     continue
             else:
-                db.add(_external_source(row, device_id=None))
+                ds = _external_source(row, device_id=None)
+                # docs/CLOUD.md "C2": the cloud link (who owns and deletes the AWS instance) survives only
+                # when the connection exists here; otherwise it stays a plain external connection.
+                if not (ds.cloud_connection_id and db.get(CloudConnection, ds.cloud_connection_id)):
+                    ds.cloud_connection_id, ds.cloud_state = None, None
+                db.add(ds)
             totals["data_sources"] += 1
         db.flush()
         known_sources = {row for row in db.scalars(select(DataSource.id))}
@@ -1390,7 +1395,17 @@ def import_projects(db: Session, payload: dict, user: User) -> tuple[list[Projec
                 if ds is None:
                     continue
             else:
-                db.add(_external_source(row, id=new_source_id, project_id=project.id, device_id=None))
+                # A copy never owns (and so never deletes) the original's cloud database.
+                db.add(
+                    _external_source(
+                        row,
+                        id=new_source_id,
+                        project_id=project.id,
+                        device_id=None,
+                        cloud_connection_id=None,
+                        cloud_state=None,
+                    )
+                )
             source_map[row["id"]] = new_source_id
             totals["data_sources"] += 1
         db.flush()

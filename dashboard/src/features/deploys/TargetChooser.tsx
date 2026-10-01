@@ -117,8 +117,8 @@ export function TargetChooser({
           <p className="text-xs text-muted">
             Built on this PC, then served entirely from the cloud: it keeps running when this PC is off. The app gets only its own
             environment variables — no <code className="font-mono">DEPLOYER_URL</code>, <code className="font-mono">DEPLOYER_API_KEY</code>{" "}
-            or <code className="font-mono">DEPLOYER_DB_*</code>, because those point at this PC. Deploying again, rollbacks and settings
-            still need this PC on.
+            or this PC's databases, because those point at this PC. An App Runner app can instead get the project's AWS databases
+            (below), which stay up with the PC off. Deploying again, rollbacks and settings still need this PC on.
           </p>
         </>
       )}

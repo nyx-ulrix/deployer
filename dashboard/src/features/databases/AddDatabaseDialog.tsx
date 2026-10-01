@@ -1,10 +1,16 @@
-import { useState, type FormEvent, type ReactNode } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Cloud, Database, HardDrive, Leaf, XCircle } from "lucide-react";
+import { useState, type FormEvent } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CheckCircle2, CloudCog, Database, Flame, HardDrive, Leaf, Server, XCircle } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api } from "../../api/endpoints";
 import { invalidateProjectSources, usePlacementOptions } from "../../api/hooks";
-import type { ConnectionTestResult, DataSourceInput, DataSourceKind, SqlExternalEngine } from "../../api/types";
+import type {
+  ConnectionTestResult,
+  DataSourceInput,
+  DataSourceKind,
+  DatabaseLocation,
+  SqlExternalEngine,
+} from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
 import { Checkbox, Field, Input, Select } from "../../components/ui/Input";
@@ -13,57 +19,33 @@ import { useToast } from "../../components/ui/toast-context";
 import { cn } from "../../lib/cn";
 import { defaultPlacement, deviceIdFromValue, engineForKind, placementDisplay } from "../devices/eligibility";
 import { HostOnSelect } from "../devices/HostOnSelect";
+import { AwsDatabaseSection } from "./AwsDatabaseSection";
+import { Choice } from "./Choice";
 
 type Mode = "managed" | "external";
+type Where = DatabaseLocation["id"];
+
+const WHERE_ICONS = {
+  local: <HardDrive className="size-4" />,
+  external: <Server className="size-4" />,
+  aws: <CloudCog className="size-4" />,
+  firebase: <Flame className="size-4" />,
+};
 
 const DEFAULT_PORTS: Record<SqlExternalEngine, number> = { mariadb: 3306, mysql: 3306, postgresql: 5432 };
-
-function Choice({
-  selected,
-  onClick,
-  icon,
-  title,
-  description,
-  tone,
-}: {
-  selected: boolean;
-  onClick: () => void;
-  icon: ReactNode;
-  title: string;
-  description: string;
-  tone?: "sql" | "nosql";
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={selected}
-      className={cn(
-        "flex w-full items-start gap-3 rounded-xl border p-3 text-left transition-colors",
-        selected ? "border-accent bg-accent-soft/50 ring-1 ring-accent" : "border-border hover:bg-surface-2",
-      )}
-    >
-      <span
-        className={cn(
-          "flex size-8 shrink-0 items-center justify-center rounded-lg",
-          tone === "sql" ? "bg-sql-soft text-sql" : tone === "nosql" ? "bg-nosql-soft text-nosql" : "bg-surface-2 text-accent",
-        )}
-      >
-        {icon}
-      </span>
-      <span className="min-w-0">
-        <span className="block text-sm font-semibold">{title}</span>
-        <span className="mt-0.5 block text-xs text-muted">{description}</span>
-      </span>
-    </button>
-  );
-}
 
 export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; onClose: () => void }) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [kind, setKind] = useState<DataSourceKind>("sql");
-  const [mode, setMode] = useState<Mode>("managed");
+  // docs/CLOUD.md "C2": on this PC (managed), another server (external), the user's AWS or Firebase.
+  const [where, setWhere] = useState<Where>("local");
+  const mode: Mode = where === "local" ? "managed" : "external";
+  const options = useQuery({
+    queryKey: ["projects", projectId, "cloud", "databases", "options"],
+    queryFn: () => api.cloud.databaseOptions(projectId),
+    staleTime: Infinity,
+  });
   const [name, setName] = useState("");
   // External SQL
   const [engine, setEngine] = useState<SqlExternalEngine>("mysql");
@@ -117,6 +99,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
   };
 
   function defaultName() {
+    if (where === "aws") return "AWS database";
     if (mode === "managed") return kind === "sql" ? "MariaDB" : "MongoDB";
     return kind === "sql" ? { mariadb: "MariaDB", mysql: "MySQL", postgresql: "PostgreSQL" }[engine] : "MongoDB";
   }
@@ -149,6 +132,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
+    if (where !== "local" && where !== "external") return; // cloud databases have their own buttons
     if (formValid && testPassed) create.mutate();
   };
 
@@ -168,7 +152,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
           <Button onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          {mode === "external" && (
+          {where === "external" && (
             <Button
               onClick={() => testMutation.mutate()}
               loading={testMutation.isPending}
@@ -177,6 +161,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
               Test connection
             </Button>
           )}
+          {(where === "local" || where === "external") && (
           <Button
             type="submit"
             form="add-db"
@@ -187,6 +172,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
           >
             {mode === "managed" ? "Create database" : "Save connection"}
           </Button>
+          )}
         </>
       }
     >
@@ -204,7 +190,10 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
             />
             <Choice
               selected={kind === "nosql"}
-              onClick={() => setKind("nosql")}
+              onClick={() => {
+                setKind("nosql");
+                if (where === "aws") setWhere("local"); // SQL only in AWS for now
+              }}
               icon={<Leaf className="size-4" />}
               title="NoSQL"
               description="MongoDB collections of JSON documents."
@@ -213,29 +202,40 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
           </div>
         </div>
         <div>
-          <p className="mb-2 text-sm font-medium">Where</p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Choice
-              selected={mode === "managed"}
-              onClick={() => setMode("managed")}
-              icon={<HardDrive className="size-4" />}
-              title="Managed"
-              description={
-                kind === "sql"
-                  ? "New MariaDB database run by Deployer, backed up automatically."
-                  : "New MongoDB database run by Deployer, backed up automatically."
-              }
-            />
-            <Choice
-              selected={mode === "external"}
-              onClick={() => setMode("external")}
-              icon={<Cloud className="size-4" />}
-              title="External"
-              description={
-                kind === "sql" ? "Connect existing MariaDB, MySQL or PostgreSQL." : "Connect MongoDB Atlas or another server."
-              }
-            />
-          </div>
+          <p className="mb-2 text-sm font-medium">Where should it live?</p>
+          {options.isPending ? (
+            <p className="text-xs text-muted">Loading the options…</p>
+          ) : options.isError ? (
+            <Alert tone="danger">{errorMessage(options.error)}</Alert>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {options.data.locations.map((loc) => {
+                const nosqlInAws = loc.id === "aws" && kind === "nosql";
+                const unavailable = loc.available === false || nosqlInAws;
+                return (
+                  <Choice
+                    key={loc.id}
+                    selected={where === loc.id}
+                    onClick={() => setWhere(loc.id)}
+                    disabled={unavailable}
+                    icon={WHERE_ICONS[loc.id]}
+                    title={loc.label}
+                    description={loc.what}
+                  >
+                    <span className="mt-1 block text-xs text-muted">
+                      <strong className="font-medium text-fg/80">PC off:</strong> {loc.when_pc_off}{" "}
+                      <strong className="font-medium text-fg/80">Cost:</strong> {loc.cost}
+                    </span>
+                    {(loc.note || nosqlInAws) && (
+                      <span className="mt-1 block text-xs font-medium text-accent">
+                        {nosqlInAws ? "SQL only for now: DynamoDB support is coming soon." : loc.note}
+                      </span>
+                    )}
+                  </Choice>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {showHostOn && (
@@ -253,7 +253,11 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
           {(id) => <Input id={id} value={name} maxLength={100} onChange={(e) => setName(e.target.value)} />}
         </Field>
 
-        {mode === "external" && kind === "sql" && (
+        {where === "aws" && options.data && (
+          <AwsDatabaseSection projectId={projectId} name={name.trim() || defaultName()} options={options.data.aws} onDone={onClose} />
+        )}
+
+        {where === "external" && kind === "sql" && (
           <div className="grid gap-3 sm:grid-cols-6">
             <Field label="Engine" className="sm:col-span-2">
               {(id) => (
@@ -334,7 +338,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
           </div>
         )}
 
-        {mode === "external" && kind === "nosql" && (
+        {where === "external" && kind === "nosql" && (
           <div className="space-y-3">
             <Field label="Connection URI">
               {(id) => (
@@ -371,7 +375,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
           </div>
         )}
 
-        {mode === "external" && currentTest && (
+        {where === "external" && currentTest && (
           <div
             className={cn(
               "flex items-start gap-2 rounded-xl px-3 py-2.5 text-sm",
@@ -393,7 +397,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
             </div>
           </div>
         )}
-        {mode === "external" && !currentTest && (
+        {where === "external" && !currentTest && (
           <p className="text-xs text-muted">Test the connection before saving.</p>
         )}
         {create.error && <Alert tone="danger">{errorMessage(create.error)}</Alert>}

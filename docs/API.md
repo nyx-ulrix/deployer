@@ -14,7 +14,7 @@ their design:
 | Saved-query versions: strict version control (`/projects/{id}/saved-queries/{sid}/versions`, `/restore`, `409 version_conflict`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) "Phase 2 — versions" |
 | Push-to-deploy: apps (`/projects/{id}/apps`), deployments, rollback, runtime logs, app hostnames, and the unauthenticated GitHub webhook `POST /hooks/github/{app_id}` (HMAC `X-Hub-Signature-256`). `database_access` (opt-in, admin+ to enable) joins an app to the databases network and injects `DEPLOYER_DB_<NAME>_*` | [DEPLOYMENTS.md](DEPLOYMENTS.md) |
 | MCP server for AI agents: `POST /projects/{id}/mcp` (Streamable HTTP, JSON-RPC 2.0; project API key or session; `GET` 405). Tools for data, queries, schema and apps; anon keys get the read-only tools | [MCP.md](MCP.md) |
-| Cloud hosting (phase C1): the owner's AWS / Firebase connections (`GET/POST /instance/cloud`, `GET /instance/cloud/requirements`, `POST /instance/cloud/{id}/check`, `DELETE /instance/cloud/{id}`), `GET /projects/{id}/cloud/connections` (admin+, read-only), `GET /projects/{id}/cloud/targets`; apps gain `target` + `cloud_connection_id` (admin+ to change), `cloud`, deployments `target_url`, cloud custom domains with `dns_records` and `POST .../domains/{did}/check`. Credentials are never returned | [CLOUD.md](CLOUD.md) |
+| Cloud hosting (phase C1): the owner's AWS / Firebase connections (`GET/POST /instance/cloud`, `GET /instance/cloud/requirements`, `POST /instance/cloud/{id}/check`, `DELETE /instance/cloud/{id}`), `GET /projects/{id}/cloud/connections` (admin+, read-only), `GET /projects/{id}/cloud/targets`; cloud databases (C2-1): `GET /projects/{id}/cloud/databases/options`, `GET /projects/{id}/cloud/connections/{cid}/databases`, `POST /projects/{id}/cloud/databases` (billable, `confirm_billing: true`), `POST /projects/{id}/cloud/databases/connect`, data sources gain `cloud`; apps gain `target` + `cloud_connection_id` (admin+ to change), `cloud`, deployments `target_url`, cloud custom domains with `dns_records` and `POST .../domains/{did}/check`. Credentials are never returned | [CLOUD.md](CLOUD.md) |
 | Connect a Git repository: the user's GitHub connection (`GET/DELETE /integrations/github`, `POST /integrations/github/connect`, `GET /integrations/github/repos?q=&page=`), `POST /projects/{id}/apps/detect` (suggested app settings), `use_github_connection` on `POST /apps` (automatic clone token + webhook) | [DEPLOYMENTS.md](DEPLOYMENTS.md) "Connect a Git repository" |
 
 Base path `/v1`. JSON in/out unless noted. Authenticated endpoints need
@@ -66,10 +66,11 @@ type DataSource = {
   engine: "mariadb" | "mysql" | "postgresql" | "mongodb";
   mode: "managed" | "external";
   database_name: string;
-  status: "ok" | "error" | "unknown"; status_message: string | null; last_checked_at: string | null;
+  status: "ok" | "error" | "unknown" | "creating"; status_message: string | null; last_checked_at: string | null;
   display: { host: string | null; port: number | null; username: string | null; tls: boolean };
   created_at: string;
   replicas: Replica[];   // live copies on co-host devices, COHOSTING.md ([] for external sources)
+  cloud: DataSourceCloud | null;   // in the user's own AWS account, CLOUD.md "C2-1" (`creating` until ready)
 };
 type ApiKey = { id: string; name: string; prefix: string; role: "anon" | "service";
                 created_at: string; last_used_at: string | null; revoked_at: string | null };

@@ -288,6 +288,8 @@ describe("cloud targets (docs/CLOUD.md)", () => {
     expect(draftErrors(ready).target).toBeUndefined();
     const body = draftToInput(ready, []);
     expect(body).toMatchObject({ target: "aws_static", cloud_connection_id: "c1", api_key_id: null, database_access: false });
+    // App Runner keeps database access: it means the project's AWS databases (docs/CLOUD.md "C2").
+    expect(draftToInput({ ...ready, target: "aws_app" }, [])).toMatchObject({ database_access: true, api_key_id: null });
     expect(draftErrors({ ...ready, preset: "node" }).target).toMatch(/static files/);
     expect(draftToInput({ ...ready, target: "local" }, []).cloud_connection_id).toBeNull();
   });

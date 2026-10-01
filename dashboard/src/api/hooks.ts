@@ -209,7 +209,9 @@ export function useDataSourcesWithReplicas(projectId: string) {
   return useQuery({
     queryKey: qk.dataSources(projectId),
     queryFn: () => api.dataSources.list(projectId),
-    refetchInterval: (query) => (hasLiveReplica(query.state.data) ? REPLICA_POLL_MS : false),
+    // Also while a cloud database is being created (docs/CLOUD.md), so the card turns healthy by itself.
+    refetchInterval: (query) =>
+      hasLiveReplica(query.state.data) || query.state.data?.some((s) => s.status === "creating") ? REPLICA_POLL_MS : false,
   });
 }
 

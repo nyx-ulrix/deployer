@@ -12,9 +12,9 @@ from sqlalchemy import select
 
 from app.crypto import decrypt_json, encrypt_json
 from app.deps import DbSession, ProjectAccess, require_role
-from app.errors import ApiError, forbidden, validation_error
+from app.errors import ApiError, CloudError, forbidden, validation_error
 from app.models import DataSource, utcnow
-from app.services import audit, connections, devices, provisioning, source_ops
+from app.services import audit, cloud_db, connections, devices, provisioning, source_ops
 from app.services.sources import data_source_out, get_source, project_sources
 
 router = APIRouter(tags=["data-sources"])
@@ -321,6 +321,10 @@ def update_data_source(source_id: str, body: DataSourceUpdate, access: Admin, db
 @router.post("/projects/{project_id}/data-sources/{source_id}/check")
 def check_data_source(source_id: str, access: Viewer, db: DbSession) -> dict:
     ds = get_source(db, access.project.id, source_id)
+    try:  # docs/CLOUD.md: a database Deployer created in AWS follows this PC's public IP
+        cloud_db.refresh_ip(db, ds)
+    except CloudError:
+        pass
     source_ops.check_status(db, ds)
     db.commit()
     return data_source_out(ds)
@@ -374,10 +378,15 @@ def delete_data_source(source_id: str, access: Admin, db: DbSession, request: Re
         database_name=ds.database_name,
         dropped=bool(drop),
     )
+    # docs/CLOUD.md: a database Deployer created in AWS is deleted there too (final snapshot first).
+    cloud_job = cloud_db.enqueue_delete(db, ds, access.user.id)
     if not backups.supported(ds):
         # External databases are the provider's responsibility: nothing to snapshot, delete right away.
         db.delete(ds)
         db.commit()
+        if cloud_job is not None:
+            jobs.dispatch(cloud_job.id)
+            return {"ok": True, "job": jobs.job_out(cloud_job)}
         return {"ok": True}
     finalize = backups.soft_delete_source(db, ds, user_id=access.user.id, drop=bool(drop))
     db.commit()

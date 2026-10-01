@@ -66,12 +66,12 @@ Source of truth: `api/app/models.py`.
 | `projects` | a project groups data sources, members, API keys and apps (deployments) |
 | `project_members` | `owner` / `admin` / `developer` / `viewer` |
 | `project_invites` | hashed single-use invite tokens (optional email lock) |
-| `data_sources` | SQL and/or NoSQL databases attached to a project — `managed` (on this host) or `external` (e.g. Atlas, remote MySQL/Postgres); connection config encrypted |
+| `data_sources` | SQL and/or NoSQL databases attached to a project — `managed` (on this host) or `external` (e.g. Atlas, remote MySQL/Postgres, or AWS RDS in the user's account with `cloud_connection_id` / `cloud_state`); connection config encrypted |
 | `schema_links` | user-declared relationships, incl. **cross-database** links (SQL column ↔ Mongo field) |
 | `api_keys` | hashed per-project keys (`anon` / `service`) |
 | `audit_logs` | security-relevant events (owner: `GET /instance/audit`; pruned after 90 days) |
 | `apps`, `deployments` | push-to-deploy: a Git-backed app per project (encrypted env / repo token / webhook secret, a Caddy port for life) and its builds; `domains.app_id` links an app hostname ([DEPLOYMENTS.md](DEPLOYMENTS.md)) |
-| `cloud_connections` | the owner's AWS / Firebase credentials (encrypted), instance-wide or per project; `apps.target` / `cloud_connection_id` / `cloud_state` put an app on a cloud target, `deployments.target_url`, `domains.dns_records` for cloud custom domains ([CLOUD.md](CLOUD.md)) |
+| `cloud_connections` | the owner's AWS / Firebase credentials (encrypted), instance-wide or per project; `apps.target` / `cloud_connection_id` / `cloud_state` put an app on a cloud target, `deployments.target_url`, `domains.dns_records` for cloud custom domains; `data_sources.cloud_connection_id` / `cloud_state` for databases in the user's AWS account ([CLOUD.md](CLOUD.md)) |
 
 ## Security model
 

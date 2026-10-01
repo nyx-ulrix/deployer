@@ -225,13 +225,17 @@ function AwsGuide({ policy }: { policy: string }) {
           <DoneButton status={steps[0]} onClick={() => ack(0)} />
         </div>
       </StepCard>
-      <StepCard n={2} title={AWS_TITLES[1]} status={steps[1]} summary="S3, CloudFront, ACM, ECR, App Runner, one IAM role">
+      <StepCard n={2} title={AWS_TITLES[1]} status={steps[1]} summary="S3, CloudFront, ACM, ECR, App Runner, RDS databases, one IAM role">
         <div className="space-y-3">
           <p className="text-muted">
             Open <ExtLink href={`${iam}#/policies/create`}>IAM → Policies → Create policy</ExtLink>, switch to <strong>JSON</strong>, paste this,
             name it <code className="font-mono">DeployerHosting</code> and create it. Then open the <code className="font-mono">deployer</code>{" "}
             user → <em>Add permissions → Attach policies directly</em> → tick <code className="font-mono">DeployerHosting</code>. It only
-            reaches resources named <code className="font-mono">deployer-*</code>.
+            reaches resources named <code className="font-mono">deployer-*</code> (and firewall rules Deployer created itself).
+          </p>
+          <p className="text-muted">
+            Already attached an older version? Paste this one over it (<em>Edit → JSON</em>): it adds the permissions for databases in
+            your AWS account (create / connect RDS, and the firewall that lets this PC and your apps in).
           </p>
           {policy && <CopyField label="Policy JSON" value={policy} />}
           <DoneButton status={steps[1]} onClick={() => ack(1)} />

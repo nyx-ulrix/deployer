@@ -19,13 +19,21 @@ export function EngineBadge({ engine }: { engine: string }) {
   return <Badge>{engineLabel(engine)}</Badge>;
 }
 
-export function ModeBadge({ mode }: { mode: DataSource["mode"] }) {
+export function ModeBadge({ mode, cloud }: { mode: DataSource["mode"]; cloud?: DataSource["cloud"] }) {
+  if (cloud) {
+    // docs/CLOUD.md "C2": in the user's own AWS account.
+    return (
+      <Badge tone="info" title={cloud.when_pc_off}>
+        AWS{cloud.region ? ` · ${cloud.region}` : ""}
+      </Badge>
+    );
+  }
   return <Badge tone={mode === "managed" ? "accent" : "info"}>{mode === "managed" ? "Managed" : "External"}</Badge>;
 }
 
 export function StatusBadge({ status, message }: { status: DataSource["status"]; message?: string | null }) {
   const tone = status === "ok" ? "success" : status === "error" ? "danger" : "neutral";
-  const label = status === "ok" ? "Healthy" : status === "error" ? "Error" : "Unknown";
+  const label = status === "ok" ? "Healthy" : status === "error" ? "Error" : status === "creating" ? "Creating" : "Unknown";
   return (
     <Badge tone={tone} title={message ?? undefined}>
       <span

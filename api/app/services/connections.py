@@ -64,7 +64,12 @@ def require_host(ds: DataSource) -> None:
         raise ApiError(409, "device_removed", DEVICE_REMOVED)
 
 
+CLOUD_CREATING = "This database is still being created in your cloud account (usually 5-15 minutes)."
+
+
 def load_config(ds: DataSource) -> dict[str, Any]:
+    if ds.status == "creating":
+        raise ApiError(409, "cloud_database_creating", CLOUD_CREATING)
     config = decrypt_json(ds.config_encrypted)
     if config.get("on_device") and not ds.device_id:
         raise ApiError(409, "device_removed", DEVICE_REMOVED)  # A-047: never the main server's namesake
@@ -114,6 +119,12 @@ def _connect_args(engine_name: str, config: dict[str, Any], io_timeout: int = 30
     }
     if config.get("tls"):
         args["ssl"] = ssl.create_default_context()
+        if config.get("tls_verify") is False:
+            # docs/CLOUD.md: AWS RDS signs with its own CA, which is not in the system store. Encrypted but
+            # not authenticated, like PostgreSQL's sslmode=require above.
+            # ponytail: pin the RDS CA bundle (truststore.pki.rds.amazonaws.com) to verify the server too.
+            args["ssl"].check_hostname = False
+            args["ssl"].verify_mode = ssl.CERT_NONE
     return args
 
 
@@ -324,6 +335,8 @@ def try_source(ds: DataSource) -> tuple[bool, str, str | None]:
 
 def check_status(db: Session, ds: DataSource) -> DataSource:
     """Tests the source and stores status / status_message / last_checked_at. Caller commits."""
+    if ds.status == "creating":  # the cloud_db create job sets the status when it is done
+        return ds
     ok, message, version = try_source(ds)
     ds.status = "ok" if ok else "error"
     ds.status_message = (f"Connected (server {version})" if version else "Connected") if ok else message

@@ -55,7 +55,17 @@ def data_source_out(ds: DataSource) -> dict:
         "device_name": _device_name(ds),
         # docs/COHOSTING.md: live copies on co-host devices.
         "replicas": _replicas(ds),
+        # docs/CLOUD.md "C2": a database in the user's own AWS account (null otherwise).
+        "cloud": _cloud(ds),
     }
+
+
+def _cloud(ds: DataSource) -> dict | None:
+    from sqlalchemy.orm import object_session
+
+    from app.services import cloud_db
+
+    return cloud_db.cloud_out(ds, object_session(ds))
 
 
 def _replicas(ds: DataSource) -> list[dict]:

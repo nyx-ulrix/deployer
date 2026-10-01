@@ -165,7 +165,8 @@ class DataSource(Base):
     #   sql:   {host, port, username, password, database, tls}
     #   nosql: {uri, database}  (managed Mongo also stores username/password)
     config_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
-    status: Mapped[str] = mapped_column(String(10), default="unknown", nullable=False)  # ok | error | unknown
+    # ok | error | unknown | creating (a cloud database being created, docs/CLOUD.md)
+    status: Mapped[str] = mapped_column(String(10), default="unknown", nullable=False)
     status_message: Mapped[str | None] = mapped_column(Text)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime)
     # Host device for managed sources; NULL = the main server. See docs/DEVICES.md.
@@ -174,6 +175,11 @@ class DataSource(Base):
     # placeholder so the name can be reused, and the original is kept in `deleted_name`.
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     deleted_name: Mapped[str | None] = mapped_column(String(63))
+    # docs/CLOUD.md "C2": an external source in the user's own cloud account (mode stays `external`, so
+    # the SQL browser / query console / schema work unchanged). `cloud_state` holds the provider's
+    # resource ids and, for databases Deployer created, the firewall it manages.
+    cloud_connection_id: Mapped[str | None] = mapped_column(ForeignKey("cloud_connections.id", ondelete="SET NULL"))
+    cloud_state: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
 

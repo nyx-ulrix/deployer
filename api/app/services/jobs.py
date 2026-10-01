@@ -98,7 +98,15 @@ def _load_builtin_handlers() -> None:
         return
     _builtin_loaded = True
     # Import side effect: modules register their handlers.
-    from app.services import backups, cloud_deploy, cohost_apps, cohosting, deployments, transfer  # noqa: F401
+    from app.services import (  # noqa: F401
+        backups,
+        cloud_db,
+        cloud_deploy,
+        cohost_apps,
+        cohosting,
+        deployments,
+        transfer,
+    )
 
 
 # ---------------------------------------------------------------------------------------------

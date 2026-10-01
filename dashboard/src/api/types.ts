@@ -75,7 +75,8 @@ export type DataSource = {
   engine: DataSourceEngine;
   mode: "managed" | "external";
   database_name: string;
-  status: "ok" | "error" | "unknown";
+  /** `creating`: a database being created in the user's cloud account (docs/CLOUD.md "C2"). */
+  status: "ok" | "error" | "unknown" | "creating";
   status_message: string | null;
   last_checked_at: string | null;
   display: { host: string | null; port: number | null; username: string | null; tls: boolean };
@@ -86,7 +87,68 @@ export type DataSource = {
   device_name?: string | null;
   /** Live copies on co-host devices (docs/COHOSTING.md); empty/absent when there are none. */
   replicas?: Replica[];
+  /** docs/CLOUD.md "C2": the database lives in the user's own AWS account; null otherwise. */
+  cloud?: DataSourceCloud | null;
 };
+
+export type DataSourceCloud = {
+  provider: "aws" | "firebase";
+  connection_id: string | null;
+  connection_name: string | null;
+  service: string;
+  /** True: Deployer created it (and deletes it, after a final snapshot). False: an existing one connected. */
+  created: boolean;
+  resource_id: string | null;
+  resource_kind: "instance" | "cluster";
+  region: string | null;
+  instance_class: string | null;
+  /** This PC's public IP the database's firewall lets in (created databases). */
+  allowed_ip: string | null;
+  /** The job creating it. */
+  job_id: string | null;
+  resources: string[];
+  when_pc_off: string;
+};
+
+export type DatabaseLocation = {
+  id: "local" | "external" | "aws" | "firebase";
+  label: string;
+  what: string;
+  when_pc_off: string;
+  cost: string;
+  available?: boolean;
+  note?: string;
+};
+
+export type CloudDatabaseOptions = {
+  locations: DatabaseLocation[];
+  aws: {
+    engines: SqlExternalEngine[];
+    instance_classes: { id: string; description: string }[];
+    default_instance_class: string;
+    storage_gb: number;
+    backup_days: number;
+    cost: string;
+    network: string;
+  };
+};
+
+export type CloudDbResource = {
+  id: string;
+  kind: "instance" | "cluster";
+  engine: string;
+  deployer_engine: SqlExternalEngine | null;
+  status: string | null;
+  host: string | null;
+  port: number | null;
+  public: boolean;
+  database: string | null;
+  username: string | null;
+  /** Why Deployer can't connect to it; null when it can. */
+  problem: string | null;
+};
+
+export type CloudDbListing = { region: string; pc_ip: string | null; databases: CloudDbResource[] };
 
 export type ApiKeyRole = "anon" | "service";
 

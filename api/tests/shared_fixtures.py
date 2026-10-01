@@ -7,6 +7,7 @@
 - `fake_mongosh`   – a query-shell sidecar (app/shell_runner.py) in a thread, running a fake mongosh
                      (FAKE_MONGOSH) instead of the real shell; query_console is pointed at it.
 - `project_setup`  – project "Shop" with owner/dev/viewer headers and the data-sources base URL.
+- `team`           – cloud tests (docs/CLOUD.md): a project with owner/admin/dev headers and the apps base URL.
 - `make_source(project, kind="sql", *, config=None, **fields)` – inserts a committed DataSource; the one
                      DataSource factory (plain-function form: `add_source(db, project, ...)`).
 """
@@ -242,3 +243,17 @@ def providers(monkeypatch, set_setting):
         set_setting(f"{p}_client_id", f"{p}-client")
         set_setting(f"{p}_client_secret", f"{p}-secret")
     return fake
+
+
+@pytest.fixture
+def team(make_user, make_project, auth_headers):
+    admin, dev = make_user(), make_user()
+    owner = make_user(owner=True)
+    project = make_project(owner, members={admin: "admin", dev: "developer"})
+    return {
+        "project": project,
+        "base": f"/v1/projects/{project.id}/apps",
+        "owner": auth_headers(owner),
+        "admin": auth_headers(admin),
+        "dev": auth_headers(dev),
+    }

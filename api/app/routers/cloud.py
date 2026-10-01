@@ -10,7 +10,8 @@ from pydantic import BaseModel, Field, field_validator
 from app.deps import DbSession, InstanceOwner, ProjectAccess, require_role
 from app.errors import ApiError
 from app.models import Project
-from app.services import audit, cloud
+from app.services import audit, cloud, cloud_db, jobs
+from app.services.sources import data_source_out
 
 router = APIRouter(tags=["cloud"])
 
@@ -114,3 +115,106 @@ def project_connections(access: Admin, db: DbSession) -> list[dict]:
 @router.get("/projects/{project_id}/cloud/targets")
 def project_targets(access: Viewer, db: DbSession) -> list[dict]:
     return cloud.targets_out(db, access.project.id)
+
+
+# --- cloud databases (docs/CLOUD.md "C2") ---------------------------------------------------------
+
+
+class CloudDatabaseCreate(BaseModel):
+    connection_id: str = Field(max_length=36)
+    name: str = Field(min_length=1, max_length=63)
+    engine: Literal["mysql", "mariadb", "postgresql"]
+    instance_class: str = Field(default=cloud_db.DEFAULT_CLASS, max_length=40)
+    # Billable: the caller must say they accept the AWS charges (the dashboard asks with the cost note).
+    confirm_billing: bool = False
+
+
+class CloudDatabaseConnect(BaseModel):
+    connection_id: str = Field(max_length=36)
+    name: str = Field(min_length=1, max_length=63)
+    resource_id: str = Field(min_length=1, max_length=63)
+    username: str = Field(min_length=1, max_length=128)
+    password: str = Field(default="", max_length=500)
+    database: str | None = Field(default=None, max_length=128)
+
+
+def _name(db, project_id: str, name: str) -> str:
+    from app.routers.data_sources import _ensure_name_free
+
+    name = name.strip()
+    if not name:
+        raise ApiError(422, "validation_error", "name is required", {"field": "name"})
+    _ensure_name_free(db, project_id, name)
+    return name
+
+
+def _audit(db, request: Request, access: ProjectAccess, ds, action: str) -> None:
+    audit.record(
+        db,
+        "data_source.create",
+        request=request,
+        user_id=access.user.id,
+        project_id=access.project.id,
+        data_source_id=ds.id,
+        name=ds.name,
+        kind=ds.kind,
+        engine=ds.engine,
+        mode=ds.mode,
+        cloud=action,
+        cloud_connection_id=ds.cloud_connection_id,
+    )
+
+
+@router.get("/projects/{project_id}/cloud/databases/options")
+def database_options(access: Viewer) -> dict:
+    """Where a database can live, in plain language, and the sizes / cost of a new AWS database."""
+    return cloud_db.options()
+
+
+@router.get("/projects/{project_id}/cloud/connections/{connection_id}/databases")
+def connection_databases(connection_id: str, access: Admin, db: DbSession) -> dict:
+    """The RDS / Aurora databases of an AWS connection's region, to connect one (and this PC's public IP)."""
+    return cloud_db.list_resources(db, access.project.id, connection_id)
+
+
+@router.post("/projects/{project_id}/cloud/databases", status_code=201)
+def create_database(body: CloudDatabaseCreate, request: Request, access: Admin, db: DbSession) -> dict:
+    if not body.confirm_billing:
+        raise ApiError(
+            422,
+            "billing_not_confirmed",
+            "This creates a database AWS bills to your account. " + cloud_db.COST_NOTE + " Send confirm_billing: true.",
+            {"field": "confirm_billing"},
+        )
+    name = _name(db, access.project.id, body.name)
+    ds, job = cloud_db.create(
+        db,
+        access.project.id,
+        connection_id=body.connection_id,
+        name=name,
+        engine=body.engine,
+        instance_class=body.instance_class,
+        user_id=access.user.id,
+    )
+    _audit(db, request, access, ds, "create")
+    db.commit()
+    jobs.dispatch(job.id)
+    return {"data_source": data_source_out(ds), "job": jobs.job_out(job)}
+
+
+@router.post("/projects/{project_id}/cloud/databases/connect", status_code=201)
+def connect_database(body: CloudDatabaseConnect, request: Request, access: Admin, db: DbSession) -> dict:
+    name = _name(db, access.project.id, body.name)
+    ds = cloud_db.connect(
+        db,
+        access.project.id,
+        connection_id=body.connection_id,
+        name=name,
+        resource_id=body.resource_id,
+        username=body.username,
+        password=body.password,
+        database=body.database,
+    )
+    _audit(db, request, access, ds, "connect")
+    db.commit()
+    return data_source_out(ds)

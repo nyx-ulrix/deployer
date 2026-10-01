@@ -53,7 +53,7 @@ Results are text content holding compact JSON. API errors come back as tool resu
 
 | Tool | Arguments | Role | What it does |
 |---|---|---|---|
-| `list_data_sources` | – | anon | databases: `id`, `name`, `kind`, `engine`, `status` |
+| `list_data_sources` | – | anon | databases: `id`, `name`, `kind`, `engine`, `status`, and `cloud` (`provider`, `service`, `created`, `resource_id`, `region`) for databases in the user's AWS account |
 | `get_schema` | `source_id?` | anon | tables/collections, columns/fields, keys, relationships (`GET /schema`) |
 | `run_query` | `source_id`, `query`, `max_rows?` | service | SQL script or `mongosh` code (the query console); a viewer session may only read |
 | `list_rows` | `source_id`, `table`, `limit?`, `offset?`, `filters?`, `sort?` | anon | rows + `total`; `filters` = `{column: value}` equality, ANDed; `sort` = `"column"` or `"-column"` |
@@ -70,6 +70,10 @@ Results are text content holding compact JSON. API errors come back as tool resu
 | `deployment_status` | `app_id`, `deployment_id` | service | status, error, `target`, `target_url` (the cloud URL it went live on), `cloud_url` and the last 100 log lines |
 | `list_cloud_connections` | – | service | the AWS / Firebase accounts the project's apps may use ([CLOUD.md](CLOUD.md)): `id`, `provider`, `name`, account id / project id, region, `status` - never credentials |
 | `list_cloud_targets` | – | service | where an app can run (`local`, `aws_static`, `aws_app`, `firebase_hosting`, `firebase_app`): what each is for, that cloud targets keep serving with the PC off, cost drivers, `available` for this project |
+| `cloud_database_options` | – | service | where a database can live (this PC, another server, the user's AWS account, Firebase) in plain language, and the sizes, cost and networking of a new AWS database ([CLOUD.md](CLOUD.md) "C2-1") |
+| `list_cloud_databases` | `connection_id` | service | the RDS / Aurora databases in that AWS connection's region, `problem` when Deployer can't connect one, this PC's public IP |
+| `create_cloud_database` | `connection_id`, `name`, `engine`, `instance_class?`, `confirm_billing` | service | **billable**: creates an RDS database in the user's AWS account (stays up with the PC off); refused unless `confirm_billing` is `true` - ask the user first. Returns the data source (`creating`) and the job |
+| `connect_cloud_database` | `connection_id`, `name`, `resource_id`, `username`, `password?`, `database?` | service | connects an existing RDS / Aurora database (never changes it) |
 | `app_logs` | `app_id`, `tail?` | service | runtime log lines of the live container (1..500, default 100) |
 
 Tools a key's role can't use are **not listed** by `tools/list` and calling them is a JSON-RPC error
@@ -91,7 +95,9 @@ project role decides the tools (viewer = anon's tools plus read-only `run_query`
   run ([QUERY_EDITOR.md](QUERY_EDITOR.md)).
 - Keys never change app settings and never reach members, env values, backups or any other endpoint.
   Putting an app on a cloud target (billed to that cloud account) is a dashboard action for project
-  admins; agents can list the targets and connections and deploy apps already on one.
+  admins; agents can list the targets and connections and deploy apps already on one. A service key can
+  create a database in the user's AWS account (`create_cloud_database`, billable, only with
+  `confirm_billing: true`) or connect an existing one; deleting one is a dashboard action.
 
 ## Limits
 

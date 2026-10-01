@@ -139,7 +139,7 @@ _last_alerts = float("-inf")
 
 def scheduler_tick() -> None:
     global _last_query_log_prune, _last_alerts
-    from app.services import alerts, audit, backups, cohost_apps, deployments, query_log, remote_access
+    from app.services import alerts, audit, backups, cloud_db, cohost_apps, deployments, query_log, remote_access
 
     jobs.recover_stale()
     try:
@@ -151,6 +151,10 @@ def scheduler_tick() -> None:
     backups.scheduler_tick(jobs.get_sessionmaker())
     deployments.scheduler_tick(jobs.get_sessionmaker())
     cohost_apps.sweep(jobs.get_sessionmaker())  # docs/COHOSTING.md: co-hosted apps on devices
+    try:  # docs/CLOUD.md "C2": AWS databases Deployer created let this PC's current public IP in
+        cloud_db.refresh_pc_ips(jobs.get_sessionmaker())
+    except Exception:  # noqa: BLE001 - never skip the work below over this
+        log.exception("could not follow this PC's public IP on cloud databases")
     if time.monotonic() - _last_alerts >= alerts.EVALUATE_EVERY_S:
         _last_alerts = time.monotonic()
         alerts.evaluate(jobs.get_sessionmaker())  # docs/MONITORING.md

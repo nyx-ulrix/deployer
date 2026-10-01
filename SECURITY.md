@@ -98,7 +98,8 @@ Security fixes are made for the latest release. Update with `deployer update`.
   dedicated IAM user with the policy shown in the dashboard (every resource named `deployer-*`, one
   IAM role it may create and pass) or a dedicated service account with the listed roles; a connection
   can be limited to one project. Project admins choose which connection an app uses, so they can
-  create billable resources in that account; developers and API keys cannot. In the worker the keys
+  create billable resources in that account; developers cannot. Service API keys can create a database
+  in the AWS account through MCP (`create_cloud_database`), only with `confirm_billing: true`. In the worker the keys
   live only in memory for a job: registry passwords/tokens reach `docker login` on stdin with a
   throw-away `DOCKER_CONFIG`, never argv; the Google token endpoint is fixed (a key file's `token_uri`
   is ignored), Google URLs are built from validated ids, and the Hosting upload URL must be Google's.
@@ -106,6 +107,14 @@ Security fixes are made for the latest release. Update with `deployer update`.
   credentials of this PC. Build output uploaded to S3 / Hosting skips symlinks, so a build cannot
   publish the worker's own files. Removing a connection deletes the stored key; delete the key
   in AWS / Google too when you no longer need it.
+- **Cloud databases** ([docs/CLOUD.md](docs/CLOUD.md) "C2-1"): a database Deployer creates in AWS gets a
+  random 32-character master password stored like every data source password (`encrypt_json`), shown
+  only through the audited connection details. Its endpoint is public, but its security group (tagged
+  `managed-by=deployer`; the IAM policy lets Deployer change only groups with that tag) lets in only
+  this PC's current public IP and the App Runner VPC connector's group; MySQL / MariaDB users must use
+  TLS (`REQUIRE SSL`), PostgreSQL forces it. Deployer does not verify the RDS server certificate yet
+  (encrypted, not authenticated). App Runner apps with database access get the credentials as runtime
+  environment, never anything of this PC. Connected (not created) databases are never modified.
 - **Rate limits:** sign-in 10 attempts / 15 min per IP+email and 50 failed attempts / hour per email
   from any IP (so rotating or forging IPs doesn't buy more guesses; the flip side is that someone
   guessing can lock an account for up to an hour - `deployer reset-password` clears it), plus 30

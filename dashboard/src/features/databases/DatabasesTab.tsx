@@ -16,6 +16,7 @@ import { Alert, EmptyState, ErrorState } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { relativeTime } from "../../lib/format";
 import { RecentlyDeletedCard } from "../backups/RecentlyDeleted";
+import { JobProgressPanel } from "../jobs/JobProgress";
 import { SourceCopies } from "../cohosting/SourceCopies";
 import { DeviceBadge } from "../devices/DeviceBits";
 import { hasOtherPlacement } from "../devices/eligibility";
@@ -179,7 +180,7 @@ function SourceCard({
       <div className="mt-3 flex flex-wrap gap-1.5">
         <KindBadge kind={source.kind} />
         <EngineBadge engine={source.engine} />
-        <ModeBadge mode={source.mode} />
+        <ModeBadge mode={source.mode} cloud={source.cloud} />
         {d.tls && <ModeTls />}
         <DeviceBadge name={deviceName} />
       </div>
@@ -201,6 +202,22 @@ function SourceCard({
           <dd>{relativeTime(source.last_checked_at)}</dd>
         </div>
       </dl>
+      {source.cloud && source.status !== "creating" && (
+        <p className="mt-3 text-xs text-muted">
+          {source.cloud.created ? "Created by Deployer in your AWS account" : "Your own AWS database, connected"}
+          {source.cloud.connection_name ? ` (${source.cloud.connection_name})` : ""}. {source.cloud.when_pc_off}
+          {source.cloud.allowed_ip ? ` Its firewall lets in this PC's IP ${source.cloud.allowed_ip}.` : ""}
+        </p>
+      )}
+      {source.status === "creating" && source.cloud?.job_id && (
+        <JobProgressPanel
+          className="mt-3"
+          projectId={project.id}
+          jobId={source.cloud.job_id}
+          title="Creating in AWS (5-15 minutes)"
+          onFinished={() => invalidateProjectSources(queryClient, project.id)}
+        />
+      )}
       {source.status === "error" && source.status_message && (
         <Alert tone="danger" className="mt-3 text-xs">
           {source.status_message}
@@ -211,7 +228,7 @@ function SourceCard({
         <Button size="sm" icon={<RefreshCw className="size-3.5" />} loading={check.isPending} onClick={() => check.mutate()}>
           Check status
         </Button>
-        {can("developer") && (
+        {can("developer") && source.status !== "creating" && (
           <Button size="sm" icon={<Plug className="size-3.5" />} onClick={onConnection}>
             Connection details
           </Button>
@@ -323,11 +340,13 @@ function DeleteSourceDialog({
   const toast = useToast();
   const queryClient = useQueryClient();
   const [drop, setDrop] = useState(false);
+  const cloudCreated = Boolean(source.cloud?.created);
   const remove = useMutation({
     mutationFn: () => api.dataSources.remove(projectId, source.id, drop),
-    onSuccess: () => {
+    onSuccess: (out) => {
       invalidateProjectSources(queryClient, projectId);
-      toast.success(drop ? `${source.name} removed and its data dropped.` : `${source.name} removed from the project.`);
+      if (out.job) toast.success(`${source.name} removed. AWS is deleting it after a final snapshot (see Activity).`);
+      else toast.success(drop ? `${source.name} removed and its data dropped.` : `${source.name} removed from the project.`);
       onClose();
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't remove database"),
@@ -340,16 +359,27 @@ function DeleteSourceDialog({
       onConfirm={() => remove.mutate()}
       loading={remove.isPending}
       title={`Remove ${source.name}?`}
-      confirmLabel={drop ? "Remove and drop data" : "Remove"}
-      confirmText={drop ? source.name : undefined}
+      confirmLabel={drop ? "Remove and drop data" : cloudCreated ? "Delete in AWS" : "Remove"}
+      confirmText={drop || cloudCreated ? source.name : undefined}
       description={
         drop
           ? "The database and all of its data will be dropped. A final version and its recovery logs are kept for 30 days under Recently deleted, then purged."
-          : source.mode === "external"
+          : cloudCreated
+            ? "Deployer created this database in your AWS account, so it deletes it there too: AWS first saves a final snapshot (kept in your account and billed for storage until you delete it in the RDS console), then deletes the database and its firewall. Apps using it lose it on their next deploy."
+            : source.cloud
+              ? "Deployer forgets this connection. The database keeps running in your AWS account (and AWS keeps billing for it); delete it in the RDS console if you no longer need it."
+              : source.mode === "external"
             ? "The database is detached from this project. Its data is kept on the external server."
             : "The database is detached from this project and kept under Recently deleted for 30 days, where you can restore it. After that it is dropped with all of its data."
       }
     >
+      {cloudCreated && source.cloud && source.cloud.resources.length > 0 && (
+        <ul className="list-disc space-y-0.5 pl-5 text-xs text-muted">
+          {source.cloud.resources.map((r) => (
+            <li key={r}>{r}</li>
+          ))}
+        </ul>
+      )}
       {canDrop && source.mode === "managed" && (
         <Checkbox
           checked={drop}

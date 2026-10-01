@@ -14,8 +14,10 @@ Every resource id is written to `apps.cloud_state` the moment it exists, so a fa
 creates a second one and teardown knows everything to remove. The deployment's `image_tag` is the
 cloud artifact (S3 prefix, image URI or Hosting version), which is what a rollback republishes.
 
-Cloud apps never get DEPLOYER_URL / DEPLOYER_API_KEY / DEPLOYER_DB_*: they must keep working while
-this PC is off (cloud databases are phase C2).
+Cloud apps never get DEPLOYER_URL / DEPLOYER_API_KEY or anything pointing at this PC: they must keep
+working while it is off. An `aws_app` with database access gets `DEPLOYER_DB_<NAME>_*` for the
+project's cloud databases on the same AWS connection (services/cloud_db.py), reached through a VPC
+connector - those point at AWS, never at this PC.
 """
 
 from __future__ import annotations
@@ -77,11 +79,14 @@ def save_state(factory: jobs.SessionFactory, app_id: str, state: dict) -> None:
             db.commit()
 
 
-def cloud_env(app: App) -> tuple[dict[str, str], list[str]]:
-    """(the app's own variables minus names the platform reserves, the dropped names)."""
-    from app.services.deployments import env_of
+def cloud_env(app: App, databases: list[dict] | None = None) -> tuple[dict[str, str], list[str]]:
+    """(the app's own variables minus names the platform reserves, the dropped names). `databases`
+    (cloud_db.app_databases) add their `DEPLOYER_DB_<NAME>_*` first, so the app's own variables win."""
+    from app.services.deployments import env_of, source_env
 
     env, dropped = {}, []
+    for d in databases or []:
+        env.update(source_env(d["name"], d["kind"], d["engine"], d["config"], d["database_name"]))
     for key, value in env_of(app).items():
         if key in RESERVED_ENV or key.upper().startswith("AWSAPPRUNNER"):
             dropped.append(key)
@@ -310,22 +315,25 @@ class Publish:
             image = f"{self.state['ecr_uri']}:{self.dep.id}"
             self.ctx.progress(0.75, "Pushing", force=True)
             self.push(image, aws.registry_login())
-        env, dropped = cloud_env(self.app)
+        databases = self.databases()
+        env, dropped = cloud_env(self.app, databases)
         if dropped:
             self.log.write("Not sent (set by App Runner itself): " + ", ".join(sorted(dropped)))
-        self.log.write("Environment: " + (", ".join(sorted(env)) or "(none)") + " - nothing from Deployer itself")
+        self.log.write("Environment: " + (", ".join(sorted(env)) or "(none)") + " - nothing that points at this PC")
+        connector = self.connect_databases(aws, databases)
         if not self.state.get("access_role_arn"):
             self.save(access_role_arn=aws.ensure_access_role())
         port = internal_port(self.app)
         self.ctx.progress(0.85, "Rolling out", force=True)
+        role = self.state["access_role_arn"]
         if not self.state.get("service_arn"):
             self.log.step(f"Creating the App Runner service {name}")
-            svc = aws.create_service(name, image, port, env, self.state["access_role_arn"])
+            svc = aws.create_service(name, image, port, env, role, connector)
             self.save(service_name=name, service_arn=svc["arn"], service_url=svc["url"])
             operation = svc["operation_id"]
         else:
             self.log.step("Updating the App Runner service to the new image")
-            operation = aws.update_service(self.state["service_arn"], image, port, env, self.state["access_role_arn"])
+            operation = aws.update_service(self.state["service_arn"], image, port, env, role, connector)
 
         def poll() -> tuple[bool, str]:
             status = aws.operation(self.state["service_arn"], operation)
@@ -338,6 +346,49 @@ class Publish:
 
         self.wait("App Runner", poll)
         return image, self.state["service_url"]
+
+    def databases(self) -> list[dict]:
+        """The project's cloud databases this app gets (docs/CLOUD.md "C2"), logged by name."""
+        from app.services import cloud_db
+
+        with self.ctx.session_factory() as db:
+            databases, notes = cloud_db.app_databases(db, db.get(App, self.app.id))
+        for note in notes:
+            self.log.write(note)
+        for d in databases:
+            self.secrets.append(d["config"].get("password") or "")
+        if databases:
+            self.log.write("Databases (in your AWS account): " + ", ".join(d["name"] for d in databases))
+        return databases
+
+    def connect_databases(self, aws, databases: list[dict]) -> str | None:
+        """The VPC connector the service reaches its databases through (None: App Runner's default
+        egress); databases Deployer created let the connector's security group in."""
+        vpcs = [d["state"].get("vpc_id") for d in databases if d["state"].get("vpc_id")]
+        if not vpcs:
+            return None
+        vpc = vpcs[0]
+        self.log.step(f"Connecting the app to the databases' network ({vpc})")
+        connector = aws.ensure_vpc_connector(vpc)
+        for d in databases:
+            s = d["state"]
+            if s.get("vpc_id") != vpc:
+                self.log.write(
+                    f"Database '{d['name']}' is in another VPC ({s.get('vpc_id')}): not reachable from this app"
+                )
+            elif s.get("created") and s.get("group_id"):
+                aws.allow_ingress(s["group_id"], int(d["config"]["port"]), source_group=connector["group_id"])
+            else:
+                self.log.write(
+                    f"Database '{d['name']}' was not created by Deployer, so its firewall is yours: allow port "
+                    f"{d['config']['port']} from security group {connector['group_id']} in it"
+                )
+        self.log.write(
+            "Outgoing traffic of this app now goes through the VPC: add a NAT gateway there if it also calls "
+            "other internet services"
+        )
+        self.save(vpc_connector_arn=connector["arn"])
+        return connector["arn"]
 
     def _hosting_site(self, gcp) -> str:
         if not self.state.get("site"):

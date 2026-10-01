@@ -109,20 +109,6 @@ def gcp(monkeypatch):
     cloud_gcp.set_factory(None)
 
 
-@pytest.fixture
-def team(make_user, make_project, auth_headers):
-    admin, dev = make_user(), make_user()
-    owner = make_user(owner=True)
-    project = make_project(owner, members={admin: "admin", dev: "developer"})
-    return {
-        "project": project,
-        "base": f"/v1/projects/{project.id}/apps",
-        "owner": auth_headers(owner),
-        "admin": auth_headers(admin),
-        "dev": auth_headers(dev),
-    }
-
-
 def connection(db, provider="aws", project_id=None) -> CloudConnection:
     config = (
         {"access_key_id": aws_key_id(), "secret_access_key": aws_secret(), "region": "eu-west-1", "account_id": "1"}
@@ -354,8 +340,8 @@ def test_aws_app_deploy_env_rollout_and_rollback(db, docker, aws, team):
         "create_service",
         "operation",
     ]
-    (name, img, port, env, role) = aws.args("create_service")[0]
-    assert (img, port, env) == (image, 3000, {"NODE_ENV": "production"})
+    (name, img, port, env, role, connector) = aws.args("create_service")[0]
+    assert (img, port, env, connector) == (image, 3000, {"NODE_ENV": "production"}, None)
     assert not any(k.startswith("DEPLOYER_") for k in env)
     push = next(c for c in docker.calls if c[0] == "push")
     assert push[2] == image and push[4] == "AWS"

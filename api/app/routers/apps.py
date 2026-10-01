@@ -236,7 +236,9 @@ def _check_target(db, app: App) -> None:
             f"{cloud.TARGETS[app.target]['label']} serves static files: use the static preset, or a full-app target",
             {"field": "target"},
         )
-    for field in ("database_access", "cohost", "api_key_id"):
+    # docs/CLOUD.md "C2": on App Runner, database access means the project's AWS databases instead.
+    tied = ("cohost", "api_key_id") if app.target == "aws_app" else ("database_access", "cohost", "api_key_id")
+    for field in tied:
         if getattr(app, field):
             raise ApiError(
                 422,
@@ -272,7 +274,9 @@ def _switch_target(db, request: Request, access: ProjectAccess, app: App, before
             dep.status = "superseded"
     app.live_deployment_id, app.cloud_state = None, None
     if app.target != "local":  # the switches that tie an app to this PC go off
-        app.database_access, app.cohost, app.cohost_share_repo_access, app.api_key_id = False, False, False, None
+        app.cohost, app.cohost_share_repo_access, app.api_key_id = False, False, None
+        if app.target != "aws_app":  # App Runner apps keep it: it gives them the project's AWS databases
+            app.database_access = False
     audit.record(
         db,
         "app.target",

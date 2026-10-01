@@ -9,7 +9,8 @@ and the `deploy-website` skill.
 | Phase | What | Status |
 |---|---|---|
 | **C1** | Cloud connections + hosting targets (this document, "C1 as built") | **Built** (migration `0011_cloud`) |
-| C2 | Cloud databases (RDS/Aurora, DynamoDB, Firestore, Realtime Database) | Planned ("C2 - cloud databases") |
+| **C2-1** | Cloud database groundwork + AWS RDS / Aurora ("C2-1 as built") | **Built** (migration `0013_cloud_databases`) |
+| C2 | The other cloud databases (DynamoDB, Firestore, Realtime Database) | Planned ("C2 - cloud databases") |
 | C3 | GitHub Actions builds, so pushes deploy with the PC off | Planned ("C3 - GitHub Actions builds") |
 
 ## Principles
@@ -20,8 +21,10 @@ and the `deploy-website` skill.
   never shown again, removable any time. Nothing from the Deployer authors is involved; AWS / Google
   bill the user directly, and the UI says so before a cloud target is chosen.
 - **Runtime never depends on the PC.** Apps on a cloud target serve from AWS / Google and get **only
-  their own environment variables**: never `DEPLOYER_URL`, `DEPLOYER_API_KEY` or `DEPLOYER_DB_*` (those
-  point at the PC). The dashboard says so next to the target chooser and in the Environment card. The
+  their own environment variables**: never `DEPLOYER_URL`, `DEPLOYER_API_KEY` or this PC's databases
+  (those point at the PC). The one addition: an App Runner app with database access gets
+  `DEPLOYER_DB_<NAME>_*` for the project's databases **in the same AWS account** (C2-1), which point at
+  AWS. The dashboard says so next to the target chooser and in the Environment card. The
   dashboard, deploys, rollbacks and settings run on the PC, so *managing* needs the PC on; *serving*
   does not.
 - **Same product surface.** Cloud apps are ordinary apps in the Deploys tab: deployments, build log,
@@ -84,7 +87,8 @@ on typical PCs, which App Runner and Cloud Run need).
 (it is billed to that account; developers keep editing everything else and deploying); the connection
 must be instance-wide or the app's project's, and of the target's provider; the static targets need
 the `static` preset; `database_access`, `cohost` and `api_key_id` are refused on cloud targets (and
-switched off when an app moves to one). Moving an app (target or connection) needs no running
+switched off when an app moves to one) - except `database_access` on `aws_app`, which since C2-1 means the
+project's AWS databases. Moving an app (target or connection) needs no running
 deployment and no custom domains, enqueues `app.cloud_teardown` for the old target (or `app.remove` for
 the local container), marks the live deployment superseded and forgets old artifacts (no rollback
 across targets). Deleting an app enqueues the same teardown. The confirm dialogs list what will be
@@ -158,21 +162,158 @@ Everything above is tested against fake AWS / Google clients (`tests/test_cloud.
 token exchange against a mock transport; the real boto3 / REST request shapes follow the providers'
 documentation but have not been run against live accounts yet.
 
+## C2-1 as built: cloud databases in AWS (RDS / Aurora)
+
+### Data model
+
+A cloud database is an ordinary **`external`** data source - so the SQL browser, query console, schema,
+DDL export and the data API work through the normal external-source path - with two new columns
+(migration `0013`): `data_sources.cloud_connection_id` (FK `cloud_connections`, `SET NULL`) and
+`cloud_state` (JSON, never secrets). `status` gains `creating`. `config_encrypted` holds the usual
+`{host, port, username, password, database, tls: true, tls_verify: false}` (`encrypt_json`); the
+password is shown only through `GET .../data-sources/{id}/connection` (developer+, audited), like every
+other source. `cloud_state`:
+
+- connected: `{provider: aws, service: rds, created: false, instance_id | cluster_id, region, vpc_id,
+  group_ids, port}`;
+- created: `{provider, service, created: true, instance_id, region, instance_class, storage_gb, port,
+  job_id, vpc_id, group_id, allowed_ip, instance_requested}` - each id written the moment it exists, so
+  an interrupted job never creates a second resource.
+
+A connection with databases on it cannot be removed (`409 connection_in_use`). Export / import: the
+cloud link survives only an instance import where the connection exists; a project copy never owns
+(and so never deletes) the original's instance - it stays a plain external connection.
+
+### Where a database can live (Add database)
+
+The **Add database** dialog asks *Where should it live?* with four cards, each with one plain sentence on
+what it means, what happens when the PC is off and the cost (`GET /projects/{id}/cloud/databases/options`,
+also the MCP tool `cloud_database_options`): **On this PC** (managed), **On another PC or server**
+(external), **In your AWS account** (this phase; SQL only - DynamoDB is next), **In your Firebase
+project** (shown as coming soon). In AWS the user picks the account (the project's AWS connections) and:
+
+- **Connect one you already have**: `GET .../cloud/connections/{cid}/databases` lists the region's RDS
+  instances (not part of a cluster) and Aurora / RDS clusters (`rds:DescribeDBInstances`,
+  `DescribeDBClusters`) with the reason Deployer can't use one (`problem`: unsupported engine - only
+  MySQL, MariaDB, PostgreSQL and their Aurora versions - or not publicly accessible) and this PC's public
+  IP. The user enters the database login; Deployer tests it over TLS and stores it. **It never changes
+  that instance or its firewall**: the user allows this PC's IP in the instance's security group (the
+  error says which IP), and removing it only forgets the connection.
+- **Create a new database** (billable: the dialog shows the cost note and needs a ticked *I understand
+  AWS charges my account*; the API needs `confirm_billing: true`, else `422 billing_not_confirmed`):
+  engine MySQL / MariaDB / PostgreSQL (newest version AWS offers), size `db.t4g.micro` (default),
+  `db.t4g.small` or `db.t4g.medium`, 20 GB gp3, automated backups kept 7 days, deletion protection on,
+  storage encrypted, single AZ, master user `deployer` with a random 32-character password
+  (`secrets.token_urlsafe`, stored encrypted, never logged), first database named after the source.
+  Job `data_source.cloud_create` (progress on the card and in Activity): default VPC of the region
+  (none: a plain error saying how to create one) -> security group `deployer-db-<id8>` tagged
+  `managed-by=deployer` -> ingress from this PC's public IP (`checkip.amazonaws.com`) ->
+  `CreateDBInstance` (`deployer-<name>-<id8>`, publicly accessible, in that group) -> waits for
+  `available` (up to 45 min) -> `ALTER USER 'deployer'@'%' REQUIRE SSL` on MySQL / MariaDB (RDS for
+  PostgreSQL 15+ already forces TLS with `rds.force_ssl=1`) -> connection test -> `ok`. A failure leaves
+  the source in `error` with the reason and everything created recorded, so **Remove** cleans it up.
+
+Deleting a created database (typing its name in the dialog, which lists what goes) queues
+`data_source.cloud_delete` and removes the source at once: deletion protection off ->
+`DeleteDBInstance` with a **final snapshot** `<instance>-final-<UTC yyyymmddHHMM>` (kept, billed for
+storage until the user deletes it; automated backups go with the instance) -> waits until it is gone ->
+deletes the security group. Anything it could not remove fails the job with the list. Deleting is
+refused while the database is still being created.
+
+### Networking (the trade-off)
+
+Requirement: this PC must browse / query the database **and** App Runner apps must reach it, with the
+PC off for the apps. Design:
+
+- **The PC** connects to a *publicly accessible* endpoint whose security group lets in only the PC's
+  current public IP `/32`. The scheduler checks the IP every 5 minutes (`cloud_db.refresh_pc_ips`, also
+  on **Check status**): when it changed, the new IP is allowed and the old one revoked. Connections use
+  TLS; Deployer does not verify the RDS certificate yet (RDS signs with its own CA, which is not in the
+  system store - encrypted but not authenticated, like PostgreSQL's `sslmode=require`; follow-up: pin
+  the RDS CA bundle).
+- **App Runner apps** reach it privately: an App Runner **VPC connector** `deployer-<vpc-id>` (one per
+  VPC, created once, shared, free) with its own security group `deployer-apprunner-<vpc-id>`, which the
+  database's group lets in on the database port. Apps without database access keep App Runner's default
+  egress.
+- Trade-offs, shown in the dialog and the app form: the endpoint is on the internet (only the PC's IP
+  gets through the firewall, the password is long and random, TLS is required); while the PC's IP
+  changes, the PC is locked out for up to 5 minutes; **an App Runner app linked to a database sends all
+  its outgoing traffic through the VPC**, which has no internet route by default, so an app that also
+  calls other internet services needs a NAT gateway (about US$32/month) - Deployer does not create one.
+  The alternatives were worse for this audience: a private-only database needs a bastion or VPN for the
+  PC, and opening the database to App Runner's public egress would mean `0.0.0.0/0`.
+
+### Apps
+
+On `aws_app`, **database access** is allowed (admins, as on the PC) and means *the project's databases
+in the same AWS connection* (so the same account and region). `cloud_deploy.cloud_env` adds
+`DEPLOYER_DB_<NAME>_{HOST,PORT,USER,PASSWORD,DATABASE,URL}` (URL with `ssl=true` / `sslmode=require`)
+before the app's own variables (which win); they go to App Runner as its runtime environment (stored
+encrypted by App Runner; follow-up: Secrets Manager references). The deploy then ensures the VPC
+connector, lets its security group into each created database's group, and creates / updates the
+service with `EgressType: VPC` (back to `DEFAULT` once database access is off). A connected (not
+created) database's firewall is the user's: the build log names the connector's security group to
+allow. A database still `creating`, in another account or in another VPC is skipped with a log line.
+Other cloud targets still refuse database access. Moving an app to `aws_app` keeps its database-access
+switch.
+
+### Permissions added (`cloud.AWS_POLICY`, shown in Settings -> Cloud accounts)
+
+`rds:DescribeDBInstances`, `rds:DescribeDBClusters`, `ec2:DescribeVpcs`, `ec2:DescribeSubnets`,
+`ec2:DescribeSecurityGroups` (read, `*`); `rds:CreateDBInstance`, `ModifyDBInstance`, `DeleteDBInstance`,
+`CreateDBSnapshot`, `AddTagsToResource` on `db:deployer-*` and `snapshot:deployer-*` (plus the default
+subnet / parameter / option groups a new instance uses); `ec2:CreateSecurityGroup`; `ec2:CreateTags` only
+while creating a security group; `ec2:AuthorizeSecurityGroupIngress`, `RevokeSecurityGroupIngress`,
+`DeleteSecurityGroup` only on groups tagged `managed-by=deployer`; `apprunner:CreateVpcConnector`,
+`ListVpcConnectors`; the service-linked roles of RDS and App Runner networking. Owners who attached the
+C1 policy paste the new one over it (the guide says so).
+
+### API
+
+| Method | Path | Role | Body / Query | Response |
+|---|---|---|---|---|
+| GET | `/projects/{pid}/cloud/databases/options` | viewer+ | – | `{locations: [{id, label, what, when_pc_off, cost, available?, note?}], aws: {engines, instance_classes, default_instance_class, storage_gb, backup_days, cost, network}}` |
+| GET | `/projects/{pid}/cloud/connections/{cid}/databases` | admin+ | – | `{region, pc_ip, databases: [{id, kind, engine, deployer_engine, status, host, port, public, vpc_id, security_groups, database, username, problem}]}` |
+| POST | `/projects/{pid}/cloud/databases` | admin+ | `{connection_id, name, engine (mysql, mariadb, postgresql), instance_class?, confirm_billing: true}` | `{data_source, job}` (201); audit `data_source.create` with `cloud: create` |
+| POST | `/projects/{pid}/cloud/databases/connect` | admin+ | `{connection_id, name, resource_id, username, password?, database?}` | `DataSource` (201); `400 connection_failed` names this PC's IP to allow |
+
+Data sources gain `cloud: {provider, connection_id, connection_name, service, created, resource_id,
+resource_kind, region, instance_class, allowed_ip, job_id, resources, when_pc_off} | null`.
+`DELETE .../data-sources/{id}` of a created one returns `{ok, job}` (`data_source.cloud_delete`), and
+`409 cloud_database_creating` while it is being created; the connection details and data routes answer
+`409 cloud_database_creating` until it is ready.
+
+### MCP
+
+`cloud_database_options`, `list_cloud_databases` (`connection_id`), `create_cloud_database`
+(`connection_id, name, engine, instance_class?, confirm_billing` - billable: the tool description tells
+the agent to get the user's agreement first; `confirm_billing: false` returns `billing_not_confirmed`),
+`connect_cloud_database`; `list_data_sources` adds `cloud` for cloud databases. Service keys (developer
+role), as planned. Deleting a cloud database stays a dashboard action.
+
+### Not verified against real clouds
+
+Tested against a fake AWS client (`tests/test_cloud_db.py`: create sequence and parameters, billing
+confirmation, IP refresh, delete with snapshot and failure report, connect, App Runner env + connector,
+MCP, migration). Not yet run against a live account: the RDS / EC2 / App Runner VPC connector request
+shapes, whether App Runner accepts every default-VPC subnet for a connector (some AZs are unsupported in
+a few regions), the `ALTER USER ... REQUIRE SSL` step on RDS, and the time AWS takes.
+
 ## C2 - cloud databases (planned)
 
 | Provider | Engine | Support |
 |---|---|---|
-| AWS | **RDS / Aurora** MySQL, MariaDB, PostgreSQL | create a small instance (class, storage, backups on, public access off + App Runner VPC connector) or connect existing ones; the SQL browser / query / schema / DDL export then work |
+| AWS | **RDS / Aurora** MySQL, MariaDB, PostgreSQL | **built in C2-1** (above) |
 | AWS | **DynamoDB** | new NoSQL engine: tables, items, Query/Scan, schema inference, on-demand backups |
 | Firebase | **Cloud Firestore** | new NoSQL engine: collections/documents, queries, schema inference, export |
 | Firebase | **Realtime Database** | new engine: JSON tree browse/edit, path queries |
 
-Seams left by C1: data sources reuse `cloud_connections` (same encryption, scope and validation);
-cloud apps get their database settings through `cloud_deploy.cloud_env` (the one place a cloud app's
-environment is assembled) as references to credentials the cloud injects (App Runner instance role /
-Cloud Run service account, Secrets Manager / Secret Manager), never the PC's `DEPLOYER_DB_*`. MCP gains
-`create_cloud_database` (service keys; billable, requires `confirm_billing: true`) and the data tools
-work on the new engines.
+Seams left by C1 and C2-1: data sources carry `cloud_connection_id` / `cloud_state` and the Add
+database dialog has the AWS / Firebase cards (`cloud_db.LOCATIONS`); cloud apps get their database
+settings through `cloud_deploy.cloud_env`; the MCP `create_cloud_database` tool and the `confirm_billing`
+rule are in place. Left: the DynamoDB / Firestore / Realtime Database engines (new NoSQL engines with
+their own browse / query / schema), Firebase databases for `firebase_app`, and Secrets Manager / Secret
+Manager references instead of plain runtime environment.
 
 ## C3 - GitHub Actions builds (planned)
 
