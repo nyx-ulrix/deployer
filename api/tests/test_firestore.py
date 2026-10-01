@@ -564,16 +564,19 @@ def test_mcp_firestore_tools(client, db, team, gcp):
     headers = {"Authorization": f"Bearer {key.json()['secret']}"}
     conn = connection(db, "firebase")
 
-    def call(tool, **arguments):
+    def call(tool, auth=None, **arguments):
         body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": arguments}}
-        out = client.post(f"{base(team)}/mcp", json=body, headers=headers).json()["result"]
+        out = client.post(f"{base(team)}/mcp", json=body, headers=auth or headers).json()["result"]
         return out["isError"], json.loads(out["content"][0]["text"])
+
+    def admin_call(tool, **arguments):  # the cloud account tools are admin-only, like their routes
+        return call(tool, auth=team["admin"], **arguments)
 
     _, options = call("cloud_database_options")
     assert "Firestore" in options["firestore"]["what"]
-    _, listed = call("list_cloud_databases", connection_id=conn.id)
+    _, listed = admin_call("list_cloud_databases", connection_id=conn.id)
     assert listed["firestore"][0]["id"] == "(default)"
-    err, source = call("connect_cloud_database", connection_id=conn.id, name="Fire", database="(default)")
+    err, source = admin_call("connect_cloud_database", connection_id=conn.id, name="Fire", database="(default)")
     assert not err and source["engine"] == "firestore"
     _, page = call("list_documents", source_id=source["id"], collection="users", limit=2)
     _, rest = call("list_documents", source_id=source["id"], collection="users", cursor=page["next_cursor"])

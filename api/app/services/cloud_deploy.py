@@ -640,6 +640,7 @@ def enqueue_teardown(db: Session, app: App, user_id: str | None) -> str | None:
         type="app.cloud_teardown",
         params={
             "app_id": app.id,
+            "name": app.name,
             "target": app.target,
             "connection_id": app.cloud_connection_id,
             "state": state,

@@ -5,7 +5,8 @@ import json
 import pytest
 from sqlalchemy import select
 
-from app.models import AuditLog, Deployment, QueryRun
+from app.main import app as fastapi_app
+from app.models import AuditLog, Deployment, QueryRun, role_rank
 from app.routers import mcp
 from app.services import connections, deployments, source_ops
 from tests.apps_support import make_app
@@ -27,14 +28,17 @@ APP_TOOLS = {
     "deployment_status",
     "app_logs",
     "deploy_app",
-    "list_cloud_connections",
     "list_cloud_targets",
     "cloud_database_options",
+    "export_documents",
+}
+# The cloud account tools: admin-only, like the REST routes they wrap (service keys act as developer).
+ADMIN_TOOLS = {
+    "list_cloud_connections",
     "list_cloud_databases",
     "create_cloud_database",
     "connect_cloud_database",
     "create_cloud_backup",
-    "export_documents",
 }
 WRITE_TOOLS = {
     "insert_row",
@@ -111,6 +115,75 @@ def test_tools_list_depends_on_role(env):
     assert names(env["anon"]) == READ_TOOLS - {"run_query"}  # A-031: queries need a service key
     assert names(env["service"]) == READ_TOOLS | WRITE_TOOLS | APP_TOOLS
     assert names(env["viewer"]) == READ_TOOLS  # JWT sessions work too, with the member's role
+    assert names(env["dev"]) == READ_TOOLS | WRITE_TOOLS | APP_TOOLS
+    assert names(env["owner"]) == READ_TOOLS | WRITE_TOOLS | APP_TOOLS | ADMIN_TOOLS
+
+
+def test_admin_tools_refuse_service_keys_and_developers(env):
+    for headers in (env["service"], env["dev"]):
+        for tool in ADMIN_TOOLS:
+            out = env["rpc"](headers, "tools/call", {"name": tool, "arguments": {"connection_id": "c"}})
+            assert out["error"]["code"] == mcp.INVALID_PARAMS and "Unknown tool" in out["error"]["message"]
+    is_error, out = env["call"](
+        env["owner"], "create_cloud_database", connection_id="c", name="x", engine="dynamodb", confirm_billing=False
+    )
+    assert is_error and out["error"]["code"] == "billing_not_confirmed"  # admins reach the route's own checks
+
+
+# Every tool and the REST route(s) it wraps: the tool's role may never be below the route's (C2-1 review).
+TOOL_ROUTES = {
+    "list_data_sources": [("GET", "/data-sources")],
+    "get_schema": [("GET", "/schema")],
+    "run_query": [("POST", "/data-sources/{source_id}/query")],
+    "list_rows": [("GET", "/data-sources/{source_id}/tables/{table}/rows")],
+    "insert_row": [("POST", "/data-sources/{source_id}/tables/{table}/rows")],
+    "update_row": [("PATCH", "/data-sources/{source_id}/tables/{table}/rows")],
+    "delete_row": [("DELETE", "/data-sources/{source_id}/tables/{table}/rows")],
+    "list_documents": [("GET", "/data-sources/{source_id}/collections/{name:path}/documents")],
+    "insert_document": [("POST", "/data-sources/{source_id}/collections/{name:path}/documents")],
+    "update_document": [("PATCH", "/data-sources/{source_id}/collections/{name:path}/documents/{doc_id}")],
+    "delete_document": [("DELETE", "/data-sources/{source_id}/collections/{name:path}/documents/{doc_id}")],
+    "list_subcollections": [
+        ("GET", "/data-sources/{source_id}/collections/{name:path}/documents/{doc_id}/collections")
+    ],
+    "export_documents": [
+        ("GET", "/data-sources/{source_id}/firestore/export"),
+        ("GET", "/data-sources/{source_id}/rtdb-export"),
+    ],
+    "rtdb_read": [("GET", "/data-sources/{source_id}/rtdb")],
+    "rtdb_write": [(m, "/data-sources/{source_id}/rtdb") for m in ("PUT", "PATCH", "POST", "DELETE")],
+    "list_apps": [("GET", "/apps")],
+    "get_app": [("GET", "/apps/{app_id}")],
+    "deploy_app": [("POST", "/apps/{app_id}/deploy")],
+    "deployment_status": [("GET", "/apps/{app_id}/deployments/{deployment_id}")],
+    "app_logs": [("GET", "/apps/{app_id}/logs")],
+    "list_cloud_connections": [("GET", "/cloud/connections")],
+    "list_cloud_targets": [("GET", "/cloud/targets")],
+    "cloud_database_options": [("GET", "/cloud/databases/options")],
+    "list_cloud_databases": [("GET", "/cloud/connections/{connection_id}/databases")],
+    "create_cloud_database": [("POST", "/cloud/databases")],
+    "connect_cloud_database": [("POST", "/cloud/databases/connect")],
+    "list_cloud_backups": [("GET", "/data-sources/{source_id}/cloud-backups")],
+    "create_cloud_backup": [("POST", "/data-sources/{source_id}/cloud-backups")],
+}
+
+
+def _route_role(method: str, path: str) -> str:
+    """The `minimum` of the route's require_role dependency."""
+    full = "/v1/projects/{project_id}" + path
+    route = next(r for r in fastapi_app.routes if getattr(r, "path", None) == full and method in r.methods)
+    for dep in route.dependant.dependencies:
+        call = dep.call
+        if call.__name__ == "dependency" and "minimum" in call.__code__.co_freevars:
+            return call.__closure__[call.__code__.co_freevars.index("minimum")].cell_contents
+    raise AssertionError(f"no role dependency on {method} {full}")
+
+
+def test_every_tool_needs_at_least_its_routes_role():
+    assert set(TOOL_ROUTES) == set(mcp.TOOLS)  # a new tool names its route here
+    for tool, routes in TOOL_ROUTES.items():
+        needed = max((_route_role(m, p) for m, p in routes), key=role_rank)
+        assert role_rank(mcp.TOOLS[tool][0]) >= role_rank(needed), (tool, needed)
 
 
 def test_anon_cannot_write(env):
@@ -197,7 +270,7 @@ def test_mongo_query_through_fake_shell(env, db, fake_mongosh, make_source):
 def test_app_tools(env, db, fake_redis):
     app = make_app(db, env["project"])
     call = env["call"]
-    for tool in APP_TOOLS:  # build/runtime logs and app settings never reach an anon (public) key
+    for tool in APP_TOOLS | ADMIN_TOOLS:  # build/runtime logs and app settings never reach an anon (public) key
         out = env["rpc"](env["anon"], "tools/call", {"name": tool, "arguments": {"app_id": app.id}})
         assert out["error"]["code"] == mcp.INVALID_PARAMS and "Unknown tool" in out["error"]["message"]
     _, apps = call(env["service"], "list_apps")

@@ -17,7 +17,10 @@ A site can be deployed in three ways:
    built on the PC, but served from the cloud - AWS S3 + CloudFront or Firebase Hosting for static
    sites, AWS App Runner or Firebase + Cloud Run for full apps (Node, Python, Dockerfile). It **keeps
    serving when the PC is off**, is billed by AWS / Google to the user, and gets only its own
-   environment variables (no `DEPLOYER_URL` / `DEPLOYER_API_KEY` / `DEPLOYER_DB_*`).
+   environment variables plus, with database access, its databases **in the same cloud account** (no
+   `DEPLOYER_URL` / `DEPLOYER_API_KEY`, nothing on the PC). Its database can live there too (RDS /
+   DynamoDB in AWS, Firestore / Realtime Database in Firebase), so the whole site runs with the PC off,
+   like Vercel + Supabase.
 3. **On an external platform** (Vercel, Netlify, Cloudflare Pages, GitHub Pages...) with the data
    and API living in Deployer (Step 1 below). Good for global CDN reach and serverless functions.
 
@@ -51,6 +54,22 @@ Then ask, in this exact shape (adapt the list; keep the first line):
 > 5. **Cloudflare Pages** / **Netlify** / **GitHub Pages** - no past use found
 >
 > Reply with a number or a name. I won't deploy until you pick one.
+
+When the site needs a database, ask where it should live in the same message (or right after), in plain
+words, ordered the same way (a cloud app needs a cloud database in **its** account to keep working with
+the PC off; MCP `cloud_database_options` has the texts and costs):
+
+> Where should the site's database live?
+> 1. **In your AWS account** (recommended with AWS App Runner) - RDS (MySQL / MariaDB / PostgreSQL, about
+>    US$15-20/month for the smallest) or DynamoDB (NoSQL, pay per read / write, often cents); stays up when
+>    the PC is off; AWS bills you
+> 2. **In your Firebase project** (recommended with Firebase) - Cloud Firestore (documents, the usual
+>    choice) or the Realtime Database (one JSON tree, instant updates); stays up when the PC is off; free
+>    quota, then Google bills you
+> 3. **On this PC** - MariaDB or MongoDB, free, backed up by Deployer; stops when the PC is off
+> 4. **On another server you already have** - Deployer only connects to it
+>
+> Creating a cloud database costs money on your account, so I'll only do it after you say yes.
 
 Use `AskUserQuestion` when the host offers it, putting the recommended option first. If no
 evidence exists, list the platforms alphabetically and say so. Record the answer in memory
@@ -133,13 +152,16 @@ instead of raw HTTP: API keys tab → *Show usage* → **AI agents (MCP)** has t
 claude mcp add --transport http deployer <url>/v1/projects/<project_id>/mcp --header "Authorization: Bearer <key>"
 ```
 
-Tools: `list_data_sources`, `get_schema`, `list_rows`, `list_documents` (any key) plus `run_query`,
-`insert_/update_/delete_row`, `insert_/update_/delete_document`, `list_apps`, `get_app`,
-`deploy_app`, `deployment_status`, `app_logs`, `list_cloud_connections`, `list_cloud_targets`,
-`cloud_database_options`, `list_cloud_databases`, `create_cloud_database` (billable: only with the
-user's yes and `confirm_billing: true`), `connect_cloud_database`, `list_cloud_backups` and
-`list_subcollections` (any key), `create_cloud_backup` (billable; service key only) and `export_documents`
-(service key); app tools report each app's `target` and cloud URL.
+Tools: `list_data_sources`, `get_schema`, `list_rows`, `list_documents`, `list_subcollections`,
+`rtdb_read`, `list_cloud_backups` (any key) plus `run_query`, `insert_/update_/delete_row`,
+`insert_/update_/delete_document`, `rtdb_write`, `export_documents`, `list_apps`, `get_app`, `deploy_app`,
+`deployment_status`, `app_logs`, `list_cloud_targets`, `cloud_database_options` (service key). The cloud
+account tools - `list_cloud_connections`, `list_cloud_databases`, `create_cloud_database` and
+`create_cloud_backup` (both billable: only with the user's yes and `confirm_billing: true`) and
+`connect_cloud_database` - need a project **admin** like their REST routes: a service key doesn't see them,
+so ask the user to add the database in the dashboard (*Add database → In your AWS account / In your Firebase
+project*), then work on its data with the service key. App tools report each app's `target` and cloud URL;
+the data tools work on cloud databases exactly like on the PC's (RDS / Aurora are SQL sources).
 DynamoDB tables use the document tools (`collection` = table, page with `cursor`) and `run_query` takes
 one JSON request (`{"operation": "Query", "TableName": ..., ...}`; docs/QUERY_CONSOLE.md). Firestore
 databases use them too (`collection` = a path such as `users` or `users/u1/orders`, `_id` = the document
@@ -177,6 +199,7 @@ so check the dashboard tab or endpoint named below).
 | **DynamoDB** (NoSQL in AWS): create an on-demand table or connect existing ones, browse / edit items, JSON queries, on-demand backups; App Runner apps get the table names and an IAM role for them | Available when `GET /v1/projects/{id}/cloud/databases/options` returns `dynamodb`; not yet exercised against a live AWS account | Databases → *Add database* → NoSQL → *In your AWS account* (admin); `docs/CLOUD.md` "C2-2" |
 | **Cloud Firestore** (NoSQL in Firebase): connect the project's Firestore database, browse / edit documents and subcollections, JSON queries, schema, JSON export; Firebase full apps with database access get `DEPLOYER_DB_<NAME>_PROJECT` / `_DATABASE` (their service account needs the Cloud Datastore User role) | Available when `GET /v1/projects/{id}/cloud/databases/options` returns `firestore`; not yet exercised against a live Google account | Databases → *Add database* → NoSQL → *In your Firebase project* (admin); `docs/CLOUD.md` "C2-3" |
 | **Firebase Realtime Database** (NoSQL JSON tree in Firebase): connect the project's Realtime Database or create its default one (billable once used), browse the tree branch by branch, edit / add / delete by path, Firebase's path queries, JSON export; Firebase full apps with database access get `DEPLOYER_DB_<NAME>_URL` / `_PROJECT` (their service account needs the Firebase Realtime Database Admin role) | Available when `GET /v1/projects/{id}/cloud/databases/options` returns `rtdb`; not yet exercised against a live Google account | Databases → *Add database* → NoSQL → *In your Firebase project* → *Realtime Database* (admin); `docs/CLOUD.md` "C2-4" |
+| Cloud databases in MCP, export / import and project delete: the data tools work on RDS, DynamoDB, Firestore and the Realtime Database; creating / connecting one needs a project admin (not a service key); exports carry their settings (encrypted) but not their data; deleting a project asks whether to delete or keep what Deployer created in the cloud account | Available when MCP `tools/list` with a service key no longer offers `create_cloud_database` (older instances offered it to service keys); never test it by deleting a project | Project → Settings → *Delete project*; `docs/CLOUD.md` "C2-5" |
 | Deploys that run without the PC (GitHub Actions builds) | **Not built** (planned, `docs/CLOUD.md` C3) - cloud apps serve with the PC off, but deploying needs it on | - |
 | Apps placed on a host device instead of the main PC | **Not built** - an app always runs on the main Deployer PC; with *Co-host this app* (phase 2 above) it **also** runs on the project's co-host PCs | - |
 
@@ -284,7 +307,9 @@ The same app, served from the user's own cloud account so it **keeps running whe
    Cloudflare linked the DNS records are created automatically; otherwise the app's Domains card lists
    the records for the user to add, then *Check again*.
 6. **Moving or deleting** the app removes what Deployer created in the cloud account (the dashboard
-   lists it first; failures are reported by the teardown job).
+   lists it first; failures are reported by the teardown job). **Deleting the whole project** asks the
+   user to choose: delete what Deployer created in the cloud (databases keep a final snapshot) or keep it
+   running and billed in their account (`cloud=delete` / `cloud=keep`). Never pick for them.
 
 ### Co-host PCs (the same app on other PCs, with failover)
 

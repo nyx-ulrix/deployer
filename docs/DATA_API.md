@@ -162,6 +162,17 @@ s.patch(f"{docs}/{doc_id}", json={"set": {"status": "paid"}, "unset": ["note"]})
 s.delete(f"{docs}/{doc_id}")
 ```
 
+### Databases in the cloud (AWS / Firebase)
+
+Databases that live in the user's own AWS account or Firebase project ([CLOUD.md](CLOUD.md) "C2") are data
+sources like any other, with `cloud` set in `GET .../data-sources` (provider, service, whether Deployer
+created it). The same keys and endpoints reach them, through this PC, so **the data API needs the PC on**;
+apps hosted in the same cloud reach their databases directly instead and keep working with the PC off.
+
+- **RDS / Aurora** (MySQL, MariaDB, PostgreSQL) are SQL sources: the rows, schema and query endpoints above
+  work unchanged. While AWS is still creating one, they answer `409 cloud_database_creating`.
+- **DynamoDB**, **Firestore** and the **Realtime Database** are NoSQL sources with their own rules, below.
+
 ### DynamoDB tables
 
 A DynamoDB database ([CLOUD.md](CLOUD.md) "C2-2") uses the same documents endpoints with `{name}` = a

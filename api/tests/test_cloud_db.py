@@ -8,11 +8,13 @@ import sqlite3
 
 import pytest
 from alembic import command
+from sqlalchemy import select
 
 from app.crypto import decrypt_json
 from app.errors import CloudError
 from app.models import App, AuditLog, DataSource, Job
-from app.services import cloud, cloud_db, cloud_deploy, connections, jobs
+from app.services import alerts, cloud, cloud_db, cloud_deploy, connections, jobs
+from tests.apps_support import make_app
 from tests.test_cloud import FakeCloud, connection, deploy
 
 PC_IP = "203.0.113.7"
@@ -211,12 +213,100 @@ def test_delete_created_database_takes_a_final_snapshot(client, db, team, aws):
     assert job.result["final_snapshot"] == snapshot
 
 
-def test_project_delete_never_orphans_a_created_database(client, db, team, aws):
+def _project_with_cloud_things(client, db, team, aws):
+    conn = connection(db)
+    create(client, team, conn)
+    jobs.run_queued()
+    make_app(
+        db,
+        team["project"],
+        "Api",
+        target="aws_app",
+        cloud_connection_id=conn.id,
+        cloud_state={"service_arn": "arn:svc", "ecr_repository": "deployer-api-1"},
+    )
+    aws.calls.clear()
+    return f"/v1/projects/{team['project'].id}?confirm={team['project'].slug}"
+
+
+def test_project_delete_asks_what_to_do_with_cloud_resources_and_can_keep_them(client, db, team, aws):
+    url = _project_with_cloud_things(client, db, team, aws)
+    resp = client.delete(url, headers=team["owner"])
+    assert resp.status_code == 409 and resp.json()["error"]["code"] == "cloud_resources_left"
+    error = resp.json()["error"]
+    assert "database Shop DB" in error["message"] and "cloud=keep" in error["message"]
+    found = {r["name"]: r for r in error["details"]["resources"]}
+    assert any("RDS instance" in r for r in found["Shop DB"]["resources"]) and found["Api"]["type"] == "app"
+    assert client.delete(url + "&cloud=maybe", headers=team["owner"]).status_code == 422
+
+    kept = client.delete(url + "&cloud=keep", headers=team["owner"])
+    assert kept.status_code == 200, kept.text
+    assert kept.json()["cloud"]["choice"] == "keep" and kept.json()["cloud"]["job_ids"] == []
+    assert aws.calls == [] and db.scalars(select(Job).where(Job.type.like("%cloud_%delete%"))).all() == []
+    audit = db.scalars(select(AuditLog).where(AuditLog.action == "project.delete")).one()
+    assert audit.details["cloud"] == "keep" and {r["name"] for r in audit.details["cloud_resources"]} == {
+        "Shop DB",
+        "Api",
+    }
+
+
+def test_project_delete_can_delete_cloud_resources_and_alerts_on_failure(client, db, team, aws):
+    url = _project_with_cloud_things(client, db, team, aws)
+    aws.returns["db_instance"] = None  # gone once deleted
+    aws.fail["delete_service"] = "AWS AccessDenied: not allowed"
+    resp = client.delete(url + "&cloud=delete", headers=team["owner"])
+    assert resp.status_code == 200, resp.text
+    job_ids = resp.json()["cloud"]["job_ids"]
+    jobs.run_queued()
+    db.expire_all()
+    done = {db.get(Job, j).type: db.get(Job, j) for j in job_ids}
+    assert all(j.project_id is None for j in done.values())  # they outlived the project
+    assert done["data_source.cloud_delete"].status == "succeeded"
+    assert done["data_source.cloud_delete"].result["final_snapshot"]
+    assert done["app.cloud_teardown"].status == "failed"
+    conditions = alerts.conditions(db, 0)
+    (failed,) = [c for c in conditions.values() if c.alert == "cloud_cleanup_failed"]
+    assert "Api" in failed.message and "AccessDenied" in failed.message
+
+
+def test_project_delete_refuses_cloud_delete_through_a_connection_that_goes_with_the_project(client, db, team, aws):
+    create(client, team, connection(db, project_id=team["project"].id))
+    jobs.run_queued()
+    url = f"{base(team)}?confirm={team['project'].slug}"
+    resp = client.delete(url + "&cloud=delete", headers=team["owner"])
+    assert resp.status_code == 409 and resp.json()["error"]["code"] == "cloud_connection_in_project"
+    assert resp.json()["error"]["details"]["resources"] == ["database Shop DB"]
+    assert client.delete(url + "&cloud=keep", headers=team["owner"]).status_code == 200
+
+
+def test_export_carries_the_cloud_link_but_no_data_and_a_copy_never_owns_the_instance(client, db, team, aws):
+    """docs/CLOUD.md "C2-5": config (with the password) only inside the encrypted file, no rows, and an
+    imported copy is a plain external connection that never deletes the original's instance."""
+    import os
+
+    from app.models import Project, User
+    from app.services import transfer
+
     create(client, team, connection(db))
     jobs.run_queued()
-    project = team["project"]
-    resp = client.delete(f"/v1/projects/{project.id}?confirm={project.slug}", headers=team["owner"])
-    assert resp.status_code == 409 and "database Shop DB" in resp.json()["error"]["message"]
+    source = db.scalars(select(DataSource)).one()
+    password = decrypt_json(source.config_encrypted)["password"]
+    path, counts = transfer.build_export_file(db, scope="projects", projects=[team["project"]], passphrase="p" * 12)
+    try:
+        with open(path, encoding="utf-8") as fh:
+            assert password not in fh.read()
+        payload = transfer.read_export_file(path, "p" * 12, "projects")
+    finally:
+        os.unlink(path)
+    (row,) = payload["data_sources"]
+    assert row["cloud_state"]["created"] is True and row["config"]["password"] == password
+    assert payload["data"] == {} and counts["rows"] == 0  # the data stays in AWS
+
+    owner = db.get(User, db.get(Project, team["project"].id).owner_id)
+    (copy,), _ = transfer.import_projects(db, payload, owner)
+    (imported,) = db.scalars(select(DataSource).where(DataSource.project_id == copy.id)).all()
+    assert imported.mode == "external" and imported.cloud_connection_id is None and imported.cloud_state is None
+    assert not cloud_db.is_created(imported)
 
 
 def test_delete_reports_what_is_left(client, db, team, aws):
@@ -294,28 +384,31 @@ def test_app_runner_app_gets_the_cloud_database(client, db, docker, team, aws):
     assert update[5] is None and not any(k.startswith("DEPLOYER_DB_") for k in update[3])
 
 
-def test_mcp_cloud_database_tools(client, db, team, aws):
+def test_mcp_cloud_database_tools(client, db, team, aws, sqlite_engine, monkeypatch):
     key = client.post(f"{base(team)}/api-keys", json={"name": "k", "role": "service"}, headers=team["admin"])
     headers = {"Authorization": f"Bearer {key.json()['secret']}"}
     conn = connection(db)
 
-    def call(tool, **arguments):
+    def call(tool, auth=None, **arguments):
         body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": arguments}}
-        out = client.post(f"{base(team)}/mcp", json=body, headers=headers).json()["result"]
+        out = client.post(f"{base(team)}/mcp", json=body, headers=auth or headers).json()["result"]
         return out["isError"], json.loads(out["content"][0]["text"])
+
+    def admin_call(tool, **arguments):  # the cloud account tools are admin-only, like their routes
+        return call(tool, auth=team["admin"], **arguments)
 
     _, options = call("cloud_database_options")
     assert [loc["id"] for loc in options["locations"]] == ["local", "external", "aws", "firebase"]
     assert options["aws"]["default_instance_class"] == "db.t4g.micro" and "NAT" in options["aws"]["network"]
-    err, out = call(
+    err, out = admin_call(
         "create_cloud_database", connection_id=conn.id, name="Shop DB", engine="mysql", confirm_billing=False
     )
     assert err and out["error"]["code"] == "billing_not_confirmed"
-    err, out = call(
+    err, out = admin_call(
         "create_cloud_database", connection_id=conn.id, name="Shop DB", engine="mysql", confirm_billing=True
     )
     assert not err and out["data_source"]["status"] == "creating"
-    _, listed = call("list_cloud_databases", connection_id=conn.id)
+    _, listed = admin_call("list_cloud_databases", connection_id=conn.id)
     assert listed["pc_ip"] == PC_IP
     _, sources = call("list_data_sources")
     assert sources[0]["cloud"] == {
@@ -325,6 +418,18 @@ def test_mcp_cloud_database_tools(client, db, team, aws):
         "resource_id": out["data_source"]["cloud"]["resource_id"],
         "region": "eu-west-1",
     }
+    # The data tools reach an RDS database like any external one, once AWS has made it.
+    sid = out["data_source"]["id"]
+    err, waiting = call("list_rows", source_id=sid, table="items")
+    assert err and waiting["error"]["code"] == "cloud_database_creating"
+    jobs.run_queued()
+    monkeypatch.setattr(connections, "get_sql_engine", lambda ds: sqlite_engine)
+    err, rows = call("list_rows", source_id=sid, table="items", limit=2)
+    assert not err and rows["total"] == 7 and len(rows["rows"]) == 2
+    err, _ = call("insert_row", source_id=sid, table="items", values={"id": 99, "name": "new"})
+    assert not err
+    err, result = call("run_query", source_id=sid, query="SELECT COUNT(*) AS n FROM items")
+    assert not err and "8" in json.dumps(result)
 
 
 def test_policy_covers_databases_and_scopes_the_firewall():

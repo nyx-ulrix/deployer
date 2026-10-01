@@ -48,7 +48,8 @@ INSTRUCTIONS = (
     "(push-to-deploy websites). Start with list_data_sources and get_schema, or list_apps. Ids come from those "
     "tools. Databases can also live in the user's own AWS account - RDS SQL or DynamoDB (cloud_database_options; "
     "creating one is billable and needs the user's agreement) - or in the user's Firebase project: its Cloud "
-    "Firestore database or its Realtime Database (connect_cloud_database / create_cloud_database). "
+    "Firestore database or its Realtime Database (connect_cloud_database / create_cloud_database; those and "
+    "the other cloud account tools need a project admin, not a service key). "
     "Results are compact JSON, capped at 200 rows / 256 KB."
 )
 
@@ -270,7 +271,9 @@ def t_app_logs(ctx: Ctx, args: dict) -> Any:
     return apps_router.runtime_logs(args["app_id"], ctx.access, ctx.db, tail=tail, device_id=None)
 
 
-# name: (minimum project role, description, input schema, handler)
+# name: (minimum project role, description, input schema, handler). The role is never below the role of the
+# REST route a tool wraps (the handlers call route functions directly, skipping their Depends): the cloud
+# account tools are admin-only like their routes, so service keys (developer) don't get them.
 TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     "list_data_sources": (
         "viewer",
@@ -499,7 +502,7 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         t_deployment_status,
     ),
     "list_cloud_connections": (
-        "developer",
+        "admin",
         "The AWS / Firebase accounts this project's apps may deploy to: id, provider, name, account id / "
         "project id, region, status. Never any credentials. Choosing one for an app is done by a project "
         "admin in the dashboard (it is billed to that account).",
@@ -522,7 +525,7 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         t_cloud_database_options,
     ),
     "list_cloud_databases": (
-        "developer",
+        "admin",
         "The RDS / Aurora databases in an AWS connection's region (from list_cloud_connections), with which "
         "ones Deployer can connect to (`problem` says why not) and this PC's public IP, plus the region's "
         "DynamoDB `tables`; for a Firebase connection, its project's Firestore databases (`firestore`) and "
@@ -531,7 +534,7 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         t_list_cloud_databases,
     ),
     "create_cloud_database": (
-        "developer",
+        "admin",
         "BILLABLE: create a new RDS database (MySQL, MariaDB or PostgreSQL; default db.t4g.micro, 20 GB, backups, "
         "deletion protection, encrypted; 5-15 minutes) or a DynamoDB table (engine dynamodb: on-demand billing, "
         "deletion protection; under a minute) in the user's AWS account. It stays up when the PC is off and AWS "
@@ -562,7 +565,7 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         t_create_cloud_database,
     ),
     "connect_cloud_database": (
-        "developer",
+        "admin",
         "Connect an existing RDS / Aurora database (resource_id from list_cloud_databases) with the user's "
         "database login, existing DynamoDB tables (tables from list_cloud_databases), or - with a Firebase "
         "connection - the project's Cloud Firestore database (database: (default) or a named one; free to "
@@ -592,7 +595,7 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         t_list_cloud_backups,
     ),
     "create_cloud_backup": (
-        "developer",
+        "admin",
         "BILLABLE (about US$0.10 per GB per month until deleted in AWS): take an on-demand backup of a DynamoDB "
         "data source's tables (or one table). Only call after the user agreed, with confirm_billing: true.",
         _schema(

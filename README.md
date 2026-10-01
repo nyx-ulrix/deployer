@@ -57,7 +57,9 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
   project's Cloud Firestore database (collections, subcollections, JSON queries, JSON export) or its
   Realtime Database (a JSON tree browsed branch by branch, edited by path, Firebase's path queries; the
   default one can be created for you) from *Add database → In your Firebase project*; Firebase full apps
-  get them with *Database access*.
+  get them with *Database access*. Cloud databases stay up when this PC is off, work with the data API,
+  query console and MCP tools like any other database, and deleting a project asks whether to delete or
+  keep what Deployer created in your cloud account.
 - **Monitoring and alerts** - CPU, memory, disk, every container and app, API traffic and error
   rate on *Settings → Monitoring*; alerts for low disk, crash-looping containers, failed backups, a
   down tunnel and more, sent to your own webhook (Slack, Discord, ntfy)
@@ -496,7 +498,8 @@ The one roadmap for the project (docs link here rather than keeping their own co
    co-host PCs, email alerts, custom thresholds, a Prometheus endpoint.
 8. **Cloud hosting** on the owner's own AWS / Firebase accounts ([docs/CLOUD.md](docs/CLOUD.md)) -
    *(current)*: C1 connections + hosting targets done; C2-1 AWS RDS / Aurora databases, C2-2
-   DynamoDB, C2-3 Cloud Firestore and C2-4 Firebase Realtime Database done; C3 GitHub Actions builds
+   DynamoDB, C2-3 Cloud Firestore, C2-4 Firebase Realtime Database and C2-5 (MCP, export / import,
+   project delete) done; C3 GitHub Actions builds
    planned.
 
 ## Security

@@ -191,6 +191,30 @@ def _backup_rules(db: Session, out: dict[str, Condition]) -> None:
             )
 
 
+# docs/CLOUD.md "C2-5": cleanups queued by a project delete outlive the project (project_id NULL), so no
+# Activity tab shows them; a failure here means something may still be billed in the user's cloud account.
+CLOUD_CLEANUP_JOBS = ("data_source.cloud_delete", "app.cloud_teardown")
+
+
+def _cloud_cleanup_rule(db: Session, out: dict[str, Condition]) -> None:
+    since = utcnow() - timedelta(days=7)
+    for job in db.scalars(
+        select(Job).where(
+            Job.type.in_(CLOUD_CLEANUP_JOBS),
+            Job.project_id.is_(None),
+            Job.status == "failed",
+            Job.finished_at >= since,
+        )
+    ):
+        out[f"cloud_cleanup:{job.id}"] = Condition(
+            "cloud_cleanup_failed",
+            "critical",
+            f"Removing {(job.params or {}).get('name') or 'an app'} from your cloud account after its project was "
+            f"deleted failed: {(job.error or '')[:300]} Delete what is left in the AWS / Firebase console, or it "
+            "stays billed",
+        )
+
+
 def _tunnel_rule(db: Session, out: dict[str, Condition]) -> None:
     from app.services import remote_access
 
@@ -242,6 +266,7 @@ def conditions(db: Session, now: float) -> dict[str, Condition]:
         lambda: _api_rule(out, now),
         lambda: _backup_rules(db, out),
         lambda: _tunnel_rule(db, out),
+        lambda: _cloud_cleanup_rule(db, out),
         lambda: _replica_rules(db, out),
     ):
         try:

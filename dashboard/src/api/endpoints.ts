@@ -191,7 +191,12 @@ export const api = {
     get: (id: string) => client.get<Project>(`/projects/${e(id)}`),
     update: (id: string, body: { name?: string; description?: string }) =>
       client.patch<Project>(`/projects/${e(id)}`, body),
-    remove: (id: string, slug: string) => client.del<Ok>(`/projects/${e(id)}`, { query: { confirm: slug } }),
+    /** `cloud`: what happens to what Deployer created in a cloud account (docs/CLOUD.md "C2-5"); required when
+     * there is any (409 `cloud_resources_left` otherwise). */
+    remove: (id: string, slug: string, cloud?: "keep" | "delete") =>
+      client.del<Ok & { cloud?: { choice: string; job_ids: string[] } }>(`/projects/${e(id)}`, {
+        query: cloud ? { confirm: slug, cloud } : { confirm: slug },
+      }),
   },
 
   members: {

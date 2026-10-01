@@ -532,13 +532,16 @@ def test_mcp_cloud_tools(client, db, docker, aws, team):
     conn = connection(db)
     app = make_app(db, team["project"], "Api", target="aws_app", cloud_connection_id=conn.id)
 
-    def call(tool, **arguments):
+    def call(tool, auth=None, **arguments):
         body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": arguments}}
-        out = client.post(f"/v1/projects/{team['project'].id}/mcp", json=body, headers=headers).json()["result"]
+        out = client.post(f"/v1/projects/{team['project'].id}/mcp", json=body, headers=auth or headers).json()["result"]
         assert not out["isError"], out
         return json.loads(out["content"][0]["text"])
 
-    conns = call("list_cloud_connections")
+    def admin_call(tool, **arguments):  # the cloud account tools are admin-only, like their routes
+        return call(tool, auth=team["admin"], **arguments)
+
+    conns = admin_call("list_cloud_connections")
     assert [c["id"] for c in conns] == [conn.id]
     assert "secret_access_key" not in json.dumps(conns) and "config" not in conns[0]
     targets = call("list_cloud_targets")

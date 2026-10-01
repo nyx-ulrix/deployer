@@ -633,27 +633,30 @@ def test_mcp_dynamodb_tools(client, db, team, aws):
     headers = {"Authorization": f"Bearer {key.json()['secret']}"}
     conn = connection(db)
 
-    def call(tool, **arguments):
+    def call(tool, auth=None, **arguments):
         body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": arguments}}
-        out = client.post(f"{base(team)}/mcp", json=body, headers=headers).json()["result"]
+        out = client.post(f"{base(team)}/mcp", json=body, headers=auth or headers).json()["result"]
         return out["isError"], json.loads(out["content"][0]["text"])
+
+    def admin_call(tool, **arguments):  # the cloud account tools are admin-only, like their routes
+        return call(tool, auth=team["admin"], **arguments)
 
     _, options = call("cloud_database_options")
     assert "partition key" in options["dynamodb"]["keys"] and options["dynamodb"]["key_types"][0]["id"] == "S"
-    _, listed = call("list_cloud_databases", connection_id=conn.id)
+    _, listed = admin_call("list_cloud_databases", connection_id=conn.id)
     assert "orders" in listed["tables"]
-    err, source = call("connect_cloud_database", connection_id=conn.id, name="Shop", tables=["orders"])
+    err, source = admin_call("connect_cloud_database", connection_id=conn.id, name="Shop", tables=["orders"])
     assert not err and source["engine"] == "dynamodb"
     _, page = call("list_documents", source_id=source["id"], collection="orders", limit=2)
     _, rest = call("list_documents", source_id=source["id"], collection="orders", cursor=page["next_cursor"])
     assert len(page["documents"]) + len(rest["documents"]) == 3
-    err, out = call("create_cloud_backup", source_id=source["id"], confirm_billing=False)
+    err, out = admin_call("create_cloud_backup", source_id=source["id"], confirm_billing=False)
     assert err and out["error"]["code"] == "billing_not_confirmed"
-    err, out = call("create_cloud_backup", source_id=source["id"], confirm_billing=True)
+    err, out = admin_call("create_cloud_backup", source_id=source["id"], confirm_billing=True)
     assert not err and out["backups"][0]["table"] == "orders"
     _, backups = call("list_cloud_backups", source_id=source["id"])
     assert len(backups["backups"]) == 1
-    err, created = call(
+    err, created = admin_call(
         "create_cloud_database",
         connection_id=conn.id,
         name="Events",

@@ -494,18 +494,23 @@ def test_mcp_rtdb_tools(client, db, team, gcp):
     headers = {"Authorization": f"Bearer {key.json()['secret']}"}
     conn = connection(db, "firebase")
 
-    def call(tool, **arguments):
+    def call(tool, auth=None, **arguments):
         body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": arguments}}
-        out = client.post(f"{base(team)}/mcp", json=body, headers=headers).json()["result"]
+        out = client.post(f"{base(team)}/mcp", json=body, headers=auth or headers).json()["result"]
         return out["isError"], json.loads(out["content"][0]["text"])
 
-    _, listed = call("list_cloud_databases", connection_id=conn.id)
+    def admin_call(tool, **arguments):  # the cloud account tools are admin-only, like their routes
+        return call(tool, auth=team["admin"], **arguments)
+
+    _, listed = admin_call("list_cloud_databases", connection_id=conn.id)
     assert listed["rtdb"][0]["url"] == URL
-    err, refused = call(
+    err, refused = admin_call(
         "create_cloud_database", connection_id=conn.id, name="Rt", engine="firebase_rtdb", confirm_billing=False
     )
     assert err and refused["error"]["code"] == "billing_not_confirmed"
-    err, source = call("connect_cloud_database", connection_id=conn.id, name="Rt", instance=f"{PROJECT}-default-rtdb")
+    err, source = admin_call(
+        "connect_cloud_database", connection_id=conn.id, name="Rt", instance=f"{PROJECT}-default-rtdb"
+    )
     assert not err and source["engine"] == "firebase_rtdb"
     _, top = call("rtdb_read", source_id=source["id"], shallow=True)
     assert [c["key"] for c in top["children"]] == ["motd", "rooms", "scores", "users"]

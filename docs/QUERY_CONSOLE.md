@@ -183,6 +183,13 @@ the real binary in the sidecar (`tests/integration/test_query_console.py`):
 - The shell's stderr is appended to `output`. Output, error messages **and the result** are redacted
   with `connections.redact` (the source's password and any `scheme://user:password@` become `***`).
 
+### AWS RDS / Aurora
+
+A SQL database in the user's AWS account ([CLOUD.md](CLOUD.md) "C2-1") is a SQL source like any external
+one: the same SQL rules, read-only session for viewers and limits apply, over TLS from this PC (whose IP the
+database's firewall lets in). While AWS is still creating it the console answers `409
+cloud_database_creating`. The MCP `run_query` tool reaches it the same way ([MCP.md](MCP.md)).
+
 ### DynamoDB
 
 For a DynamoDB data source ([CLOUD.md](CLOUD.md) "C2-2") the query is **one JSON object**: `operation`

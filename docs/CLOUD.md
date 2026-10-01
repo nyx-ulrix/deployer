@@ -13,6 +13,7 @@ and the `deploy-website` skill.
 | **C2-2** | DynamoDB engine ("C2-2 as built") | **Built** (no migration) |
 | **C2-3** | Cloud Firestore engine ("C2-3 as built") | **Built** (no migration) |
 | **C2-4** | Firebase Realtime Database engine ("C2-4 as built") | **Built** (no migration) |
+| **C2-5** | MCP roles, data tools on every cloud engine, transfer, project delete keep / delete ("C2-5 as built") | **Built** (no migration) |
 | C3 | GitHub Actions builds, so pushes deploy with the PC off | Planned ("C3 - GitHub Actions builds") |
 
 ## Principles
@@ -149,7 +150,7 @@ updated_at}` - never a secret. Apps gain `target`, `cloud_connection_id` (create
 
 ### MCP
 
-`list_cloud_connections` (service key / developer+; no secrets), `list_cloud_targets` (targets with
+`list_cloud_connections` (project admin, like its route - C2-5; no secrets), `list_cloud_targets` (targets with
 explanations and availability), and `get_app` / `list_apps` / `deploy_app` / `deployment_status` report
 `target` and the cloud URL (`cloud_url`, `target_url`). Choosing a target stays a dashboard action for
 project admins (it is billable). See MCP.md.
@@ -157,7 +158,7 @@ project admins (it is billable). See MCP.md.
 ### Transfer (export / import)
 
 Connections are not exported (they hold credentials). Apps keep `target` / `cloud_state` only on an
-instance import where the connection exists; otherwise they come back as `local` apps.
+instance import where the connection exists; otherwise they come back as `local` apps. Cloud databases: "C2-5 as built".
 
 ### Not verified against real clouds
 
@@ -222,9 +223,9 @@ Deleting a created database (typing its name in the dialog, which lists what goe
 storage until the user deletes it; automated backups go with the instance) -> waits until it is gone ->
 deletes the security group (retried for up to 10 minutes while the old instance's network interface
 still holds it). Anything it could not remove fails the job with the list. Deleting is refused while the
-database is still being created. Deleting a **project** is refused (`409 cloud_resources_left`, naming
-them) while it still has databases Deployer created in AWS or apps with cloud resources: removing those
-first runs their cleanup, so nothing is left running and billed with no record of it.
+database is still being created. Deleting a **project** that still has databases Deployer created in AWS or apps with
+cloud resources asks what to do with them (C2-5, "Deleting a project"), so nothing is left running and
+billed without the owner choosing it.
 
 ### Networking (the trade-off)
 
@@ -294,8 +295,9 @@ resource_kind, region, instance_class, allowed_ip, job_id, resources, when_pc_of
 `cloud_database_options`, `list_cloud_databases` (`connection_id`), `create_cloud_database`
 (`connection_id, name, engine, instance_class?, confirm_billing` - billable: the tool description tells
 the agent to get the user's agreement first; `confirm_billing: false` returns `billing_not_confirmed`),
-`connect_cloud_database`; `list_data_sources` adds `cloud` for cloud databases. Service keys (developer
-role), as planned. Deleting a cloud database stays a dashboard action.
+`connect_cloud_database`; `list_data_sources` adds `cloud` for cloud databases. Like their REST routes, the
+account tools need a project **admin** (C2-5: an admin's session, not a service key). Deleting a cloud
+database stays a dashboard action.
 
 ### Not verified against real clouds
 
@@ -428,7 +430,7 @@ listing adds `tables` and `tables_problem`; data sources' `cloud` adds `tables` 
 `create_cloud_database` takes `engine: "dynamodb"` with `partition_key` / `sort_key`,
 `connect_cloud_database` takes `tables`, `list_cloud_databases` returns `tables`, `list_documents` takes
 `cursor`, `run_query` takes the JSON request, plus `list_cloud_backups` (any key) and
-`create_cloud_backup` (service key; billable, `confirm_billing`). See MCP.md.
+`create_cloud_backup` (project admin since C2-5; billable, `confirm_billing`). See MCP.md.
 
 ### Not verified against real clouds
 
@@ -713,6 +715,71 @@ accepts the `firebase.database` + `userinfo.email` token as admin, how Firebase'
 children (the tree handles both readings), and Cloud Run reaching the database as the default compute service
 account.
 
+## C2-5 as built: MCP, transfer, project delete
+
+### MCP: every tool needs at least its REST route's role
+
+The MCP handlers call the route functions directly, so the routes' own `require_role` never ran: since C2-1
+the cloud account tools were open to **service keys** (developer) although their routes are admin-only.
+Each tool's role is now at least its route's (`tests/test_mcp.py` maps every tool to the route(s) it wraps
+and compares the roles read from the routes' dependencies, so a new tool must name its route):
+`list_cloud_connections`, `list_cloud_databases`, `create_cloud_database`, `connect_cloud_database` and
+`create_cloud_backup` need a project **admin** - an admin's dashboard session (JWT) as the MCP bearer; a
+service key does not see them (`-32602 Unknown tool`), and the agent asks the user to do it in the dashboard
+(*Add database -> In your AWS account / In your Firebase project*) instead. The billable ones still need
+`confirm_billing: true`. No other tool was below its route.
+
+### Data tools on cloud databases
+
+The data tools reach every cloud engine through the same `source_ops` / query console paths as the REST
+API: RDS / Aurora are ordinary SQL sources (`list_rows`, `insert_/update_/delete_row`, `run_query`,
+`get_schema`; `409 cloud_database_creating` until AWS has made the database), DynamoDB and Firestore use the
+document tools (`cursor` paging, collection paths), a Realtime Database `rtdb_read` / `rtdb_write`, and
+`run_query` takes each engine's JSON request (QUERY_CONSOLE.md).
+
+### Transfer (export / import)
+
+- **Configuration, not data.** A cloud database's row travels with its `cloud_state` and its connection
+  settings - for RDS that includes the database password - **only inside the passphrase-encrypted export**
+  (AES-256-GCM like every other secret in the file; never in plain text). Its data is **not** exported: it
+  stays in AWS / Google (export with the provider's tools, the Firestore / Realtime Database JSON export of
+  the Data tab, or a SQL dump of the RDS database). Cloud connections are never exported.
+- **Instance import** keeps the cloud link when the connection exists on the new instance (same id);
+  otherwise RDS becomes a plain external connection and DynamoDB / Firestore / Realtime Database sources are
+  skipped with a warning (they have no login of their own).
+- **Project import (a copy)** never owns the original's resources: RDS comes back as a plain external
+  connection, DynamoDB / Firestore / Realtime Database as *connected* (`created: false`) when the
+  connection may be used by the new project, else skipped with a warning. So deleting a copy never deletes
+  the original's database.
+
+### Deleting a project
+
+`DELETE /projects/{id}?confirm=<slug>` on a project with databases Deployer **created** in a cloud account
+(RDS instances, DynamoDB tables) or apps with cloud resources answers `409 cloud_resources_left`, with
+`details.resources: [{type: database | app, id, name, resources}]` and a message explaining the choice. The
+owner passes **`cloud=delete`** or **`cloud=keep`**:
+
+- `delete` queues each one's cleanup exactly as removing it would (`data_source.cloud_delete` with its final
+  snapshot / backup, `app.cloud_teardown`). The jobs are detached from the project (`project_id` NULL) so
+  they outlive it; a failed one raises the critical alert `cloud_cleanup_failed` (for 7 days) naming what
+  is left to delete in the provider's console. Refused (`409 cloud_connection_in_project`) when a cleanup
+  needs a cloud connection scoped to this project only, because that connection goes with the project:
+  remove those databases / apps first, or keep them.
+- `keep` leaves them running (and billed) in the account; Deployer stops tracking them. The audit entry
+  `project.delete` records the choice and the list either way.
+
+Connected databases (Firestore, the Realtime Database, connected RDS / DynamoDB) are only forgotten, as
+before. The dashboard's delete dialog lists the cloud resources with both choices in plain words and keeps
+the delete button off until one is picked.
+
+### Not verified against real clouds
+
+Everything here is local logic tested with the fakes (`tests/test_mcp.py`, `tests/test_cloud_db.py`:
+role mapping, MCP data tools on an RDS source, export / import of a created database, both project delete
+choices, the alert, the project-scoped connection refusal; the dashboard dialog in
+`ProjectSettingsTab.test.tsx`). The cleanup jobs are the C2-1 / C2-2 / C1 ones, unverified against live
+accounts as noted there.
+
 ## C2 - cloud databases (what is left)
 
 | Provider | Engine | Support |
@@ -721,6 +788,7 @@ account.
 | AWS | **DynamoDB** | **built in C2-2** (above) |
 | Firebase | **Cloud Firestore** | **built in C2-3** (above) |
 | Firebase | **Realtime Database** | **built in C2-4** (above) |
+| all | MCP, transfer, project delete | **built in C2-5** (above) |
 
 Seams left by C1 and C2-1..4: data sources carry `cloud_connection_id` / `cloud_state` and the Add
 database dialog has the AWS / Firebase cards (`cloud_db.LOCATIONS`); cloud apps get their database

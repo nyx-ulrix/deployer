@@ -15,6 +15,8 @@ export type ConfirmDialogProps = {
   confirmText?: string;
   destructive?: boolean;
   loading?: boolean;
+  /** Keeps the confirm button off (e.g. until a required choice is made). */
+  disabled?: boolean;
 };
 
 export function ConfirmDialog(props: ConfirmDialogProps) {
@@ -34,9 +36,10 @@ function ConfirmDialogInner({
   confirmText,
   destructive = true,
   loading = false,
+  disabled = false,
 }: ConfirmDialogProps) {
   const [typed, setTyped] = useState("");
-  const matches = !confirmText || typed.trim() === confirmText;
+  const matches = (!confirmText || typed.trim() === confirmText) && !disabled;
   return (
     <Dialog
       open={open}
