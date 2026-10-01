@@ -856,6 +856,57 @@ def test_deleted_project_final_snapshot_is_listed_and_downloadable(client, env, 
     assert client.get(f"/v1/instance/backups/deleted/{manual}/download", headers=owner_headers).status_code == 404
 
 
+def test_deleted_project_restore_recreates_it_and_its_databases(client, env, db, owner, owner_headers, monkeypatch):
+    """A-195 follow-up: one click recreates the project (same id, name, members) and restores each final
+    snapshot into a new managed database; a failed restore can be retried."""
+    project, old = env["project"], env["ds"]
+    project_id, old_id, old_name = project.id, old.id, old.name
+    client.delete(f"/v1/projects/{project_id}?confirm={project.slug}", headers=env["owner"])
+    jobs.run_queued()
+    [item] = client.get("/v1/instance/backups", headers=owner_headers).json()["deleted_projects"]
+    assert item["restorable"] is True
+    # A project deleted before its sources were recorded: the final snapshot's job still says what it was.
+    assert backups._deleted_source(db, db.get(Backup, item["backup_id"]), {})["database_name"] == "p_shop_abc123"
+
+    url = f"/v1/instance/backups/deleted/projects/{project_id}/restore"
+    assert client.post(url, headers=env["owner"]).status_code == 403  # instance owner only
+    calls = {"n": 0}
+    real_restore = env["fake"].restore
+
+    def flaky(**kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("restore failed")
+        return real_restore(**kwargs)
+
+    monkeypatch.setattr(env["fake"], "restore", flaky)
+    resp = client.post(url, headers=owner_headers)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["project"]["id"] == project_id and body["project"]["name"] == "Shop"
+    assert body["project"]["my_role"] == "admin" and body["project"]["owner_id"] != owner.id
+    assert client.post(url, headers=owner_headers).json()["error"]["code"] == "nothing_to_restore"  # running
+    roles = {m["role"] for m in client.get(f"/v1/projects/{project_id}/members", headers=env["owner"]).json()}
+    assert roles == {"owner", "admin", "developer", "viewer"}
+
+    jobs.run_queued()  # the first attempt fails: the project is back, its database is still listed
+    assert db.get(Job, body["jobs"][0]["id"]).status == "failed"
+    [left] = client.get("/v1/instance/backups", headers=owner_headers).json()["deleted_projects"]
+    assert left["backup_id"] == item["backup_id"]
+    retry = client.post(url, headers=owner_headers)
+    assert retry.status_code == 200, retry.text
+    results = dict(jobs.run_queued())
+    assert results[retry.json()["jobs"][0]["id"]] == "succeeded"
+
+    db.expire_all()
+    new = db.query(DataSource).filter_by(project_id=project_id).one()
+    assert new.name == old_name and new.id != old_id and new.status == "ok"
+    restore = [c[1] for c in env["fake"].calls if c[0] == "restore"][-1]
+    assert restore["source_database_name"] == "p_shop_abc123" and restore["target_database_name"] == new.database_name
+    assert client.get("/v1/instance/backups", headers=owner_headers).json()["deleted_projects"] == []
+    assert client.post(url, headers=owner_headers).status_code == 404
+
+
 def test_prune_and_purge_deleted_sources(client, env, db):
     ds = env["ds"]
     ds_id = ds.id

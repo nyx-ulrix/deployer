@@ -160,6 +160,23 @@ def delete_project(
 
     finalize_jobs = []
     managed = [s for s in project.data_sources if s.mode == "managed"]
+    # A-195: what Settings -> Backups needs to restore the project from its final snapshots.
+    kept = {
+        "name": project.name,
+        "description": project.description,
+        "members": [{"user_id": m.user_id, "role": m.role} for m in project.members],
+        "sources": {
+            s.id: {
+                "name": s.name,
+                "kind": s.kind,
+                "engine": s.engine,
+                "database_name": s.database_name,
+                "device_id": s.device_id,
+            }
+            for s in managed
+            if s.deleted_at is None
+        },
+    }
     if managed:
         provisioning = _provisioning()
         for source in managed:
@@ -180,7 +197,9 @@ def delete_project(
     db.execute(delete(ApiKey).where(ApiKey.project_id == project_id))
     db.execute(delete(ProjectInvite).where(ProjectInvite.project_id == project_id))
     db.delete(project)
-    audit.record(db, "project.delete", request=request, user_id=access.user.id, project_id=project_id, slug=slug)
+    audit.record(
+        db, "project.delete", request=request, user_id=access.user.id, project_id=project_id, slug=slug, **kept
+    )
     db.commit()
     for job_id in finalize_jobs:
         jobs.dispatch(job_id)

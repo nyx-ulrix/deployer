@@ -303,6 +303,8 @@ export const api = {
       client.download("GET", `/instance/backups/platform/${e(backupId)}/download`, "deployer-platform.sql.gz"),
     deletedDownload: (backupId: string) =>
       client.download("GET", `/instance/backups/deleted/${e(backupId)}/download`, "backup.gz"),
+    restoreDeletedProject: (projectId: string) =>
+      client.post<{ project: Project; jobs: Job[] }>(`/instance/backups/deleted/projects/${e(projectId)}/restore`),
   },
 
   monitoring: {

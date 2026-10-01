@@ -165,7 +165,7 @@ function DangerCard({ project }: { project: Project }) {
         onConfirm={() => remove.mutate()}
         loading={remove.isPending}
         title={`Delete ${project.name}?`}
-        description="The project, its members, invites and API keys are deleted, and its managed databases are dropped. External databases are only disconnected. The project cannot be restored; the last version of each managed database is kept for 30 days, and only the instance owner can download it (Settings → Backups)."
+        description="The project, its members, invites and API keys are deleted, and its managed databases are dropped. External databases are only disconnected. For 30 days the instance owner can restore the project, with the last version of each managed database, or download those versions (Settings → Backups)."
         confirmText={project.slug}
         confirmLabel="Delete project"
       />

@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, DatabaseBackup, Download, HardDrive, Server } from "lucide-react";
+import { AlertTriangle, CheckCircle2, DatabaseBackup, Download, HardDrive, RotateCcw, Server } from "lucide-react";
 import { errorMessage, saveBlob } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import { useDevices } from "../../api/hooks";
@@ -76,6 +76,16 @@ export function InstanceBackupsPage() {
       toast.success(`Downloaded ${file.filename}.`);
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't download the snapshot"),
+  });
+  const restoreProject = useMutation({
+    mutationFn: api.instanceBackups.restoreDeletedProject,
+    onSuccess: ({ project }) => {
+      void queryClient.invalidateQueries({ queryKey: qk.instanceBackups });
+      void queryClient.invalidateQueries({ queryKey: qk.projects });
+      toast.success(`${project.name} is back. Its databases are being restored (see its Activity).`);
+      void navigate(`/projects/${project.id}`);
+    },
+    onError: (e) => toast.error(errorMessage(e), "Couldn't restore the project"),
   });
 
   const sources = data.data?.sources ?? [];
@@ -246,7 +256,7 @@ export function InstanceBackupsPage() {
           {data.data.deleted_projects.length > 0 && (
             <Card
               title="Deleted projects"
-              description="The last version of each database of a deleted project, kept for 30 days after the delete. Download one to load it into a new database (MariaDB: a .sql.gz dump; MongoDB: a mongorestore --archive --gzip file)."
+              description="The last version of each database of a deleted project, kept for 30 days after the delete. Restore the project (its name, members still here and these databases, as new databases), or download one to load it elsewhere (MariaDB: a .sql.gz dump; MongoDB: a mongorestore --archive --gzip file)."
               bodyClassName="p-0 sm:p-0"
             >
               <Table className="rounded-none border-0">
@@ -260,7 +270,7 @@ export function InstanceBackupsPage() {
                   </Tr>
                 </THead>
                 <TBody>
-                  {data.data.deleted_projects.map((b) => (
+                  {data.data.deleted_projects.map((b, i, all) => (
                     <Tr key={b.backup_id}>
                       <Td className="min-w-48">
                         <span className="font-medium">{b.name}</span>
@@ -273,7 +283,17 @@ export function InstanceBackupsPage() {
                       </Td>
                       <Td className="whitespace-nowrap">{formatDateTime(b.expires_at)}</Td>
                       <Td className="text-right whitespace-nowrap tabular-nums">{formatBytes(b.size_bytes)}</Td>
-                      <Td className="text-right">
+                      <Td className="space-x-2 text-right whitespace-nowrap">
+                        {b.restorable && all.findIndex((x) => x.project_id === b.project_id && x.restorable) === i && (
+                          <Button
+                            size="sm"
+                            icon={<RotateCcw className="size-4" />}
+                            loading={restoreProject.isPending && restoreProject.variables === b.project_id}
+                            onClick={() => restoreProject.mutate(b.project_id)}
+                          >
+                            Restore project
+                          </Button>
+                        )}
                         <Button
                           size="sm"
                           icon={<Download className="size-4" />}

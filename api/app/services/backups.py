@@ -1138,6 +1138,9 @@ def perform_restore(ctx: jobs.JobContext) -> dict:
     host: str | None = None
     try:
         ds = session.get(DataSource, ctx.data_source_id or params.get("data_source_id"))
+        if ds is None and params.get("detached"):
+            # A-195: a deleted project's database; its row went with the project. Never added to the session.
+            ds = DataSource(id=params["data_source_id"], mode="managed", **params["detached"])
         if ds is None:
             raise ApiError(404, "not_found", "Data source not found")
         project = session.get(Project, ds.project_id)
@@ -1248,6 +1251,9 @@ def perform_restore(ctx: jobs.JobContext) -> dict:
         follow_job, _ = start_snapshot(session, target_ds, trigger="scheduled", user_id=ctx.created_by_id)
         if new_ds is not None:
             session.get(Job, ctx.job_id).result = None  # the target is complete: keep it
+        if params.get("detached"):
+            # Restored: off the Deleted projects list (the snapshot itself still expires as before).
+            session.get(Backup, plan.backup.id).project_id = None
         session.commit()
         jobs.dispatch(follow_job.id)
         new_ds = None  # success: keep it
@@ -1674,33 +1680,54 @@ FINAL_LABEL = "Final snapshot of "
 
 
 def _deleted_project_finals():
+    # A deleted project's sources went with it (a source deleted on its own keeps its row until purged).
+    # Also lists what a partial restore left: the project is back, those databases are not yet.
     return select(Backup).where(
         Backup.scope == "source",
         Backup.trigger == "final",
         Backup.status == "succeeded",
         Backup.project_id.is_not(None),
-        Backup.project_id.not_in(select(Project.id)),
+        Backup.data_source_id.not_in(select(DataSource.id)),
     )
+
+
+def _deleted_project(db: Session, project_id: str) -> dict:
+    """The project.delete audit entry's details (slug, name, members, sources) + who deleted it (its owner)."""
+    entry = db.scalar(
+        select(AuditLog)
+        .where(AuditLog.action == "project.delete", AuditLog.project_id == project_id)
+        .order_by(AuditLog.id.desc())
+    )
+    return {**(entry.details or {}), "deleted_by": entry.user_id} if entry else {}
+
+
+def _deleted_source(db: Session, backup: Backup, project: dict) -> dict | None:
+    """What restoring a deleted project's database needs: kept in the project.delete entry or, for a
+    project deleted before that was recorded, in the final snapshot's job until it is pruned (JOB_KEEP)."""
+    info = (project.get("sources") or {}).get(backup.data_source_id)
+    if info is None and backup.job_id:
+        job = db.get(Job, backup.job_id)
+        info = (job.params or {}).get("detached") if job else None
+    if not info or not info.get("database_name"):
+        return None
+    return {k: info.get(k) for k in ("name", "kind", "engine", "database_name", "device_id")}
 
 
 def deleted_project_backups(db: Session) -> list[dict]:
     """A-195: the final snapshots of deleted projects' databases (kept DELETED_KEEP). The project's own
-    "Recently deleted" went with it, so the instance owner downloads them from Settings -> Backups."""
-    slugs: dict[str, str | None] = {}
+    "Recently deleted" went with it, so the instance owner downloads them, or restores the project,
+    from Settings -> Backups."""
+    projects: dict[str, dict] = {}
     out = []
     for b in db.scalars(_deleted_project_finals().order_by(Backup.started_at.desc())):
-        if b.project_id not in slugs:
-            entry = db.scalar(
-                select(AuditLog)
-                .where(AuditLog.action == "project.delete", AuditLog.project_id == b.project_id)
-                .order_by(AuditLog.id.desc())
-            )
-            slugs[b.project_id] = (entry.details or {}).get("slug") if entry else None
+        if b.project_id not in projects:
+            projects[b.project_id] = _deleted_project(db, b.project_id)
         out.append(
             {
                 "backup_id": b.id,
                 "project_id": b.project_id,
-                "project_slug": slugs[b.project_id],
+                "project_slug": projects[b.project_id].get("slug"),
+                "restorable": _deleted_source(db, b, projects[b.project_id]) is not None,
                 "name": (b.label or "").removeprefix(FINAL_LABEL) or "database",
                 "engine": b.engine,
                 "size_bytes": b.size_bytes,
@@ -1716,6 +1743,74 @@ def get_deleted_project_backup(db: Session, backup_id: str) -> Backup:
     if backup is None:
         raise not_found("Snapshot of a deleted project")
     return backup
+
+
+def restore_deleted_project(db: Session, project_id: str, *, user_id: str) -> tuple[Project, list[Job]]:
+    """A-195: recreates a deleted project (same id, name, the members still present) and queues a
+    new-source restore of each database's final snapshot. A retry after a failed restore queues only
+    what is left. Caller commits and dispatches the jobs."""
+    from app.models import ProjectMember, User
+    from app.services import devices
+    from app.services.slugs import unique_slug
+
+    finals = list(
+        db.scalars(_deleted_project_finals().where(Backup.project_id == project_id).order_by(Backup.started_at.desc()))
+    )
+    if not finals:
+        raise not_found("Deleted project")
+    kept = _deleted_project(db, project_id)
+    project = db.get(Project, project_id)
+    if project is None:
+        name = (kept.get("name") or kept.get("slug") or "Restored project")[:120]
+        owner_id = kept.get("deleted_by") if db.get(User, kept.get("deleted_by") or "") else user_id
+        project = Project(
+            id=project_id,
+            slug=unique_slug(db, kept.get("slug") or name),
+            name=name,
+            description=kept.get("description"),
+            owner_id=owner_id,
+        )
+        db.add(project)
+        db.flush()
+        members = kept.get("members") or []
+        roles = {m["user_id"]: m["role"] for m in members if m["role"] != "owner" and db.get(User, m["user_id"])}
+        roles[owner_id] = "owner"
+        roles.setdefault(user_id, "admin")  # the instance owner who restored it can follow the restores
+        db.add_all(ProjectMember(project_id=project_id, user_id=u, role=r) for u, r in roles.items())
+        db.flush()
+    queued: list[Job] = []
+    names, seen = set(), set()
+    for b in finals:
+        info = _deleted_source(db, b, kept)
+        if info is None or b.data_source_id in seen or jobs.active_job(db, "backup.restore", key=b.data_source_id):
+            continue
+        seen.add(b.data_source_id)
+        name = info["name"]
+        if name in names or _name_taken(db, project_id, name):
+            name = f"{name[:40]}-restored-{utcnow():%Y%m%d-%H%M}"
+        names.add(name)
+        device_id = info["device_id"]
+        try:
+            devices.validate_placement(db, project, device_id, info["kind"])
+        except ApiError:
+            device_id = None  # its PC is gone or can no longer host it: the main server
+        params = {
+            "key": b.data_source_id,
+            "mode": "new_source",
+            "backup_id": b.id,
+            "point_in_time": None,
+            "new_name": name,
+            "target_device_id": device_id,
+            "data_source_id": b.data_source_id,
+            "detached": {**info, "project_id": project_id},
+        }
+        job = jobs.enqueue(
+            db, type="backup.restore", params=params, project_id=project_id, device_id=device_id, created_by_id=user_id
+        )
+        queued.append(job)
+    if not queued:
+        raise ApiError(409, "nothing_to_restore", "None of this project's snapshots can be restored now")
+    return project, queued
 
 
 def _columns(obj: Any) -> dict:

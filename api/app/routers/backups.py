@@ -14,8 +14,8 @@ from sqlalchemy import select
 
 from app.deps import DbSession, InstanceOwner, ProjectAccess, require_role
 from app.errors import ApiError, forbidden
-from app.models import Backup
-from app.serializers import iso
+from app.models import Backup, ProjectMember
+from app.serializers import iso, project_out
 from app.services import audit, backups, executors, jobs
 from app.services.backup_crypto import BackupCryptoError, iter_decrypt
 from app.services.sources import data_source_out, get_source
@@ -409,3 +409,19 @@ def download_deleted_project_backup(backup_id: str, user: InstanceOwner, db: DbS
     )
     db.commit()
     return _decrypted_download(stream, _download_name((backup.label or "").removeprefix(backups.FINAL_LABEL), backup))
+
+
+@router.post("/instance/backups/deleted/projects/{project_id}/restore")
+def restore_deleted_project(project_id: str, user: InstanceOwner, db: DbSession, request: Request) -> dict:
+    """A-195: recreates a deleted project and restores its databases' final snapshots as jobs."""
+    project, queued = backups.restore_deleted_project(db, project_id, user_id=user.id)
+    audit.record(
+        db, "project.restore", request=request, user_id=user.id, project_id=project.id, jobs=[j.id for j in queued]
+    )
+    db.commit()
+    for job in queued:
+        jobs.dispatch(job.id)
+    role = db.scalar(
+        select(ProjectMember.role).where(ProjectMember.project_id == project.id, ProjectMember.user_id == user.id)
+    )
+    return {"project": project_out(db, project, role), "jobs": [jobs.job_out(j) for j in queued]}

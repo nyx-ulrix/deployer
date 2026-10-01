@@ -649,6 +649,8 @@ export type DeletedProjectBackup = {
   backup_id: string;
   project_id: string;
   project_slug: string | null;
+  /** The project can be recreated with this database restored (POST .../deleted/projects/{id}/restore). */
+  restorable: boolean;
   name: string;
   engine: string;
   size_bytes: number | null;
