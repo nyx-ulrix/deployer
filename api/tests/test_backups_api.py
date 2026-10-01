@@ -893,6 +893,21 @@ def test_deleted_project_restore_recreates_it_and_its_databases(client, env, db,
     assert db.get(Job, body["jobs"][0]["id"]).status == "failed"
     [left] = client.get("/v1/instance/backups", headers=owner_headers).json()["deleted_projects"]
     assert left["backup_id"] == item["backup_id"]
+    # An older final snapshot of the same database (deleted on its own, then undeleted): the newest is
+    # restored, and both leave the list.
+    newest = db.get(Backup, item["backup_id"])
+    older = Backup(
+        data_source_id=old_id,
+        project_id=project_id,
+        scope="source",
+        engine=newest.engine,
+        trigger="final",
+        status="succeeded",
+        started_at=newest.started_at - timedelta(days=1),
+        label=newest.label,
+    )
+    db.add(older)
+    db.commit()
     retry = client.post(url, headers=owner_headers)
     assert retry.status_code == 200, retry.text
     results = dict(jobs.run_queued())

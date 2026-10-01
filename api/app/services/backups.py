@@ -1252,8 +1252,11 @@ def perform_restore(ctx: jobs.JobContext) -> dict:
         if new_ds is not None:
             session.get(Job, ctx.job_id).result = None  # the target is complete: keep it
         if params.get("detached"):
-            # Restored: off the Deleted projects list (the snapshot itself still expires as before).
-            session.get(Backup, plan.backup.id).project_id = None
+            # Restored: off the Deleted projects list (the snapshots still expire as before). Every final
+            # snapshot of it: one from an earlier delete + undelete would otherwise stay listed, restorable.
+            finals = select(Backup).where(Backup.data_source_id == ds.id, Backup.trigger == "final")
+            for backup in session.scalars(finals):
+                backup.project_id = None
         session.commit()
         jobs.dispatch(follow_job.id)
         new_ds = None  # success: keep it
