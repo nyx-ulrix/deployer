@@ -40,7 +40,7 @@ from app.errors import ApiError, conflict, not_found
 from app.models import ApiKey, App, CloudConnection, DataSource, Deployment, Domain, Job, User, utcnow
 from app.redis_client import get_redis
 from app.serializers import iso
-from app.services import github, jobs
+from app.services import github, github_actions, jobs
 from app.services.app_runner import DockerCli, DockerError, cancel_check, get_docker
 from app.services.connections import device_removed, load_config, parse_mongo_uri, redact, sql_app_uri
 from app.services.instance_settings import public_url
@@ -285,6 +285,7 @@ def app_out(db: Session, app: App) -> dict:
         "target": app.target,
         "cloud_connection_id": app.cloud_connection_id,
         "cloud": cloud,
+        "build": github_actions.out(app),  # docs/CLOUD.md "C3": where it builds
         "live_deployment": deployment_out(live) if live else None,
         "domains": [domain_out(d) for d in domains],
         "created_at": iso(app.created_at),
@@ -421,6 +422,8 @@ def handle_push(db: Session, app: App, payload: dict) -> tuple[Deployment | None
     """A `push` event: (deployment, job) for the app's branch, (None, None) when ignored. A push
     while a deployment is still queued replaces its commit instead of adding another."""
     if payload.get("ref") != f"refs/heads/{app.branch}" or payload.get("deleted"):
+        return None, None
+    if github_actions.builds_on_github(app):  # docs/CLOUD.md "C3": the workflow builds and deploys it
         return None, None
     sha = str(payload.get("after") or "").lower()
     sha = sha if re.fullmatch(r"[0-9a-f]{40}", sha) else None  # it reaches `git fetch` argv: hex only

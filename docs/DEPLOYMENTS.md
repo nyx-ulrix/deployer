@@ -85,6 +85,15 @@ databases in the same Firebase project (CLOUD.md "C2-3"). Only project admins pi
 `app.cloud_teardown`). Custom domains of cloud apps go to the cloud target (with DNS records created in
 Cloudflare when linked) instead of the tunnel. Details, API and permissions: [CLOUD.md](CLOUD.md).
 
+**Where it builds** (cloud apps, CLOUD.md "C3"): *This PC* (above), or *GitHub Actions* - a project admin
+switches it (`PUT /apps/{id}/build`, billing confirmation for GitHub's build minutes) and Deployer commits a
+workflow to the app's GitHub repository that builds every push with the same recipe and deploys it straight to
+the cloud, signing in with GitHub's OIDC token (an AWS role / Google workload identity limited to that
+repository's branch). Pushes then deploy while this PC is off: the PC's push webhook ignores them, **Deploy
+now** starts the workflow (`workflow_dispatch`), each run reports back to `/hooks/github/{app_id}` (signed by
+GitHub, `X-GitHub-Event: deployer_build`) and becomes a deployment with `trigger: github`, and
+`GET /apps/{id}/github-runs` lists the runs from the GitHub API. Rollbacks still run on this PC.
+
 ## Database access
 
 Off by default. An app normally reaches its project's data only through the data API
@@ -289,7 +298,9 @@ rather than looking for `deployer-app/<id>` on Docker Hub.
 | GET | `/apps/{id}/env` | admin+ | – | `{env: {k:v}}` plain values (audit `app.env.reveal`) |
 | GET | `/apps/{id}/webhook` | developer+ | – | `{url, secret}` — url `<public_url>/v1/hooks/github/{app_id}`; audit `app.webhook.reveal` |
 | POST | `/apps/{id}/webhook/rotate` | developer+ | – | `{url, secret, hook_active, warnings}` (also updates the GitHub hook of a connected app) |
-| POST | `/apps/{id}/deploy` | developer+ | `{branch?}` | `Deployment` (202) |
+| POST | `/apps/{id}/deploy` | developer+ | `{branch?}` | `Deployment` (202); an app that builds on GitHub Actions: `{github_actions: true, status: "dispatched", runs_url}` (CLOUD.md "C3") |
+| PUT | `/apps/{id}/build` | admin+ | `{location: "pc"\|"github", confirm_billing?}` | `App & {job_id}` - where a cloud app builds (CLOUD.md "C3") |
+| GET | `/apps/{id}/github-runs` | viewer+ | – | `{runs, runs_url}` - the GitHub Actions runs (CLOUD.md "C3") |
 | GET | `/apps/{id}/deployments?limit=20&before=<deployment id>` | viewer+ | – | `{deployments: Deployment[] (log omitted), has_more}`; next page: `before` = the last row's id |
 | GET | `/apps/{id}/deployments/{dep}` | viewer+ | `?log=1` includes the log | `Deployment` |
 | POST | `/apps/{id}/deployments/{dep}/cancel` | developer+ | – | `Deployment` |
@@ -308,6 +319,9 @@ for the same app replaces its commit instead of adding another. Rate limit 6/min
 deliveries only, checked after the signature so junk cannot block real pushes; 429 `rate_limited`). Unknown app → 404. When the
 instance owner has disabled the project owner's account → 403 `account_disabled`. Bodies over
 5 MB → 413 `payload_too_large`; an `after` that is not a 40-hex sha deploys the branch head instead.
+Pushes of an app that builds on GitHub Actions are ignored (its workflow deploys them); that workflow's run
+reports (`X-GitHub-Event: deployer_build`) are authenticated with GitHub's OIDC token instead of the HMAC
+(CLOUD.md "C3").
 
 Runtime logs: the API has no Docker access. `GET /apps/{id}/logs` enqueues nothing; instead the
 worker keeps the last 500 lines of each live container in Redis (`apps:logs:<app_id>`, a capped
@@ -329,8 +343,10 @@ type App = { id; project_id; name; slug; repo_url; branch; root_dir; preset; ins
   port: number; local_url: string|null; urls: string[]; live_deployment: Deployment|null;
   target: "local"|"aws_static"|"aws_app"|"firebase_hosting"|"firebase_app"; cloud_connection_id: string|null;
   cloud: {provider; connection_name; url: string|null; resources: string[]} | null;   // docs/CLOUD.md
+  build: {location: "pc"} | {location: "github"; status; message; job_id; repo; workflow_path; workflow_url;
+          runs_url; reports};                                            // docs/CLOUD.md "C3"
   domains: Domain[]; created_at; updated_at };
-type Deployment = { id; app_id; status; trigger; commit_sha; commit_message; branch; image_tag; created_at;
+type Deployment = { id; app_id; status; trigger /* manual|webhook|rollback|github */; commit_sha; commit_message; branch; image_tag; created_at;
   started_at; finished_at; error; rollback_of; log?: string; job_id; target_url: string|null };
 ```
 

@@ -17,6 +17,7 @@ import { JobProgressPanel } from "../jobs/JobProgress";
 import { AppFormFields } from "./AppForm";
 import { draftErrors, draftToPatch, emptyDraft, envToRows, rowsToEnv, TARGET_SHORT, type EnvRow } from "./deploys";
 import { EnvEditor } from "./EnvEditor";
+import { BuildCard } from "./GitHubBuild";
 
 type Props = { projectId: string; app: App; canEdit: boolean; isAdmin: boolean };
 
@@ -24,6 +25,7 @@ export function AppSettings(props: Props) {
   return (
     <div className="space-y-4">
       <GeneralCard {...props} />
+      {props.app.target !== "local" && <BuildCard projectId={props.projectId} app={props.app} isAdmin={props.isAdmin} />}
       <EnvCard {...props} />
       <WebhookCard {...props} />
       <DomainsCard {...props} />
@@ -45,13 +47,19 @@ function GeneralCard({ projectId, app, canEdit, isAdmin }: Props) {
     draft.target !== app.target || (draft.target !== "local" && draft.cloud_connection_id !== (app.cloud_connection_id ?? ""));
   const save = useMutation({
     mutationFn: () => api.apps.update(projectId, app.id, draftToPatch(draft, app)),
-    onSuccess: ({ teardown_job_id, warnings, ...updated }) => {
+    onSuccess: ({ teardown_job_id, build_job_id, warnings, ...updated }) => {
       queryClient.setQueryData(qk.app(projectId, app.id), updated);
       setDraft(emptyDraft(updated));
       setSubmitted(false);
       setConfirmMove(false);
       if (teardown_job_id) setTeardownJob(teardown_job_id);
-      toast.success(moving ? "Target changed. Deploy to publish the app there." : "Settings saved. They apply on the next deploy.");
+      toast.success(
+        moving
+          ? "Target changed. Deploy to publish the app there."
+          : build_job_id
+            ? "Settings saved. Deployer is updating the GitHub Actions workflow with them."
+            : "Settings saved. They apply on the next deploy.",
+      );
       for (const w of warnings ?? []) toast.info(w, "GitHub webhook");
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't save"),
@@ -219,7 +227,11 @@ function WebhookCard({ projectId, app, canEdit }: Props) {
   return (
     <Card
       title="Push to deploy"
-      description={`Every push to ${app.branch} deploys automatically once GitHub calls this webhook.`}
+      description={
+        app.build.location === "github"
+          ? `Pushes to ${app.branch} are built by the GitHub Actions workflow (see "Where it builds"); this webhook is not used for them.`
+          : `Every push to ${app.branch} deploys automatically once GitHub calls this webhook.`
+      }
       actions={
         canEdit && !hook ? (
           <Button size="sm" icon={<Eye className="size-3.5" />} loading={reveal.isPending} onClick={() => reveal.mutate()}>

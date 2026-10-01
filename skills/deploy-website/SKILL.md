@@ -20,7 +20,8 @@ A site can be deployed in three ways:
    environment variables plus, with database access, its databases **in the same cloud account** (no
    `DEPLOYER_URL` / `DEPLOYER_API_KEY`, nothing on the PC). Its database can live there too (RDS /
    DynamoDB in AWS, Firestore / Realtime Database in Firebase), so the whole site runs with the PC off,
-   like Vercel + Supabase.
+   like Vercel + Supabase. With **GitHub Actions builds** pushes even *deploy* with the PC off: GitHub
+   builds each push and uploads it to the cloud (`docs/CLOUD.md` "C3").
 3. **On an external platform** (Vercel, Netlify, Cloudflare Pages, GitHub Pages...) with the data
    and API living in Deployer (Step 1 below). Good for global CDN reach and serverless functions.
 
@@ -155,10 +156,10 @@ claude mcp add --transport http deployer <url>/v1/projects/<project_id>/mcp --he
 Tools: `list_data_sources`, `get_schema`, `list_rows`, `list_documents`, `list_subcollections`,
 `rtdb_read`, `list_cloud_backups` (any key) plus `run_query`, `insert_/update_/delete_row`,
 `insert_/update_/delete_document`, `rtdb_write`, `export_documents`, `list_apps`, `get_app`, `deploy_app`,
-`deployment_status`, `app_logs`, `list_cloud_targets`, `cloud_database_options` (service key). The cloud
-account tools - `list_cloud_connections`, `list_cloud_databases`, `create_cloud_database` and
-`create_cloud_backup` (both billable: only with the user's yes and `confirm_billing: true`) and
-`connect_cloud_database` - need a project **admin** like their REST routes: a service key doesn't see them,
+`deployment_status`, `app_logs`, `list_github_runs`, `list_cloud_targets`, `cloud_database_options` (service
+key). The cloud account tools - `list_cloud_connections`, `list_cloud_databases`, `create_cloud_database`,
+`create_cloud_backup` and `set_build_location` (all three billable: only with the user's yes and
+`confirm_billing: true`) and `connect_cloud_database` - need a project **admin** like their REST routes: a service key doesn't see them,
 so ask the user to add the database in the dashboard (*Add database → In your AWS account / In your Firebase
 project*), then work on its data with the service key. App tools report each app's `target` and cloud URL;
 the data tools work on cloud databases exactly like on the PC's (RDS / Aurora are SQL sources).
@@ -200,7 +201,7 @@ so check the dashboard tab or endpoint named below).
 | **Cloud Firestore** (NoSQL in Firebase): connect the project's Firestore database, browse / edit documents and subcollections, JSON queries, schema, JSON export; Firebase full apps with database access get `DEPLOYER_DB_<NAME>_PROJECT` / `_DATABASE` (their service account needs the Cloud Datastore User role) | Available when `GET /v1/projects/{id}/cloud/databases/options` returns `firestore`; not yet exercised against a live Google account | Databases → *Add database* → NoSQL → *In your Firebase project* (admin); `docs/CLOUD.md` "C2-3" |
 | **Firebase Realtime Database** (NoSQL JSON tree in Firebase): connect the project's Realtime Database or create its default one (billable once used), browse the tree branch by branch, edit / add / delete by path, Firebase's path queries, JSON export; Firebase full apps with database access get `DEPLOYER_DB_<NAME>_URL` / `_PROJECT` (their service account needs the Firebase Realtime Database Admin role) | Available when `GET /v1/projects/{id}/cloud/databases/options` returns `rtdb`; not yet exercised against a live Google account | Databases → *Add database* → NoSQL → *In your Firebase project* → *Realtime Database* (admin); `docs/CLOUD.md` "C2-4" |
 | Cloud databases in MCP, export / import and project delete: the data tools work on RDS, DynamoDB, Firestore and the Realtime Database; creating / connecting one needs a project admin (not a service key); exports carry their settings (encrypted) but not their data; deleting a project asks whether to delete or keep what Deployer created in the cloud account | Available when MCP `tools/list` with a service key no longer offers `create_cloud_database` (older instances offered it to service keys); never test it by deleting a project | Project → Settings → *Delete project*; `docs/CLOUD.md` "C2-5" |
-| Deploys that run without the PC (GitHub Actions builds) | **Not built** (planned, `docs/CLOUD.md` C3) - cloud apps serve with the PC off, but deploying needs it on | - |
+| **GitHub Actions builds** for cloud apps: a workflow in the app's GitHub repository builds every push and deploys it straight to AWS / Firebase with an OIDC sign-in (no stored keys), so pushes deploy with the PC off; runs report back as deployments; rollbacks still need the PC | Available when `get_app` returns `build` (and MCP offers `set_build_location` to admins); not yet run on GitHub's runners against live accounts | app → Settings → *Where it builds* (admin); `docs/CLOUD.md` "C3" |
 | Apps placed on a host device instead of the main PC | **Not built** - an app always runs on the main Deployer PC; with *Co-host this app* (phase 2 above) it **also** runs on the project's co-host PCs | - |
 
 Never describe a "being built" or "planned" feature as available; say what the user can do today
@@ -303,10 +304,24 @@ The same app, served from the user's own cloud account so it **keeps running whe
 4. **Deploy** as above (*Deploy now*, `deploy_app`, push webhook). The build log shows the cloud steps
    (upload, rollout status); `deployment_status` returns `target_url`. First CloudFront rollouts take
    ~15 minutes to answer.
-5. **Domain**: `POST .../apps/{app_id}/domains {hostname}` (admin, after the first deploy): with
+5. **Where it builds** (optional, after that first deploy): by default this PC builds every push, so pushes
+   wait while it is off. To deploy pushes with the PC off, a project admin picks **GitHub Actions** under the
+   app's Settings → *Where it builds* (or MCP `set_build_location` with `location: "github"`, or
+   `PUT .../apps/{app_id}/build`). Explain it in plain words first and get a yes: Deployer adds a workflow
+   file to their GitHub repository (a commit on the app's branch) and a sign-in for it in their cloud account
+   (an IAM role, or a Google workload identity provider, that only that repository's branch can use - no keys
+   are stored in GitHub); GitHub then builds every push and deploys it to the cloud; GitHub may bill build
+   minutes (free for public repositories, 2,000 minutes a month free for private ones), so send
+   `confirm_billing: true` only after they agree. It needs the admin's GitHub connection with the workflow
+   permission (`github_scope_missing`: they reconnect GitHub in the dashboard). Then `deploy_app` runs the
+   workflow (answer `{github_actions: true}`), `list_github_runs` shows the runs (also those while the PC
+   was off), runs report back as deployments when the PC is on, rollbacks still run on the PC, and changed
+   environment variables reach the app with the next rollback (GitHub never sees them). `location: "pc"`
+   removes the workflow and the sign-in again.
+6. **Domain**: `POST .../apps/{app_id}/domains {hostname}` (admin, after the first deploy): with
    Cloudflare linked the DNS records are created automatically; otherwise the app's Domains card lists
    the records for the user to add, then *Check again*.
-6. **Moving or deleting** the app removes what Deployer created in the cloud account (the dashboard
+7. **Moving or deleting** the app removes what Deployer created in the cloud account (the dashboard
    lists it first; failures are reported by the teardown job). **Deleting the whole project** asks the
    user to choose: delete what Deployer created in the cloud (databases keep a final snapshot) or keep it
    running and billed in their account (`cloud=delete` / `cloud=keep`). Never pick for them.

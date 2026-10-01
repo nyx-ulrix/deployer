@@ -28,6 +28,7 @@ from app.services import (
     deployments,
     device_rpc,
     github,
+    github_actions,
     jobs,
     rate_limit,
 )
@@ -451,6 +452,7 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
             raise forbidden("Only project admins can change where an app runs")
         teardown_job = _switch_target(db, request, access, app, target_before)
     _check_target(db, app)
+    build_job = github_actions.refresh_if_needed(db, app, changed, access.user.id)
     audit.record(
         db,
         "app.update",
@@ -480,13 +482,69 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
                 "The GitHub webhook was removed with the old repository; add one by hand (app Settings → Webhook)."
             ]
     db.commit()
-    if teardown_job:
-        jobs.dispatch(teardown_job)
+    for job_id in (teardown_job, build_job):
+        if job_id:
+            jobs.dispatch(job_id)
     if cohost_changed:
         cohost_apps.replicate(get_sessionmaker(), app.id, user_id=access.user.id, retry=True)
         ra.sync_desired(db)  # the apps tunnel may be new: start its connector on this PC
     db.refresh(app)
-    return {**deployments.app_out(db, app), "teardown_job_id": teardown_job, "warnings": warnings}
+    return {
+        **deployments.app_out(db, app),
+        "teardown_job_id": teardown_job,
+        "build_job_id": build_job,
+        "warnings": warnings,
+    }
+
+
+class BuildBody(BaseModel):
+    location: Literal["pc", "github"]
+    confirm_billing: bool = False
+
+
+@router.put(BASE + "/{app_id}/build")
+def set_build_location(app_id: str, body: BuildBody, request: Request, access: Admin, db: DbSession) -> dict:
+    """docs/CLOUD.md "C3": where a cloud app builds - this PC, or GitHub Actions (which then deploys every push
+    while this PC is off). Choosing GitHub Actions again re-runs its setup (repairs it)."""
+    app = deployments.get_app(db, access.project.id, app_id)
+    if db.scalar(
+        select(Deployment.id).where(Deployment.app_id == app.id, Deployment.status.in_(deployments.ACTIVE_STATUSES))
+    ):
+        raise conflict("deployment_active", "Wait for the running deployment to finish (or cancel it) first")
+    if jobs.active_job(db, "app.github_actions", key=app.id) is not None:
+        raise conflict("build_setup_running", "Wait for the GitHub Actions setup to finish first")
+    if body.location == "github":
+        github_actions.check_can_build(db, app, access.user.id)
+        if not body.confirm_billing:
+            raise ApiError(
+                422,
+                "billing_not_confirmed",
+                f"{github_actions.COST} Send confirm_billing: true.",
+                {"field": "confirm_billing"},
+            )
+        job_id = github_actions.enqueue_setup(db, app, access.user.id)
+    else:
+        job_id = github_actions.enqueue_removal(db, app, access.user.id)
+    audit.record(
+        db,
+        "app.build_location",
+        request=request,
+        user_id=access.user.id,
+        project_id=app.project_id,
+        app_id=app.id,
+        location=body.location,
+    )
+    db.commit()
+    if job_id:
+        jobs.dispatch(job_id)
+    db.refresh(app)
+    return {**deployments.app_out(db, app), "job_id": job_id}
+
+
+@router.get(BASE + "/{app_id}/github-runs")
+def github_runs(app_id: str, access: Viewer, db: DbSession) -> dict:
+    """The GitHub Actions runs of the app's workflow (also the ones while this PC was off)."""
+    return github_actions.runs(db, deployments.get_app(db, access.project.id, app_id))
 
 
 @router.delete(BASE + "/{app_id}")
@@ -575,7 +633,22 @@ class DeployBody(BaseModel):
 
 @router.post(BASE + "/{app_id}/deploy", status_code=202)
 def deploy(app_id: str, request: Request, access: Developer, db: DbSession, body: DeployBody | None = None) -> dict:
+    """Builds and deploys the app (on this PC), or runs its GitHub Actions workflow when it builds there
+    (then the answer is `{github_actions: true, status: "dispatched", runs_url}`, no deployment yet)."""
     app = deployments.get_app(db, access.project.id, app_id)
+    if github_actions.ready(app):  # docs/CLOUD.md "C3": built and deployed by its workflow on GitHub
+        out = github_actions.dispatch(db, app, body.branch if body else None)
+        audit.record(
+            db,
+            "app.deploy",
+            request=request,
+            user_id=access.user.id,
+            project_id=app.project_id,
+            app_id=app.id,
+            github=True,
+        )
+        db.commit()
+        return out
     dep, job = deployments.start_deployment(
         db, app, trigger="manual", user_id=access.user.id, branch=(body.branch if body else None)
     )
@@ -821,7 +894,34 @@ async def github_webhook(app_id: str, request: Request, db: DbSession) -> Any:
     body = await read_body_capped(request, WEBHOOK_MAX_BODY)
     if len(body) > WEBHOOK_MAX_BODY:
         raise ApiError(413, "payload_too_large", f"Webhook payloads are limited to {WEBHOOK_MAX_BODY // 2**20} MB")
+    if request.headers.get("X-GitHub-Event") == github_actions.REPORT_EVENT:
+        return await run_in_threadpool(_actions_report, db, app, request.headers, body)
     return await run_in_threadpool(_github_delivery, db, app, request.headers, body)
+
+
+def _actions_report(db: Session, app: App, headers: Any, body: bytes) -> Any:
+    """docs/CLOUD.md "C3": a GitHub Actions run of the app's workflow reports its result, signed with GitHub's
+    OIDC token for this app (no shared secret)."""
+    authorization = headers.get("Authorization") or ""
+    if not authorization.startswith("Bearer "):
+        raise ApiError(401, "bad_signature", "A GitHub Actions report needs its OIDC token")
+    try:
+        payload = json.loads(body or b"{}")
+    except ValueError:
+        raise ApiError(400, "invalid_payload", "The body is not JSON") from None
+    dep = github_actions.record_report(db, app, authorization, payload)
+    allowed, retry_after = rate_limit.hit(f"rl:hook:{app.id}", deployments.WEBHOOK_LIMIT, deployments.WEBHOOK_WINDOW_S)
+    if not allowed:
+        raise ApiError(429, "rate_limited", "Too many reports; try again later", {"retry_after": retry_after})
+    if dep is None:
+        return {"ignored": True}
+    audit.record(db, "app.deploy", project_id=app.project_id, app_id=app.id, deployment_id=dep.id, trigger="github")
+    job = None
+    if dep.status == "live":  # old artifacts go, like after a deploy from this PC
+        job = jobs.enqueue(db, type="app.cloud_prune", params={"app_id": app.id}, project_id=app.project_id)
+    db.commit()
+    _dispatch(job)
+    return {"deployment_id": dep.id, "status": dep.status}
 
 
 def _github_delivery(db: Session, app: App, headers: Any, body: bytes) -> Any:

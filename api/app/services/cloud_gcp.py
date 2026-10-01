@@ -41,6 +41,8 @@ RUN = "https://run.googleapis.com/v2"
 REGISTRY = "https://artifactregistry.googleapis.com/v1"
 FIRESTORE = "https://firestore.googleapis.com/v1"
 RTDB_MANAGEMENT = "https://firebasedatabase.googleapis.com/v1beta"
+IAM = "https://iam.googleapis.com/v1"
+GITHUB_ISSUER = "https://token.actions.githubusercontent.com"
 # The Realtime Database's own REST API takes a token with these scopes (docs/CLOUD.md "C2-4").
 RTDB_SCOPES = "https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email"
 RTDB_MAX_BYTES = 32 * 1024 * 1024  # one Realtime Database read: bigger answers are refused, not buffered
@@ -51,6 +53,7 @@ CHANNEL_TTL = "604800s"  # preview channels expire after 7 days
 PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 REGION_RE = re.compile(r"^[a-z]+-[a-z]+\d{1,2}$")
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+_SA_EMAIL = re.compile(r"^[a-z0-9-]{6,30}@[a-z0-9-]+\.iam\.gserviceaccount\.com$")
 _OPERATION = re.compile(r"^projects/[\w.-]+/locations/[\w-]+/operations/[\w.-]+$")
 _VERSION = re.compile(r"^(projects/[\w-]+/)?sites/[a-z0-9-]+/versions/[\w-]+$")
 # A Firestore path under projects/<project>/ (segments already percent-encoded by services/firestore.py):
@@ -384,3 +387,68 @@ class GcpClient:
 
     def delete_service(self, name: str) -> None:
         self._send("DELETE", f"{self._services()}/{_name(name)}", ok=(200, 404))
+
+    # --- GitHub Actions builds: workload identity federation (docs/CLOUD.md "C3") ------------------
+
+    def _pools(self) -> str:
+        return f"{IAM}/projects/{self.project}/locations/global/workloadIdentityPools"
+
+    def _revive(self, url: str) -> None:
+        """Pools and providers stay soft-deleted for 30 days and keep their id: bring one back."""
+        if self._send("GET", url).get("state") == "DELETED":
+            self._json("POST", f"{url}:undelete", {})
+
+    def ensure_wif_pool(self, pool: str) -> None:
+        """The project's workload identity pool for GitHub Actions (created once, shared, kept)."""
+        try:
+            self._json(
+                "POST",
+                self._pools(),
+                {"displayName": "Deployer GitHub Actions"},
+                params={"workloadIdentityPoolId": _name(pool)},
+            )
+        except CloudError as exc:
+            if exc.status != 409:
+                raise
+            self._revive(f"{self._pools()}/{pool}")
+
+    def ensure_wif_provider(self, pool: str, provider: str, condition: str) -> None:
+        """An OIDC provider for GitHub's tokens that accepts only `condition` (one repository and branch)."""
+        url = f"{self._pools()}/{_name(pool)}/providers"
+        body = {
+            "displayName": f"Deployer {provider}"[:32],
+            "attributeMapping": {
+                "google.subject": "assertion.sub",
+                "attribute.repository": "assertion.repository",
+                "attribute.ref": "assertion.ref",
+            },
+            "attributeCondition": condition,
+            "oidc": {"issuerUri": GITHUB_ISSUER},
+        }
+        try:
+            self._json("POST", url, body, params={"workloadIdentityPoolProviderId": _name(provider)})
+        except CloudError as exc:
+            if exc.status != 409:
+                raise
+            self._revive(f"{url}/{provider}")
+            mask = "displayName,attributeMapping,attributeCondition,oidc"
+            self._json("PATCH", f"{url}/{provider}", body, params={"updateMask": mask})
+
+    def delete_wif_provider(self, pool: str, provider: str) -> None:
+        self._send("DELETE", f"{self._pools()}/{_name(pool)}/providers/{_name(provider)}", ok=(200, 404))
+
+    def set_sa_member(self, email: str, role: str, member: str, present: bool) -> None:
+        """Adds (or removes) `member` in `role` on the service account `email` itself."""
+        if not _SA_EMAIL.match(email):
+            raise CloudError("Invalid service account email")
+        url = f"{IAM}/projects/{self.project}/serviceAccounts/{email}"
+        policy = self._json("POST", f"{url}:getIamPolicy", {})
+        bindings = [b for b in policy.get("bindings") or [] if b.get("role") != role]
+        members = {m for b in policy.get("bindings") or [] if b.get("role") == role for m in b.get("members") or []}
+        changed = (member in members) != present
+        members = (members | {member}) if present else (members - {member})
+        if not changed:
+            return
+        if members:
+            bindings.append({"role": role, "members": sorted(members)})
+        self._json("POST", f"{url}:setIamPolicy", {"policy": {**policy, "bindings": bindings}})

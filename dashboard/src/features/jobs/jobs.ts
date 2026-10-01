@@ -21,6 +21,8 @@ export const JOB_LABELS: Record<string, string> = {
   "app.replicate": "Deploy app to device",
   "app.cloud_teardown": "Remove cloud deployment",
   "app.cloud_domain": "Check custom domain",
+  "app.github_actions": "Set up GitHub Actions builds",
+  "app.cloud_prune": "Remove old cloud versions",
   "data_source.cloud_create": "Create database in AWS",
   "data_source.cloud_delete": "Delete database in AWS",
   "transfer.export": "Export",

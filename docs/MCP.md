@@ -69,8 +69,10 @@ Results are text content holding compact JSON. API errors come back as tool resu
 | `rtdb_read` | `source_id`, `path?`, `shallow?`, `orderBy?`, `startAt?`, `endAt?`, `equalTo?`, `limitToFirst?`, `limitToLast?` | anon | Firebase Realtime Database ([CLOUD.md](CLOUD.md) "C2-4"): the JSON at a path; `shallow` lists only the children's keys; Firebase's query parameters filter children (`limitToFirst` defaults to 200 with `orderBy`) and add `children` in order |
 | `rtdb_write` | `source_id`, `operation`, `path`, `value?` | service | Realtime Database: `set` (replace), `update` (children by path), `push` (new child, returns `key`) or `delete` at a path; the root can't be replaced or deleted |
 | `list_apps` | – | service | the project's apps (push-to-deploy, [DEPLOYMENTS.md](DEPLOYMENTS.md)) with their `target` |
-| `get_app` | `app_id` | service | one app: settings, `target`, `cloud` (`url`, `resources`), URLs, hostnames, live deployment |
-| `deploy_app` | `app_id` | service | starts a deployment from the app's branch on the app's target; adds `target` and `cloud_url` |
+| `get_app` | `app_id` | service | one app: settings, `target`, `cloud` (`url`, `resources`), `build` (where it builds: `pc` or `github` with its setup status and links), URLs, hostnames, live deployment |
+| `deploy_app` | `app_id` | service | starts a deployment from the app's branch on the app's target; adds `target` and `cloud_url`. An app that builds on GitHub Actions runs its workflow there instead: `{github_actions: true, status: "dispatched", runs_url}` (follow it with `list_github_runs`) |
+| `set_build_location` | `app_id`, `location` (`pc` or `github`), `confirm_billing?` | admin | where a cloud app builds ([CLOUD.md](CLOUD.md) "C3"): `github` commits a workflow to the app's GitHub repository that builds every push on GitHub and deploys it straight to the cloud with a short-lived OIDC sign-in, so pushes deploy while the PC is off. Needs the app deployed once, the admin's GitHub connection with the `workflow` permission and `confirm_billing: true` after the user agreed GitHub may bill build minutes (free for public repositories, 2,000 minutes a month free for private ones); returns `build`, the setup `job_id` and the plain-language `locations`. `pc` removes the workflow and the sign-in |
+| `list_github_runs` | `app_id` | service | the newest GitHub Actions runs of an app that builds there (status, conclusion, commit, link) - also runs while the PC was off |
 | `deployment_status` | `app_id`, `deployment_id` | service | status, error, `target`, `target_url` (the cloud URL it went live on), `cloud_url` and the last 100 log lines |
 | `list_cloud_connections` | – | admin | the AWS / Firebase accounts the project's apps may use ([CLOUD.md](CLOUD.md)): `id`, `provider`, `name`, account id / project id, region, `status` - never credentials |
 | `list_cloud_targets` | – | service | where an app can run (`local`, `aws_static`, `aws_app`, `firebase_hosting`, `firebase_app`): what each is for, that cloud targets keep serving with the PC off, cost drivers, `available` for this project |
@@ -110,7 +112,8 @@ developer and don't get them.
   in the user's AWS account (`create_cloud_database`, billable, only with `confirm_billing: true` - ask the
   user first; with a Firebase connection, `engine: "firebase_rtdb"` creates the project's default Realtime
   Database, same rule), connect an existing one (also a Firebase project's Firestore database or Realtime
-  Database, `instance`) and back up DynamoDB tables (`create_cloud_backup`, same rule). A service key can
+  Database, `instance`), back up DynamoDB tables (`create_cloud_backup`, same rule) and move a cloud app's
+  builds to GitHub Actions (`set_build_location`, same rule for GitHub's build minutes). A service key can
   read and change the data of every cloud database the project has (the data tools above, the same as for
   databases on this PC) and export Firestore / Realtime Database JSON (`export_documents`); deleting a cloud
   database or a project is a dashboard action.

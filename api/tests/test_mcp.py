@@ -28,6 +28,7 @@ APP_TOOLS = {
     "deployment_status",
     "app_logs",
     "deploy_app",
+    "list_github_runs",
     "list_cloud_targets",
     "cloud_database_options",
     "export_documents",
@@ -39,6 +40,7 @@ ADMIN_TOOLS = {
     "create_cloud_database",
     "connect_cloud_database",
     "create_cloud_backup",
+    "set_build_location",
 }
 WRITE_TOOLS = {
     "insert_row",
@@ -155,6 +157,8 @@ TOOL_ROUTES = {
     "list_apps": [("GET", "/apps")],
     "get_app": [("GET", "/apps/{app_id}")],
     "deploy_app": [("POST", "/apps/{app_id}/deploy")],
+    "set_build_location": [("PUT", "/apps/{app_id}/build")],
+    "list_github_runs": [("GET", "/apps/{app_id}/github-runs")],
     "deployment_status": [("GET", "/apps/{app_id}/deployments/{deployment_id}")],
     "app_logs": [("GET", "/apps/{app_id}/logs")],
     "list_cloud_connections": [("GET", "/cloud/connections")],

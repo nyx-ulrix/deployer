@@ -331,6 +331,28 @@ AWS_POLICY = {
             "Resource": "arn:aws:ec2:*:*:vpc-endpoint/*",
             "Condition": {"StringEquals": {"ec2:CreateAction": "CreateVpcEndpoint"}},
         },
+        # GitHub Actions builds (docs/CLOUD.md "C3"): the account's identity provider for GitHub's OIDC tokens
+        # (one, shared) and one deployer-gha-* role per app that only its repository's branch may assume.
+        {
+            "Sid": "GitHubActionsSignIn",
+            "Effect": "Allow",
+            "Action": ["iam:CreateOpenIDConnectProvider", "iam:TagOpenIDConnectProvider"],
+            "Resource": f"arn:aws:iam::*:oidc-provider/{cloud_aws.GITHUB_OIDC_HOST}",
+        },
+        {
+            "Sid": "GitHubActionsRoles",
+            "Effect": "Allow",
+            "Action": [
+                "iam:GetRole",
+                "iam:CreateRole",
+                "iam:TagRole",
+                "iam:UpdateAssumeRolePolicy",
+                "iam:PutRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:DeleteRole",
+            ],
+            "Resource": f"arn:aws:iam::*:role/{cloud_aws.GITHUB_ROLE_PREFIX}*",
+        },
     ],
 }
 GOOGLE_ROLES = [
@@ -351,6 +373,20 @@ GOOGLE_ROLES = [
         "why": "list and create the project's Realtime Database and read and write its data",
         "only_for": "firebase_rtdb",
     },
+    {
+        "role": "roles/iam.workloadIdentityPoolAdmin",
+        "title": "IAM Workload Identity Pool Admin",
+        "why": "let GitHub Actions sign in without a key (one pool, one provider per app)",
+        "only_for": "github_actions",
+    },
+    {
+        "role": "roles/iam.serviceAccountAdmin",
+        "title": "Service Account Admin",
+        "why": "let an app's GitHub Actions workflow act as this deployer account",
+        "only_for": "github_actions",
+        # Granted on the deployer service account itself (its Permissions tab), not on the whole project.
+        "on": "service_account",
+    },
 ]
 GOOGLE_APIS = [
     {"api": "firebasehosting.googleapis.com", "title": "Firebase Hosting API"},
@@ -362,6 +398,13 @@ GOOGLE_APIS = [
         "api": "firebasedatabase.googleapis.com",
         "title": "Firebase Realtime Database Management API",
         "only_for": "firebase_rtdb",
+    },
+    {"api": "iam.googleapis.com", "title": "Identity and Access Management (IAM) API", "only_for": "github_actions"},
+    {"api": "sts.googleapis.com", "title": "Security Token Service API", "only_for": "github_actions"},
+    {
+        "api": "iamcredentials.googleapis.com",
+        "title": "IAM Service Account Credentials API",
+        "only_for": "github_actions",
     },
 ]
 

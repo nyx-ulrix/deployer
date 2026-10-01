@@ -25,6 +25,10 @@ from app.errors import CloudError
 ACCESS_ROLE = "deployer-apprunner-ecr-access"  # shared by every App Runner service of the account
 INSTANCE_ROLE_PREFIX = "deployer-app-"  # one instance role per App Runner app that uses DynamoDB tables
 INSTANCE_ROLE_POLICY = "deployer-databases"
+# docs/CLOUD.md "C3": GitHub Actions signs in with OpenID Connect and assumes one role per app.
+GITHUB_OIDC_HOST = "token.actions.githubusercontent.com"
+GITHUB_ROLE_PREFIX = "deployer-gha-"
+GITHUB_ROLE_POLICY = "deployer-deploy"
 ECR_ACCESS_POLICY = "arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess"
 CACHING_OPTIMIZED = "658327ea-f89d-4fab-a63d-7e88639e58f6"  # AWS managed cache policy
 CERT_REGION = "us-east-1"  # CloudFront only uses ACM certificates from us-east-1
@@ -800,10 +804,11 @@ class AwsClient:
         return arn
 
     @_wrap
-    def delete_instance_role(self, name: str) -> None:
+    def delete_instance_role(self, name: str, policy_name: str = INSTANCE_ROLE_POLICY) -> None:
+        """Deletes a role Deployer made (its one inline policy first); also the GitHub Actions roles."""
         iam = self._c("iam")
         for call in (
-            lambda: iam.delete_role_policy(RoleName=name, PolicyName=INSTANCE_ROLE_POLICY),
+            lambda: iam.delete_role_policy(RoleName=name, PolicyName=policy_name),
             lambda: iam.delete_role(RoleName=name),
         ):
             try:
@@ -811,3 +816,39 @@ class AwsClient:
             except Exception as exc:  # noqa: BLE001
                 if _code(exc) != "NoSuchEntity":
                     raise
+
+    # --- GitHub Actions builds (docs/CLOUD.md "C3") -------------------------------------------------
+
+    @_wrap
+    def ensure_github_oidc(self, account_id: str) -> str:
+        """The account's IAM identity provider for GitHub Actions tokens (one per account, shared, kept)."""
+        iam = self._c("iam")
+        try:
+            return iam.create_open_id_connect_provider(
+                Url=f"https://{GITHUB_OIDC_HOST}", ClientIDList=["sts.amazonaws.com"], Tags=[TAG]
+            )["OpenIDConnectProviderArn"]
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) != "EntityAlreadyExists":
+                raise
+        return f"arn:aws:iam::{account_id}:oidc-provider/{GITHUB_OIDC_HOST}"
+
+    @_wrap
+    def ensure_github_role(self, name: str, trust: dict, policy: dict) -> str:
+        """The role one app's workflow assumes: `trust` (its repository and branch) is (re)written, and
+        its one inline policy `policy` (that app's resources only). Returns the role ARN."""
+        iam = self._c("iam")
+        try:
+            arn = iam.get_role(RoleName=name)["Role"]["Arn"]
+            iam.update_assume_role_policy(RoleName=name, PolicyDocument=json.dumps(trust))
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) != "NoSuchEntity":
+                raise
+            arn = iam.create_role(
+                RoleName=name,
+                AssumeRolePolicyDocument=json.dumps(trust),
+                Description="Deployer: GitHub Actions deploys of one app",
+                MaxSessionDuration=3600,
+                Tags=[TAG],
+            )["Role"]["Arn"]
+        iam.put_role_policy(RoleName=name, PolicyName=GITHUB_ROLE_POLICY, PolicyDocument=json.dumps(policy))
+        return arn

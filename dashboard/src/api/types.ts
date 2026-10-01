@@ -1003,7 +1003,8 @@ export type AppPreset = "static" | "node" | "python" | "dockerfile";
 
 export type DeploymentStatus = "queued" | "building" | "deploying" | "live" | "failed" | "cancelled" | "superseded";
 
-export type DeploymentTrigger = "manual" | "webhook" | "rollback";
+/** `github`: built and deployed by the app's GitHub Actions workflow, which reported the run (docs/CLOUD.md "C3"). */
+export type DeploymentTrigger = "manual" | "webhook" | "rollback" | "github";
 
 export type Deployment = {
   id: string;
@@ -1075,7 +1076,8 @@ export type CloudConnectionInput = {
 export type CloudRequirements = {
   aws: { policy: unknown };
   firebase: {
-    roles: { role: string; title: string; why: string; only_for?: string }[];
+    /** `on: "service_account"`: granted on the deployer service account itself, not the project. */
+    roles: { role: string; title: string; why: string; only_for?: string; on?: string }[];
     apis: { api: string; title: string; only_for?: string }[];
   };
 };
@@ -1087,6 +1089,39 @@ export type AppCloud = {
   /** What Deployer created in the cloud account (removed on delete / target switch). */
   resources: string[];
 };
+
+export type AppBuild =
+  | { location: "pc" }
+  | {
+      location: "github";
+      status: "setting_up" | "ready" | "error";
+      message: string | null;
+      job_id: string | null;
+      repo: string | null;
+      workflow_path: string | null;
+      workflow_url: string | null;
+      runs_url: string | null;
+      /** Whether runs report back here (false while Deployer has no public address). */
+      reports: boolean | null;
+    };
+
+/** A run of the app's GitHub Actions workflow (from the GitHub API). */
+export type GitHubRun = {
+  id: number;
+  attempt: number | null;
+  status: "queued" | "in_progress" | "completed" | "waiting" | "requested" | "pending";
+  conclusion: string | null;
+  event: string | null;
+  branch: string | null;
+  sha: string | null;
+  message: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  url: string | null;
+};
+
+/** `POST .../deploy` on an app that builds on GitHub Actions: the workflow was started there. */
+export type GitHubDispatch = { github_actions: true; status: "dispatched"; runs_url: string | null };
 
 export type App = {
   id: string;
@@ -1122,6 +1157,8 @@ export type App = {
   target: AppTarget;
   cloud_connection_id: string | null;
   cloud: AppCloud | null;
+  /** docs/CLOUD.md "C3": where a cloud app builds (`pc` for every local app). */
+  build: AppBuild;
   live_deployment: Deployment | null;
   domains: Domain[];
   created_at: string;

@@ -10,6 +10,7 @@ import type {
   Deployment,
   DeploymentStatus,
   DeploymentTrigger,
+  GitHubDispatch,
   GitHubRepo,
 } from "../../api/types";
 import type { BadgeTone } from "../../components/ui/Badge";
@@ -78,7 +79,29 @@ export const TRIGGER_LABELS: Record<DeploymentTrigger, string> = {
   manual: "Manual",
   webhook: "Push",
   rollback: "Rollback",
+  github: "GitHub Actions",
 };
+
+/** docs/CLOUD.md "C3": the "Where it builds" choices, in plain words (the API's github_actions.LOCATIONS). */
+export const BUILD_LOCATIONS = {
+  pc: {
+    label: "This PC",
+    what: "Deployer clones and builds the app here, then uploads it to the cloud.",
+    whenPcOff: "Pushes wait until the PC is on again; the app keeps serving.",
+    cost: "Free.",
+  },
+  github: {
+    label: "GitHub Actions",
+    what: "Deployer adds a workflow file to the repository: GitHub builds every push on its own computers and uploads it to the cloud, signing in with a short-lived token instead of a stored key.",
+    whenPcOff: "Pushes still deploy when this PC is off (the run shows up here once it is on).",
+    cost: "GitHub bills the build minutes: free for public repositories; private ones use your GitHub account's free minutes (2,000 a month on the Free plan), then GitHub charges for more. The sign-in pieces Deployer adds to your cloud account are free.",
+  },
+} as const;
+
+/** `POST .../deploy` answered that the app's GitHub Actions workflow was started (no deployment row yet). */
+export function isGitHubDispatch(value: object): value is GitHubDispatch {
+  return "github_actions" in value;
+}
 
 /** Queued, building or deploying: the deployment still changes, keep polling. */
 export function isActive(status: string | undefined | null): boolean {

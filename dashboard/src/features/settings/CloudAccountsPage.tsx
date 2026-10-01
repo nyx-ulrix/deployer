@@ -225,7 +225,7 @@ function AwsGuide({ policy }: { policy: string }) {
           <DoneButton status={steps[0]} onClick={() => ack(0)} />
         </div>
       </StepCard>
-      <StepCard n={2} title={AWS_TITLES[1]} status={steps[1]} summary="S3, CloudFront, ACM, ECR, App Runner, RDS and DynamoDB databases, deployer-* IAM roles">
+      <StepCard n={2} title={AWS_TITLES[1]} status={steps[1]} summary="S3, CloudFront, ACM, ECR, App Runner, RDS and DynamoDB databases, deployer-* IAM roles, GitHub Actions sign-in">
         <div className="space-y-3">
           <p className="text-muted">
             Open <ExtLink href={`${iam}#/policies/create`}>IAM → Policies → Create policy</ExtLink>, switch to <strong>JSON</strong>, paste this,
@@ -239,7 +239,9 @@ function AwsGuide({ policy }: { policy: string }) {
           <p className="text-muted">
             Already attached an older version? Paste this one over it (<em>Edit → JSON</em>): it adds the permissions for databases in
             your AWS account (create / connect RDS and the firewall that lets this PC and your apps in; DynamoDB tables, their
-            backups, and the role an App Runner app uses to reach its tables).
+            backups, and the role an App Runner app uses to reach its tables) and for building apps on GitHub Actions (GitHub&apos;s
+            sign-in for your account and one <code className="font-mono">deployer-gha-*</code> role per app, which only that app&apos;s
+            repository can use).
           </p>
           {policy && <CopyField label="Policy JSON" value={policy} />}
           <DoneButton status={steps[1]} onClick={() => ack(1)} />
@@ -303,13 +305,14 @@ const ONLY_FOR: Record<string, string> = {
   firebase_app: "only needed for full apps",
   firestore: "only needed for Firestore databases",
   firebase_rtdb: "only needed for Realtime Databases",
+  github_actions: "only needed to build apps on GitHub Actions",
 };
 
 function FirebaseGuide({
   roles,
   apis,
 }: {
-  roles: { role: string; title: string; why: string; only_for?: string }[];
+  roles: { role: string; title: string; why: string; only_for?: string; on?: string }[];
   apis: { api: string; title: string; only_for?: string }[];
 }) {
   const { steps, ack } = useGuide(FIREBASE_TITLES.length);
@@ -389,6 +392,8 @@ function FirebaseGuide({
                   {" "}
                   — {r.why}
                   {r.only_for && ` (${ONLY_FOR[r.only_for] ?? r.only_for})`}
+                  {r.on === "service_account" &&
+                    ". Grant this one on the deployer service account itself, not the whole project: Service accounts → deployer → Permissions → Grant access → the deployer account's email → this role"}
                 </span>
               </li>
             ))}

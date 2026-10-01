@@ -97,7 +97,7 @@ def test_connect_stores_encrypted_token_and_never_signs_in(client, owner, owner_
     resp = client.post("/v1/integrations/github/connect", headers=owner_headers)
     assert resp.status_code == 200 and oauth.BROWSER_COOKIE in resp.cookies
     q = {k: v[0] for k, v in parse_qs(urlsplit(resp.json()["url"]).query).items()}
-    assert q["scope"] == "repo admin:repo_hook read:user" and q["code_challenge_method"] == "S256"
+    assert q["scope"] == "repo admin:repo_hook read:user workflow" and q["code_challenge_method"] == "S256"
     assert q["redirect_uri"] == f"{BASE}/v1/auth/oauth/github/callback"
     users_before = db.query(User).count()
 
@@ -115,7 +115,7 @@ def test_connect_stores_encrypted_token_and_never_signs_in(client, owner, owner_
     assert status.json() == {
         "connected": True,
         "login": "octo",
-        "scopes": ["repo", "admin:repo_hook", "read:user"],
+        "scopes": ["repo", "admin:repo_hook", "read:user", "workflow"],
         "configured": True,
     }
     assert "provider-token" not in status.text

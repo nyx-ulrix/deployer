@@ -25,7 +25,17 @@ from app.routers import cloud as cloud_router
 from app.routers import data as data_router
 from app.routers import query as query_router
 from app.routers import schema as schema_router
-from app.services import audit, cloud, cloud_db, deployments, introspection, rate_limit, rtdb, source_ops
+from app.services import (
+    audit,
+    cloud,
+    cloud_db,
+    deployments,
+    github_actions,
+    introspection,
+    rate_limit,
+    rtdb,
+    source_ops,
+)
 from app.services.sources import get_source, project_sources
 
 log = logging.getLogger(__name__)
@@ -49,7 +59,8 @@ INSTRUCTIONS = (
     "tools. Databases can also live in the user's own AWS account - RDS SQL or DynamoDB (cloud_database_options; "
     "creating one is billable and needs the user's agreement) - or in the user's Firebase project: its Cloud "
     "Firestore database or its Realtime Database (connect_cloud_database / create_cloud_database; those and "
-    "the other cloud account tools need a project admin, not a service key). "
+    "the other cloud account tools need a project admin, not a service key). A cloud app can build on GitHub "
+    "Actions (set_build_location, admin, billable minutes) so pushes deploy while the PC is off. "
     "Results are compact JSON, capped at 200 rows / 256 KB."
 )
 
@@ -229,6 +240,16 @@ def t_deployment_status(ctx: Ctx, args: dict) -> Any:
     out = apps_router.get_deployment(args["app_id"], args["deployment_id"], ctx.access, ctx.db, log=1)
     out["log_tail"] = "\n".join((out.pop("log") or "").splitlines()[-LOG_TAIL_LINES:])
     return {**out, **_where(ctx, args["app_id"])}
+
+
+def t_set_build_location(ctx: Ctx, args: dict) -> Any:
+    body = apps_router.BuildBody(location=args["location"], confirm_billing=bool(args.get("confirm_billing")))
+    app = apps_router.set_build_location(args["app_id"], body, ctx.request, ctx.access, ctx.db)
+    return {"build": app["build"], "job_id": app["job_id"], "locations": github_actions.LOCATIONS}
+
+
+def t_list_github_runs(ctx: Ctx, args: dict) -> Any:
+    return apps_router.github_runs(args["app_id"], ctx.access, ctx.db)
 
 
 def t_list_cloud_connections(ctx: Ctx, args: dict) -> Any:
@@ -490,9 +511,33 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         "developer",
         "Start a new deployment of an app from its branch, on the app's target (this PC, or its AWS / "
         "Firebase account: cloud targets keep serving when the PC is off). Poll deployment_status with the "
-        "returned id.",
+        "returned id. An app that builds on GitHub Actions (get_app's build.location) instead runs its workflow "
+        "there: the answer is {github_actions: true, status: dispatched} - follow it with list_github_runs.",
         _schema(["app_id"], app_id=APP),
         t_deploy_app,
+    ),
+    "set_build_location": (
+        "admin",
+        "Where a cloud app builds: pc (this PC builds it and uploads it; pushes wait while the PC is off) or github "
+        "(Deployer commits a workflow to the app's GitHub repository that builds every push on GitHub and deploys "
+        "it straight to the cloud with a short-lived sign-in, so pushes deploy while the PC is off). github needs "
+        "the app deployed once, the admin's GitHub connection with the workflow permission, and confirm_billing: "
+        "true after the user agreed that GitHub may bill build minutes (free for public repositories, 2,000 "
+        "minutes a month free for private ones). Runs a setup job (job_id); pc removes the workflow and sign-in.",
+        _schema(
+            ["app_id", "location"],
+            app_id=APP,
+            location=_p("string", "pc or github", enum=["pc", "github"]),
+            confirm_billing=_p("boolean", "github: must be true - the user agreed GitHub may bill build minutes"),
+        ),
+        t_set_build_location,
+    ),
+    "list_github_runs": (
+        "developer",
+        "The newest GitHub Actions runs of an app that builds on GitHub (status, conclusion, commit, link), "
+        "including runs while the PC was off.",
+        _schema(["app_id"], app_id=APP),
+        t_list_github_runs,
     ),
     "deployment_status": (
         "developer",

@@ -31,13 +31,14 @@ import mimetypes
 import os
 import re
 import time
+from types import SimpleNamespace
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.errors import ApiError, CloudError, conflict
 from app.models import App, CloudConnection, Deployment, Domain, utcnow
-from app.services import cloud, cloud_aws, cloud_gcp, jobs
+from app.services import cloud, cloud_aws, cloud_gcp, github_actions, jobs
 from app.services import cloudflare as cf
 from app.services.instance_settings import get_value
 
@@ -78,11 +79,12 @@ def site_id(app: App) -> str:
     return f"{app.slug[:21].rstrip('-')}-{app.id[:8]}"
 
 
-def save_state(factory: jobs.SessionFactory, app_id: str, state: dict) -> None:
+def save_state(factory: jobs.SessionFactory, app_id: str, values: dict) -> None:
+    """Merges `values` into the app's cloud_state (other keys, e.g. GitHub Actions' "github", are kept)."""
     with factory() as db:
-        row = db.get(App, app_id)
+        row = db.get(App, app_id, with_for_update=True)
         if row is not None:
-            row.cloud_state = dict(state)
+            row.cloud_state = {**(row.cloud_state or {}), **values}
             db.commit()
 
 
@@ -130,7 +132,7 @@ def resources(target: str, state: dict | None) -> list[str]:
             out.append(f"Artifact Registry images {AR_REPOSITORY}/{s['ar_package']}")
         if s.get("site"):
             out.append(f"Firebase Hosting site {s['site']} (all versions, preview channels and domains)")
-    return out
+    return out + github_actions.resources(s.get("github"))
 
 
 def cloud_url(app: App) -> str | None:
@@ -240,7 +242,7 @@ class Publish:
 
     def save(self, **values) -> None:
         self.state.update(values)
-        save_state(self.ctx.session_factory, self.app.id, self.state)
+        save_state(self.ctx.session_factory, self.app.id, values)
 
     def push(self, remote: str, registry: tuple[str, str, str]) -> None:
         host, user, password = registry
@@ -622,6 +624,23 @@ def prune(db: Session, app: App, publish: Publish, log_) -> None:
         d.image_tag = None
 
 
+@jobs.job_handler("app.cloud_prune")
+def _job_prune(ctx: jobs.JobContext) -> dict:
+    """After a GitHub Actions deployment (docs/CLOUD.md "C3"): old artifacts go, like after a PC deploy."""
+    lines: list[str] = []
+    with ctx.session_factory() as db:
+        app = db.get(App, str(ctx.params["app_id"]))
+        if app is None or app.target == "local":
+            return {"skipped": "app missing"}
+        _, config = _connection(ctx.session_factory, app)
+        try:
+            prune(db, app, SimpleNamespace(config=config), SimpleNamespace(write=lines.append))
+        except CloudError as exc:
+            raise jobs.JobError(f"Could not remove old versions: {exc.message}") from None
+        db.commit()
+    return {"log": lines}
+
+
 # --- teardown ------------------------------------------------------------------------------------
 
 
@@ -671,12 +690,14 @@ def _delete_cf_records(db: Session, records: list[dict]) -> list[str]:
     return failures
 
 
-def teardown_steps(target: str, config: dict, state: dict) -> list[tuple[str, object]]:
-    """(label, zero-argument call) in dependency order."""
+def teardown_steps(
+    target: str, config: dict, state: dict, github_token: str | None = None, keep_member: bool = False
+) -> list[tuple[str, object]]:
+    """(label, zero-argument call) in dependency order; GitHub Actions' workflow / role / provider last."""
     s = state
     steps: list[tuple[str, object]] = []
     if target in ("aws_static", "aws_app"):
-        aws = cloud_aws.client(config)
+        aws = client = cloud_aws.client(config)
         if target == "aws_static":
             if s.get("distribution_id"):
                 steps.append(
@@ -707,7 +728,7 @@ def teardown_steps(target: str, config: dict, state: dict) -> list[tuple[str, ob
             if s.get("instance_role"):
                 steps.append((f"IAM role {s['instance_role']}", lambda: aws.delete_instance_role(s["instance_role"])))
     else:
-        gcp = cloud_gcp.client(config)
+        gcp = client = cloud_gcp.client(config)
         if s.get("run_service"):
             steps.append((f"Cloud Run service {s['run_service']}", lambda: gcp.delete_service(s["run_service"])))
         if s.get("ar_package"):
@@ -719,6 +740,8 @@ def teardown_steps(target: str, config: dict, state: dict) -> list[tuple[str, ob
             )
         if s.get("site"):
             steps.append((f"Firebase Hosting site {s['site']}", lambda: gcp.delete_site(s["site"])))
+    if s.get("github"):
+        steps += github_actions.teardown_steps(client, target, s["github"], github_token, keep_member)
     return steps
 
 
@@ -731,12 +754,15 @@ def _job_teardown(ctx: jobs.JobContext) -> dict:
         conn = db.get(CloudConnection, p.get("connection_id")) if p.get("connection_id") else None
         config = cloud.config_of(conn) if conn else None
         failures = _delete_cf_records(db, records)
+        token, keep_member = github_actions.teardown_context(
+            db, p["app_id"], p.get("connection_id"), state.get("github") or {}
+        )
     if config is None:
         left = resources(p["target"], state)
         raise jobs.JobError("The cloud connection was removed; delete these by hand: " + "; ".join(left))
     removed = []
     try:
-        steps = teardown_steps(p["target"], config, state)
+        steps = teardown_steps(p["target"], config, state, token, keep_member)
     except CloudError as exc:
         raise jobs.JobError(f"Could not connect to the cloud account: {exc.message}") from None
     for i, (label, call) in enumerate(steps):

@@ -31,7 +31,8 @@ log = logging.getLogger(__name__)
 
 API = "https://api.github.com"
 HTTP_TIMEOUT = 10.0
-CONNECT_SCOPE = "repo admin:repo_hook read:user"
+# `workflow`: docs/CLOUD.md "C3" commits a GitHub Actions workflow file (GitHub refuses that without it).
+CONNECT_SCOPE = "repo admin:repo_hook read:user workflow"
 REVOKE_HINT = "You can also revoke Deployer's access at https://github.com/settings/applications."
 MAX_FILE_BYTES = 256 * 1024
 MAX_FILES = 40
@@ -285,3 +286,93 @@ def delete_hook(db: Session, app: App, *, repo_url: str | None = None) -> None:
         except GitHubError:
             log.info("could not remove the GitHub webhook of app %s", app.id)
     app.github_hook_id = None
+
+
+# --- GitHub Actions (docs/CLOUD.md "C3") ---------------------------------------------------------
+
+
+def _repo_path(full_name: str) -> str:
+    owner, _, repo = full_name.partition("/")
+    return f"/repos/{quote(owner)}/{quote(repo)}"
+
+
+def _call(method: str, path: str, token: str, ok: tuple[int, ...], **kwargs) -> Any:
+    """One API call that must answer one of `ok`; anything else is a GitHubError with GitHub's message."""
+    status, body = _api(method, path, token=token, **kwargs)
+    if status == 401:
+        raise GitHubError("GitHub rejected the connection (revoked?); connect GitHub again")
+    if status not in ok:
+        raise GitHubError(_message(status, body))
+    return body
+
+
+def repo_for_actions(token: str, repo_url: str) -> dict:
+    """`{full_name, id}` of the app's repository, which the token must be able to push to."""
+    parsed = parse_repo(repo_url)
+    if parsed is None:
+        raise GitHubError("GitHub Actions builds need a https://github.com/<owner>/<repo> repository")
+    info = _call("GET", f"/repos/{quote(parsed[0])}/{quote(parsed[1])}", token, (200,))
+    if not (info.get("permissions") or {}).get("push"):
+        raise GitHubError(f"Your GitHub account can't push to {info.get('full_name')}: ask its owner for write access")
+    return {"full_name": str(info["full_name"]), "id": int(info["id"])}
+
+
+def put_file(token: str, full_name: str, path: str, branch: str, text: str, message: str) -> str | None:
+    """Creates or updates `path` on `branch`; returns the commit sha (None when the file was already so)."""
+    url = f"{_repo_path(full_name)}/contents/{quote(path)}"
+    content = base64.b64encode(text.encode("utf-8")).decode()
+    current = _call("GET", url, token, (200, 404), params={"ref": branch})
+    body = {"message": message, "content": content, "branch": branch}
+    if isinstance(current, dict) and current.get("sha"):
+        if "".join((current.get("content") or "").split()) == content:
+            return None
+        body["sha"] = current["sha"]
+    out = _call("PUT", url, token, (200, 201), json_body=body)
+    return str((out.get("commit") or {}).get("sha") or "") or None
+
+
+def delete_file(token: str, full_name: str, path: str, branch: str, message: str) -> None:
+    url = f"{_repo_path(full_name)}/contents/{quote(path)}"
+    current = _call("GET", url, token, (200, 404), params={"ref": branch})
+    if isinstance(current, dict) and current.get("sha"):
+        _call("DELETE", url, token, (200,), json_body={"message": message, "sha": current["sha"], "branch": branch})
+
+
+def workflow_runs(token: str, full_name: str, path: str, limit: int = 10) -> list[dict]:
+    """The newest runs of one workflow (queued, in progress and finished)."""
+    workflow = quote(path.rsplit("/", 1)[-1])
+    body = _call(
+        "GET",
+        f"{_repo_path(full_name)}/actions/workflows/{workflow}/runs",
+        token,
+        (200, 404),
+        params={"per_page": limit},
+    )
+    return [
+        {
+            "id": r.get("id"),
+            "attempt": r.get("run_attempt"),
+            "status": r.get("status"),
+            "conclusion": r.get("conclusion"),
+            "event": r.get("event"),
+            "branch": r.get("head_branch"),
+            "sha": r.get("head_sha"),
+            "message": str((r.get("head_commit") or {}).get("message") or "").partition("\n")[0][:200] or None,
+            "created_at": r.get("created_at"),
+            "updated_at": r.get("updated_at"),
+            "url": r.get("html_url"),
+        }
+        for r in (body or {}).get("workflow_runs") or []
+        if isinstance(r, dict)
+    ]
+
+
+def dispatch_workflow(token: str, full_name: str, path: str, branch: str) -> None:
+    workflow = quote(path.rsplit("/", 1)[-1])
+    _call(
+        "POST",
+        f"{_repo_path(full_name)}/actions/workflows/{workflow}/dispatches",
+        token,
+        (204,),
+        json_body={"ref": branch},
+    )

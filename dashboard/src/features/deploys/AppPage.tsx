@@ -17,7 +17,8 @@ import { AppSettings } from "./AppSettings";
 import { BuildLog } from "./BuildLog";
 import { DeploymentsTable } from "./DeploymentsTable";
 import { AppStatusDot } from "./DeploysTab";
-import { cohostSummary, DEPLOYMENT_STATUS, isActive, PRESETS, TARGET_SHORT } from "./deploys";
+import { cohostSummary, DEPLOYMENT_STATUS, isActive, isGitHubDispatch, PRESETS, TARGET_SHORT } from "./deploys";
+import { GitHubRuns } from "./GitHubBuild";
 import { RuntimeLogs } from "./RuntimeLogs";
 
 type Section = "deployments" | "logs" | "settings";
@@ -43,8 +44,13 @@ export function AppPage() {
   const deploy = useMutation({
     mutationFn: () => api.apps.deploy(project.id, appId),
     onSuccess: (d) => {
-      setSelectedId(d.id);
       setSection("deployments");
+      if (isGitHubDispatch(d)) {
+        void queryClient.invalidateQueries({ queryKey: qk.githubRuns(project.id, appId) });
+        toast.success("Started on GitHub Actions. The run appears below in a few seconds.");
+        return;
+      }
+      setSelectedId(d.id);
       refresh();
       toast.success("Deployment queued.");
     },
@@ -76,6 +82,7 @@ export function AppPage() {
         <h2 className="min-w-0 truncate text-lg font-semibold">{a.name}</h2>
         <Badge>{PRESETS[a.preset].label}</Badge>
         {a.target !== "local" && <Badge tone="info">{TARGET_SHORT[a.target]}</Badge>}
+        {a.build.location === "github" && <Badge tone="info">Builds on GitHub Actions</Badge>}
         <Badge tone={a.live_deployment?.status === "live" ? "success" : "neutral"}>{a.live_deployment?.status === "live" ? "Live" : "Not live"}</Badge>
         {cohostSummary(a) && <Badge tone="info">{cohostSummary(a)}</Badge>}
         {can("developer") && (
@@ -114,6 +121,7 @@ export function AppPage() {
         <p className="text-xs text-muted">
           Served from {a.cloud.connection_name ? `the ${a.cloud.connection_name} account` : "the cloud"} ({TARGET_SHORT[a.target]}): it keeps
           running when this PC is off.{" "}
+          {a.build.location === "github" && a.build.status === "ready" && "Pushes are built and deployed by GitHub Actions, also while this PC is off. "}
           {active
             ? `Rollout: ${DEPLOYMENT_STATUS[active.status].label.toLowerCase()}…`
             : a.cloud.url
@@ -132,6 +140,7 @@ export function AppPage() {
         ]}
       />
 
+      {section === "deployments" && a.build.location === "github" && a.build.workflow_path && <GitHubRuns projectId={project.id} app={a} />}
       {section === "deployments" &&
         (deployments.isPending ? (
           <PageSpinner />

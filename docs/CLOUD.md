@@ -14,7 +14,7 @@ and the `deploy-website` skill.
 | **C2-3** | Cloud Firestore engine ("C2-3 as built") | **Built** (no migration) |
 | **C2-4** | Firebase Realtime Database engine ("C2-4 as built") | **Built** (no migration) |
 | **C2-5** | MCP roles, data tools on every cloud engine, transfer, project delete keep / delete ("C2-5 as built") | **Built** (no migration) |
-| C3 | GitHub Actions builds, so pushes deploy with the PC off | Planned ("C3 - GitHub Actions builds") |
+| **C3** | GitHub Actions builds with OIDC, so pushes deploy with the PC off ("C3 as built") | **Built** (no migration) |
 
 ## Principles
 
@@ -30,7 +30,7 @@ and the `deploy-website` skill.
   AWS, and a Cloud Run app with database access the project's Firestore databases **in the same Firebase
   project** (C2-3) and its Realtime Databases (C2-4). The dashboard says so next to the target chooser and in the Environment card. The
   dashboard, deploys, rollbacks and settings run on the PC, so *managing* needs the PC on; *serving*
-  does not.
+  does not - and with GitHub Actions builds (C3) neither does *deploying a push*.
 - **Same product surface.** Cloud apps are ordinary apps in the Deploys tab: deployments, build log,
   rollback, env vars, custom domains, delete.
 
@@ -799,11 +799,198 @@ Left: creating Firestore databases and their managed exports / scheduled
 backups from Deployer, and Secrets Manager / Secret Manager references instead of plain runtime
 environment.
 
-## C3 - GitHub Actions builds (planned)
+## C3 as built: GitHub Actions builds (pushes deploy with the PC off)
 
-Each cloud app picks where it builds: *This PC* (C1, the worker builds, pushes and rolls out) or
-*GitHub Actions* (Deployer commits a workflow that builds and deploys on every push with GitHub OIDC →
-AWS role / Google workload identity, so pushes deploy even when the PC is off). Seams left by C1:
-`cloud_deploy.go_live` publishes from an artifact reference (the same path rollbacks use), so a
-workflow that pushes the image / uploads the site only needs the rollout half; `apps.cloud_state` holds
-the ids the workflow needs; the role / identity provider joins `cloud.AWS_POLICY` and the Google roles.
+### Where it builds
+
+Every cloud app has a **Where it builds** choice (app Settings; `app.build`, the MCP tool `set_build_location`),
+each explained in one plain sentence with what happens while the PC is off and the cost
+(`github_actions.LOCATIONS`):
+
+- **This PC** (default, C1): the worker clones, builds and uploads; pushes wait while the PC is off.
+- **GitHub Actions**: Deployer commits a workflow file to the app's GitHub repository. GitHub builds every
+  push to the app's branch on its own runners and rolls it out straight to the cloud, signing in with a
+  short-lived **GitHub OIDC token** - no AWS key or Google key is ever stored in GitHub. Pushes deploy while
+  the PC is off; the PC learns about them when it is on.
+
+No migration: the setup lives in `apps.cloud_state["github"]` (`{status setting_up | ready | error, message,
+job_id, user_id, repo, repo_id, branch, workflow_path, commit, callback, role, role_arn | provider,
+service_account, member}`), next to the target's own ids. `cloud_deploy.save_state` now **merges** the keys a
+deploy writes into the row (instead of replacing the whole JSON), so a deploy and the setup job never drop each
+other's keys. Moving the app to another target, or deleting it, tears the GitHub Actions setup down with the
+rest (`app.cloud_teardown`, listed in the confirm dialogs).
+
+### Switching to GitHub Actions
+
+`PUT /apps/{id}/build {location: "github", confirm_billing: true}` (project admin; the dialog shows the cost
+note and needs a ticked *I understand GitHub may bill build minutes*: free for public repositories, the
+account's free minutes - 2,000 a month on GitHub Free - then GitHub bills; the IAM role / identity provider
+are free). It needs:
+
+- a cloud target that was **deployed once from this PC** (`409 not_deployed`: that first deploy creates the
+  bucket / distribution, ECR repository / App Runner service, Hosting site or Cloud Run service the workflow
+  then updates);
+- a `https://github.com/<owner>/<repo>` repository the admin can push to;
+- the admin's **GitHub connection with the `workflow` scope** (GitHub refuses workflow files without it):
+  `github.CONNECT_SCOPE` now asks for it; connections made before C3 get `409 github_scope_missing` ("connect
+  GitHub again").
+
+It queues **`app.github_actions`** (progress in the card and Activity):
+
+1. *Checking the repository* - `GET /repos/{owner}/{repo}` (canonical `full_name`, `id`, push permission).
+2. *Letting GitHub Actions sign in to your cloud account*:
+   - **AWS**: the account's IAM OIDC identity provider for `token.actions.githubusercontent.com`
+     (`CreateOpenIDConnectProvider`, audience `sts.amazonaws.com`; `EntityAlreadyExists` is fine - one per
+     account, shared, kept) and the role **`deployer-gha-<slug>-<id8>`** whose trust policy allows
+     `sts:AssumeRoleWithWebIdentity` only with `aud = sts.amazonaws.com` and
+     `sub = repo:<owner>/<repo>:ref:refs/heads/<branch>` (re-written when it exists, e.g. after a branch change),
+     with one inline policy `deployer-deploy` allowing **only this app's resources**: `aws_app` -
+     `ecr:GetAuthorizationToken` plus the push actions on its ECR repository, `DescribeService` / `UpdateService` /
+     `ListOperations` on its App Runner service and `iam:PassRole` of the access role to App Runner; `aws_static` -
+     `s3:ListBucket` on its bucket, `s3:PutObject` under `d/*` and `GetDistributionConfig` / `UpdateDistribution` /
+     `CreateInvalidation` on its distribution.
+   - **Google**: the workload identity pool **`deployer-github`** (one per project, shared, kept; a soft-deleted
+     one is undeleted) and the OIDC provider **`gh-<id8>`** with issuer `https://token.actions.githubusercontent.com`,
+     the mapping `google.subject = assertion.sub`, `attribute.repository`, `attribute.ref`, and the condition
+     `assertion.repository_id == '<id>' && assertion.ref == 'refs/heads/<branch>'` (a deleted provider keeps its
+     id for 30 days: it is undeleted and patched); then `roles/iam.workloadIdentityUser` on the **connection's own
+     service account** for `principalSet://.../workloadIdentityPools/deployer-github/attribute.repository/<owner>/<repo>`
+     (`getIamPolicy` / `setIamPolicy` on that account, keeping its other bindings and the etag). The workflow acts
+     as that account (it already holds the Hosting / Cloud Run / Artifact Registry roles); a dedicated, narrower
+     account would need project IAM admin rights to grant it roles, which Deployer does not ask for.
+3. *Adding `.github/workflows/deployer-<slug>-<id8>.yml`* - one commit on the app's branch through the
+   contents API (an unchanged file is not committed again). That push runs the workflow once straight away, as a
+   first check. When the branch changed, the old branch's copy is deleted (best effort).
+
+A failure leaves `status: error` with the reason (the card offers *Set up again*; until then this PC keeps
+building pushes); choosing GitHub Actions again re-runs the job, which is idempotent. Changing a build setting
+(`branch`, `root_dir`, `preset`, the install / build / start commands, `output_dir`) re-runs it to rewrite the
+workflow and the branch in the trust (`PATCH` returns `build_job_id`).
+
+### The workflow
+
+`github_actions.render_workflow`: `on: push` to the branch and `workflow_dispatch`; `permissions: contents:
+read, id-token: write`; one job on `ubuntu-latest` (45 min timeout, a concurrency group per app so runs never
+overlap):
+
+1. `actions/checkout@v4`, then `docker build` with **the same recipe the PC uses**
+   (`deployments.generate_dockerfile`, written from base64; the `dockerfile` preset uses the repository's own) in
+   `root_dir`.
+2. Sign-in: `aws-actions/configure-aws-credentials@v4` with the role, or `google-github-actions/auth@v2` with the
+   provider and service account (`token_format: access_token`).
+3. Roll-out, tagged `gh-<run id>-<attempt>`:
+   - `aws_static`: the build output copied out of the image (`docker cp`; dotfiles were already removed by the
+     recipe) -> `aws s3 sync` to `d/gh-<run>/` (`no-cache` for HTML, 1 h for the rest) -> CloudFront origin path
+     switched to it (`get-distribution-config` + `jq` + `update-distribution --if-match`) -> invalidation `/*`;
+   - `aws_app`: push to the app's ECR repository -> `UpdateService` with the service's current source
+     configuration and only the image changed (port, environment and access role stay) -> waits for the
+     operation (`SUCCEEDED`, or the run fails and the previous version keeps serving);
+   - `firebase_hosting`: `firebase-tools deploy --only hosting` of the output with the same SPA rewrite and HTML
+     `no-cache` header, then the live channel's version name (the artifact);
+   - `firebase_app`: push to Artifact Registry with the access token -> `gcloud run services update --image`
+     (keeps the port and environment).
+4. *Tell Deployer* (`if: always()`, never fails the run): requests a GitHub OIDC token for the audience
+   **`deployer:<app id>`** and posts `{status: success | failure | cancelled, artifact, message}` to the app's
+   existing webhook URL with `X-GitHub-Event: deployer_build` and `Authorization: Bearer <token>`. Left out (and
+   the card says so) while Deployer's public URL is not reachable from the internet.
+
+Every value the app's settings control is a JSON-quoted YAML value or base64, and none may contain `${{` (GitHub
+would evaluate it; the setup fails with a plain error), so a build setting can neither change the workflow nor
+reach repository secrets. Environment variables are **not** in the workflow: App Runner / Cloud Run keep the
+ones Deployer last set; changed variables reach the app with the next rollback (the live deployment's
+*Rollback* republishes it from this PC with today's variables).
+
+### Reports, Deploy now, runs
+
+- **Reports** (`POST /v1/hooks/github/{app_id}` with `X-GitHub-Event: deployer_build`): the token is verified
+  against GitHub's published keys (`https://token.actions.githubusercontent.com/.well-known/jwks`, PyJWT's
+  `PyJWKClient`, cached an hour; a test hook replaces it) - RS256, issuer, audience `deployer:<app id>`, and the
+  claims `repository_id`, `repository`, `ref` (the app's branch) and `workflow_ref` (this app's workflow file) must
+  match the setup, else `401 bad_signature`. `run_id`, `run_attempt` and `sha` come from the signed token, not
+  the body. Each run becomes **one deployment** (`trigger: github`, log = the run's link; a repeated report is
+  ignored): `success` -> `live` (the previous live one is superseded) with the artifact **derived by Deployer**
+  (`d/gh-<run>`, `<ecr repo>:gh-<run>`, `<registry>/<package>:gh-<run>`; only Hosting's version comes from the
+  report and must be a version of the app's own site), so a rollback to it works like any other and a report
+  can't point the app elsewhere; `failure` / `cancelled` -> `failed` / `cancelled` with the run's link as the
+  error. A live report queues **`app.cloud_prune`** (old S3 prefixes / ECR images beyond the newest 5, as after
+  a PC deploy). Rate-limited together with the push webhook.
+- **Pushes**: the PC's push webhook ignores pushes of an app that builds on GitHub (`{ignored: true}`) unless
+  its setup failed.
+- **Deploy now** (`POST /apps/{id}/deploy`) on such an app runs the workflow there (`workflow_dispatch` on the
+  app's branch; another `branch` is `422`) and answers `202 {github_actions: true, status: "dispatched",
+  runs_url}` instead of a deployment.
+- **Runs**: `GET /apps/{id}/github-runs` (viewer+) -> `{runs: [{id, attempt, status, conclusion, event, branch,
+  sha, message, created_at, updated_at, url}], runs_url}`, the workflow's newest 10 runs from the GitHub API with
+  the setup admin's connection - including runs that finished while this PC was off, which have no deployment
+  row (and whose artifacts are not pruned).
+- **Rollbacks** still run on this PC (the `app.deploy` job republishes the old artifact).
+
+### Switching back, teardown
+
+`PUT /apps/{id}/build {location: "pc"}` queues `app.cloud_teardown` with only the GitHub part: the workflow file
+is deleted from the branch (a commit), the `deployer-gha-*` role (inline policy first) or the `gh-<id8>`
+provider is deleted, and the service-account binding is removed unless another app of the same repository on
+that connection still uses it. The shared OIDC provider / pool stay (like the shared App Runner access role).
+Anything that can't be removed fails the job with the list. Moving or deleting the app does the same as part of
+its teardown.
+
+### Permissions added
+
+- **AWS** (`cloud.AWS_POLICY`): `iam:CreateOpenIDConnectProvider`, `TagOpenIDConnectProvider` on
+  `oidc-provider/token.actions.githubusercontent.com`; `iam:GetRole`, `CreateRole`, `TagRole`,
+  `UpdateAssumeRolePolicy`, `PutRolePolicy`, `DeleteRolePolicy`, `DeleteRole` on `role/deployer-gha-*` (no
+  `PassRole`: GitHub assumes the role, nothing passes it). Like the `deployer-app-*` roles, Deployer writes these
+  roles' policies itself; IAM can only limit that with a permissions boundary (follow-up). The policy stays under
+  the 6,144-character limit.
+- **Google** (`cloud.GOOGLE_ROLES` / `GOOGLE_APIS`, marked "only needed to build apps on GitHub Actions"): **IAM
+  Workload Identity Pool Admin** (`roles/iam.workloadIdentityPoolAdmin`) and **Service Account Admin**
+  (`roles/iam.serviceAccountAdmin`) granted **on the deployer service account itself** (its Permissions tab), not
+  the project, so it can only change who may act as that one account; APIs `iam.googleapis.com`,
+  `sts.googleapis.com`, `iamcredentials.googleapis.com`.
+- **GitHub**: the `workflow` OAuth scope.
+
+### API
+
+| Method | Path | Role | Body / Query | Response |
+|---|---|---|---|---|
+| PUT | `/projects/{pid}/apps/{id}/build` | admin+ | `{location: "pc" or "github", confirm_billing?}` | `App & {job_id}`; `422 billing_not_confirmed`, `409 not_deployed` / `github_not_connected` / `github_scope_missing` / `deployment_active`; audit `app.build_location` |
+| GET | `/projects/{pid}/apps/{id}/github-runs` | viewer+ | – | `{runs, runs_url}`; `409 not_on_github` |
+| POST | `/projects/{pid}/apps/{id}/deploy` | developer+ | `{branch?}` | GitHub Actions apps: `{github_actions: true, status: "dispatched", runs_url}` (202) |
+| POST | `/hooks/github/{app_id}` | GitHub OIDC token | `X-GitHub-Event: deployer_build`, `{status, artifact?, message?}` | `{deployment_id, status}` or `{ignored: true}` |
+
+Apps gain `build: {location: "pc"} | {location: "github", status, message, job_id, repo, workflow_path,
+workflow_url, runs_url, reports}`; deployments gain `trigger: "github"`; `PATCH` returns `build_job_id`.
+
+### Dashboard
+
+- **App Settings -> Where it builds** (cloud apps): the two choices as cards (what, when the PC is off, cost),
+  the confirm dialog listing exactly what Deployer will add (the commit, the IAM role / identity provider) with the
+  cost note and the billing tick, the setup job's progress, then the workflow link, the note about environment
+  variables, errors with *Set up again*, and *Build on This PC* (confirm) to switch back. The Push to deploy card
+  says the webhook is not used for pushes then.
+- **App page**: a *Builds on GitHub Actions* badge; **GitHub Actions runs** (status, commit, time, log link;
+  polled while one runs) above the deployments, where GitHub-built deployments show the trigger *GitHub
+  Actions*; **Deploy now** starts a run there.
+- **Settings -> Cloud accounts**: the AWS step mentions the GitHub Actions statements; the Firebase role list
+  marks the two new roles and APIs and says to grant Service Account Admin on the deployer account itself.
+
+### MCP
+
+`set_build_location` (project admin, like its route; `app_id`, `location`, `confirm_billing` - the description
+tells the agent to explain the GitHub minutes and get the user's agreement first) and `list_github_runs` (service
+key); `get_app` / `list_apps` return `build`; `deploy_app` on a GitHub Actions app answers `{github_actions: true,
+status: "dispatched"}`. See MCP.md.
+
+### Not verified against real clouds
+
+Tested with fakes (`tests/test_github_actions.py`: the switch's checks and billing confirmation, the AWS role's
+trust and scoped policy, the Google pool / provider / binding calls, the committed workflow and its recipe,
+pushes ignored, dispatch, the runs list, signed reports with a wrong audience / repository / ref / workflow
+refused, derived artifacts, rollback to a GitHub-built deployment, rewriting on settings changes, the `${{`
+guard, both teardowns; the Google REST shapes of the binding and the provider undelete / patch against
+`httpx.MockTransport`; the dashboard chooser in `GitHubBuild.test.tsx`). Not yet run for real: the workflow
+itself on GitHub's runners (the AWS CLI / `jq` / `firebase-tools` / `gcloud` steps, `firebase-tools` signing in
+through the workload identity credentials file), the IAM / IAM Credentials request shapes against live
+accounts, GitHub's `sub` claim for organisations that customised it (the AWS trust expects the default
+`repo:<owner>/<repo>:ref:<ref>`), and committing to a protected branch (the setup then fails with GitHub's
+message).

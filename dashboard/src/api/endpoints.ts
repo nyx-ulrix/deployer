@@ -41,7 +41,9 @@ import type {
   Domain,
   DropResult,
   EnrollStartResponse,
+  GitHubDispatch,
   GitHubRepo,
+  GitHubRun,
   GitHubStatus,
   EnrollStatus,
   InstanceAlert,
@@ -479,15 +481,21 @@ export const api = {
     /** `teardown_job_id`: the target changed and the old cloud resources are being removed (docs/CLOUD.md).
      *  `warnings`: the repository changed and its GitHub webhook could not be moved. */
     update: (pid: string, id: string, body: AppPatch) =>
-      client.patch<App & { teardown_job_id?: string | null; warnings?: string[] }>(`/projects/${e(pid)}/apps/${e(id)}`, body),
+      client.patch<App & { teardown_job_id?: string | null; build_job_id?: string | null; warnings?: string[] }>(`/projects/${e(pid)}/apps/${e(id)}`, body),
     /** `warnings`: hostnames whose Cloudflare DNS record could not be removed (remove by hand). */
     remove: (pid: string, id: string) =>
       client.del<{ job_id: string; teardown_job_id: string | null; warnings?: string[] }>(`/projects/${e(pid)}/apps/${e(id)}`),
     env: (pid: string, id: string) => client.get<{ env: Record<string, string> }>(`/projects/${e(pid)}/apps/${e(id)}/env`),
     webhook: (pid: string, id: string) => client.get<AppWebhook>(`/projects/${e(pid)}/apps/${e(id)}/webhook`),
     rotateWebhook: (pid: string, id: string) => client.post<AppWebhook>(`/projects/${e(pid)}/apps/${e(id)}/webhook/rotate`),
+    /** A `GitHubDispatch` instead of a deployment when the app builds on GitHub Actions (docs/CLOUD.md "C3"). */
     deploy: (pid: string, id: string, branch?: string) =>
-      client.post<Deployment>(`/projects/${e(pid)}/apps/${e(id)}/deploy`, branch ? { branch } : {}),
+      client.post<Deployment | GitHubDispatch>(`/projects/${e(pid)}/apps/${e(id)}/deploy`, branch ? { branch } : {}),
+    /** docs/CLOUD.md "C3": where a cloud app builds; `github` needs `confirm_billing` (GitHub build minutes). */
+    setBuild: (pid: string, id: string, location: "pc" | "github", confirm_billing = false) =>
+      client.put<App & { job_id: string | null }>(`/projects/${e(pid)}/apps/${e(id)}/build`, { location, confirm_billing }),
+    githubRuns: (pid: string, id: string) =>
+      client.get<{ runs: GitHubRun[]; runs_url: string | null }>(`/projects/${e(pid)}/apps/${e(id)}/github-runs`),
     deployments: (pid: string, id: string, params: { limit?: number; before?: string } = {}) =>
       client.get<DeploymentPage>(`/projects/${e(pid)}/apps/${e(id)}/deployments`, { query: params }),
     deployment: (pid: string, id: string, dep: string, log = false) =>
@@ -658,6 +666,7 @@ export const qk = {
   deployments: (id: string, appId: string) => ["projects", id, "apps", appId, "deployments"] as const,
   deployment: (id: string, appId: string, dep: string) => ["projects", id, "apps", appId, "deployments", dep] as const,
   appLogs: (id: string, appId: string) => ["projects", id, "apps", appId, "logs"] as const,
+  githubRuns: (id: string, appId: string) => ["projects", id, "apps", appId, "github-runs"] as const,
   github: ["integrations", "github"] as const,
   cloudConnections: ["instance", "cloud"] as const,
   cloudRequirements: ["instance", "cloud", "requirements"] as const,

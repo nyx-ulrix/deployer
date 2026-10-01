@@ -499,8 +499,8 @@ The one roadmap for the project (docs link here rather than keeping their own co
 8. **Cloud hosting** on the owner's own AWS / Firebase accounts ([docs/CLOUD.md](docs/CLOUD.md)) -
    *(current)*: C1 connections + hosting targets done; C2-1 AWS RDS / Aurora databases, C2-2
    DynamoDB, C2-3 Cloud Firestore, C2-4 Firebase Realtime Database and C2-5 (MCP, export / import,
-   project delete) done; C3 GitHub Actions builds
-   planned.
+   project delete) done; C3 GitHub Actions builds (pushes deploy with the PC off) done; not yet run
+   against live cloud accounts.
 
 ## Security
 
