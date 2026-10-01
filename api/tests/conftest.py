@@ -11,8 +11,9 @@ Environment (set here, before any `app` import):
 
 Fixtures:
 - `client`               – `fastapi.testclient.TestClient` for the app (base URL http://testserver; call `/v1/...`).
-- `db`                   – a SQLAlchemy `Session` on the test database. It is separate from the
-                           request sessions: call `db.expire_all()` before re-reading rows changed by the API.
+- `db`                   – a SQLAlchemy `Session` on the test database (READ COMMITTED on MariaDB). It is
+                           separate from the request sessions: call `db.expire_all()` before re-reading rows
+                           changed by the API.
 - `fake_redis`           – the fakeredis client in use.
 - `make_user(email=None, password=DEFAULT_PASSWORD, *, owner=False, display_name=None, active=True)`
                          – inserts a committed `User` (email auto-generated when None).
@@ -158,7 +159,13 @@ def client():
 
 @pytest.fixture
 def db():
-    session = get_sessionmaker()()
+    engine = get_engine()
+    if engine.dialect.name == "mysql":
+        # This session lives through the whole test. Under MariaDB's REPEATABLE READ it would keep the
+        # snapshot of its first read (blind to what the API commits later, and innodb_snapshot_isolation
+        # refuses its writes over those rows). The app's own sessions keep the server default.
+        engine = engine.execution_options(isolation_level="READ COMMITTED")
+    session = get_sessionmaker()(bind=engine)
     try:
         yield session
     finally:

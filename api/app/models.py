@@ -10,7 +10,6 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
-    DateTime,
     Float,
     ForeignKey,
     Index,
@@ -20,11 +19,17 @@ from sqlalchemy import (
     UniqueConstraint,
     false,
 )
+from sqlalchemy import DateTime as _DateTime
+from sqlalchemy.dialects import mysql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 
 ROLES = ("viewer", "developer", "admin", "owner")
+
+# MariaDB's plain DATETIME drops the microseconds (SQLite keeps them): rows written in the same second
+# tied in every ORDER BY created_at (job, query log and deployment order) - migration 0012.
+DateTime = _DateTime().with_variant(mysql.DATETIME(fsp=6), "mysql", "mariadb")
 
 
 def new_id() -> str:

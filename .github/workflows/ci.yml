@@ -112,9 +112,6 @@ jobs:
           done
           echo "::error::MongoDB did not become primary"; exit 1
       - name: Unit suite on MariaDB
-        # Reported, not yet enforced: ~40 tests still fail on MariaDB (DATETIME precision, row order,
-        # innodb_snapshot_isolation). Remove continue-on-error once they pass.
-        continue-on-error: true
         run: |
           docker run --rm --user root --network it -v "$PWD:/repo" -w /repo/api \
             -e DEPLOYER_TEST_DATABASE_URL="mysql+pymysql://root:${IT_PW}@mariadb:3306/deployer_test?charset=utf8mb4" \

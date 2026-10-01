@@ -432,8 +432,7 @@ pytest -rs                               # tests/integration is skipped without 
 `tests/integration` (provisioning, backups/PITR, the query console, co-hosting, device hosting,
 push-to-deploy) needs real MariaDB 11 / MongoDB 8.0 servers and the tools in the API image; each
 file's docstring says how to run it. CI (`.github/workflows/ci.yml`, job "integration") builds the
-API image and runs them there, and fails if any is skipped. It also runs the unit suite on MariaDB
-(reported only for now: about 40 tests still fail there).
+API image and runs them there, and fails if any is skipped. It also runs the unit suite on MariaDB.
 Every push also builds the dashboard and tunnel images.
 
 To try the Windows installer against your checkout, run it from the repository:

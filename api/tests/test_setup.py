@@ -175,7 +175,6 @@ def test_instance_settings_roundtrip(client, owner_headers, db):
     assert body["github"]["secret_set"] is False and body["github"]["configured"] is False
     assert body["allow_signup"] is False
     assert body["public_url"] == "https://deployer.example.com"
-    db.rollback()  # end the snapshot transaction (MariaDB REPEATABLE READ)
     assert db.query(AuditLog).filter_by(action="instance.settings_update").count() == 2
 
 
