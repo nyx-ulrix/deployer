@@ -362,6 +362,12 @@ def test_changing_build_settings_rewrites_the_workflow_and_bad_values_fail_plain
     recipe = committed(gh, app).split("echo '", 1)[1].split("'", 1)[0]
     assert "npm run build:prod" in base64.b64decode(recipe).decode()
 
+    # The workflow, the role's trust and the reports belong to the repository: moving it needs a switch back first.
+    moved = client.patch(
+        f"{people['base']}/{app.id}", json={"repo_url": "https://github.com/acme/other"}, headers=people["dev"]
+    )
+    assert moved.status_code == 409 and moved.json()["error"]["code"] == "builds_on_github"
+
     client.patch(f"{people['base']}/{app.id}", json={"root_dir": "web/${{ secrets.TOKEN }}"}, headers=people["dev"])
     jobs.run_queued()
     db.expire_all()

@@ -857,7 +857,9 @@ It queues **`app.github_actions`** (progress in the card and Activity):
      service account** for `principalSet://.../workloadIdentityPools/deployer-github/attribute.repository/<owner>/<repo>`
      (`getIamPolicy` / `setIamPolicy` on that account, keeping its other bindings and the etag). The workflow acts
      as that account (it already holds the Hosting / Cloud Run / Artifact Registry roles); a dedicated, narrower
-     account would need project IAM admin rights to grant it roles, which Deployer does not ask for.
+     account would need project IAM admin rights to grant it roles, which Deployer does not ask for. So on Google
+     anyone who can push to that branch gets **everything the deployer account may do** in the project (its
+     Firestore / Realtime Database access and the two IAM roles below included); the confirm dialog says so.
 3. *Adding `.github/workflows/deployer-<slug>-<id8>.yml`* - one commit on the app's branch through the
    contents API (an unchanged file is not committed again). That push runs the workflow once straight away, as a
    first check. When the branch changed, the old branch's copy is deleted (best effort).
@@ -865,7 +867,8 @@ It queues **`app.github_actions`** (progress in the card and Activity):
 A failure leaves `status: error` with the reason (the card offers *Set up again*; until then this PC keeps
 building pushes); choosing GitHub Actions again re-runs the job, which is idempotent. Changing a build setting
 (`branch`, `root_dir`, `preset`, the install / build / start commands, `output_dir`) re-runs it to rewrite the
-workflow and the branch in the trust (`PATCH` returns `build_job_id`).
+workflow and the branch in the trust (`PATCH` returns `build_job_id`). Changing the repository is refused
+(`409 builds_on_github`): the workflow, the trust and the reports belong to it, so switch back to This PC first.
 
 ### The workflow
 

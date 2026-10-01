@@ -310,7 +310,8 @@ The same app, served from the user's own cloud account so it **keeps running whe
    `PUT .../apps/{app_id}/build`). Explain it in plain words first and get a yes: Deployer adds a workflow
    file to their GitHub repository (a commit on the app's branch) and a sign-in for it in their cloud account
    (an IAM role, or a Google workload identity provider, that only that repository's branch can use - no keys
-   are stored in GitHub); GitHub then builds every push and deploys it to the cloud; GitHub may bill build
+   are stored in GitHub; on Firebase the workflow signs in as Deployer's service account, so anyone who can
+   push to that branch gets Deployer's access to the Firebase project - say so); GitHub then builds every push and deploys it to the cloud; GitHub may bill build
    minutes (free for public repositories, 2,000 minutes a month free for private ones), so send
    `confirm_billing: true` only after they agree. It needs the admin's GitHub connection with the workflow
    permission (`github_scope_missing`: they reconnect GitHub in the dashboard). Then `deploy_app` runs the

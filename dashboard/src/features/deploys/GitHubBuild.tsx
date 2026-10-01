@@ -136,7 +136,7 @@ export function BuildCard({ projectId, app, isAdmin }: { projectId: string; app:
             <Cloud className="mr-1 inline size-3.5" />
             {app.cloud?.provider === "aws"
               ? "create an IAM role in your AWS account that only this repository's branch can use, allowed to update only this app;"
-              : "add a workload identity provider to your Google project that only this repository's branch can use, so its workflow can act as Deployer's service account;"}
+              : `add a workload identity provider to your Google project that only this repository's branch can use. The workflow then signs in as Deployer's service account, with all the access Deployer has to your Firebase project, so anyone who can push to ${app.branch} gets that access too;`}
           </li>
           <li>stop building pushes on this PC (rollbacks still run here).</li>
         </ul>

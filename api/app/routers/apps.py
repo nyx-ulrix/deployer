@@ -406,6 +406,13 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
         cohost_apps.check_single_cohost(db, app.id)
     old_repo_url = app.repo_url
     repo_moved = bool("repo_url" in changed and body.repo_url and body.repo_url != app.repo_url)
+    if repo_moved and github_actions.state_of(app) is not None:
+        # The workflow file, the role / provider trust and the reports all belong to the old repository.
+        raise conflict(
+            "builds_on_github",
+            "This app builds on GitHub Actions in its current repository: switch 'Where it builds' back to This PC "
+            "first, change the repository, then choose GitHub Actions again",
+        )
     _check_api_key_access(access, app, body, repo_moved)
     if (
         "repo_url" in changed
