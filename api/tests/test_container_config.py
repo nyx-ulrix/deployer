@@ -75,3 +75,13 @@ def test_untrusted_containers_share_no_network_with_the_api():
     assert not {"apps", "appdb", "tunnel"} & set(services["api"]["networks"])
     assert services["tunnel"]["networks"] == ["tunnel"]
     assert "--forwarded-allow-ips" not in read("api/Dockerfile") + read("deploy/docker-compose.dev.yml")
+
+
+def test_caddy_lets_every_import_upload_through():
+    """A-044: the dashboard imports through /projects/import/jobs; Caddy's 64 MB cap for other API
+    requests must not apply to it (the API's own limit is up to 1 GB)."""
+    caddy = read("deploy/Caddyfile")
+    imports = re.search(r"@imports path (.+)", caddy).group(1).split()
+    assert {"/v1/setup/import", "/v1/projects/import", "/v1/projects/import/jobs"} <= set(imports)
+    other = re.search(r"@api_other \{\s*path /v1/\*\s*not path (.+)", caddy).group(1).split()
+    assert set(imports) <= set(other)

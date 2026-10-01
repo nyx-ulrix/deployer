@@ -41,7 +41,7 @@
 	}
 
 	# Full export files (settings + users + all managed database contents) can be large.
-	@imports path /v1/setup/import /v1/projects/import
+	@imports path /v1/setup/import /v1/projects/import /v1/projects/import/jobs
 	request_body @imports {
 		max_size 2GB
 	}
@@ -54,7 +54,7 @@
 
 	@api_other {
 		path /v1/*
-		not path /v1/setup/import /v1/projects/import /v1/devices/transfers/*
+		not path /v1/setup/import /v1/projects/import /v1/projects/import/jobs /v1/devices/transfers/*
 	}
 	request_body @api_other {
 		max_size 64MB

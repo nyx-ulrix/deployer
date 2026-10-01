@@ -108,7 +108,8 @@ function TransferRow({ job }: { job: Job }) {
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{jobLabel(job.type)}</span>
         <JobStatusBadge status={job.status} />
         {job.type === "transfer.export" && job.status === "succeeded" && <DownloadExportButton jobId={job.id} />}
-        {active && (
+        {/* An import can't stop halfway; only an export checks for cancel (before each database). */}
+        {active && (job.type === "transfer.export" || job.status === "queued") && (
           <Button size="sm" variant="ghost" loading={cancel.isPending} onClick={() => cancel.mutate()}>
             Cancel
           </Button>

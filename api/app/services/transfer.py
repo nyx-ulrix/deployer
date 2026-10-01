@@ -1459,7 +1459,7 @@ _pending: dict[str, dict[str, Any]] = {}
 
 
 def exports_dir() -> Path:
-    """Finished export files of the API process, until downloaded or EXPORT_KEEP_SECONDS old."""
+    """Finished export files of the API process; `prune_exports` deletes them after EXPORT_KEEP_SECONDS."""
     path = Path(tempfile.gettempdir()) / "deployer-exports"
     path.mkdir(mode=0o700, exist_ok=True)
     return path

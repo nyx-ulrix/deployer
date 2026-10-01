@@ -242,6 +242,7 @@ def download_transfer(job_id: str, user: CurrentUser, db: DbSession) -> FileResp
     job = _my_transfer_job(db, user, job_id)
     if job.type != transfer.EXPORT_JOB or job.status != "succeeded":
         raise conflict("export_not_ready", "This export hasn't finished")
+    transfer.prune_exports()  # past 24 hours it is gone, also when nothing listed transfers since
     path = transfer.export_path(job.id)
     if not path.exists():
         raise ApiError(410, "export_expired", "This export file is gone (they are kept for 24 hours). Export again.")
