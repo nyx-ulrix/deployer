@@ -50,6 +50,7 @@ def aws(monkeypatch):
         create_service={"arn": "arn:svc", "url": "https://abc.eu-west-1.awsapprunner.com", "operation_id": "op1"},
         operation="SUCCEEDED",
         delete_db_instance=True,
+        ddb=lambda operation: {"TableNames": []},
         db_resources=[
             {
                 "id": "shop-prod",

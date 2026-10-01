@@ -36,6 +36,7 @@ export const ENGINE_LABELS: Record<string, string> = {
   mysql: "MySQL",
   postgresql: "PostgreSQL",
   mongodb: "MongoDB",
+  dynamodb: "DynamoDB",
 };
 
 export function engineLabel(engine: string): string {

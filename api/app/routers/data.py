@@ -102,9 +102,10 @@ def list_documents(
     filter: str | None = None,
     limit: Annotated[int, Query(ge=1, le=data_browser.MAX_LIMIT)] = 50,
     skip: Annotated[int, Query(ge=0)] = 0,
+    cursor: Annotated[str | None, Query(max_length=4096)] = None,  # DynamoDB: the previous page's next_cursor
 ) -> dict:
     ds = _mongo_source(db, access, source_id)
-    return source_ops.list_documents(ds, name, filter_json=filter, limit=limit, skip=skip)
+    return source_ops.list_documents(ds, name, filter_json=filter, limit=limit, skip=skip, cursor=cursor)
 
 
 @router.post(COLLECTION_DOCS)

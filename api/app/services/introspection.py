@@ -560,6 +560,10 @@ def introspect_source(ds: DataSource, sample: int = DEFAULT_SAMPLE) -> dict:
     try:
         if ds.kind == "sql":
             entities, rels = introspect_sql(connections.get_sql_engine(ds))
+        elif ds.engine == "dynamodb":
+            from app.services import dynamo
+
+            entities, rels = dynamo.introspect(ds, sample), []
         else:
             entities, rels = introspect_mongo(connections.get_mongo_db(ds), sample)
         out["entities"], out["relationships"] = entities, rels
@@ -594,5 +598,9 @@ def sql_entity(ds: DataSource, table: str) -> dict | None:
 
 
 def mongo_entity(ds: DataSource, name: str, sample: int = DEFAULT_SAMPLE) -> dict | None:
+    if ds.engine == "dynamodb":
+        from app.services import dynamo
+
+        return dynamo.entity(ds, name, sample)
     entities, _ = introspect_mongo(connections.get_mongo_db(ds), sample, only=name)
     return entities[0] if entities else None

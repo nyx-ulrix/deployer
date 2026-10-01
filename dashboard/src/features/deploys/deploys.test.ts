@@ -165,6 +165,12 @@ describe("database access", () => {
       "DEPLOYER_DB_SHOP_DB_URL",
     ]);
     expect(databaseEnvNames({ name: "Docs Store", kind: "nosql" })).toEqual(["DEPLOYER_DB_DOCS_STORE_URL", "DEPLOYER_DB_DOCS_STORE_DATABASE"]);
+    expect(databaseEnvNames({ name: "Events", kind: "nosql", engine: "dynamodb" })).toEqual([
+      "DEPLOYER_DB_EVENTS_TABLE",
+      "DEPLOYER_DB_EVENTS_TABLES",
+      "DEPLOYER_DB_EVENTS_REGION",
+      "DEPLOYER_DB_EVENTS_DATABASE",
+    ]);
   });
   it("only managed sources on the main server are reachable", () => {
     const rows = [

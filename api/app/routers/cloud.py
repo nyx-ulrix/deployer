@@ -10,13 +10,22 @@ from pydantic import BaseModel, Field, field_validator
 from app.deps import DbSession, InstanceOwner, ProjectAccess, require_role
 from app.errors import ApiError
 from app.models import Project
-from app.services import audit, cloud, cloud_db, jobs
-from app.services.sources import data_source_out
+from app.services import audit, cloud, cloud_db, dynamo, jobs
+from app.services.sources import data_source_out, get_source
 
 router = APIRouter(tags=["cloud"])
 
 Admin = Annotated[ProjectAccess, Depends(require_role("admin"))]
 Viewer = Annotated[ProjectAccess, Depends(require_role("viewer"))]
+
+BACKUP_COST = (
+    "An on-demand backup is a full copy of the table kept by AWS until you delete it (in the AWS console, "
+    "DynamoDB -> Backups), billed at about US$0.10 per GB per month. Making one does not slow the table down."
+)
+BACKUP_RESTORE = (
+    "To restore, open the backup in the AWS console (DynamoDB -> Backups -> Restore): AWS creates a new table "
+    "from it, which you can then connect here with Add database -> In your AWS account."
+)
 
 
 class AwsCredentials(BaseModel):
@@ -120,11 +129,19 @@ def project_targets(access: Viewer, db: DbSession) -> list[dict]:
 # --- cloud databases (docs/CLOUD.md "C2") ---------------------------------------------------------
 
 
+class TableKey(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    type: Literal["S", "N", "B"] = "S"  # text, number, binary
+
+
 class CloudDatabaseCreate(BaseModel):
     connection_id: str = Field(max_length=36)
     name: str = Field(min_length=1, max_length=63)
-    engine: Literal["mysql", "mariadb", "postgresql"]
+    engine: Literal["mysql", "mariadb", "postgresql", "dynamodb"]
     instance_class: str = Field(default=cloud_db.DEFAULT_CLASS, max_length=40)
+    # DynamoDB only (docs/CLOUD.md "C2-2"): the table's key; default a text `id`.
+    partition_key: TableKey | None = None
+    sort_key: TableKey | None = None
     # Billable: the caller must say they accept the AWS charges (the dashboard asks with the cost note).
     confirm_billing: bool = False
 
@@ -132,10 +149,18 @@ class CloudDatabaseCreate(BaseModel):
 class CloudDatabaseConnect(BaseModel):
     connection_id: str = Field(max_length=36)
     name: str = Field(min_length=1, max_length=63)
-    resource_id: str = Field(min_length=1, max_length=63)
-    username: str = Field(min_length=1, max_length=128)
+    # RDS / Aurora: the instance or cluster and the database login.
+    resource_id: str | None = Field(default=None, max_length=63)
+    username: str = Field(default="", max_length=128)
     password: str = Field(default="", max_length=500)
     database: str | None = Field(default=None, max_length=128)
+    # DynamoDB: the tables (from the connection's listing); set instead of resource_id.
+    tables: list[str] | None = Field(default=None, max_length=100)
+
+
+class CloudBackupCreate(BaseModel):
+    table: str | None = Field(default=None, max_length=255)  # None: every table of the database
+    confirm_billing: bool = False
 
 
 def _name(db, project_id: str, name: str) -> str:
@@ -179,23 +204,36 @@ def connection_databases(connection_id: str, access: Admin, db: DbSession) -> di
 
 @router.post("/projects/{project_id}/cloud/databases", status_code=201)
 def create_database(body: CloudDatabaseCreate, request: Request, access: Admin, db: DbSession) -> dict:
+    dynamodb = body.engine == "dynamodb"
     if not body.confirm_billing:
+        cost = cloud_db.DYNAMODB_COST_NOTE if dynamodb else cloud_db.COST_NOTE
         raise ApiError(
             422,
             "billing_not_confirmed",
-            "This creates a database AWS bills to your account. " + cloud_db.COST_NOTE + " Send confirm_billing: true.",
+            "This creates a database AWS bills to your account. " + cost + " Send confirm_billing: true.",
             {"field": "confirm_billing"},
         )
     name = _name(db, access.project.id, body.name)
-    ds, job = cloud_db.create(
-        db,
-        access.project.id,
-        connection_id=body.connection_id,
-        name=name,
-        engine=body.engine,
-        instance_class=body.instance_class,
-        user_id=access.user.id,
-    )
+    if dynamodb:
+        ds, job = cloud_db.create_table(
+            db,
+            access.project.id,
+            connection_id=body.connection_id,
+            name=name,
+            partition_key=(body.partition_key or TableKey(name="id")).model_dump(),
+            sort_key=body.sort_key.model_dump() if body.sort_key else None,
+            user_id=access.user.id,
+        )
+    else:
+        ds, job = cloud_db.create(
+            db,
+            access.project.id,
+            connection_id=body.connection_id,
+            name=name,
+            engine=body.engine,
+            instance_class=body.instance_class,
+            user_id=access.user.id,
+        )
     _audit(db, request, access, ds, "create")
     db.commit()
     jobs.dispatch(job.id)
@@ -205,16 +243,64 @@ def create_database(body: CloudDatabaseCreate, request: Request, access: Admin, 
 @router.post("/projects/{project_id}/cloud/databases/connect", status_code=201)
 def connect_database(body: CloudDatabaseConnect, request: Request, access: Admin, db: DbSession) -> dict:
     name = _name(db, access.project.id, body.name)
-    ds = cloud_db.connect(
-        db,
-        access.project.id,
-        connection_id=body.connection_id,
-        name=name,
-        resource_id=body.resource_id,
-        username=body.username,
-        password=body.password,
-        database=body.database,
-    )
+    if body.tables is not None:
+        ds = cloud_db.connect_tables(
+            db, access.project.id, connection_id=body.connection_id, name=name, tables=body.tables
+        )
+    elif not body.resource_id or not body.username.strip():
+        raise ApiError(422, "validation_error", "Pick the database and enter its user", {"field": "resource_id"})
+    else:
+        ds = cloud_db.connect(
+            db,
+            access.project.id,
+            connection_id=body.connection_id,
+            name=name,
+            resource_id=body.resource_id,
+            username=body.username,
+            password=body.password,
+            database=body.database,
+        )
     _audit(db, request, access, ds, "connect")
     db.commit()
     return data_source_out(ds)
+
+
+# --- DynamoDB on-demand backups (docs/CLOUD.md "C2-2") --------------------------------------------
+
+
+def _dynamo_source(db, access: ProjectAccess, source_id: str):
+    ds = get_source(db, access.project.id, source_id)
+    if ds.engine != dynamo.ENGINE:
+        raise ApiError(400, "wrong_source_kind", "Cloud backups here are for DynamoDB databases")
+    db.commit()
+    return ds
+
+
+@router.get("/projects/{project_id}/data-sources/{source_id}/cloud-backups")
+def list_cloud_backups(source_id: str, access: Viewer, db: DbSession) -> dict:
+    """The tables' on-demand backups in AWS, newest first (also ones made in the AWS console)."""
+    ds = _dynamo_source(db, access, source_id)
+    return {"backups": dynamo.list_backups(ds), "cost": BACKUP_COST, "restore": BACKUP_RESTORE}
+
+
+@router.post("/projects/{project_id}/data-sources/{source_id}/cloud-backups", status_code=201)
+def create_cloud_backup(
+    source_id: str, body: CloudBackupCreate, request: Request, access: Admin, db: DbSession
+) -> dict:
+    if not body.confirm_billing:
+        raise ApiError(
+            422, "billing_not_confirmed", BACKUP_COST + " Send confirm_billing: true.", {"field": "confirm_billing"}
+        )
+    ds = _dynamo_source(db, access, source_id)
+    backups = dynamo.create_backups(ds, body.table)
+    audit.record(
+        db,
+        "data_source.cloud_backup",
+        request=request,
+        user_id=access.user.id,
+        project_id=access.project.id,
+        data_source_id=ds.id,
+        tables=[b["table"] for b in backups],
+    )
+    db.commit()
+    return {"backups": backups}

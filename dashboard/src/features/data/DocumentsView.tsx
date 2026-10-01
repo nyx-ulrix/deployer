@@ -17,7 +17,7 @@ import { formatNumber } from "../../lib/format";
 import { clampOffset } from "../../lib/pagination";
 import { JobProgressPanel } from "../jobs/JobProgress";
 import { useProjectContext } from "../projects/project-context";
-import { docIdString, parseJsonObject, pretty } from "./json";
+import { docIdString, itemKeyId, parseJsonObject, pretty } from "./json";
 import { JsonEditor } from "./JsonEditor";
 
 const PAGE_SIZES = [10, 25, 50];
@@ -36,6 +36,16 @@ export function DocumentsView({
   const queryClient = useQueryClient();
   const [limit, setLimit] = useState(25);
   const [skip, setSkip] = useState(0);
+  // DynamoDB pages with cursors (docs/CLOUD.md "C2-2"): the cursors of the pages before this one.
+  const dynamo = source.engine === "dynamodb";
+  const [cursors, setCursors] = useState<string[]>([]);
+  const [cursor, setCursor] = useState<string | undefined>(undefined);
+  const firstPage = () => {
+    setSkip(0);
+    setCursors([]);
+    setCursor(undefined);
+  };
+  const noun = dynamo ? "item" : "document";
   const [filterText, setFilterText] = useState("");
   const [appliedFilter, setAppliedFilter] = useState<string | undefined>(undefined);
   const [editing, setEditing] = useState<JsonObject | "new" | null>(null);
@@ -49,7 +59,7 @@ export function DocumentsView({
   };
 
   const filterParse = parseJsonObject(filterText, { allowEmpty: true });
-  const params = { filter: appliedFilter, limit, skip };
+  const params = dynamo ? { filter: appliedFilter, limit, cursor } : { filter: appliedFilter, limit, skip };
   const docs = useQuery({
     queryKey: qk.documents(project.id, source.id, entity.name, params),
     queryFn: () => api.documents.list(project.id, source.id, entity.name, params),
@@ -59,14 +69,16 @@ export function DocumentsView({
   const invalidate = () =>
     queryClient.invalidateQueries({ queryKey: ["projects", project.id, "documents", source.id, entity.name] });
 
+  const key = docs.data?.key ?? [];
+  const idOf = (doc: JsonObject) => (dynamo ? itemKeyId(doc, key) : docIdString(doc._id));
   const remove = useMutation({
-    mutationFn: (doc: JsonObject) => api.documents.remove(project.id, source.id, entity.name, docIdString(doc._id) ?? ""),
+    mutationFn: (doc: JsonObject) => api.documents.remove(project.id, source.id, entity.name, idOf(doc) ?? ""),
     onSuccess: () => {
       setDeleting(null);
       void invalidate();
-      toast.success("Document deleted.");
+      toast.success(dynamo ? "Item deleted." : "Document deleted.");
     },
-    onError: (e) => toast.error(errorMessage(e), "Couldn't delete document"),
+    onError: (e) => toast.error(errorMessage(e), `Couldn't delete ${noun}`),
   });
 
   const drop = useMutation({
@@ -82,12 +94,12 @@ export function DocumentsView({
   const applyFilter = () => {
     if (!filterParse.ok) return;
     setAppliedFilter(filterParse.value ? JSON.stringify(filterParse.value) : undefined);
-    setSkip(0);
+    firstPage();
   };
 
   const total = docs.data?.total ?? 0;
   // Deleting the last document on a page leaves skip past the end: step back a page.
-  if (docs.data && !docs.isPlaceholderData && clampOffset(skip, total, limit) !== skip) {
+  if (!dynamo && docs.data && !docs.isPlaceholderData && clampOffset(skip, total, limit) !== skip) {
     setSkip(clampOffset(skip, total, limit));
   }
 
@@ -105,10 +117,10 @@ export function DocumentsView({
         </Button>
         {can("developer") && (
           <Button size="sm" variant="primary" icon={<Plus className="size-3.5" />} onClick={() => setEditing("new")}>
-            Insert document
+            Insert {noun}
           </Button>
         )}
-        {can("admin") && (
+        {can("admin") && !dynamo && (
           <Button size="sm" variant="outline-danger" icon={<Trash2 className="size-3.5" />} onClick={() => setDropping(true)}>
             Drop collection
           </Button>
@@ -139,10 +151,14 @@ export function DocumentsView({
           <input
             value={filterText}
             onChange={(e) => setFilterText(e.target.value)}
-            placeholder='Filter, e.g. { "status": "active" }'
+            placeholder={
+              dynamo
+                ? `Equal values, e.g. { "${key[0] ?? "id"}": "..." } (naming the ${key[0] ?? "partition key"} is fastest)`
+                : 'Filter, e.g. { "status": "active" }'
+            }
             spellCheck={false}
             autoCapitalize="off"
-            aria-label="MongoDB filter (JSON)"
+            aria-label={dynamo ? "DynamoDB filter (JSON)" : "MongoDB filter (JSON)"}
             aria-invalid={!filterParse.ok}
             className={cn(
               "h-10 w-full rounded-lg border bg-surface pr-3 pl-8 font-mono text-base focus:ring-3 focus:ring-ring focus:outline-none sm:text-xs",
@@ -161,7 +177,7 @@ export function DocumentsView({
               onClick={() => {
                 setFilterText("");
                 setAppliedFilter(undefined);
-                setSkip(0);
+                firstPage();
               }}
             >
               Clear
@@ -177,28 +193,36 @@ export function DocumentsView({
         <ErrorState error={docs.error} onRetry={() => void docs.refetch()} />
       ) : docs.data.documents.length === 0 ? (
         <EmptyState
-          title={appliedFilter ? "No matching documents" : "No documents"}
-          description={appliedFilter ? "Try a different filter." : "This collection is empty."}
+          title={appliedFilter ? `No matching ${noun}s` : `No ${noun}s`}
+          description={
+            appliedFilter
+              ? dynamo && docs.data.next_cursor
+                ? "None on this stretch of the table; try the next page."
+                : "Try a different filter."
+              : `This ${dynamo ? "table" : "collection"} is empty.`
+          }
         />
       ) : (
         <ul className={cn("space-y-2", docs.isFetching && "opacity-80")}>
           {docs.data.documents.map((doc, i) => {
-            const id = docIdString(doc._id);
+            const id = idOf(doc);
             return (
               <li key={id ?? i} className="rounded-xl border border-border bg-surface">
                 <div className="flex items-center gap-2 border-b border-border px-3 py-1.5">
-                  <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">_id: {id ?? "—"}</code>
+                  <code className="min-w-0 flex-1 truncate font-mono text-xs text-muted">
+                    {dynamo ? "key" : "_id"}: {id ?? "—"}
+                  </code>
                   <CopyButton value={pretty(doc)} label="Copy JSON" className="size-7" />
                   {can("developer") && id && (
                     <>
-                      <Button size="icon-sm" variant="ghost" aria-label="Edit document" title="Edit" onClick={() => setEditing(doc)}>
+                      <Button size="icon-sm" variant="ghost" aria-label={`Edit ${noun}`} title="Edit" onClick={() => setEditing(doc)}>
                         <Pencil className="size-3.5" />
                       </Button>
                       <Button
                         size="icon-sm"
                         variant="ghost"
                         className="text-danger"
-                        aria-label="Delete document"
+                        aria-label={`Delete ${noun}`}
                         title="Delete"
                         onClick={() => setDeleting(doc)}
                       >
@@ -216,17 +240,24 @@ export function DocumentsView({
 
       {docs.data && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted">
-          <span>
-            {formatNumber(total === 0 ? 0 : skip + 1)}–{formatNumber(Math.min(skip + limit, total))} of {formatNumber(total)}
-          </span>
+          {dynamo ? (
+            <span>
+              Page {cursors.length + 1}
+              {docs.data.total !== null && ` · about ${formatNumber(docs.data.total)} in the table (AWS updates this every few hours)`}
+            </span>
+          ) : (
+            <span>
+              {formatNumber(total === 0 ? 0 : skip + 1)}–{formatNumber(Math.min(skip + limit, total))} of {formatNumber(total)}
+            </span>
+          )}
           <div className="flex items-center gap-2">
             <Select
               className="h-8 w-auto text-xs"
-              aria-label="Documents per page"
+              aria-label={`${dynamo ? "Items" : "Documents"} per page`}
               value={limit}
               onChange={(e) => {
                 setLimit(Number(e.target.value));
-                setSkip(0);
+                firstPage();
               }}
             >
               {PAGE_SIZES.map((n) => (
@@ -235,10 +266,28 @@ export function DocumentsView({
                 </option>
               ))}
             </Select>
-            <Button size="icon-sm" aria-label="Previous page" disabled={skip === 0} onClick={() => setSkip(Math.max(0, skip - limit))}>
+            <Button
+              size="icon-sm"
+              aria-label="Previous page"
+              disabled={dynamo ? cursors.length === 0 : skip === 0}
+              onClick={() => {
+                if (!dynamo) return setSkip(Math.max(0, skip - limit));
+                setCursor(cursors.at(-1) || undefined);
+                setCursors(cursors.slice(0, -1));
+              }}
+            >
               <ChevronLeft className="size-4" />
             </Button>
-            <Button size="icon-sm" aria-label="Next page" disabled={skip + limit >= total} onClick={() => setSkip(skip + limit)}>
+            <Button
+              size="icon-sm"
+              aria-label="Next page"
+              disabled={dynamo ? !docs.data.next_cursor : skip + limit >= total}
+              onClick={() => {
+                if (!dynamo) return setSkip(skip + limit);
+                setCursors([...cursors, cursor ?? ""]);
+                setCursor(docs.data.next_cursor ?? undefined);
+              }}
+            >
               <ChevronRight className="size-4" />
             </Button>
           </div>
@@ -250,6 +299,7 @@ export function DocumentsView({
           projectId={project.id}
           sourceId={source.id}
           collection={entity.name}
+          itemKey={dynamo ? key : null}
           doc={editing === "new" ? null : editing}
           onClose={() => setEditing(null)}
           onSaved={() => void invalidate()}
@@ -261,9 +311,9 @@ export function DocumentsView({
           onClose={() => setDeleting(null)}
           onConfirm={() => remove.mutate(deleting)}
           loading={remove.isPending}
-          title="Delete this document?"
-          description={`Document ${docIdString(deleting._id)} will be permanently deleted.`}
-          confirmLabel="Delete document"
+          title={`Delete this ${noun}?`}
+          description={`${dynamo ? "Item" : "Document"} ${idOf(deleting)} will be permanently deleted.`}
+          confirmLabel={`Delete ${noun}`}
         />
       )}
       <ConfirmDialog
@@ -284,6 +334,7 @@ function DocumentDialog({
   projectId,
   sourceId,
   collection,
+  itemKey,
   doc,
   onClose,
   onSaved,
@@ -291,16 +342,20 @@ function DocumentDialog({
   projectId: string;
   sourceId: string;
   collection: string;
+  /** DynamoDB: the key attributes, which identify the item and cannot be edited. */
+  itemKey: string[] | null;
   doc: JsonObject | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const toast = useToast();
   const isNew = doc === null;
+  const fixed = itemKey ?? ["_id"]; // never sent in `set`
+  const docId = doc ? (itemKey ? itemKeyId(doc, itemKey) : docIdString(doc._id)) : null;
   const [text, setText] = useState(() => {
-    if (!doc) return "{\n  \n}";
+    if (!doc) return itemKey ? pretty(Object.fromEntries(itemKey.map((k) => [k, ""]))) : "{\n  \n}";
     const rest: JsonObject = { ...doc };
-    delete rest._id;
+    for (const k of fixed) delete rest[k];
     return pretty(rest);
   });
   const parsed = parseJsonObject(text);
@@ -311,12 +366,13 @@ function DocumentDialog({
       const value = parsed.value;
       if (isNew) return api.documents.insert(projectId, sourceId, collection, value);
       const set: JsonObject = { ...value };
-      delete set._id;
-      const unset = Object.keys(doc).filter((k) => k !== "_id" && !(k in set));
-      return api.documents.update(projectId, sourceId, collection, docIdString(doc._id) ?? "", set, unset.length ? unset : undefined);
+      for (const k of fixed) delete set[k];
+      const unset = Object.keys(doc).filter((k) => !fixed.includes(k) && !(k in set));
+      return api.documents.update(projectId, sourceId, collection, docId ?? "", set, unset.length ? unset : undefined);
     },
     onSuccess: () => {
-      toast.success(isNew ? "Document inserted." : "Document updated.");
+      const noun = itemKey ? "Item" : "Document";
+      toast.success(isNew ? `${noun} inserted.` : `${noun} updated.`);
       onSaved();
       onClose();
     },
@@ -326,11 +382,15 @@ function DocumentDialog({
     <Dialog
       open
       onClose={onClose}
-      title={isNew ? `Insert into ${collection}` : "Edit document"}
+      title={isNew ? `Insert into ${collection}` : itemKey ? "Edit item" : "Edit document"}
       description={
-        isNew
-          ? "Relaxed Extended JSON is supported, e.g. { \"createdAt\": { \"$date\": \"2026-01-01T00:00:00Z\" } }. Omit _id to generate one."
-          : `_id ${docIdString(doc._id)} — top-level fields you remove are unset.`
+        itemKey
+          ? isNew
+            ? `Fill in the key (${itemKey.join(", ")}) and any other fields. Plain JSON; a set is { "$set": ["a", "b"] }, binary is { "$base64": "..." }.`
+            : `Key ${docId} (it cannot change) — top-level fields you remove are deleted.`
+          : isNew
+            ? "Relaxed Extended JSON is supported, e.g. { \"createdAt\": { \"$date\": \"2026-01-01T00:00:00Z\" } }. Omit _id to generate one."
+            : `_id ${docId} — top-level fields you remove are unset.`
       }
       size="lg"
       dismissible={!save.isPending}

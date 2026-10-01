@@ -23,6 +23,8 @@ from typing import Any
 from app.errors import CloudError
 
 ACCESS_ROLE = "deployer-apprunner-ecr-access"  # shared by every App Runner service of the account
+INSTANCE_ROLE_PREFIX = "deployer-app-"  # one instance role per App Runner app that uses DynamoDB tables
+INSTANCE_ROLE_POLICY = "deployer-databases"
 ECR_ACCESS_POLICY = "arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess"
 CACHING_OPTIMIZED = "658327ea-f89d-4fab-a63d-7e88639e58f6"  # AWS managed cache policy
 CERT_REGION = "us-east-1"  # CloudFront only uses ACM certificates from us-east-1
@@ -443,6 +445,11 @@ class AwsClient:
         }
 
     @staticmethod
+    def _instance(role_arn: str | None) -> dict:
+        out = {"Cpu": "0.25 vCPU", "Memory": "0.5 GB"}
+        return {**out, "InstanceRoleArn": role_arn} if role_arn else out
+
+    @staticmethod
     def _network(connector_arn: str | None) -> dict:
         """Egress through the VPC connector when the app uses a cloud database, else App Runner's default."""
         egress = {"EgressType": "VPC", "VpcConnectorArn": connector_arn} if connector_arn else {"EgressType": "DEFAULT"}
@@ -450,7 +457,14 @@ class AwsClient:
 
     @_wrap
     def create_service(
-        self, name: str, image: str, port: int, env: dict[str, str], role_arn: str, connector_arn: str | None = None
+        self,
+        name: str,
+        image: str,
+        port: int,
+        env: dict[str, str],
+        role_arn: str,
+        connector_arn: str | None = None,
+        instance_role_arn: str | None = None,
     ) -> dict:
         ar = self._c("apprunner")
         for attempt in range(6):
@@ -458,7 +472,7 @@ class AwsClient:
                 out = ar.create_service(
                     ServiceName=name,
                     SourceConfiguration=self._source(image, port, env, role_arn),
-                    InstanceConfiguration={"Cpu": "0.25 vCPU", "Memory": "0.5 GB"},
+                    InstanceConfiguration=self._instance(instance_role_arn),
                     NetworkConfiguration=self._network(connector_arn),
                 )
                 break
@@ -476,11 +490,19 @@ class AwsClient:
 
     @_wrap
     def update_service(
-        self, arn: str, image: str, port: int, env: dict[str, str], role_arn: str, connector_arn: str | None = None
+        self,
+        arn: str,
+        image: str,
+        port: int,
+        env: dict[str, str],
+        role_arn: str,
+        connector_arn: str | None = None,
+        instance_role_arn: str | None = None,
     ) -> str:
         out = self._c("apprunner").update_service(
             ServiceArn=arn,
             SourceConfiguration=self._source(image, port, env, role_arn),
+            InstanceConfiguration=self._instance(instance_role_arn),
             NetworkConfiguration=self._network(connector_arn),
         )
         return out["OperationId"]
@@ -704,3 +726,88 @@ class AwsClient:
             VpcConnectorName=name, Subnets=[s["SubnetId"] for s in subnets], SecurityGroups=[group], Tags=[TAG]
         )
         return {"arn": out["VpcConnector"]["VpcConnectorArn"], "group_id": group}
+
+    @_wrap
+    def ensure_dynamodb_endpoint(self, vpc_id: str) -> str:
+        """A DynamoDB gateway endpoint in the VPC (free, created once, shared): an App Runner app whose
+        traffic goes through the VPC (it also uses an RDS database) still reaches DynamoDB without a NAT."""
+        ec2 = self._c("ec2")
+        service = f"com.amazonaws.{self.region}.dynamodb"
+        filters = [{"Name": "vpc-id", "Values": [vpc_id]}, {"Name": "service-name", "Values": [service]}]
+        for e in ec2.describe_vpc_endpoints(Filters=filters)["VpcEndpoints"]:
+            if str(e.get("State", "")).lower() not in ("deleting", "deleted", "failed", "rejected", "expired"):
+                return e["VpcEndpointId"]
+        routes = ec2.describe_route_tables(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["RouteTables"]
+        return ec2.create_vpc_endpoint(
+            VpcEndpointType="Gateway",
+            VpcId=vpc_id,
+            ServiceName=service,
+            RouteTableIds=[r["RouteTableId"] for r in routes],
+            TagSpecifications=[{"ResourceType": "vpc-endpoint", "Tags": [TAG]}],
+        )["VpcEndpoint"]["VpcEndpointId"]
+
+    # --- DynamoDB (docs/CLOUD.md "C2-2"; services/dynamo.py) --------------------------------------------
+
+    @_wrap
+    def ddb(self, operation: str, **params) -> dict:
+        """One DynamoDB API call by its AWS name (`Query`, `PutItem`, `CreateTable`...) with low-level
+        (typed) attribute values. The DynamoDB engine's browser, console, schema, backups and the create /
+        delete jobs all go through here, so tests fake this one method."""
+        from botocore import xform_name
+        from botocore.exceptions import ParamValidationError
+
+        try:
+            out = getattr(self._c("dynamodb"), xform_name(operation))(**params)
+        except ParamValidationError as exc:  # a console request with a wrong parameter: say which
+            raise CloudError(f"Invalid request: {exc}", code="ValidationException") from None
+        out.pop("ResponseMetadata", None)
+        return out
+
+    @_wrap
+    def ensure_instance_role(self, name: str, policy: dict | None) -> str:
+        """The App Runner instance role `name` (created once) the app's code runs as; its one inline policy
+        is `policy` (the DynamoDB tables it may use), removed when None. Returns the role ARN."""
+        iam = self._c("iam")
+        try:
+            arn = iam.get_role(RoleName=name)["Role"]["Arn"]
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) != "NoSuchEntity":
+                raise
+            trust = {
+                "Version": "2012-10-17",
+                "Statement": [
+                    {
+                        "Effect": "Allow",
+                        "Principal": {"Service": "tasks.apprunner.amazonaws.com"},
+                        "Action": "sts:AssumeRole",
+                    }
+                ],
+            }
+            arn = iam.create_role(
+                RoleName=name,
+                AssumeRolePolicyDocument=json.dumps(trust),
+                Description="Deployer: what this App Runner app's code may use",
+                Tags=[TAG],
+            )["Role"]["Arn"]
+        if policy:
+            iam.put_role_policy(RoleName=name, PolicyName=INSTANCE_ROLE_POLICY, PolicyDocument=json.dumps(policy))
+        else:
+            try:
+                iam.delete_role_policy(RoleName=name, PolicyName=INSTANCE_ROLE_POLICY)
+            except Exception as exc:  # noqa: BLE001
+                if _code(exc) != "NoSuchEntity":
+                    raise
+        return arn
+
+    @_wrap
+    def delete_instance_role(self, name: str) -> None:
+        iam = self._c("iam")
+        for call in (
+            lambda: iam.delete_role_policy(RoleName=name, PolicyName=INSTANCE_ROLE_POLICY),
+            lambda: iam.delete_role(RoleName=name),
+        ):
+            try:
+                call()
+            except Exception as exc:  # noqa: BLE001
+                if _code(exc) != "NoSuchEntity":
+                    raise

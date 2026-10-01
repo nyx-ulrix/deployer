@@ -162,6 +162,35 @@ s.patch(f"{docs}/{doc_id}", json={"set": {"status": "paid"}, "unset": ["note"]})
 s.delete(f"{docs}/{doc_id}")
 ```
 
+### DynamoDB tables
+
+A DynamoDB database ([CLOUD.md](CLOUD.md) "C2-2") uses the same documents endpoints with `{name}` = a
+table of the source (any other table is `404`):
+
+- `GET`: `filter` = **equality** only (`{"status": "open"}`; naming the partition key reads just that
+  partition), `limit`, and **`cursor`** instead of `skip`. Response: `{"documents": [...], "total": n |
+  null, "key": ["customer", "n"], "next_cursor": "..." | null}` - pass `next_cursor` as `cursor` for the
+  next page; `total` is DynamoDB's estimate (refreshed every few hours), `null` with a filter.
+- Items are plain JSON: numbers, strings, booleans, `null`, lists, maps; binary is `{"$base64": "..."}`
+  and sets are `{"$set": [...]}` - send the same shapes when writing.
+- `{doc_id}` is the item's key as JSON, URL-encoded (`{"customer":"c1","n":2}`), or the plain value for a
+  table with only a partition key. `POST` needs the key (`400 missing_key`) and refuses an existing one
+  (`409 document_exists`); `PATCH` can't change the key (`400 immutable_field`); an unknown item is `404
+  document_not_found`.
+
+```js
+const items = `${base}/projects/${PID}/data-sources/${SID}/collections/orders/documents`;
+let page = await fetch(`${items}?limit=50`, { headers }).then((r) => r.json());
+while (page.next_cursor) {
+  page = await fetch(`${items}?limit=50&cursor=${encodeURIComponent(page.next_cursor)}`, { headers }).then((r) => r.json());
+}
+const id = encodeURIComponent(JSON.stringify({ customer: "c1", n: 2 }));
+await fetch(`${items}/${id}`, { method: "PATCH", headers, body: JSON.stringify({ set: { status: "paid" } }) });
+```
+
+An app on AWS App Runner doesn't need this API for its own tables: with *Database access* it gets
+`DEPLOYER_DB_<NAME>_TABLE` / `_REGION` and an AWS role for the SDK, and keeps working when the PC is off.
+
 ## Queries
 
 `POST /projects/{pid}/data-sources/{sid}/query` with `{"query": "...", "max_rows": 500, "timeout_seconds": 30}`

@@ -19,6 +19,7 @@ import { useDeviceNames } from "../devices/useDeviceNames";
 import { JobProgressPanel } from "../jobs/JobProgress";
 import { useProjectContext } from "../projects/project-context";
 import { RecoveryTimelineBar } from "./BackupBits";
+import { CloudBackups } from "./CloudBackups";
 import { CompareDialog } from "./CompareDialog";
 import { pitrBounds, timelineBar } from "./pitr";
 import { PolicyDialog } from "./PolicyDialog";
@@ -65,7 +66,9 @@ export function BackupsTab() {
         </Select>
         <p className="text-xs text-muted">Times are shown in {localTimeZone()}.</p>
       </div>
-      {source.mode === "external" ? (
+      {source.engine === "dynamodb" ? (
+        <CloudBackups key={source.id} source={source} />
+      ) : source.mode === "external" ? (
         <EmptyState
           icon={<Cloud className="size-5" />}
           title="Backups for external databases are up to their provider"

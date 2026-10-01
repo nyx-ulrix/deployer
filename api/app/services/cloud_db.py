@@ -12,8 +12,15 @@ DDL export work unchanged) with `cloud_connection_id` and `cloud_state` set:
   password kept with `encrypt_json` in the source's config. Deleting it (job `data_source.cloud_delete`)
   switches deletion protection off and deletes with a final snapshot, then removes the group.
 
+DynamoDB ("C2-2"): an `external` source with engine `dynamodb` holding one or more tables
+(`cloud_state.tables`); data operations are in services/dynamo.py. **Created**: one on-demand table
+`deployer-<name>-<id8>` (job `data_source.cloud_create`: CreateTable, wait for ACTIVE), deletion protection
+on; deleting switches it off, takes a final on-demand backup and deletes the table. **Connected**: tables the
+user already has, only read and written, never deleted.
+
 Apps on `aws_app` with database access get `DEPLOYER_DB_<NAME>_*` for the project's databases on the
-same AWS connection through `cloud_deploy.cloud_env`, and reach them through the VPC connector.
+same AWS connection through `cloud_deploy.cloud_env`, and reach them through the VPC connector (RDS) or
+their App Runner instance role, scoped to the tables' ARNs (DynamoDB).
 """
 
 from __future__ import annotations
@@ -30,7 +37,7 @@ from sqlalchemy.orm import Session
 from app.crypto import decrypt_json, encrypt_json
 from app.errors import ApiError, CloudError, conflict
 from app.models import App, CloudConnection, DataSource, Job, utcnow
-from app.services import cloud, cloud_aws, connections, jobs
+from app.services import cloud, cloud_aws, connections, dynamo, jobs
 
 log = logging.getLogger(__name__)
 
@@ -79,10 +86,11 @@ LOCATIONS = [
     {
         "id": "aws",
         "label": "In your AWS account",
-        "what": "Amazon runs the database (RDS: MySQL, MariaDB or PostgreSQL) in your own AWS account. Create a "
-        "new one here or connect one you already have.",
+        "what": "Amazon runs the database in your own AWS account: a SQL database (RDS: MySQL, MariaDB or "
+        "PostgreSQL) or a DynamoDB table (NoSQL). Create a new one here or connect one you already have.",
         "when_pc_off": "Stays up when this PC is off, so cloud apps keep working.",
-        "cost": "AWS bills you directly: the smallest new database is roughly US$15-20/month (less on the free tier).",
+        "cost": "AWS bills you directly: the smallest new SQL database is roughly US$15-20/month (less on the free "
+        "tier); a DynamoDB table costs per read, write and GB stored, often cents for a small app.",
     },
     {
         "id": "firebase",
@@ -108,6 +116,26 @@ NETWORK_NOTE = (
     "app linked to a database sends all its outgoing traffic through your VPC, which has no internet route by "
     "default: if the app also calls other internet services, add a NAT gateway in the VPC console (about "
     "US$32/month)."
+)
+
+DYNAMODB_WHAT = (
+    "DynamoDB is Amazon's NoSQL database: you store items (JSON-like records) in a table and find them by a key "
+    "you choose, such as a user id. There is no server to keep running and nothing to size. Your app talks to "
+    "it with the AWS SDK (not SQL)."
+)
+DYNAMODB_KEYS = (
+    "Every item needs the partition key (for example id or userId). Add a sort key (for example createdAt) when "
+    "one partition holds many items you want in order, like a user's orders. Keys cannot be changed later."
+)
+DYNAMODB_COST_NOTE = (
+    "Creates a DynamoDB table in your AWS account that AWS bills to you, on demand: about US$0.63 per million "
+    "writes and US$0.13 per million reads, plus about US$0.25 per GB stored per month (US region prices; the "
+    "first 25 GB of storage are free every month). An idle table costs only its storage. On-demand backups cost "
+    "about US$0.10 per GB per month until you delete them; deleting the table here keeps a final backup."
+)
+DYNAMODB_NETWORK = (
+    "No firewall or password: Deployer reaches it with your AWS connection's key, and App Runner apps with "
+    "Database access through an IAM role that may use exactly these tables."
 )
 
 
@@ -139,7 +167,7 @@ def resources(state: dict | None) -> list[str]:
     s = state or {}
     if not s.get("created"):
         return []
-    out = []
+    out = [f"DynamoDB table {t} (deleted after a final backup)" for t in s.get("tables") or []]
     if s.get("instance_id"):
         out.append(f"RDS instance {s['instance_id']} (deleted after a final snapshot)")
     if s.get("group_id"):
@@ -159,8 +187,13 @@ def cloud_out(ds: DataSource, db: Session | None = None) -> dict | None:
         "connection_name": conn.name if conn else None,
         "service": s.get("service", "rds"),
         "created": bool(s.get("created")),
-        "resource_id": s.get("instance_id") or s.get("cluster_id"),
-        "resource_kind": "cluster" if s.get("cluster_id") else "instance",
+        "resource_id": s.get("instance_id") or s.get("cluster_id") or next(iter(s.get("tables") or []), None),
+        "resource_kind": "table"
+        if s.get("service") == "dynamodb"
+        else "cluster"
+        if s.get("cluster_id")
+        else "instance",
+        "tables": s.get("tables"),
         "region": s.get("region"),
         "instance_class": s.get("instance_class"),
         "allowed_ip": s.get("allowed_ip"),
@@ -181,6 +214,13 @@ def options() -> dict:
             "backup_days": BACKUP_DAYS,
             "cost": COST_NOTE,
             "network": NETWORK_NOTE,
+        },
+        "dynamodb": {
+            "what": DYNAMODB_WHAT,
+            "keys": DYNAMODB_KEYS,
+            "key_types": [{"id": k, "label": v} for k, v in dynamo.KEY_TYPES.items()],
+            "cost": DYNAMODB_COST_NOTE,
+            "network": DYNAMODB_NETWORK,
         },
     }
 
@@ -220,7 +260,29 @@ def list_resources(db: Session, project_id: str, connection_id: str) -> dict:
         elif not r["public"]:
             problem = "Not publicly accessible: this PC cannot reach it (turn on Public access in the RDS console)"
         out.append({**r, "deployer_engine": engine, "region": config["region"], "problem": problem})
-    return {"region": config["region"], "pc_ip": pc_ip, "databases": out}
+    tables, tables_problem = [], None
+    try:
+        tables = list_tables(aws)
+    except CloudError as exc:  # e.g. a policy pasted before DynamoDB support: RDS still listed
+        tables_problem = exc.message
+    return {
+        "region": config["region"],
+        "pc_ip": pc_ip,
+        "databases": out,
+        "tables": tables,
+        "tables_problem": tables_problem,
+    }
+
+
+def list_tables(aws, limit: int = 1000) -> list[str]:
+    names, start = [], None
+    while len(names) < limit:
+        page = aws.ddb("ListTables", **({"ExclusiveStartTableName": start} if start else {}))
+        names += page.get("TableNames") or []
+        start = page.get("LastEvaluatedTableName")
+        if not start:
+            break
+    return names
 
 
 def connect(
@@ -292,6 +354,140 @@ def connect(
     db.add(ds)
     db.flush()
     return ds
+
+
+def connect_tables(db: Session, project_id: str, *, connection_id: str, name: str, tables: list[str]) -> DataSource:
+    """A DynamoDB source for tables the user already has (the caller checks the name and commits). Deployer
+    only reads and writes their items; removing the source never deletes a table."""
+    conn, config = _aws_connection(db, project_id, connection_id)
+    tables = list(dict.fromkeys(t.strip() for t in tables if t and t.strip()))
+    if not tables:
+        raise ApiError(422, "validation_error", "Pick at least one table", {"field": "tables"})
+    aws = cloud_aws.client(config)
+    for t in tables:
+        try:
+            aws.ddb("DescribeTable", TableName=t)
+        except CloudError as exc:
+            raise ApiError(400, "connection_failed", f"Table {t}: {exc.message}") from None
+    noun = "table" if len(tables) == 1 else "tables"
+    ds = DataSource(
+        project_id=project_id,
+        name=name,
+        kind="nosql",
+        engine=dynamo.ENGINE,
+        mode="external",
+        database_name=tables[0][:128],
+        config_encrypted=encrypt_json({}),  # no secret of its own: the AWS connection's key is used
+        status="ok",
+        status_message=f"Connected ({len(tables)} {noun})",
+        last_checked_at=utcnow(),
+        cloud_connection_id=conn.id,
+        cloud_state={
+            "provider": "aws",
+            "service": "dynamodb",
+            "created": False,
+            "tables": tables,
+            "region": config["region"],
+        },
+    )
+    db.add(ds)
+    db.flush()
+    return ds
+
+
+def create_table(
+    db: Session,
+    project_id: str,
+    *,
+    connection_id: str,
+    name: str,
+    partition_key: dict,
+    sort_key: dict | None,
+    user_id: str,
+) -> tuple[DataSource, Job]:
+    """A `creating` DynamoDB source and the job that creates its on-demand table (the caller commits and
+    dispatches). Keys are `{name, type}` with type S (text), N (number) or B (binary)."""
+    keys = [k for k in (partition_key, sort_key) if k]
+    for k in keys:
+        if not str(k.get("name") or "").strip() or k.get("type") not in dynamo.KEY_TYPES:
+            raise ApiError(422, "validation_error", "Each key needs a name and a type (S, N or B)", {"field": "keys"})
+    if sort_key and sort_key["name"].strip() == partition_key["name"].strip():
+        raise ApiError(422, "validation_error", "The sort key must differ from the partition key", {"field": "keys"})
+    conn, config = _aws_connection(db, project_id, connection_id)
+    ds = DataSource(
+        project_id=project_id,
+        name=name,
+        kind="nosql",
+        engine=dynamo.ENGINE,
+        mode="external",
+        database_name="",
+        config_encrypted=encrypt_json({}),
+        status="creating",
+        status_message="Creating the table in your AWS account (usually under a minute)",
+        cloud_connection_id=conn.id,
+    )
+    db.add(ds)
+    db.flush()
+    table = instance_id(ds)
+    ds.database_name = table
+    job = jobs.enqueue(
+        db,
+        type="data_source.cloud_create",
+        params={"data_source_id": ds.id},
+        project_id=project_id,
+        data_source_id=ds.id,
+        created_by_id=user_id,
+    )
+    ds.cloud_state = {
+        "provider": "aws",
+        "service": "dynamodb",
+        "created": True,
+        "tables": [table],
+        "region": config["region"],
+        "keys": [{"name": k["name"].strip(), "type": k["type"]} for k in keys],
+        "job_id": job.id,
+    }
+    return ds, job
+
+
+def _create_table_steps(ctx: jobs.JobContext, ds_id: str, config: dict, state: dict) -> dict:
+    factory = ctx.session_factory
+    aws = cloud_aws.client(config)
+    table, keys = state["tables"][0], state["keys"]
+    if not state.get("table_requested"):
+        ctx.progress(0.2, f"Asking AWS for the table {table}", force=True)
+        try:
+            aws.ddb(
+                "CreateTable",
+                TableName=table,
+                KeySchema=[
+                    {"AttributeName": k["name"], "KeyType": t} for k, t in zip(keys, ("HASH", "RANGE"), strict=False)
+                ],
+                AttributeDefinitions=[{"AttributeName": k["name"], "AttributeType": k["type"]} for k in keys],
+                BillingMode="PAY_PER_REQUEST",
+                DeletionProtectionEnabled=True,
+                Tags=[cloud_aws.TAG],
+            )
+        except CloudError as exc:
+            if exc.code != "ResourceInUseException":  # an interrupted job already asked for it
+                raise
+        state = _save(factory, ds_id, table_requested=True) or state
+    started = time.monotonic()
+    while aws.ddb("DescribeTable", TableName=table)["Table"].get("TableStatus") != "ACTIVE":
+        if time.monotonic() - started > CREATE_TIMEOUT_S:
+            raise jobs.JobError("AWS did not finish creating the table in time")
+        if _save(factory, ds_id) is None:
+            return {"skipped": "data source removed"}
+        ctx.check_cancelled()
+        ctx.progress(0.5, "AWS is creating the table")
+        time.sleep(POLL_S)
+    with factory() as db:
+        ds = db.get(DataSource, ds_id)
+        if ds is None:
+            return {"skipped": "data source removed"}
+        ds.status, ds.status_message, ds.last_checked_at = "ok", "Connected (1 table)", utcnow()
+        db.commit()
+    return {"table": table}
 
 
 # --- create a new instance -----------------------------------------------------------------------
@@ -417,6 +613,8 @@ def _create_steps(ctx: jobs.JobContext, ds_id: str) -> dict:
         config, state = cloud.config_of(conn), dict(ds.cloud_state or {})
         source_config = decrypt_json(ds.config_encrypted)
         engine = ds.engine
+    if state.get("service") == "dynamodb":
+        return _create_table_steps(ctx, ds_id, config, state)
     aws = cloud_aws.client(config)
     port = int(state["port"])
     if not state.get("vpc_id"):
@@ -539,6 +737,8 @@ def _job_delete(ctx: jobs.JobContext) -> dict:
     if config is None:
         raise jobs.JobError("The AWS connection was removed; delete these by hand: " + "; ".join(resources(s)))
     aws = cloud_aws.client(config)
+    if s.get("service") == "dynamodb":
+        return _delete_tables(ctx, aws, s)
     removed, snapshot = [], None
     try:
         if s.get("instance_id"):
@@ -576,6 +776,41 @@ def _job_delete(ctx: jobs.JobContext) -> dict:
         left = [r for r in resources(s) if not any(r.startswith(x) for x in removed)]
         raise jobs.JobError(f"{exc.message} - still in AWS: " + "; ".join(left)) from None
     return {"removed": removed, "final_snapshot": snapshot}
+
+
+def _backup_status(aws, arn: str) -> str:
+    return aws.ddb("DescribeBackup", BackupArn=arn)["BackupDescription"]["BackupDetails"]["BackupStatus"]
+
+
+def _delete_tables(ctx: jobs.JobContext, aws, s: dict) -> dict:
+    """Deletion protection off -> a final on-demand backup (kept, billed for storage until the user deletes
+    it) -> waits until it is available -> DeleteTable."""
+    removed, backups = [], []
+    try:
+        for table in s.get("tables") or []:
+            ctx.progress(0.1, f"Taking a final backup of {table}", force=True)
+            try:
+                aws.ddb("UpdateTable", TableName=table, DeletionProtectionEnabled=False)
+            except CloudError as exc:
+                if exc.code != "ResourceNotFoundException":
+                    raise
+                removed.append(f"DynamoDB table {table}")  # already gone
+                continue
+            name = f"{table}-final-{datetime.now(UTC):%Y%m%d%H%M}"
+            arn = aws.ddb("CreateBackup", TableName=table, BackupName=name)["BackupDetails"]["BackupArn"]
+            started = time.monotonic()
+            while _backup_status(aws, arn) != "AVAILABLE":
+                if time.monotonic() - started > DELETE_TIMEOUT_S:
+                    raise jobs.JobError(f"The final backup of {table} did not finish; the table was not deleted")
+                time.sleep(POLL_S)
+            backups.append(arn)
+            ctx.progress(0.6, f"Deleting the table {table}", force=True)
+            aws.ddb("DeleteTable", TableName=table)
+            removed.append(f"DynamoDB table {table}")
+    except CloudError as exc:
+        left = [r for r in resources(s) if not any(r.startswith(x) for x in removed)]
+        raise jobs.JobError(f"{exc.message} - still in AWS: " + "; ".join(left)) from None
+    return {"removed": removed, "final_backups": backups}
 
 
 # --- this PC's IP --------------------------------------------------------------------------------
@@ -619,7 +854,7 @@ def refresh_pc_ips(factory: jobs.SessionFactory, *, force: bool = False) -> int:
             select(DataSource).where(DataSource.cloud_connection_id.is_not(None), DataSource.deleted_at.is_(None))
         )
         for ds in sources:
-            if not is_created(ds):
+            if not is_created(ds) or not (ds.cloud_state or {}).get("group_id"):  # DynamoDB has no firewall
                 continue
             try:
                 conn = db.get(CloudConnection, ds.cloud_connection_id)
@@ -658,14 +893,17 @@ def app_databases(db: Session, app: App) -> tuple[list[dict], list[str]]:
         elif ds.status == "creating":
             notes.append(f"Database '{ds.name}' is still being created: deploy again once it is ready")
         else:
+            state = dict(ds.cloud_state or {})
+            dynamodb = {"region": state.get("region"), "tables": state.get("tables") or []}
             out.append(
                 {
                     "name": ds.name,
                     "kind": ds.kind,
                     "engine": ds.engine,
-                    "config": connections.load_config(ds),
+                    # DynamoDB: no credentials; the app's instance role may use these tables.
+                    "config": dynamodb if ds.engine == dynamo.ENGINE else connections.load_config(ds),
                     "database_name": ds.database_name,
-                    "state": dict(ds.cloud_state or {}),
+                    "state": state,
                 }
             )
     return out, notes

@@ -10,7 +10,8 @@ and the `deploy-website` skill.
 |---|---|---|
 | **C1** | Cloud connections + hosting targets (this document, "C1 as built") | **Built** (migration `0011_cloud`) |
 | **C2-1** | Cloud database groundwork + AWS RDS / Aurora ("C2-1 as built") | **Built** (migration `0013_cloud_databases`) |
-| C2 | The other cloud databases (DynamoDB, Firestore, Realtime Database) | Planned ("C2 - cloud databases") |
+| **C2-2** | DynamoDB engine ("C2-2 as built") | **Built** (no migration) |
+| C2 | The Firebase databases (Firestore, Realtime Database) | Planned ("C2 - cloud databases") |
 | C3 | GitHub Actions builds, so pushes deploy with the PC off | Planned ("C3 - GitHub Actions builds") |
 
 ## Principles
@@ -23,7 +24,7 @@ and the `deploy-website` skill.
 - **Runtime never depends on the PC.** Apps on a cloud target serve from AWS / Google and get **only
   their own environment variables**: never `DEPLOYER_URL`, `DEPLOYER_API_KEY` or this PC's databases
   (those point at the PC). The one addition: an App Runner app with database access gets
-  `DEPLOYER_DB_<NAME>_*` for the project's databases **in the same AWS account** (C2-1), which point at
+  `DEPLOYER_DB_<NAME>_*` for the project's databases **in the same AWS account** (C2-1, C2-2), which point at
   AWS. The dashboard says so next to the target chooser and in the Environment card. The
   dashboard, deploys, rollbacks and settings run on the PC, so *managing* needs the PC on; *serving*
   does not.
@@ -189,7 +190,7 @@ cloud link survives only an instance import where the connection exists; a proje
 The **Add database** dialog asks *Where should it live?* with four cards, each with one plain sentence on
 what it means, what happens when the PC is off and the cost (`GET /projects/{id}/cloud/databases/options`,
 also the MCP tool `cloud_database_options`): **On this PC** (managed), **On another PC or server**
-(external), **In your AWS account** (this phase; SQL only - DynamoDB is next), **In your Firebase
+(external), **In your AWS account** (RDS for SQL, below; DynamoDB for NoSQL, "C2-2"), **In your Firebase
 project** (shown as coming soon). In AWS the user picks the account (the project's AWS connections) and:
 
 - **Connect one you already have**: `GET .../cloud/connections/{cid}/databases` lists the region's RDS
@@ -302,21 +303,155 @@ MCP, migration). Not yet run against a live account: the RDS / EC2 / App Runner 
 shapes, whether App Runner accepts every default-VPC subnet for a connector (some AZs are unsupported in
 a few regions), the `ALTER USER ... REQUIRE SSL` step on RDS, and the time AWS takes.
 
+## C2-2 as built: DynamoDB
+
+### Data model
+
+A DynamoDB database is an `external` data source with `kind: nosql`, `engine: dynamodb` on an AWS cloud
+connection: **one or more tables** of the connection's region. No migration: `cloud_state` holds
+`{provider: aws, service: dynamodb, created, tables: [...], region}` (created ones add `keys: [{name, type}]`,
+`job_id`, `table_requested`), and `config_encrypted` is `{}` - the source has **no secret of its own**;
+every call is made with the connection's key (`cloud_aws.AwsClient.ddb`, one generic method named after
+the AWS operation, which is the seam the tests fake). A source only ever reaches **its own tables**
+(`404` for any other table name, also in the query console), so the project's API keys cannot read the
+account's other tables. It reuses the MongoDB seams (`kind: nosql`): the documents endpoints, the data
+browser's documents view, the MongoDB-shaped console answer, schema entities of type `collection` -
+`services/dynamo.py` is the adapter, branched on `engine` in `source_ops`, `introspection`,
+`query_console`, `ddl_export` and `connections`.
+
+- **Items are plain JSON both ways**: numbers as numbers (DynamoDB keeps them exact; floats are sent as
+  their decimal text), binary as `{"$base64": "..."}`, string / number / binary **sets** as
+  `{"$set": [...]}` (so editing an item keeps a set a set), `null`, booleans, lists and maps as themselves.
+- **An item's id** (`{doc_id}` of the documents endpoints, the browser's edit / delete) is its key as JSON,
+  `{"customer": "c1", "n": 2}`, or for a table with only a partition key its plain value (`u1`).
+
+### Add database -> In your AWS account -> NoSQL
+
+The dialog first says in one paragraph what DynamoDB is (items found by a key you choose, no server to run,
+used with the AWS SDK, not SQL), then the same two choices as RDS:
+
+- **Create a new table** (billable: cost note + ticked box; API `engine: "dynamodb"`, `confirm_billing:
+  true`): a **partition key** (default a text `id`; plain hint: "the field every item is found by") and an
+  optional **sort key** (text, number or binary). Job `data_source.cloud_create`: `CreateTable`
+  `deployer-<name>-<id8>` with **on-demand billing** (`PAY_PER_REQUEST`: pay per read / write, nothing to
+  size), **deletion protection** on, tagged `managed-by=deployer` -> waits for `ACTIVE` (seconds) -> `ok`.
+  A retried job never creates a second table (`table_requested`, `ResourceInUseException` is fine).
+- **Connect tables you already have**: `ListTables` of the region (also listed with the RDS databases by
+  `GET .../cloud/connections/{cid}/databases` as `tables`, or `tables_problem` when the AWS user's policy
+  predates DynamoDB), tick one or more; each must answer `DescribeTable`. Deployer only reads and writes
+  their items and takes backups; removing the source never touches the tables.
+
+Deleting a **created** table (typing its name; the dialog lists it) queues `data_source.cloud_delete`:
+deletion protection off -> `CreateBackup` `<table>-final-<UTC yyyymmddHHMM>` -> waits until it is
+`AVAILABLE` -> `DeleteTable`. The final backup stays in the account (billed for storage until the user
+deletes it in the DynamoDB console). A project with created tables cannot be deleted (C2-1's rule).
+
+### Browsing, editing, querying
+
+- **Data tab** (the same documents view as MongoDB, labelled *items* / *tables*): pages with
+  **`cursor`** (`next_cursor` of the previous page; DynamoDB's `LastEvaluatedKey`, opaque) instead of
+  `skip`; the filter box takes **equality** filters (`{"status": "open"}`); naming the partition key (and
+  the sort key) runs a `Query` on that partition, anything else a `Scan` with a filter (DynamoDB applies
+  `Limit` before the filter, so up to 5 pages are read to fill one). `total` is the table's own
+  `ItemCount` (AWS refreshes it about every 6 hours) and `null` with a filter; `key` lists the key
+  attributes. Insert needs the key (`400 missing_key`; an existing key is `409 document_exists` - no
+  silent overwrite), edit can't change the key (`400 immutable_field`) and sends `UpdateItem` SET / REMOVE
+  with a condition that the item exists (`404 document_not_found`), delete likewise. Tables are not
+  created or dropped from the Data tab (`400 not_supported`: add a database, or use the AWS console).
+- **Query console**: one JSON request, AWS's own parameter names with plain JSON values (QUERY_CONSOLE.md
+  "DynamoDB"); viewers may only `Query`, `Scan` and `GetItem` (`403 read_only_role`), developers also
+  `PutItem`, `UpdateItem`, `DeleteItem`. The answer has the MongoDB console's shape (`result`,
+  `result_docs`, `output`, in-band `error`), so the notebook / terminal show it unchanged.
+- **Schema**: per table, the key attributes first (primary key; the partition key alone is `unique` when
+  there is no sort key), the other fields inferred from a sampled `Scan` (types `string`, `int`,
+  `double`, `bool`, `binData`, `array` for sets and lists, `object` for maps), indexes = the primary key
+  plus global / local secondary indexes, `row_count` = `ItemCount`. The naming checks skip table names
+  (they are AWS resource names). The schema export writes each table's `CreateTable` input as comments.
+- **Connection details** show the region, endpoint and tables - there is no URI, user or password.
+
+### Backups (Backups tab)
+
+DynamoDB databases get an **AWS backups** card instead of the "up to their provider" note: the tables'
+on-demand backups (`ListBackups`, newest first, including ones made in the AWS console) and **Back up now**
+(admin; billable, so a cost note and a ticked box; `CreateBackup` `<table>-<UTC yyyymmddHHMMSS>` of every
+table or one). Restoring is in the AWS console (DynamoDB -> Backups -> Restore creates a new table, which can
+then be connected here); the card says so. Point-in-time recovery is not switched on (it costs about 20%
+of the storage price; follow-up).
+
+### Apps on App Runner
+
+`database_access` on an `aws_app` now also means the project's DynamoDB databases on the same connection:
+
+- `DEPLOYER_DB_<NAME>_TABLE` (the first table), `_TABLES` (comma-separated), `_REGION` and `_DATABASE` -
+  **no credentials**.
+- An **instance role** `deployer-app-<slug>-<id8>` (created on the first deploy that needs it, trust
+  `tasks.apprunner.amazonaws.com`, tagged) with one inline policy `deployer-databases` allowing
+  `GetItem`, `BatchGetItem`, `Query`, `Scan`, `PutItem`, `UpdateItem`, `DeleteItem`, `BatchWriteItem`,
+  `ConditionCheckItem`, `DescribeTable` on **exactly those tables' ARNs** (and their indexes); the service
+  runs as it (`InstanceConfiguration.InstanceRoleArn`), so the AWS SDK in the app finds credentials by
+  itself. Database access off: the policy is removed (the role stays, allowed nothing). The app's
+  teardown deletes the role; the delete dialog lists it.
+- DynamoDB is reached over AWS's own endpoint, so it needs no VPC connector. When the app also has an RDS
+  database (its traffic then goes through the VPC), the deploy adds a free **DynamoDB gateway endpoint**
+  to that VPC's route tables (created once, shared, kept), so the tables stay reachable without a NAT.
+
+### Permissions added (`cloud.AWS_POLICY`)
+
+`dynamodb:ListTables` (`*`); `DescribeTable`, `GetItem`, `Query`, `Scan`, `PutItem`, `UpdateItem`,
+`DeleteItem`, `CreateBackup`, `ListBackups`, `DescribeBackup` on `table/*` and `table/*/backup/*` - any
+table, because connected tables keep their own names (a source still only uses its own); `CreateTable`,
+`UpdateTable`, `DeleteTable`, `TagResource` only on `table/deployer-*`; `iam:GetRole`, `CreateRole`,
+`TagRole`, `PutRolePolicy`, `DeleteRolePolicy`, `DeleteRole`, `PassRole` only on `role/deployer-app-*`;
+`ec2:DescribeVpcEndpoints`, `DescribeRouteTables` (read) and `ec2:CreateVpcEndpoint` + `CreateTags` (only
+while creating an endpoint) for the gateway endpoint. The policy stays under IAM's 6,144-character limit
+(test-enforced). Owners paste the new policy over the old one (the guide says so).
+
+### API
+
+| Method | Path | Role | Body / Query | Response |
+|---|---|---|---|---|
+| POST | `/projects/{pid}/cloud/databases` | admin+ | `{connection_id, name, engine: "dynamodb", partition_key?: {name, type: S\|N\|B}, sort_key?, confirm_billing: true}` | `{data_source, job}` (201) |
+| POST | `/projects/{pid}/cloud/databases/connect` | admin+ | `{connection_id, name, tables: [...]}` | `DataSource` (201); `400 connection_failed` names the table AWS refused |
+| GET | `/projects/{pid}/data-sources/{sid}/cloud-backups` | viewer+ | – | `{backups: [{table, arn, name, status, type, size_bytes, created_at}], cost, restore}` |
+| POST | `/projects/{pid}/data-sources/{sid}/cloud-backups` | admin+ | `{table?, confirm_billing: true}` | `{backups}` (201); audit `data_source.cloud_backup` |
+| GET | `/projects/{pid}/data-sources/{sid}/collections/{table}/documents` | viewer+ / API keys | `filter?`, `limit`, `cursor?` | `{documents, total, key, next_cursor}` |
+
+`GET .../cloud/databases/options` adds `dynamodb: {what, keys, key_types, cost, network}`; the
+listing adds `tables` and `tables_problem`; data sources' `cloud` adds `tables` and `resource_kind:
+"table"`. Editing a DynamoDB source's connection settings is refused (rename only).
+
+### MCP
+
+`create_cloud_database` takes `engine: "dynamodb"` with `partition_key` / `sort_key`,
+`connect_cloud_database` takes `tables`, `list_cloud_databases` returns `tables`, `list_documents` takes
+`cursor`, `run_query` takes the JSON request, plus `list_cloud_backups` (any key) and
+`create_cloud_backup` (service key; billable, `confirm_billing`). See MCP.md.
+
+### Not verified against real clouds
+
+Tested against an in-memory DynamoDB behind the `ddb` seam (`tests/test_dynamo.py`: create / delete with
+a final backup, connect, paging, Query vs Scan, insert / update / delete, value round trips, the console
+and its read-only rule, schema, backups, the App Runner role and gateway endpoint, MCP, policy size). Not
+yet run against a live account: the exact request shapes (botocore validates parameters, the fake does
+not), App Runner taking the instance role on an existing service, and the gateway endpoint on default
+VPCs.
+
 ## C2 - cloud databases (planned)
 
 | Provider | Engine | Support |
 |---|---|---|
 | AWS | **RDS / Aurora** MySQL, MariaDB, PostgreSQL | **built in C2-1** (above) |
-| AWS | **DynamoDB** | new NoSQL engine: tables, items, Query/Scan, schema inference, on-demand backups |
+| AWS | **DynamoDB** | **built in C2-2** (above) |
 | Firebase | **Cloud Firestore** | new NoSQL engine: collections/documents, queries, schema inference, export |
 | Firebase | **Realtime Database** | new engine: JSON tree browse/edit, path queries |
 
-Seams left by C1 and C2-1: data sources carry `cloud_connection_id` / `cloud_state` and the Add
+Seams left by C1, C2-1 and C2-2: data sources carry `cloud_connection_id` / `cloud_state` and the Add
 database dialog has the AWS / Firebase cards (`cloud_db.LOCATIONS`); cloud apps get their database
 settings through `cloud_deploy.cloud_env`; the MCP `create_cloud_database` tool and the `confirm_billing`
-rule are in place. Left: the DynamoDB / Firestore / Realtime Database engines (new NoSQL engines with
-their own browse / query / schema), Firebase databases for `firebase_app`, and Secrets Manager / Secret
-Manager references instead of plain runtime environment.
+rule are in place; a NoSQL engine without its own driver plugs in like `services/dynamo.py` (branch on
+`engine` in `source_ops`, `introspection`, `query_console`, `ddl_export`, `connections`). Left: the
+Firestore / Realtime Database engines, Firebase databases for `firebase_app`, and Secrets Manager /
+Secret Manager references instead of plain runtime environment.
 
 ## C3 - GitHub Actions builds (planned)
 

@@ -66,6 +66,11 @@ def resource_name(app: App) -> str:
     return f"deployer-{app.slug[:22].rstrip('-')}-{app.id[:8]}"
 
 
+def instance_role_name(app: App) -> str:
+    """`deployer-app-<slug>-<id8>`: the App Runner instance role (IAM role names are <= 64 chars)."""
+    return cloud_aws.INSTANCE_ROLE_PREFIX + resource_name(app).removeprefix("deployer-")
+
+
 def site_id(app: App) -> str:
     """Firebase Hosting site id (globally unique, <= 30 chars)."""
     return f"{app.slug[:21].rstrip('-')}-{app.id[:8]}"
@@ -114,6 +119,8 @@ def resources(target: str, state: dict | None) -> list[str]:
             out.append(f"App Runner service {s.get('service_name')} ({s['service_arn']})")
         if s.get("ecr_repository"):
             out.append(f"ECR repository {s['ecr_repository']} and its images")
+        if s.get("instance_role"):
+            out.append(f"IAM role {s['instance_role']} (what the app may use)")
     elif target in ("firebase_hosting", "firebase_app"):
         if s.get("run_service"):
             out.append(f"Cloud Run service {s['run_service']}")
@@ -321,6 +328,8 @@ class Publish:
             self.log.write("Not sent (set by App Runner itself): " + ", ".join(sorted(dropped)))
         self.log.write("Environment: " + (", ".join(sorted(env)) or "(none)") + " - nothing that points at this PC")
         connector = self.connect_databases(aws, databases)
+        instance_role = self.instance_role(aws, databases)
+        extra = {"instance_role_arn": instance_role} if instance_role else {}
         if not self.state.get("access_role_arn"):
             self.save(access_role_arn=aws.ensure_access_role())
         port = internal_port(self.app)
@@ -328,12 +337,12 @@ class Publish:
         role = self.state["access_role_arn"]
         if not self.state.get("service_arn"):
             self.log.step(f"Creating the App Runner service {name}")
-            svc = aws.create_service(name, image, port, env, role, connector)
+            svc = aws.create_service(name, image, port, env, role, connector, **extra)
             self.save(service_name=name, service_arn=svc["arn"], service_url=svc["url"])
             operation = svc["operation_id"]
         else:
             self.log.step("Updating the App Runner service to the new image")
-            operation = aws.update_service(self.state["service_arn"], image, port, env, role, connector)
+            operation = aws.update_service(self.state["service_arn"], image, port, env, role, connector, **extra)
 
         def poll() -> tuple[bool, str]:
             status = aws.operation(self.state["service_arn"], operation)
@@ -361,6 +370,43 @@ class Publish:
             self.log.write("Databases (in your AWS account): " + ", ".join(d["name"] for d in databases))
         return databases
 
+    def instance_role(self, aws, databases: list[dict]) -> str | None:
+        """docs/CLOUD.md "C2-2": the IAM role the app's code runs as, allowed to use exactly the project's
+        DynamoDB tables (created on first use, emptied when the app has none). None: no role needed."""
+        account, region = self.config.get("account_id") or "*", self.config.get("region")
+        arns = [
+            f"arn:aws:dynamodb:{region}:{account}:table/{t}"
+            for d in databases
+            if d["engine"] == "dynamodb"
+            for t in d["config"].get("tables") or []
+        ]
+        if not arns and not self.state.get("instance_role"):
+            return None
+        name = instance_role_name(self.app)
+        policy = None
+        if arns:
+            self.log.step(f"Letting the app use its DynamoDB tables (IAM role {name})")
+            actions = [
+                "dynamodb:GetItem",
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:Scan",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:DescribeTable",
+            ]
+            resources = arns + [f"{a}/index/*" for a in arns]
+            policy = {
+                "Version": "2012-10-17",
+                "Statement": [{"Effect": "Allow", "Action": actions, "Resource": resources}],
+            }
+        arn = aws.ensure_instance_role(name, policy)
+        self.save(instance_role=name, instance_role_arn=arn)
+        return arn
+
     def connect_databases(self, aws, databases: list[dict]) -> str | None:
         """The VPC connector the service reaches its databases through (None: App Runner's default
         egress); databases Deployer created let the connector's security group in."""
@@ -383,6 +429,9 @@ class Publish:
                     f"Database '{d['name']}' was not created by Deployer, so its firewall is yours: allow port "
                     f"{d['config']['port']} from security group {connector['group_id']} in it"
                 )
+        if any(d["engine"] == "dynamodb" for d in databases):
+            self.log.write(f"Reaching DynamoDB from the VPC through a gateway endpoint (free) in {vpc}")
+            aws.ensure_dynamodb_endpoint(vpc)
         self.log.write(
             "Outgoing traffic of this app now goes through the VPC: add a NAT gateway there if it also calls "
             "other internet services"
@@ -630,6 +679,8 @@ def teardown_steps(target: str, config: dict, state: dict) -> list[tuple[str, ob
                 steps.append(
                     (f"ECR repository {s['ecr_repository']}", lambda: aws.delete_repository(s["ecr_repository"]))
                 )
+            if s.get("instance_role"):
+                steps.append((f"IAM role {s['instance_role']}", lambda: aws.delete_instance_role(s["instance_role"])))
     else:
         gcp = cloud_gcp.client(config)
         if s.get("run_service"):

@@ -5,7 +5,7 @@ import { Database, Plug, Plus } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import { invalidateProjectSources } from "../../api/hooks";
-import type { CloudDatabaseOptions, SqlExternalEngine } from "../../api/types";
+import type { CloudDatabaseOptions, DataSourceKind, DynamoKeyType, SqlExternalEngine } from "../../api/types";
 import { Button } from "../../components/ui/Button";
 import { Checkbox, Field, Input, Select } from "../../components/ui/Input";
 import { PageSpinner } from "../../components/ui/Spinner";
@@ -14,16 +14,21 @@ import { useToast } from "../../components/ui/toast-context";
 import { engineLabel } from "../../lib/format";
 import { Choice } from "./Choice";
 
-/** docs/CLOUD.md "C2": a database in the project's AWS account, created new (billable, confirmed) or connected. */
+/** docs/CLOUD.md "C2": a database in the project's AWS account, created new (billable, confirmed) or connected:
+ * RDS for SQL, DynamoDB tables for NoSQL. */
 export function AwsDatabaseSection({
   projectId,
+  kind,
   name,
   options,
+  dynamodb,
   onDone,
 }: {
   projectId: string;
+  kind: DataSourceKind;
   name: string;
   options: CloudDatabaseOptions["aws"];
+  dynamodb: CloudDatabaseOptions["dynamodb"];
   onDone: () => void;
 }) {
   const toast = useToast();
@@ -46,6 +51,14 @@ export function AwsDatabaseSection({
   const [password, setPassword] = useState("");
   const [database, setDatabase] = useState("");
 
+  // DynamoDB
+  const [partitionKey, setPartitionKey] = useState("id");
+  const [partitionType, setPartitionType] = useState<DynamoKeyType>("S");
+  const [sortKey, setSortKey] = useState("");
+  const [sortType, setSortType] = useState<DynamoKeyType>("S");
+  const [tables, setTables] = useState<string[]>([]);
+  const dynamo = kind === "nosql";
+
   const listing = useQuery({
     queryKey: ["projects", projectId, "cloud", "connections", connectionId, "databases"],
     queryFn: () => api.cloud.connectionDatabases(projectId, connectionId),
@@ -59,25 +72,37 @@ export function AwsDatabaseSection({
   };
   const create = useMutation({
     mutationFn: () =>
-      api.cloud.createDatabase(projectId, {
-        connection_id: connectionId,
-        name,
-        engine,
-        instance_class: instanceClass,
-        confirm_billing: agreed,
-      }),
-    onSuccess: (out) => done(`${out.data_source.name} is being created in AWS. This takes 5-15 minutes.`),
+      api.cloud.createDatabase(
+        projectId,
+        dynamo
+          ? {
+              connection_id: connectionId,
+              name,
+              engine: "dynamodb",
+              partition_key: { name: partitionKey.trim(), type: partitionType },
+              sort_key: sortKey.trim() ? { name: sortKey.trim(), type: sortType } : undefined,
+              confirm_billing: agreed,
+            }
+          : { connection_id: connectionId, name, engine, instance_class: instanceClass, confirm_billing: agreed },
+      ),
+    onSuccess: (out) =>
+      done(`${out.data_source.name} is being created in AWS. This takes ${dynamo ? "under a minute" : "5-15 minutes"}.`),
   });
   const connect = useMutation({
     mutationFn: () =>
-      api.cloud.connectDatabase(projectId, {
-        connection_id: connectionId,
-        name,
-        resource_id: resourceId,
-        username: username.trim(),
-        password,
-        database: database.trim() || undefined,
-      }),
+      api.cloud.connectDatabase(
+        projectId,
+        dynamo
+          ? { connection_id: connectionId, name, tables }
+          : {
+              connection_id: connectionId,
+              name,
+              resource_id: resourceId,
+              username: username.trim(),
+              password,
+              database: database.trim() || undefined,
+            },
+      ),
     onSuccess: (source) => done(`${source.name} connected.`),
   });
 
@@ -111,24 +136,128 @@ export function AwsDatabaseSection({
           )}
         </Field>
       )}
+      {dynamo && (
+        <Alert tone="info" title="What is DynamoDB?">
+          {dynamodb.what}
+        </Alert>
+      )}
       <div className="grid gap-2 sm:grid-cols-2">
         <Choice
           selected={action === "create"}
           onClick={() => setAction("create")}
           icon={<Plus className="size-4" />}
-          title="Create a new database"
-          description="AWS sets up a new MySQL, MariaDB or PostgreSQL server for you, with daily backups."
+          title={dynamo ? "Create a new table" : "Create a new database"}
+          description={
+            dynamo
+              ? "AWS makes an empty DynamoDB table, billed per read and write, protected against accidental deletion."
+              : "AWS sets up a new MySQL, MariaDB or PostgreSQL server for you, with daily backups."
+          }
         />
         <Choice
           selected={action === "connect"}
           onClick={() => setAction("connect")}
           icon={<Plug className="size-4" />}
-          title="Connect one you already have"
-          description="Pick an RDS or Aurora database that is already in this AWS account."
+          title={dynamo ? "Connect tables you already have" : "Connect one you already have"}
+          description={
+            dynamo
+              ? "Pick DynamoDB tables that are already in this AWS account and region."
+              : "Pick an RDS or Aurora database that is already in this AWS account."
+          }
         />
       </div>
 
-      {action === "create" ? (
+      {dynamo ? (
+        action === "create" ? (
+          <div className="space-y-3">
+            <p className="text-xs text-muted">{dynamodb.keys}</p>
+            <div className="grid gap-3 sm:grid-cols-4">
+              <Field label="Partition key" className="sm:col-span-2" hint="The field every item is found by.">
+                {(id) => (
+                  <Input id={id} value={partitionKey} onChange={(e) => setPartitionKey(e.target.value)} spellCheck={false} />
+                )}
+              </Field>
+              <KeyTypeField value={partitionType} onChange={setPartitionType} types={dynamodb.key_types} />
+              <Field label="Sort key" optional className="sm:col-span-2" hint="Keeps items of one partition in order.">
+                {(id) => (
+                  <Input
+                    id={id}
+                    value={sortKey}
+                    onChange={(e) => setSortKey(e.target.value)}
+                    placeholder="e.g. createdAt"
+                    spellCheck={false}
+                  />
+                )}
+              </Field>
+              <KeyTypeField value={sortType} onChange={setSortType} types={dynamodb.key_types} />
+            </div>
+            <Alert tone="info" title="How apps and this PC reach it">
+              {dynamodb.network}
+            </Alert>
+            <Alert tone="warning" title="AWS bills you for this">
+              {dynamodb.cost}
+              <Checkbox
+                className="mt-2"
+                checked={agreed}
+                onChange={(e) => setAgreed(e.target.checked)}
+                label="I understand AWS charges my account for this table"
+              />
+            </Alert>
+            {create.error && <Alert tone="danger">{errorMessage(create.error)}</Alert>}
+            <div className="flex justify-end">
+              <Button
+                variant="primary"
+                icon={<Database className="size-4" />}
+                loading={create.isPending}
+                disabled={!agreed || !connectionId || !partitionKey.trim()}
+                onClick={() => create.mutate()}
+                title={agreed ? undefined : "Tick the cost box first"}
+              >
+                Create in AWS
+              </Button>
+            </div>
+          </div>
+        ) : listing.isPending ? (
+          <PageSpinner />
+        ) : listing.isError ? (
+          <ErrorState error={listing.error} onRetry={() => void listing.refetch()} />
+        ) : (
+          <div className="space-y-3">
+            {listing.data.tables_problem ? (
+              <Alert tone="danger" title="Couldn't list the tables">
+                {listing.data.tables_problem} The AWS user may need the newest policy from Settings → Cloud accounts.
+              </Alert>
+            ) : listing.data.tables.length === 0 ? (
+              <Alert tone="info">No DynamoDB tables in {listing.data.region} yet. Create a new one instead.</Alert>
+            ) : (
+              <div className="grid max-h-64 gap-1 overflow-y-auto rounded-xl border border-border p-2">
+                {listing.data.tables.map((t) => (
+                  <Checkbox
+                    key={t}
+                    checked={tables.includes(t)}
+                    onChange={(e) => setTables(e.target.checked ? [...tables, t] : tables.filter((x) => x !== t))}
+                    label={t}
+                  />
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-muted">
+              Deployer only reads and writes their items; removing this database here never deletes a table.
+            </p>
+            {connect.error && <Alert tone="danger">{errorMessage(connect.error)}</Alert>}
+            <div className="flex justify-end">
+              <Button
+                variant="primary"
+                icon={<Plug className="size-4" />}
+                loading={connect.isPending}
+                disabled={tables.length === 0}
+                onClick={() => connect.mutate()}
+              >
+                {tables.length > 1 ? `Connect ${tables.length} tables` : "Connect table"}
+              </Button>
+            </div>
+          </div>
+        )
+      ) : action === "create" ? (
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Engine" hint="Not sure? MySQL works with most website tools.">
@@ -249,5 +378,29 @@ export function AwsDatabaseSection({
         </div>
       )}
     </div>
+  );
+}
+
+function KeyTypeField({
+  value,
+  onChange,
+  types,
+}: {
+  value: DynamoKeyType;
+  onChange: (t: DynamoKeyType) => void;
+  types: CloudDatabaseOptions["dynamodb"]["key_types"];
+}) {
+  return (
+    <Field label="Type" className="sm:col-span-2">
+      {(id) => (
+        <Select id={id} value={value} onChange={(e) => onChange(e.target.value as DynamoKeyType)}>
+          {types.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.label}
+            </option>
+          ))}
+        </Select>
+      )}
+    </Field>
   );
 }

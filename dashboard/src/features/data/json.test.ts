@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { docIdString } from "./json";
+import { docIdString, itemKeyId } from "./json";
 
 describe("docIdString", () => {
   it("unwraps Extended JSON ids and stringifies the rest", () => {
@@ -10,5 +10,13 @@ describe("docIdString", () => {
     expect(docIdString("abc")).toBe("abc");
     expect(docIdString(null)).toBeNull();
     expect(docIdString(undefined)).toBeNull();
+  });
+});
+
+describe("itemKeyId", () => {
+  it("is the DynamoDB key attributes as JSON, in key order", () => {
+    expect(itemKeyId({ total: 3, n: 2, customer: "c1" }, ["customer", "n"])).toBe('{"customer":"c1","n":2}');
+    expect(itemKeyId({ id: "u1" }, ["id"])).toBe('{"id":"u1"}');
+    expect(itemKeyId({ customer: "c1" }, ["customer", "n"])).toBeNull();
   });
 });

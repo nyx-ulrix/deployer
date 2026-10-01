@@ -161,6 +161,7 @@ describe("starterQuery", () => {
     expect(starterQuery("sql", "mysql", "we`ird")).toBe("SELECT * FROM `we``ird` LIMIT 100;");
     expect(starterQuery("sql", "postgresql", "Users")).toBe('SELECT * FROM "Users" LIMIT 100;');
     expect(starterQuery("nosql", "mongodb", "my-events")).toBe('db.getCollection("my-events").find({}).limit(20)');
+    expect(starterQuery("nosql", "dynamodb", "orders")).toBe('{"operation":"Scan","TableName":"orders","Limit":20}');
   });
 });
 

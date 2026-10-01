@@ -65,7 +65,8 @@ export type Invite = {
 };
 
 export type DataSourceKind = "sql" | "nosql";
-export type DataSourceEngine = "mariadb" | "mysql" | "postgresql" | "mongodb";
+/** `dynamodb`: tables in the user's AWS account (docs/CLOUD.md "C2-2"), browsed like MongoDB collections. */
+export type DataSourceEngine = "mariadb" | "mysql" | "postgresql" | "mongodb" | "dynamodb";
 
 export type DataSource = {
   id: string;
@@ -99,7 +100,9 @@ export type DataSourceCloud = {
   /** True: Deployer created it (and deletes it, after a final snapshot). False: an existing one connected. */
   created: boolean;
   resource_id: string | null;
-  resource_kind: "instance" | "cluster";
+  resource_kind: "instance" | "cluster" | "table";
+  /** DynamoDB: the tables this database holds. */
+  tables?: string[] | null;
   region: string | null;
   instance_class: string | null;
   /** This PC's public IP the database's firewall lets in (created databases). */
@@ -131,6 +134,26 @@ export type CloudDatabaseOptions = {
     cost: string;
     network: string;
   };
+  dynamodb: {
+    what: string;
+    keys: string;
+    key_types: { id: DynamoKeyType; label: string }[];
+    cost: string;
+    network: string;
+  };
+};
+
+/** DynamoDB key attribute types: text, number, binary. */
+export type DynamoKeyType = "S" | "N" | "B";
+
+export type CloudBackup = {
+  table: string;
+  arn: string;
+  name: string;
+  status: string | null;
+  type: string | null;
+  size_bytes: number | null;
+  created_at: string | null;
 };
 
 export type CloudDbResource = {
@@ -148,7 +171,14 @@ export type CloudDbResource = {
   problem: string | null;
 };
 
-export type CloudDbListing = { region: string; pc_ip: string | null; databases: CloudDbResource[] };
+export type CloudDbListing = {
+  region: string;
+  pc_ip: string | null;
+  databases: CloudDbResource[];
+  /** DynamoDB tables of the region (`tables_problem`: why they could not be listed). */
+  tables: string[];
+  tables_problem: string | null;
+};
 
 export type ApiKeyRole = "anon" | "service";
 
@@ -318,13 +348,17 @@ export type DataSourceInput =
 export type ConnectionTestResult = { ok: boolean; message: string; server_version: string | null };
 
 export type ConnectionDetails = {
-  uri: string;
+  /** null for DynamoDB, which has no URI, user or password (apps use AWS credentials). */
+  uri: string | null;
   host: string;
   port: number | null;
-  username: string;
-  password: string;
-  database: string;
+  username: string | null;
+  password: string | null;
+  database: string | null;
   external_hint?: string | null;
+  /** DynamoDB (docs/CLOUD.md "C2-2"). */
+  region?: string;
+  tables?: string[];
 };
 
 // ---- Schema ----
@@ -440,7 +474,15 @@ export type RowsResponse = {
   total: number;
 };
 
-export type DocumentsResponse = { documents: JsonObject[]; total: number };
+export type DocumentsResponse = {
+  documents: JsonObject[];
+  /** DynamoDB: the table's own estimate, null with a filter. */
+  total: number | null;
+  /** DynamoDB: the key attributes (partition, sort); a document's id is these as JSON. */
+  key?: string[];
+  /** DynamoDB: pass as `cursor` for the next page; null on the last one. */
+  next_cursor?: string | null;
+};
 
 export type Ok = { ok: true };
 /** Drops with a safety snapshot run as a job (202); without one they finish in the request. */
@@ -763,7 +805,8 @@ export type SqlQueryResponse = {
 
 export type MongoQueryResponse = {
   kind: "nosql";
-  engine: "mongodb";
+  /** `dynamodb`: one JSON request (QUERY_CONSOLE.md "DynamoDB"), answered in the same shape. */
+  engine: "mongodb" | "dynamodb";
   duration_ms: number;
   /** Text printed by the shell (print(), warnings, stderr). */
   output: string;

@@ -251,9 +251,14 @@ export function draftToPatch(d: AppDraft, app: App): AppPatch {
 }
 
 /** Variable names "database access" injects for a source (mirrors `deployments.database_env`). Values are never shown. */
-export function databaseEnvNames(source: Pick<DataSource, "name" | "kind">): string[] {
+export function databaseEnvNames(source: Pick<DataSource, "name" | "kind"> & { engine?: string }): string[] {
   const prefix = `DEPLOYER_DB_${source.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_`;
-  const suffixes = source.kind === "sql" ? ["HOST", "PORT", "USER", "PASSWORD", "DATABASE", "URL"] : ["URL", "DATABASE"];
+  const suffixes =
+    source.engine === "dynamodb" // docs/CLOUD.md "C2-2": table names and region; the app's IAM role grants access
+      ? ["TABLE", "TABLES", "REGION", "DATABASE"]
+      : source.kind === "sql"
+        ? ["HOST", "PORT", "USER", "PASSWORD", "DATABASE", "URL"]
+        : ["URL", "DATABASE"];
   return suffixes.map((s) => prefix + s);
 }
 

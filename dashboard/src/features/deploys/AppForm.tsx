@@ -217,7 +217,7 @@ function CloudDatabaseAccess({
         label="Connect to this project's AWS databases"
         description={
           isAdmin
-            ? "Gives the app the databases in the same AWS account (never the ones on this PC) and links the App Runner service to their private network. Takes effect on the next deploy."
+            ? "Gives the app the databases in the same AWS account (never the ones on this PC): SQL databases through their private network, DynamoDB tables through an AWS role that may use only those tables. Takes effect on the next deploy."
             : "Only project admins can change this; ask a project admin."
         }
         checked={checked}
@@ -239,8 +239,9 @@ function CloudDatabaseAccess({
         ) : (
           <>No databases in this AWS account yet: add one under Databases → Add database → In your AWS account.</>
         )}{" "}
-        Linked apps send their outgoing internet traffic through that network, which has no internet route by default: if
-        the app also calls other online services, add a NAT gateway in the AWS VPC console (about US$32/month).
+        With a SQL (RDS) database, the app sends its outgoing internet traffic through that database's network, which has
+        no internet route by default: if the app also calls other online services, add a NAT gateway in the AWS VPC
+        console (about US$32/month). DynamoDB alone needs nothing extra.
       </div>
     </div>
   );

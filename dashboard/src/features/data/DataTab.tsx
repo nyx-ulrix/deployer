@@ -43,6 +43,8 @@ export function DataTab() {
   const entityName = params.get("entity");
   const entity = entities.find((e) => e.name === entityName) ?? null;
   const isSql = source.kind === "sql";
+  const dynamo = source.engine === "dynamodb"; // tables of items; tables are added in AWS, not here
+  const entityNoun = isSql || dynamo ? "table" : "collection";
 
   const select = (next: { source?: string; entity?: string | null }) => {
     const p = new URLSearchParams();
@@ -81,11 +83,11 @@ export function DataTab() {
             {/* Phone: a select; desktop: a list */}
             <Select
               className="lg:hidden"
-              aria-label={isSql ? "Table" : "Collection"}
+              aria-label={isSql || dynamo ? "Table" : "Collection"}
               value={entity?.name ?? ""}
               onChange={(e) => select({ entity: e.target.value || null })}
             >
-              <option value="">{isSql ? "Choose a table…" : "Choose a collection…"}</option>
+              <option value="">{`Choose a ${entityNoun}…`}</option>
               {entities.map((e) => (
                 <option key={e.name} value={e.name}>
                   {e.name}
@@ -94,7 +96,7 @@ export function DataTab() {
             </Select>
             <nav className="hidden max-h-[60vh] overflow-y-auto rounded-xl border border-border bg-surface p-1 lg:block">
               <p className="px-2 pt-1.5 pb-1 text-xs font-medium tracking-wide text-muted uppercase">
-                {isSql ? "Tables" : "Collections"}
+                {isSql || dynamo ? "Tables" : "Collections"}
               </p>
               {entities.length === 0 && <p className="px-2 py-2 text-sm text-muted">None yet.</p>}
               {entities.map((e) => (
@@ -113,12 +115,12 @@ export function DataTab() {
                 </button>
               ))}
             </nav>
-            {can("developer") && (
+            {can("developer") && !dynamo && (
               <Button icon={<Plus className="size-4" />} onClick={() => setCreating(true)}>
                 {isSql ? "Create table" : "Create collection"}
               </Button>
             )}
-            {source.mode === "managed" && (
+            {(source.mode === "managed" || dynamo) && (
               <Link
                 to={`/projects/${project.id}/backups?source=${encodeURIComponent(source.id)}`}
                 className="inline-flex items-center gap-1.5 self-start px-1 text-sm text-accent hover:underline"
@@ -140,11 +142,11 @@ export function DataTab() {
         ) : (
           <EmptyState
             icon={isSql ? <Database className="size-5" /> : <Leaf className="size-5" />}
-            title={isSql ? "Pick a table" : "Pick a collection"}
+            title={`Pick a ${entityNoun}`}
             description={
               entities.length === 0 && !schema.isPending
-                ? `This database has no ${isSql ? "tables" : "collections"} yet.`
-                : `Choose a ${isSql ? "table" : "collection"} to browse its ${isSql ? "rows" : "documents"}.`
+                ? `This database has no ${entityNoun}s yet.`
+                : `Choose a ${entityNoun} to browse its ${isSql ? "rows" : dynamo ? "items" : "documents"}.`
             }
           />
         )}

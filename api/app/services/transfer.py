@@ -1264,6 +1264,11 @@ def import_instance(db: Session, payload: dict) -> dict:
                 # docs/CLOUD.md "C2": the cloud link (who owns and deletes the AWS instance) survives only
                 # when the connection exists here; otherwise it stays a plain external connection.
                 if not (ds.cloud_connection_id and db.get(CloudConnection, ds.cloud_connection_id)):
+                    if ds.engine == "dynamodb":  # reached only through its AWS connection
+                        warnings.append(
+                            f"{ds.name}: its AWS connection is not on this Deployer; connect the tables again"
+                        )
+                        continue
                     ds.cloud_connection_id, ds.cloud_state = None, None
                 db.add(ds)
             totals["data_sources"] += 1
@@ -1394,6 +1399,16 @@ def import_projects(db: Session, payload: dict, user: User) -> tuple[list[Projec
                 )
                 if ds is None:
                     continue
+            elif row.get("engine") == "dynamodb":
+                # Same tables through the same AWS connection, but a copy never owns (or deletes) them.
+                conn = db.get(CloudConnection, row.get("cloud_connection_id") or "")
+                if conn is None or conn.project_id not in (None, project.id):
+                    warnings.append(f"{row.get('name')}: DynamoDB tables need their AWS connection; not copied")
+                    continue
+                state = {**(row.get("cloud_state") or {}), "created": False}
+                db.add(
+                    _external_source(row, id=new_source_id, project_id=project.id, device_id=None, cloud_state=state)
+                )
             else:
                 # A copy never owns (and so never deletes) the original's cloud database.
                 db.add(

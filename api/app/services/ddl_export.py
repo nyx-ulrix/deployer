@@ -392,6 +392,10 @@ def export_mongo_source(ds: DataSource, now: datetime | None = None) -> str:
 
 
 def export_source(ds: DataSource, now: datetime | None = None) -> str:
+    if ds.engine == "dynamodb":
+        from app.services import dynamo
+
+        return dynamo.export_script(ds)
     return export_sql_source(ds, now) if ds.kind == "sql" else export_mongo_source(ds, now)
 
 

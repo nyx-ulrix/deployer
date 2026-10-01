@@ -83,7 +83,8 @@ STATIC_TARGETS = tuple(t for t, v in TARGETS.items() if v["kind"] == "static")
 CLOUD_ENV_NOTE = (
     "Cloud targets get only the app's own environment variables: no DEPLOYER_URL or DEPLOYER_API_KEY, and "
     "nothing that points at this PC (which may be off). An App Runner app with database access gets "
-    "DEPLOYER_DB_<NAME>_* for the project's databases in the same AWS account - pointing at AWS, never at this PC."
+    "DEPLOYER_DB_<NAME>_* for the project's databases in the same AWS account - pointing at AWS, never at this PC "
+    "(DynamoDB tables: their names and region, used through an IAM role that may access only those tables)."
 )
 
 _AWS_KEY_ID = re.compile(r"^(AKIA|ASIA)[A-Z0-9]{16}$")
@@ -250,6 +251,74 @@ AWS_POLICY = {
             ],
             "Resource": "arn:aws:ec2:*:*:security-group/*",
             "Condition": {"StringEquals": {"aws:ResourceTag/managed-by": "deployer"}},
+        },
+        # DynamoDB (docs/CLOUD.md "C2-2"): list tables to connect them; read / write items, schema and
+        # on-demand backups of any table a source names (connected tables keep their own names); create,
+        # change and delete only deployer-* tables.
+        {"Sid": "DynamoDBList", "Effect": "Allow", "Action": "dynamodb:ListTables", "Resource": "*"},
+        {
+            "Sid": "DynamoDBData",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:DescribeTable",
+                "dynamodb:GetItem",
+                "dynamodb:Query",
+                "dynamodb:Scan",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:CreateBackup",
+                "dynamodb:ListBackups",
+                "dynamodb:DescribeBackup",
+            ],
+            "Resource": ["arn:aws:dynamodb:*:*:table/*", "arn:aws:dynamodb:*:*:table/*/backup/*"],
+        },
+        {
+            "Sid": "DynamoDBTables",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:CreateTable",
+                "dynamodb:UpdateTable",
+                "dynamodb:DeleteTable",
+                "dynamodb:TagResource",
+            ],
+            "Resource": "arn:aws:dynamodb:*:*:table/deployer-*",
+        },
+        {
+            # The IAM role an App Runner app's code runs as, allowed only its project's tables.
+            "Sid": "AppRunnerInstanceRoles",
+            "Effect": "Allow",
+            "Action": [
+                "iam:GetRole",
+                "iam:CreateRole",
+                "iam:TagRole",
+                "iam:PutRolePolicy",
+                "iam:DeleteRolePolicy",
+                "iam:DeleteRole",
+                "iam:PassRole",
+            ],
+            "Resource": f"arn:aws:iam::*:role/{cloud_aws.INSTANCE_ROLE_PREFIX}*",
+        },
+        {
+            # Apps whose traffic goes through the VPC (they also use an RDS database) reach DynamoDB through
+            # a free gateway endpoint; describing is read-only.
+            "Sid": "DynamoDBEndpointRead",
+            "Effect": "Allow",
+            "Action": ["ec2:DescribeVpcEndpoints", "ec2:DescribeRouteTables"],
+            "Resource": "*",
+        },
+        {
+            "Sid": "DynamoDBEndpointCreate",
+            "Effect": "Allow",
+            "Action": "ec2:CreateVpcEndpoint",
+            "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:route-table/*", "arn:aws:ec2:*:*:vpc-endpoint/*"],
+        },
+        {
+            "Sid": "DynamoDBEndpointTag",
+            "Effect": "Allow",
+            "Action": "ec2:CreateTags",
+            "Resource": "arn:aws:ec2:*:*:vpc-endpoint/*",
+            "Condition": {"StringEquals": {"ec2:CreateAction": "CreateVpcEndpoint"}},
         },
     ],
 }

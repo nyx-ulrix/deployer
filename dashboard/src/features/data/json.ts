@@ -20,6 +20,12 @@ export function pretty(v: unknown): string {
   return JSON.stringify(v, null, 2);
 }
 
+/** DynamoDB (docs/CLOUD.md "C2-2"): an item's id for the documents endpoints is its key attributes as JSON. */
+export function itemKeyId(doc: JsonObject, key: string[]): string | null {
+  if (key.some((k) => doc[k] === undefined)) return null;
+  return JSON.stringify(Object.fromEntries(key.map((k) => [k, doc[k]])));
+}
+
 /** String form of a Mongo `_id` in relaxed Extended JSON (`{"$oid": "..."}` → hex). */
 export function docIdString(id: JsonValue | undefined): string | null {
   if (id === undefined || id === null) return null;

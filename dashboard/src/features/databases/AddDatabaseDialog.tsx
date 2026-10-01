@@ -99,7 +99,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
   };
 
   function defaultName() {
-    if (where === "aws") return "AWS database";
+    if (where === "aws") return kind === "sql" ? "AWS database" : "DynamoDB";
     if (mode === "managed") return kind === "sql" ? "MariaDB" : "MongoDB";
     return kind === "sql" ? { mariadb: "MariaDB", mysql: "MySQL", postgresql: "PostgreSQL" }[engine] : "MongoDB";
   }
@@ -190,13 +190,10 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
             />
             <Choice
               selected={kind === "nosql"}
-              onClick={() => {
-                setKind("nosql");
-                if (where === "aws") setWhere("local"); // SQL only in AWS for now
-              }}
+              onClick={() => setKind("nosql")}
               icon={<Leaf className="size-4" />}
               title="NoSQL"
-              description="MongoDB collections of JSON documents."
+              description="JSON documents: MongoDB (here or elsewhere) or DynamoDB (in AWS)."
               tone="nosql"
             />
           </div>
@@ -210,8 +207,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
           ) : (
             <div className="grid gap-2 sm:grid-cols-2">
               {options.data.locations.map((loc) => {
-                const nosqlInAws = loc.id === "aws" && kind === "nosql";
-                const unavailable = loc.available === false || nosqlInAws;
+                const unavailable = loc.available === false;
                 return (
                   <Choice
                     key={loc.id}
@@ -226,11 +222,7 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
                       <strong className="font-medium text-fg/80">PC off:</strong> {loc.when_pc_off}{" "}
                       <strong className="font-medium text-fg/80">Cost:</strong> {loc.cost}
                     </span>
-                    {(loc.note || nosqlInAws) && (
-                      <span className="mt-1 block text-xs font-medium text-accent">
-                        {nosqlInAws ? "SQL only for now: DynamoDB support is coming soon." : loc.note}
-                      </span>
-                    )}
+                    {loc.note && <span className="mt-1 block text-xs font-medium text-accent">{loc.note}</span>}
                   </Choice>
                 );
               })}
@@ -254,7 +246,15 @@ export function AddDatabaseDialog({ projectId, onClose }: { projectId: string; o
         </Field>
 
         {where === "aws" && options.data && (
-          <AwsDatabaseSection projectId={projectId} name={name.trim() || defaultName()} options={options.data.aws} onDone={onClose} />
+          <AwsDatabaseSection
+            key={kind}
+            projectId={projectId}
+            kind={kind}
+            name={name.trim() || defaultName()}
+            options={options.data.aws}
+            dynamodb={options.data.dynamodb}
+            onDone={onClose}
+          />
         )}
 
         {where === "external" && kind === "sql" && (

@@ -6,7 +6,8 @@ database from a selector; everything runs through the control plane with the pro
 
 ## API
 
-`POST /v1/projects/{project_id}/data-sources/{sid}/query`
+`POST /v1/projects/{project_id}/data-sources/{sid}/query` (SQL, MongoDB shell code, or one DynamoDB request
+as JSON - "DynamoDB" below)
 
 | Field | Type | Notes |
 |---|---|---|
@@ -181,6 +182,31 @@ the real binary in the sidecar (`tests/integration/test_query_console.py`):
   `.limit(20)`, a projection or fewer rows.
 - The shell's stderr is appended to `output`. Output, error messages **and the result** are redacted
   with `connections.redact` (the source's password and any `scheme://user:password@` become `***`).
+
+### DynamoDB
+
+For a DynamoDB data source ([CLOUD.md](CLOUD.md) "C2-2") the query is **one JSON object**: `operation`
+plus the AWS API's own parameters, with **plain JSON values** (numbers, strings, `{"$set": [...]}`,
+`{"$base64": "..."}`) in `Key`, `Item`, `ExclusiveStartKey` and `ExpressionAttributeValues`:
+
+```json
+{"operation": "Query", "TableName": "orders",
+ "KeyConditionExpression": "customer = :c AND n > :n",
+ "ExpressionAttributeValues": {":c": "c1", ":n": 10}}
+```
+
+- `operation`: `Query`, `Scan`, `GetItem` (every role) or `PutItem`, `UpdateItem`, `DeleteItem`
+  (developer+; a viewer gets `403 read_only_role` - the operation, not the text, decides, so this check is
+  exact). Table operations, batches and transactions are not offered.
+- `TableName` must be one of the source's tables. `Limit` is capped at `max_rows` (default `max_rows`).
+- Runs with the AWS connection's key in the API process (no shell, no sidecar). The answer has the
+  MongoDB shape below: `engine: "dynamodb"`, `result` = the response with items as plain JSON (`Items`,
+  `Item`, `Attributes`, `LastEvaluatedKey`, `Count`, `ScannedCount`), `result_docs` = the items, `output`
+  = a one-line summary (plus how to fetch the next page), `truncated` = more items exist (send
+  `LastEvaluatedKey` as `ExclusiveStartKey`).
+- Invalid JSON, an unknown operation or table, wrong parameters (botocore names them) and AWS errors
+  (`ValidationException`, `ConditionalCheckFailedException`, `AccessDenied...`) are in-band `error`s
+  (HTTP 200), like a MongoDB script error.
 
 ### Device-hosted sources
 

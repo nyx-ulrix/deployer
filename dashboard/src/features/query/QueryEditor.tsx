@@ -255,6 +255,12 @@ function mongoCompletions(collections: readonly string[]) {
 }
 
 function placeholderFor(kind: DataSourceKind, engine: string, mode: EditorMode): string {
+  if (engine === "dynamodb") {
+    // QUERY_CONSOLE.md "DynamoDB": one JSON request, AWS's own parameter names with plain JSON values.
+    return mode === "terminal"
+      ? '{ "operation": "Scan", "TableName": "orders", "Limit": 20 }'
+      : '{\n  "operation": "Query",\n  "TableName": "orders",\n  "KeyConditionExpression": "customer = :c",\n  "ExpressionAttributeValues": { ":c": "c1" }\n}';
+  }
   if (kind === "nosql") {
     return mode === "terminal"
       ? "db.users.find().limit(20)"

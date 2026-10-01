@@ -819,7 +819,12 @@ def source_env(name: str, kind: str, engine: str, config: dict, database_name: s
     env: dict[str, str] = {}
     prefix = env_prefix(name)
     database = str(config.get("database") or database_name)
-    if kind == "sql":
+    if engine == "dynamodb":  # docs/CLOUD.md "C2-2": no credentials, App Runner's instance role is allowed
+        tables = list(config.get("tables") or [])
+        env[prefix + "TABLE"] = tables[0] if tables else ""
+        env[prefix + "TABLES"] = ",".join(tables)
+        env[prefix + "REGION"] = str(config.get("region") or "")
+    elif kind == "sql":
         env[prefix + "HOST"] = str(config.get("host") or "")
         env[prefix + "PORT"] = str(config.get("port") or 3306)
         env[prefix + "USER"] = str(config.get("username") or "")

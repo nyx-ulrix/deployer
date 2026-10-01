@@ -204,9 +204,14 @@ function SourceCard({
       </dl>
       {source.cloud && source.status !== "creating" && (
         <p className="mt-3 text-xs text-muted">
-          {source.cloud.created ? "Created by Deployer in your AWS account" : "Your own AWS database, connected"}
+          {source.cloud.created
+            ? "Created by Deployer in your AWS account"
+            : source.engine === "dynamodb"
+              ? "Your own DynamoDB tables, connected"
+              : "Your own AWS database, connected"}
           {source.cloud.connection_name ? ` (${source.cloud.connection_name})` : ""}. {source.cloud.when_pc_off}
           {source.cloud.allowed_ip ? ` Its firewall lets in this PC's IP ${source.cloud.allowed_ip}.` : ""}
+          {source.cloud.tables?.length ? ` Tables: ${source.cloud.tables.join(", ")}.` : ""}
         </p>
       )}
       {source.status === "creating" && source.cloud?.job_id && (
@@ -214,7 +219,7 @@ function SourceCard({
           className="mt-3"
           projectId={project.id}
           jobId={source.cloud.job_id}
-          title="Creating in AWS (5-15 minutes)"
+          title={source.engine === "dynamodb" ? "Creating in AWS (under a minute)" : "Creating in AWS (5-15 minutes)"}
           onFinished={() => invalidateProjectSources(queryClient, project.id)}
         />
       )}
@@ -233,7 +238,7 @@ function SourceCard({
             Connection details
           </Button>
         )}
-        {source.mode === "managed" && (
+        {(source.mode === "managed" || source.engine === "dynamodb") && (
           <Link
             to={`/projects/${project.id}/backups?source=${encodeURIComponent(source.id)}`}
             className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 text-xs font-medium shadow-sm hover:bg-surface-2"
@@ -312,14 +317,24 @@ function ConnectionDialog({
       ) : (
         <div className="space-y-3">
           {conn.data.external_hint && <Alert tone="info">{conn.data.external_hint}</Alert>}
-          <CopyField label="Connection URI" value={conn.data.uri} secret />
+          {conn.data.tables ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <CopyField label="Region" value={conn.data.region ?? ""} />
+              <CopyField label="Endpoint" value={conn.data.host} />
+              <CopyField label="Tables" value={conn.data.tables.join(", ")} className="sm:col-span-2" />
+            </div>
+          ) : (
+            <>
+          <CopyField label="Connection URI" value={conn.data.uri ?? ""} secret />
           <div className="grid gap-3 sm:grid-cols-2">
             <CopyField label="Host" value={conn.data.host} />
             <CopyField label="Port" value={conn.data.port === null ? "" : String(conn.data.port)} />
-            <CopyField label="Username" value={conn.data.username} />
-            <CopyField label="Password" value={conn.data.password} secret />
-            <CopyField label="Database" value={conn.data.database} className="sm:col-span-2" />
+            <CopyField label="Username" value={conn.data.username ?? ""} />
+            <CopyField label="Password" value={conn.data.password ?? ""} secret />
+            <CopyField label="Database" value={conn.data.database ?? ""} className="sm:col-span-2" />
           </div>
+            </>
+          )}
         </div>
       )}
     </Dialog>
@@ -345,7 +360,10 @@ function DeleteSourceDialog({
     mutationFn: () => api.dataSources.remove(projectId, source.id, drop),
     onSuccess: (out) => {
       invalidateProjectSources(queryClient, projectId);
-      if (out.job) toast.success(`${source.name} removed. AWS is deleting it after a final snapshot (see Activity).`);
+      if (out.job)
+        toast.success(
+          `${source.name} removed. AWS is deleting it after a final ${source.engine === "dynamodb" ? "backup" : "snapshot"} (see Activity).`,
+        );
       else toast.success(drop ? `${source.name} removed and its data dropped.` : `${source.name} removed from the project.`);
       onClose();
     },
@@ -364,8 +382,12 @@ function DeleteSourceDialog({
       description={
         drop
           ? "The database and all of its data will be dropped. A final version and its recovery logs are kept for 30 days under Recently deleted, then purged."
-          : cloudCreated
+          : cloudCreated && source.engine === "dynamodb"
+            ? "Deployer created this table in your AWS account, so it deletes it there too: AWS first saves a final on-demand backup (kept in your account and billed for storage until you delete it in the DynamoDB console), then deletes the table. Apps using it lose it on their next deploy."
+            : cloudCreated
             ? "Deployer created this database in your AWS account, so it deletes it there too: AWS first saves a final snapshot (kept in your account and billed for storage until you delete it in the RDS console), then deletes the database and its firewall. Apps using it lose it on their next deploy."
+            : source.cloud && source.engine === "dynamodb"
+              ? "Deployer forgets these tables. They stay in your AWS account with their data (AWS keeps billing for their storage); delete them in the DynamoDB console if you no longer need them."
             : source.cloud
               ? "Deployer forgets this connection. The database keeps running in your AWS account (and AWS keeps billing for it); delete it in the RDS console if you no longer need it."
               : source.mode === "external"

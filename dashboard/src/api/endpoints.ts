@@ -19,8 +19,10 @@ import type {
   AppWebhook,
   CloudConnection,
   CloudConnectionInput,
+  CloudBackup,
   CloudDatabaseOptions,
   CloudDbListing,
+  DynamoKeyType,
   CloudRequirements,
   CloudTarget,
   AuthResponse,
@@ -417,7 +419,12 @@ export const api = {
   },
 
   documents: {
-    list: (pid: string, sid: string, collection: string, params: { filter?: string; limit: number; skip: number }) =>
+    list: (
+      pid: string,
+      sid: string,
+      collection: string,
+      params: { filter?: string; limit: number; skip?: number; cursor?: string },
+    ) =>
       client.get<DocumentsResponse>(
         `/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(collection)}/documents`,
         { query: params },
@@ -489,12 +496,30 @@ export const api = {
     /** Billable: `confirm_billing` must be true (the dialog asks with the cost note). */
     createDatabase: (
       pid: string,
-      body: { connection_id: string; name: string; engine: string; instance_class: string; confirm_billing: boolean },
+      body: {
+        connection_id: string;
+        name: string;
+        engine: string;
+        instance_class?: string;
+        partition_key?: { name: string; type: DynamoKeyType };
+        sort_key?: { name: string; type: DynamoKeyType };
+        confirm_billing: boolean;
+      },
     ) => client.post<{ data_source: DataSource; job: Job }>(`/projects/${e(pid)}/cloud/databases`, body),
+    /** RDS: `resource_id` + login; DynamoDB: `tables`. */
     connectDatabase: (
       pid: string,
-      body: { connection_id: string; name: string; resource_id: string; username: string; password: string; database?: string },
+      body:
+        | { connection_id: string; name: string; resource_id: string; username: string; password: string; database?: string }
+        | { connection_id: string; name: string; tables: string[] },
     ) => client.post<DataSource>(`/projects/${e(pid)}/cloud/databases/connect`, body),
+    // DynamoDB on-demand backups (billable: confirm_billing).
+    backups: (pid: string, sid: string) =>
+      client.get<{ backups: CloudBackup[]; cost: string; restore: string }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/cloud-backups`,
+      ),
+    backup: (pid: string, sid: string, body: { table?: string; confirm_billing: boolean }) =>
+      client.post<{ backups: CloudBackup[] }>(`/projects/${e(pid)}/data-sources/${e(sid)}/cloud-backups`, body),
   },
 
   // DEPLOYMENTS.md "Connect a Git repository": the signed-in user's GitHub connection.

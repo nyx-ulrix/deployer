@@ -55,15 +55,15 @@ Results are text content holding compact JSON. API errors come back as tool resu
 |---|---|---|---|
 | `list_data_sources` | – | anon | databases: `id`, `name`, `kind`, `engine`, `status`, and `cloud` (`provider`, `service`, `created`, `resource_id`, `region`) for databases in the user's AWS account |
 | `get_schema` | `source_id?` | anon | tables/collections, columns/fields, keys, relationships (`GET /schema`) |
-| `run_query` | `source_id`, `query`, `max_rows?` | service | SQL script or `mongosh` code (the query console); a viewer session may only read |
+| `run_query` | `source_id`, `query`, `max_rows?` | service | SQL script, `mongosh` code or one DynamoDB request as JSON (the query console); a viewer session may only read |
 | `list_rows` | `source_id`, `table`, `limit?`, `offset?`, `filters?`, `sort?` | anon | rows + `total`; `filters` = `{column: value}` equality, ANDed; `sort` = `"column"` or `"-column"` |
 | `insert_row` | `source_id`, `table`, `values` | service | inserts a row, returns it |
 | `update_row` | `source_id`, `table`, `pk`, `values` | service | updates the row with that primary key |
 | `delete_row` | `source_id`, `table`, `pk` | service | deletes the row with that primary key |
-| `list_documents` | `source_id`, `collection`, `filter?`, `limit?`, `skip?` | anon | documents (relaxed Extended JSON) + `total` |
-| `insert_document` | `source_id`, `collection`, `document` | service | inserts a document, returns it with `_id` |
-| `update_document` | `source_id`, `collection`, `document_id`, `set?`, `unset?` | service | `$set` / `$unset` on one document |
-| `delete_document` | `source_id`, `collection`, `document_id` | service | deletes one document |
+| `list_documents` | `source_id`, `collection`, `filter?`, `limit?`, `skip?`, `cursor?` | anon | documents (relaxed Extended JSON) + `total`; DynamoDB tables: items, `key`, `next_cursor` (pass as `cursor`), equality filters only |
+| `insert_document` | `source_id`, `collection`, `document` | service | inserts a document, returns it with `_id` (DynamoDB: the item must contain its key) |
+| `update_document` | `source_id`, `collection`, `document_id`, `set?`, `unset?` | service | `$set` / `$unset` on one document (DynamoDB: `document_id` is the item's key as JSON) |
+| `delete_document` | `source_id`, `collection`, `document_id` | service | deletes one document or DynamoDB item |
 | `list_apps` | – | service | the project's apps (push-to-deploy, [DEPLOYMENTS.md](DEPLOYMENTS.md)) with their `target` |
 | `get_app` | `app_id` | service | one app: settings, `target`, `cloud` (`url`, `resources`), URLs, hostnames, live deployment |
 | `deploy_app` | `app_id` | service | starts a deployment from the app's branch on the app's target; adds `target` and `cloud_url` |
@@ -71,9 +71,11 @@ Results are text content holding compact JSON. API errors come back as tool resu
 | `list_cloud_connections` | – | service | the AWS / Firebase accounts the project's apps may use ([CLOUD.md](CLOUD.md)): `id`, `provider`, `name`, account id / project id, region, `status` - never credentials |
 | `list_cloud_targets` | – | service | where an app can run (`local`, `aws_static`, `aws_app`, `firebase_hosting`, `firebase_app`): what each is for, that cloud targets keep serving with the PC off, cost drivers, `available` for this project |
 | `cloud_database_options` | – | service | where a database can live (this PC, another server, the user's AWS account, Firebase) in plain language, and the sizes, cost and networking of a new AWS database ([CLOUD.md](CLOUD.md) "C2-1") |
-| `list_cloud_databases` | `connection_id` | service | the RDS / Aurora databases in that AWS connection's region, `problem` when Deployer can't connect one, this PC's public IP |
-| `create_cloud_database` | `connection_id`, `name`, `engine`, `instance_class?`, `confirm_billing` | service | **billable**: creates an RDS database in the user's AWS account (stays up with the PC off); refused unless `confirm_billing` is `true` - ask the user first. Returns the data source (`creating`) and the job |
-| `connect_cloud_database` | `connection_id`, `name`, `resource_id`, `username`, `password?`, `database?` | service | connects an existing RDS / Aurora database (never changes it) |
+| `list_cloud_databases` | `connection_id` | service | the RDS / Aurora databases in that AWS connection's region, `problem` when Deployer can't connect one, this PC's public IP, and the region's DynamoDB `tables` |
+| `create_cloud_database` | `connection_id`, `name`, `engine`, `instance_class?`, `partition_key?`, `sort_key?`, `confirm_billing` | service | **billable**: creates an RDS database (`mysql`, `mariadb`, `postgresql`) or a DynamoDB table (`dynamodb`, keys `{name, type: S\|N\|B}`, default a text `id`) in the user's AWS account (stays up with the PC off); refused unless `confirm_billing` is `true` - ask the user first. Returns the data source (`creating`) and the job |
+| `connect_cloud_database` | `connection_id`, `name`, `resource_id?`, `username?`, `password?`, `database?`, `tables?` | service | connects an existing RDS / Aurora database (`resource_id` + login) or existing DynamoDB `tables` (never changes them) |
+| `list_cloud_backups` | `source_id` | anon | a DynamoDB database's on-demand backups in AWS, newest first, and how to restore one |
+| `create_cloud_backup` | `source_id`, `table?`, `confirm_billing` | service | **billable** (about US$0.10 per GB per month until deleted in AWS): an on-demand backup of the tables (or one) - ask the user first |
 | `app_logs` | `app_id`, `tail?` | service | runtime log lines of the live container (1..500, default 100) |
 
 Tools a key's role can't use are **not listed** by `tools/list` and calling them is a JSON-RPC error
@@ -97,7 +99,8 @@ project role decides the tools (viewer = anon's tools plus read-only `run_query`
   Putting an app on a cloud target (billed to that cloud account) is a dashboard action for project
   admins; agents can list the targets and connections and deploy apps already on one. A service key can
   create a database in the user's AWS account (`create_cloud_database`, billable, only with
-  `confirm_billing: true`) or connect an existing one; deleting one is a dashboard action.
+  `confirm_billing: true`) or connect an existing one, and back up DynamoDB tables
+  (`create_cloud_backup`, same rule); deleting one is a dashboard action.
 
 ## Limits
 

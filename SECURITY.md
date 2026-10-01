@@ -115,6 +115,12 @@ Security fixes are made for the latest release. Update with `deployer update`.
   TLS (`REQUIRE SSL`), PostgreSQL forces it. Deployer does not verify the RDS server certificate yet
   (encrypted, not authenticated). App Runner apps with database access get the credentials as runtime
   environment, never anything of this PC. Connected (not created) databases are never modified.
+  DynamoDB databases ("C2-2") hold no credential of their own: Deployer uses the AWS connection's key
+  and a source only reaches the tables it was given (so the project's API keys can't read the
+  account's other tables); viewers may only run Query / Scan / GetItem in the console. App Runner apps
+  get no key either, but an IAM role (`deployer-app-*`) whose only policy allows item operations on
+  exactly the project's tables. The IAM policy may read and write items of any table (connected tables
+  keep their own names) but create, change or delete only `deployer-*` tables.
 - **Rate limits:** sign-in 10 attempts / 15 min per IP+email and 50 failed attempts / hour per email
   from any IP (so rotating or forging IPs doesn't buy more guesses; the flip side is that someone
   guessing can lock an account for up to an hour - `deployer reset-password` clears it), plus 30

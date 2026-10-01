@@ -131,6 +131,8 @@ def run_local(ds: DataSource, op: str, args: dict | None = None) -> Any:
         if op == "table.drop":
             schema_ops.drop_table(engine, _str_arg(args, "name"))
             return {"ok": True}
+    if ds.engine == "dynamodb":
+        return _run_dynamo(ds, op, args)
     database = connections.get_mongo_db(ds)
     if op == "documents.list":
         return data_browser.list_documents(
@@ -155,6 +157,35 @@ def run_local(ds: DataSource, op: str, args: dict | None = None) -> Any:
         schema_ops.drop_collection(database, _str_arg(args, "name"))
         return {"ok": True}
     raise ApiError(400, "unknown_operation", f"Unknown data source operation: {op}")  # pragma: no cover
+
+
+NO_TABLE_CHANGES = (
+    "Tables of a DynamoDB database are added in AWS: create one with Add database -> In your AWS account, or "
+    "create it in the AWS console and connect it."
+)
+
+
+def _run_dynamo(ds: DataSource, op: str, args: dict) -> Any:
+    """docs/CLOUD.md "C2-2": the documents ops on DynamoDB items (services/dynamo.py)."""
+    from app.services import dynamo
+
+    if op == "documents.list":
+        return dynamo.list_documents(
+            ds,
+            _str_arg(args, "name"),
+            filter_json=args.get("filter"),
+            limit=int(args.get("limit", 50)),
+            cursor=args.get("cursor"),
+        )
+    if op == "documents.insert":
+        return dynamo.insert_document(ds, _str_arg(args, "name"), args.get("document"))
+    if op == "documents.update":
+        return dynamo.update_document(
+            ds, _str_arg(args, "name"), _str_arg(args, "doc_id"), args.get("set") or {}, args.get("unset")
+        )
+    if op == "documents.delete":
+        return dynamo.delete_document(ds, _str_arg(args, "name"), _str_arg(args, "doc_id"))
+    raise ApiError(400, "not_supported", NO_TABLE_CHANGES)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -241,6 +272,8 @@ def drop_table(ds: DataSource, name: str) -> None:
 
 
 def create_collection(ds: DataSource, name: str, validator: Any = None) -> None:
+    if ds.engine == "dynamodb":
+        raise ApiError(400, "not_supported", NO_TABLE_CHANGES)
     if is_remote(ds):
         run(ds, "collection.create", {"name": name, "validator": validator})
     else:
@@ -249,6 +282,8 @@ def create_collection(ds: DataSource, name: str, validator: Any = None) -> None:
 
 
 def drop_collection(ds: DataSource, name: str) -> None:
+    if ds.engine == "dynamodb":
+        raise ApiError(400, "not_supported", "Delete DynamoDB tables in the AWS console, or remove this database")
     if is_remote(ds):
         run(ds, "collection.drop", {"name": name})
     else:
@@ -335,8 +370,12 @@ def delete_row(ds: DataSource, table: str, pk: dict) -> dict:
     return run(ds, "rows.delete", {"table": table, "pk": pk})
 
 
-def list_documents(ds: DataSource, name: str, *, filter_json: str | None, limit: int = 50, skip: int = 0) -> dict:
-    return run(ds, "documents.list", {"name": name, "filter": filter_json, "limit": limit, "skip": skip})
+def list_documents(
+    ds: DataSource, name: str, *, filter_json: str | None, limit: int = 50, skip: int = 0, cursor: str | None = None
+) -> dict:
+    """`cursor` pages DynamoDB tables (its `next_cursor`); MongoDB pages with `skip`."""
+    args = {"name": name, "filter": filter_json, "limit": limit, "skip": skip}
+    return run(ds, "documents.list", {**args, "cursor": cursor} if cursor else args)
 
 
 def insert_document(ds: DataSource, name: str, document: Any) -> dict:

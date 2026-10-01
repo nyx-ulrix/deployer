@@ -8,13 +8,13 @@ their design:
 | Host devices (enrollment, device management, placement, moving databases, device-local status) | [DEVICES.md](DEVICES.md) |
 | Backups, versions, point-in-time restore, jobs, recently deleted | [BACKUPS.md](BACKUPS.md) |
 | Cloudflare remote access & custom domains | [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
-| Query console (`POST /projects/{id}/data-sources/{sid}/query`: SQL scripts and MongoDB shell code per data source; `api_keys: true`, service keys only) | [QUERY_CONSOLE.md](QUERY_CONSOLE.md) |
+| Query console (`POST /projects/{id}/data-sources/{sid}/query`: SQL scripts, MongoDB shell code or one DynamoDB JSON request per data source; `api_keys: true`, service keys only) | [QUERY_CONSOLE.md](QUERY_CONSOLE.md) |
 | Data API for apps: API keys on the data, query and schema routes, reveal / config download | [DATA_API.md](DATA_API.md) |
 | Query editor: query log (`/projects/{id}/query-log`) and saved queries (`/projects/{id}/saved-queries`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) |
 | Saved-query versions: strict version control (`/projects/{id}/saved-queries/{sid}/versions`, `/restore`, `409 version_conflict`) | [QUERY_EDITOR.md](QUERY_EDITOR.md) "Phase 2 — versions" |
 | Push-to-deploy: apps (`/projects/{id}/apps`), deployments, rollback, runtime logs, app hostnames, and the unauthenticated GitHub webhook `POST /hooks/github/{app_id}` (HMAC `X-Hub-Signature-256`). `database_access` (opt-in, admin+ to enable) joins an app to the databases network and injects `DEPLOYER_DB_<NAME>_*` | [DEPLOYMENTS.md](DEPLOYMENTS.md) |
 | MCP server for AI agents: `POST /projects/{id}/mcp` (Streamable HTTP, JSON-RPC 2.0; project API key or session; `GET` 405). Tools for data, queries, schema and apps; anon keys get the read-only tools | [MCP.md](MCP.md) |
-| Cloud hosting (phase C1): the owner's AWS / Firebase connections (`GET/POST /instance/cloud`, `GET /instance/cloud/requirements`, `POST /instance/cloud/{id}/check`, `DELETE /instance/cloud/{id}`), `GET /projects/{id}/cloud/connections` (admin+, read-only), `GET /projects/{id}/cloud/targets`; cloud databases (C2-1): `GET /projects/{id}/cloud/databases/options`, `GET /projects/{id}/cloud/connections/{cid}/databases`, `POST /projects/{id}/cloud/databases` (billable, `confirm_billing: true`), `POST /projects/{id}/cloud/databases/connect`, data sources gain `cloud`; apps gain `target` + `cloud_connection_id` (admin+ to change), `cloud`, deployments `target_url`, cloud custom domains with `dns_records` and `POST .../domains/{did}/check`. Credentials are never returned | [CLOUD.md](CLOUD.md) |
+| Cloud hosting (phase C1): the owner's AWS / Firebase connections (`GET/POST /instance/cloud`, `GET /instance/cloud/requirements`, `POST /instance/cloud/{id}/check`, `DELETE /instance/cloud/{id}`), `GET /projects/{id}/cloud/connections` (admin+, read-only), `GET /projects/{id}/cloud/targets`; cloud databases (C2-1): `GET /projects/{id}/cloud/databases/options`, `GET /projects/{id}/cloud/connections/{cid}/databases`, `POST /projects/{id}/cloud/databases` (billable, `confirm_billing: true`), `POST /projects/{id}/cloud/databases/connect`, data sources gain `cloud`; DynamoDB (C2-2): `engine: "dynamodb"` on create, `tables` on connect, `GET/POST /projects/{id}/data-sources/{sid}/cloud-backups` (POST billable), the documents routes page DynamoDB tables with `cursor`; apps gain `target` + `cloud_connection_id` (admin+ to change), `cloud`, deployments `target_url`, cloud custom domains with `dns_records` and `POST .../domains/{did}/check`. Credentials are never returned | [CLOUD.md](CLOUD.md) |
 | Connect a Git repository: the user's GitHub connection (`GET/DELETE /integrations/github`, `POST /integrations/github/connect`, `GET /integrations/github/repos?q=&page=`), `POST /projects/{id}/apps/detect` (suggested app settings), `use_github_connection` on `POST /apps` (automatic clone token + webhook) | [DEPLOYMENTS.md](DEPLOYMENTS.md) "Connect a Git repository" |
 
 Base path `/v1`. JSON in/out unless noted. Authenticated endpoints need
@@ -398,7 +398,7 @@ MongoDB (`kind = nosql`):
 
 | Method | Path | Role | Body / Query | Response |
 |---|---|---|---|---|
-| GET | `/projects/{id}/data-sources/{sid}/collections/{name}/documents?filter={json}&limit=50&skip=0` | viewer+ | – | `{documents:object[], total:number}` (relaxed Extended JSON) |
+| GET | `/projects/{id}/data-sources/{sid}/collections/{name}/documents?filter={json}&limit=50&skip=0` | viewer+ | – | `{documents:object[], total:number}` (relaxed Extended JSON); DynamoDB tables page with `cursor` instead of `skip` and add `key`, `next_cursor` ([DATA_API.md](DATA_API.md) "DynamoDB tables") |
 | POST | `.../collections/{name}/documents` | developer+ | `{document:object}` | `{document:object}` |
 | PATCH | `.../collections/{name}/documents/{doc_id}` | developer+ | `{set:object, unset?:string[]}` | `{document:object}` |
 | DELETE | `.../collections/{name}/documents/{doc_id}` | developer+ | – | `{ok:true}` |

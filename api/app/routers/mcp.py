@@ -42,9 +42,9 @@ CALL_LIMIT, CALL_WINDOW_S = 60, 60  # tool calls per key (or user) per minute
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
 
 INSTRUCTIONS = (
-    "Tools for one Deployer project: its databases (SQL tables, MongoDB collections) and its apps "
-    "(push-to-deploy websites). Start with list_data_sources and get_schema, or list_apps. "
-    "Ids come from those tools. Databases can also live in the user's own AWS account "
+    "Tools for one Deployer project: its databases (SQL tables, MongoDB collections, DynamoDB tables) and "
+    "its apps (push-to-deploy websites). Start with list_data_sources and get_schema, or list_apps. "
+    "Ids come from those tools. Databases can also live in the user's own AWS account - RDS SQL or DynamoDB "
     "(cloud_database_options; creating one is billable and needs the user's agreement). "
     "Results are compact JSON, capped at 200 rows / 256 KB."
 )
@@ -63,8 +63,18 @@ def _p(type_: str, description: str, **extra: Any) -> dict:
 
 SOURCE = _p("string", "Data source id (from list_data_sources)")
 TABLE = _p("string", "SQL table name")
-COLLECTION = _p("string", "MongoDB collection name")
-DOC_ID = _p("string", "String form of the document's _id: ObjectId hex, an integer, or the raw string")
+COLLECTION = _p("string", "MongoDB collection or DynamoDB table name")
+DOC_ID = _p(
+    "string",
+    "MongoDB: the _id as ObjectId hex, an integer or the raw string. DynamoDB: the item's key as JSON "
+    '(e.g. {"pk": "a", "sk": 1}), or the plain partition key value when the table has no sort key',
+)
+TABLE_KEY = _p(
+    "object",
+    'DynamoDB key: {"name": "id", "type": "S"} (S text, N number, B binary)',
+    properties={"name": {"type": "string"}, "type": {"type": "string", "enum": ["S", "N", "B"]}},
+    required=["name"],
+)
 APP = _p("string", "App id (from list_apps)")
 CONNECTION = _p("string", "Cloud connection id (from list_cloud_connections)")
 LIMIT = _p("integer", f"Max rows to return (1-{MAX_ROWS}, default 50)", minimum=1, maximum=MAX_ROWS)
@@ -141,6 +151,7 @@ def t_list_documents(ctx: Ctx, args: dict) -> Any:
         filter_json=json.dumps(flt) if flt else None,
         limit=_limit(args),
         skip=max(0, int(args.get("skip", 0))),
+        **({"cursor": args["cursor"]} if args.get("cursor") else {}),
     )
 
 
@@ -209,6 +220,15 @@ def t_connect_cloud_database(ctx: Ctx, args: dict) -> Any:
     return cloud_router.connect_database(body, ctx.request, ctx.access, ctx.db)
 
 
+def t_list_cloud_backups(ctx: Ctx, args: dict) -> Any:
+    return cloud_router.list_cloud_backups(args["source_id"], ctx.access, ctx.db)
+
+
+def t_create_cloud_backup(ctx: Ctx, args: dict) -> Any:
+    body = cloud_router.CloudBackupCreate(**{k: v for k, v in args.items() if k != "source_id"})
+    return cloud_router.create_cloud_backup(args["source_id"], body, ctx.request, ctx.access, ctx.db)
+
+
 def t_app_logs(ctx: Ctx, args: dict) -> Any:
     tail = max(1, min(int(args.get("tail", 100)), 500))
     return apps_router.runtime_logs(args["app_id"], ctx.access, ctx.db, tail=tail, device_id=None)
@@ -231,12 +251,19 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     ),
     "run_query": (
         "viewer",
-        "Run SQL (a script, several statements allowed) or MongoDB shell code (`db` is the database) "
-        f"against a data source. Returns up to {MAX_ROWS} rows per statement. Viewer sessions may only read.",
+        "Run SQL (a script, several statements allowed), MongoDB shell code (`db` is the database) or one "
+        'DynamoDB request as JSON ({"operation": "Query", "TableName": ..., plus AWS parameters with plain JSON '
+        f"values}}) against a data source. Returns up to {MAX_ROWS} rows per statement. Viewer sessions may only "
+        "read (DynamoDB: Query, Scan, GetItem).",
         _schema(
             ["source_id", "query"],
             source_id=SOURCE,
-            query=_p("string", "SQL, or mongosh code such as db.orders.find({status: 'open'})"),
+            query=_p(
+                "string",
+                "SQL, mongosh code such as db.orders.find({status: 'open'}), or a DynamoDB request such as "
+                '{"operation": "Query", "TableName": "orders", "KeyConditionExpression": "customer = :c", '
+                '"ExpressionAttributeValues": {":c": "c1"}}',
+            ),
             max_rows=_p("integer", f"Max rows per statement (1-{MAX_ROWS})", minimum=1, maximum=MAX_ROWS),
         ),
         t_run_query,
@@ -291,20 +318,24 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     ),
     "list_documents": (
         "viewer",
-        "Read documents of a MongoDB collection (relaxed Extended JSON), with the total count.",
+        "Read documents of a MongoDB collection (relaxed Extended JSON) or items of a DynamoDB table, with the "
+        "total count. DynamoDB: equality filters only (naming the partition key reads just that partition), "
+        "page with next_cursor -> cursor; `key` lists the table's key attributes.",
         _schema(
             ["source_id", "collection"],
             source_id=SOURCE,
             collection=COLLECTION,
-            filter=_p("object", 'MongoDB query filter, e.g. {"status": "open"} ($where is refused)'),
+            filter=_p("object", 'Query filter, e.g. {"status": "open"} (MongoDB: $where is refused)'),
             limit=LIMIT,
-            skip=_p("integer", "Documents to skip (default 0)", minimum=0),
+            skip=_p("integer", "MongoDB: documents to skip (default 0)", minimum=0),
+            cursor=_p("string", "DynamoDB: next_cursor of the previous page"),
         ),
         t_list_documents,
     ),
     "insert_document": (
         "developer",
-        "Insert a document into a MongoDB collection; returns it with its _id.",
+        "Insert a document into a MongoDB collection (returns it with its _id) or an item into a DynamoDB "
+        "table (it must contain the table's key; an existing key is refused).",
         _schema(
             ["source_id", "collection", "document"],
             source_id=SOURCE,
@@ -315,7 +346,7 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     ),
     "update_document": (
         "developer",
-        "Set and/or unset fields of one MongoDB document; _id cannot change.",
+        "Set and/or unset fields of one MongoDB document or DynamoDB item; _id / the key cannot change.",
         _schema(
             ["source_id", "collection", "document_id"],
             source_id=SOURCE,
@@ -328,7 +359,7 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     ),
     "delete_document": (
         "developer",
-        "Delete one MongoDB document.",
+        "Delete one MongoDB document or DynamoDB item.",
         _schema(
             ["source_id", "collection", "document_id"], source_id=SOURCE, collection=COLLECTION, document_id=DOC_ID
         ),
@@ -389,23 +420,31 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     "list_cloud_databases": (
         "developer",
         "The RDS / Aurora databases in an AWS connection's region (from list_cloud_connections), with which "
-        "ones Deployer can connect to (`problem` says why not) and this PC's public IP.",
+        "ones Deployer can connect to (`problem` says why not) and this PC's public IP, plus the region's "
+        "DynamoDB `tables`.",
         _schema(["connection_id"], connection_id=CONNECTION),
         t_list_cloud_databases,
     ),
     "create_cloud_database": (
         "developer",
         "BILLABLE: create a new RDS database (MySQL, MariaDB or PostgreSQL; default db.t4g.micro, 20 GB, backups, "
-        "deletion protection, encrypted) in the user's AWS account. It stays up when the PC is off and AWS "
+        "deletion protection, encrypted; 5-15 minutes) or a DynamoDB table (engine dynamodb: on-demand billing, "
+        "deletion protection; under a minute) in the user's AWS account. It stays up when the PC is off and AWS "
         "bills the user (see cloud_database_options for the cost). Only call after the user agreed to the "
-        "cost, with confirm_billing: true. Returns the data source (status creating) and a job; creation "
-        "takes 5-15 minutes. Apps on aws_app with database_access then get DEPLOYER_DB_<NAME>_*.",
+        "cost, with confirm_billing: true. Returns the data source (status creating) and a job. Apps on aws_app "
+        "with database_access then get DEPLOYER_DB_<NAME>_*.",
         _schema(
             ["connection_id", "name", "engine", "confirm_billing"],
             connection_id=CONNECTION,
             name=_p("string", "Data source name, unique in the project"),
-            engine=_p("string", "mysql, mariadb or postgresql", enum=["mysql", "mariadb", "postgresql"]),
-            instance_class=_p("string", "db.t4g.micro (default), db.t4g.small or db.t4g.medium"),
+            engine=_p(
+                "string",
+                "mysql, mariadb, postgresql or dynamodb",
+                enum=["mysql", "mariadb", "postgresql", "dynamodb"],
+            ),
+            instance_class=_p("string", "RDS: db.t4g.micro (default), db.t4g.small or db.t4g.medium"),
+            partition_key={**TABLE_KEY, "description": "DynamoDB: the partition key (default a text id)"},
+            sort_key={**TABLE_KEY, "description": "DynamoDB: an optional sort key"},
             confirm_billing=_p("boolean", "Must be true: the user agreed to the AWS charges"),
         ),
         t_create_cloud_database,
@@ -413,17 +452,37 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     "connect_cloud_database": (
         "developer",
         "Connect an existing RDS / Aurora database (resource_id from list_cloud_databases) with the user's "
-        "database login. Deployer only connects; it never changes that database or its firewall.",
+        "database login, or existing DynamoDB tables (tables from list_cloud_databases). Deployer only "
+        "connects; it never changes that database, its firewall or the tables' settings.",
         _schema(
-            ["connection_id", "name", "resource_id", "username"],
+            ["connection_id", "name"],
             connection_id=CONNECTION,
             name=_p("string", "Data source name, unique in the project"),
             resource_id=_p("string", "Instance or cluster id from list_cloud_databases"),
             username=_p("string", "Database user"),
             password=_p("string", "Database password"),
             database=_p("string", "Database name (defaults to the instance's own)"),
+            tables=_p("array", "DynamoDB: table names (instead of resource_id)", items={"type": "string"}),
         ),
         t_connect_cloud_database,
+    ),
+    "list_cloud_backups": (
+        "viewer",
+        "On-demand backups in AWS of a DynamoDB data source's tables, newest first, with how to restore one.",
+        _schema(["source_id"], source_id=SOURCE),
+        t_list_cloud_backups,
+    ),
+    "create_cloud_backup": (
+        "developer",
+        "BILLABLE (about US$0.10 per GB per month until deleted in AWS): take an on-demand backup of a DynamoDB "
+        "data source's tables (or one table). Only call after the user agreed, with confirm_billing: true.",
+        _schema(
+            ["source_id", "confirm_billing"],
+            source_id=SOURCE,
+            table=_p("string", "One table (default: every table of the data source)"),
+            confirm_billing=_p("boolean", "Must be true: the user agreed to the AWS charges"),
+        ),
+        t_create_cloud_backup,
     ),
     "app_logs": (
         "developer",
