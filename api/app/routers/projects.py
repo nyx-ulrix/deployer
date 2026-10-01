@@ -8,8 +8,8 @@ from pydantic_core import PydanticCustomError
 from sqlalchemy import delete, select
 
 from app.deps import CurrentUser, DbSession, ProjectAccess, ProjectCreator, require_role
-from app.errors import ApiError
-from app.models import ApiKey, DataSource, Project, ProjectInvite, ProjectMember, SchemaLink, utcnow
+from app.errors import ApiError, conflict
+from app.models import ApiKey, App, DataSource, Project, ProjectInvite, ProjectMember, SchemaLink, utcnow
 from app.serializers import project_out
 from app.services import audit
 from app.services.slugs import unique_slug
@@ -153,6 +153,26 @@ def delete_project(
             "confirmation_required",
             "Pass ?confirm=<project slug> to delete this project",
             {"slug": project.slug},
+        )
+    # docs/CLOUD.md: what Deployer created in the user's cloud account is removed on its own (final snapshot,
+    # teardown); deleting the project around it would leave it running, still billed, with nothing tracking it.
+    from app.services import cloud_db
+
+    in_cloud = [
+        f"database {s.name}"
+        for s in db.scalars(select(DataSource).where(DataSource.project_id == project.id))
+        if s.deleted_at is None and cloud_db.is_created(s)
+    ]
+    in_cloud += [
+        f"app {a.name}"
+        for a in db.scalars(select(App).where(App.project_id == project.id, App.target != "local"))
+        if a.cloud_state
+    ]
+    if in_cloud:
+        raise conflict(
+            "cloud_resources_left",
+            "Remove these from the project first, so Deployer deletes what they use in your cloud account: "
+            + ", ".join(in_cloud),
         )
     # docs/BACKUPS.md: every managed database gets a final snapshot (kept 30 days) before it is dropped;
     # the snapshot + drop run as jobs that don't depend on the project rows deleted below.

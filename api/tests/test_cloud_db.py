@@ -10,6 +10,7 @@ import pytest
 from alembic import command
 
 from app.crypto import decrypt_json
+from app.errors import CloudError
 from app.models import App, AuditLog, DataSource, Job
 from app.services import cloud, cloud_db, cloud_deploy, connections, jobs
 from tests.test_cloud import FakeCloud, connection, deploy
@@ -189,6 +190,13 @@ def test_delete_created_database_takes_a_final_snapshot(client, db, team, aws):
     instance = db.get(DataSource, source["id"]).cloud_state["instance_id"]
     aws.calls.clear()
     aws.returns["db_instance"] = None  # gone once deleted
+    held = iter([True])  # the deleted instance's network interface holds the group for a moment
+
+    def release(group):
+        if next(held, False):
+            raise CloudError("AWS DependencyViolation: in use", code="DependencyViolation")
+
+    aws.returns["delete_security_group"] = release
     resp = client.delete(f"{base(team)}/data-sources/{source['id']}", headers=team["admin"])
     assert resp.status_code == 200 and resp.json()["job"]["type"] == "data_source.cloud_delete"
     db.expire_all()
@@ -198,8 +206,16 @@ def test_delete_created_database_takes_a_final_snapshot(client, db, team, aws):
     assert job.status == "succeeded", job.error
     (deleted, snapshot) = aws.args("delete_db_instance")[0]
     assert deleted == instance and snapshot.startswith(f"{instance}-final-")
-    assert aws.names() == ["delete_db_instance", "db_instance", "delete_security_group"]
+    assert aws.names() == ["delete_db_instance", "db_instance", "delete_security_group", "delete_security_group"]
     assert job.result["final_snapshot"] == snapshot
+
+
+def test_project_delete_never_orphans_a_created_database(client, db, team, aws):
+    create(client, team, connection(db))
+    jobs.run_queued()
+    project = team["project"]
+    resp = client.delete(f"/v1/projects/{project.id}?confirm={project.slug}", headers=team["owner"])
+    assert resp.status_code == 409 and "database Shop DB" in resp.json()["error"]["message"]
 
 
 def test_delete_reports_what_is_left(client, db, team, aws):

@@ -217,8 +217,11 @@ Deleting a created database (typing its name in the dialog, which lists what goe
 `data_source.cloud_delete` and removes the source at once: deletion protection off ->
 `DeleteDBInstance` with a **final snapshot** `<instance>-final-<UTC yyyymmddHHMM>` (kept, billed for
 storage until the user deletes it; automated backups go with the instance) -> waits until it is gone ->
-deletes the security group. Anything it could not remove fails the job with the list. Deleting is
-refused while the database is still being created.
+deletes the security group (retried for up to 10 minutes while the old instance's network interface
+still holds it). Anything it could not remove fails the job with the list. Deleting is refused while the
+database is still being created. Deleting a **project** is refused (`409 cloud_resources_left`, naming
+them) while it still has databases Deployer created in AWS or apps with cloud resources: removing those
+first runs their cleanup, so nothing is left running and billed with no record of it.
 
 ### Networking (the trade-off)
 

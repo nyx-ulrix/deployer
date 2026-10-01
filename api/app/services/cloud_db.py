@@ -37,6 +37,7 @@ log = logging.getLogger(__name__)
 POLL_S = 20.0  # tests set 0
 CREATE_TIMEOUT_S = 45 * 60
 DELETE_TIMEOUT_S = 45 * 60
+GROUP_RELEASE_S = 10 * 60
 IP_REFRESH_EVERY_S = 5 * 60
 MASTER_USER = "deployer"
 
@@ -561,7 +562,15 @@ def _job_delete(ctx: jobs.JobContext) -> dict:
             removed.append(f"RDS instance {s['instance_id']}")
         if s.get("group_id"):
             ctx.progress(0.9, "Removing the firewall (security group)", force=True)
-            aws.delete_security_group(s["group_id"])
+            started = time.monotonic()
+            while True:  # the deleted instance's network interface holds the group for a few minutes
+                try:
+                    aws.delete_security_group(s["group_id"])
+                    break
+                except CloudError as exc:
+                    if exc.code != "DependencyViolation" or time.monotonic() - started > GROUP_RELEASE_S:
+                        raise
+                    time.sleep(POLL_S)
             removed.append(f"Security group {s['group_id']}")
     except CloudError as exc:
         left = [r for r in resources(s) if not any(r.startswith(x) for x in removed)]
