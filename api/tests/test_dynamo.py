@@ -5,6 +5,7 @@ in-memory fake behind `AwsClient.ddb`; nothing here reaches AWS."""
 
 import json
 import re
+import secrets
 from decimal import Decimal
 
 import pytest
@@ -591,7 +592,7 @@ def test_app_with_rds_and_dynamodb_gets_a_gateway_endpoint(client, db, docker, t
         engine="mysql",
         mode="external",
         database_name="main",
-        config_encrypted=encrypt_json({"host": "h", "port": 3306, "password": "rds-pw-0123456789"}),
+        config_encrypted=encrypt_json({"host": "h", "port": 3306, "password": secrets.token_urlsafe(16)}),
         status="ok",
         cloud_connection_id=conn.id,
         cloud_state={"provider": "aws", "service": "rds", "created": False, "instance_id": "m", "vpc_id": "vpc-1"},
