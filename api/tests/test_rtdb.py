@@ -319,6 +319,11 @@ def test_create_default_database_is_confirmed_and_idempotent(client, db, team, g
     # It exists now: a second create connects it instead of making another.
     again = client.post(url, json={**body, "name": "Chat 2"}, headers=team["admin"])
     assert again.status_code == 201 and len(gcp.args("create_rtdb_instance")) == 1
+    # An existing default database that is disabled is not connected blindly.
+    gcp.instances[-1]["state"] = "DISABLED"
+    disabled = client.post(url, json={**body, "name": "Chat 4"}, headers=team["admin"])
+    assert disabled.status_code == 400 and "disabled" in disabled.json()["error"]["message"]
+    assert len(gcp.args("create_rtdb_instance")) == 1
     # Firebase refusing (no role / API) says what to turn on.
     gcp.instances = []
     gcp.fail["create_rtdb_instance"] = "Google API error 403: The caller does not have permission"

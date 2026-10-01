@@ -370,7 +370,7 @@ def instances(gcp) -> list[dict]:
         out.append(
             {
                 "id": name.rsplit("/", 1)[-1],
-                "url": i.get("databaseUrl"),
+                "url": (i.get("databaseUrl") or "").rstrip("/") or None,
                 "location": name.split("/locations/")[-1].split("/")[0] if "/locations/" in name else None,
                 "type": i.get("type"),
                 "state": state,

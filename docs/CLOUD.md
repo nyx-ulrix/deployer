@@ -622,7 +622,7 @@ and the cost, then lists the project's instances (`GET .../cloud/connections/{ci
   move later - and `confirm_billing: true`): `POST .../locations/<loc>/instances?databaseId=<project>-default-rtdb`
   with `{type: DEFAULT_DATABASE}`. Synchronous - Firebase answers with the ready database - so there is no job
   (`job: null`). When the project already has a default database (or one appears meanwhile, `409`) that one is
-  connected instead; a retry never creates a second one. Further (`USER_DATABASE`) instances are made in the
+  connected instead (a disabled one is refused with the reason); a retry never creates a second one. Further (`USER_DATABASE`) instances are made in the
   Firebase console (Blaze plan) and connected here.
 
 ### Browsing, editing, querying

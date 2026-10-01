@@ -641,6 +641,8 @@ def create_rtdb(db: Session, project_id: str, *, connection_id: str, name: str, 
         found = [i for i in _cloud_call(rtdb.instances, gcp) if i["type"] == "DEFAULT_DATABASE"]
         if not found:
             raise ApiError(502, "cloud_error", "Firebase did not list the new database yet: try again in a minute")
+    if found[0]["problem"] or not found[0].get("url"):  # e.g. the existing default database is disabled
+        raise ApiError(400, "connection_failed", found[0]["problem"] or "Firebase gave no URL for this database")
     ds = _rtdb_source(project_id, conn, config, name, found[0])
     db.add(ds)
     db.flush()
