@@ -914,6 +914,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
             # 5 (files first: the WSL setup script and the resume-after-reboot script live there) ------
             Write-InstallStep 2 'Getting Deployer files'
             $source = Resolve-Source
+            if ($facts.Avx) { Assert-DeployerMongoRef -InstallDir $InstallDir -SourceRoot $source.Root -Ref $source.Ref }
             New-Item -ItemType Directory -Path (Join-Path $InstallDir 'installer') -Force | Out-Null
             Copy-DeployerFiles -SourceRoot $source.Root -InstallDir $InstallDir
             Set-DeployerInstallDirAcl -Path $InstallDir

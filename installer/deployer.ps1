@@ -623,12 +623,17 @@ function Invoke-Update {
 
     $work = Join-Path $env:TEMP 'deployer-update'
     $root = Get-DeployerSource -Repo $repo -Ref $target -WorkDir $work
+    $mongo = [bool](Get-DeployerStateValue $ctx.State 'managedMongodb' $true)
+    # V-07: whether the version that was running can open MongoDB 8.0 data, for the way back.
+    $previousMongo8 = Test-DeployerComposeMongoImage -Path (Join-Path $InstallDir 'docker-compose.yml')
+    $replaced = $false
     try {
+        if ($mongo) { Assert-DeployerMongoRef -InstallDir $InstallDir -SourceRoot $root -Ref $target }
+        $replaced = $true
         Copy-DeployerFiles -SourceRoot $root -InstallDir $InstallDir
         # Installs from before A-067 left the WSL disk and logs readable by every local user.
         Protect-DeployerDataDirs -InstallDir $InstallDir -UserSid ([string](Get-DeployerStateValue $ctx.State 'installUserSid' (Get-DeployerUserSid)))
 
-        $mongo = [bool](Get-DeployerStateValue $ctx.State 'managedMongodb' $true)
         $bind = if ($ctx.Env['DEPLOYER_BIND']) { [string]$ctx.Env['DEPLOYER_BIND'] } else { '127.0.0.1' }
         [void](Initialize-DeployerEnv -InstallDir $InstallDir -Port $ctx.Port -MongoEnabled $mongo `
                 -ImagePrefix (Get-DeployerImagePrefix -Repo $repo) -Version (Get-DeployerImageVersion -Ref $target) -Bind $bind)
@@ -649,8 +654,10 @@ function Invoke-Update {
             throw 'Deployer did not become healthy after the update.'
         }
     } catch {
+        if (-not $replaced) { throw }
         # The old deploy files are already replaced, so name the way back (A-150).
-        throw ("{0}`n{1}" -f $_.Exception.Message, (Get-DeployerUpdateRecoveryHint -PreviousRef $currentRef -BackupName $script:DeployerLastBackup))
+        $mongoNewer = $mongo -and -not $previousMongo8 -and [bool]((Read-DeployerEnvFile -Path (Join-Path $InstallDir '.env'))['MONGODB_IMAGE'])
+        throw ("{0}`n{1}" -f $_.Exception.Message, (Get-DeployerUpdateRecoveryHint -PreviousRef $currentRef -BackupName $script:DeployerLastBackup -MongoNewer:$mongoNewer))
     } finally {
         # A-151: the downloaded source is in the install folder now (or not wanted); free %TEMP%.
         Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue

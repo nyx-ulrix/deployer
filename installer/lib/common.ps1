@@ -888,6 +888,8 @@ function Update-DeployerMongo {
     # 8.0 is one step away from 7.0), else 6.0 -> 7.0 -> 8.0. Each step is a no-op once done, so an
     # interrupted upgrade resumes where it stopped. docs/BACKUPS.md "MongoDB versions".
     param([string]$InstallDir, [string]$Runtime)
+    # V-07: a version from before A-143 runs mongo:5.0 and has no upgrade steps; nothing to do.
+    if (-not (Test-DeployerComposeMongoImage -Path (Join-Path $InstallDir 'docker-compose.yml'))) { return }
     [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('stop', '-t', '60', 'mongodb'))
     $steps = @('8')
     $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Runtime -Arguments @('--profile', 'mongodb-upgrade', 'run', '--rm', '-T', 'mongodb-upgrade-8')
@@ -906,6 +908,22 @@ function Update-DeployerMongo {
     # the previous `deployer` script, running the first update to this version, leaves in place).
     Set-DeployerEnvValues -Path (Join-Path $InstallDir '.env') -Values ([ordered]@{ MONGODB_IMAGE = 'mongo:8.0' })
     Write-DeployerOk 'Managed MongoDB data is ready for MongoDB 8.0'
+}
+
+function Test-DeployerComposeMongoImage {
+    # Whether a compose file starts MongoDB from ${MONGODB_IMAGE} (A-143 and later). Older versions
+    # hardcode mongo:5.0, which cannot open data that is on 8.0.
+    param([string]$Path)
+    return ((Test-Path -LiteralPath $Path) -and ([System.IO.File]::ReadAllText($Path) -match '\$\{MONGODB_IMAGE'))
+}
+
+function Assert-DeployerMongoRef {
+    # V-07: once .env runs MONGODB_IMAGE (new installs, or Update-DeployerMongo after the upgrade) the
+    # managed MongoDB data is on 8.0, so refuse a version from before A-143 before any file is replaced.
+    param([string]$InstallDir, [string]$SourceRoot, [string]$Ref)
+    if (-not (Read-DeployerEnvFile -Path (Join-Path $InstallDir '.env'))['MONGODB_IMAGE']) { return }
+    if (Test-DeployerComposeMongoImage -Path (Join-Path $SourceRoot 'deploy\docker-compose.yml')) { return }
+    throw "Deployer '$Ref' runs MongoDB 5.0, but the managed MongoDB data on this PC is already on MongoDB 8.0, which 5.0 cannot open. Nothing was changed. To stay on a current version run 'deployer update' without -Ref; going back to '$Ref' means starting its MongoDB on empty data and restoring a backup, see docs/BACKUPS.md `"MongoDB versions`"."
 }
 
 # ------------------------------------------------------------------------------------------------
@@ -988,14 +1006,17 @@ function Get-DeployerUpdateRecoveryHint {
     <#
       Next steps after 'deployer update' fails once the new files are in place (A-150): how to see why,
       how to go back to the version that was running, and the backup to restore if the new version
-      already migrated the database.
+      already migrated the database. -MongoNewer: the update moved the managed MongoDB data to 8.0
+      and the previous version still runs 5.0, so going back is not one command (V-07).
     #>
-    param([string]$PreviousRef, [string]$BackupName)
+    param([string]$PreviousRef, [string]$BackupName, [switch]$MongoNewer)
     $back = if ($PreviousRef) { $PreviousRef } else { '<the version you had>' }
-    $lines = @(
-        'To see why: deployer logs api',
+    $lines = @('To see why: deployer logs api')
+    $lines += if ($MongoNewer) {
+        "To retry: deployer update. The managed MongoDB data is now on MongoDB 8.0, which $back (MongoDB 5.0) cannot open; going back to it takes the steps in docs/BACKUPS.md `"MongoDB versions`"."
+    } else {
         "To go back to the previous version: deployer update -Ref $back"
-    )
+    }
     $lines += if ($BackupName) {
         "If it still fails, the new version may have migrated the database: after going back, run deployer restore $BackupName"
     } else {

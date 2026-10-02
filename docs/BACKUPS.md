@@ -46,6 +46,21 @@ If an upgrade step fails, the update stops before starting the new containers an
 Any update that fails after the new files are in place ends with the way back: `deployer logs api`,
 `deployer update -Ref <the version that was running>`, and, if the new version already migrated the
 databases, `deployer restore <that backup>` after going back.
+
+Once the data is on 8.0 (`MONGODB_IMAGE` is in `.env`; every install made since A-143 too), a version
+from before A-143 cannot open it: it runs MongoDB 5.0. `deployer update -Ref <such a version>` (and
+`install.ps1 -Ref`) refuses it before replacing any file, and an update that failed after moving the
+data says to retry with `deployer update` instead of going back. If you must go back anyway, its
+MongoDB has to start on empty data and be filled from the backup taken before the upgrade
+(anything written since is lost):
+
+1. `deployer backup` (a copy of the current data, in case you change your mind).
+2. `deployer compose -- rm -s -f mongodb`, then delete the 8.0 data:
+   `wsl -d deployer -u root docker volume rm deployer_mongodb_data` (Docker Desktop:
+   `docker volume rm deployer_mongodb_data`).
+3. Delete the `MONGODB_IMAGE=` line from `.env`.
+4. `deployer update -Ref <the old version>`, then `deployer restore <the backup from before the upgrade>`
+   (it replaces the MariaDB data too).
 Starting 8.0 on data that was never upgraded (for example setting `MONGODB_IMAGE` by hand) fails,
 and the `mongodb` log says to run `deployer update`.
 
