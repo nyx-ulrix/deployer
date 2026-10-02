@@ -41,7 +41,14 @@ BEFORE_SPLIT_SIDS = [
 ]
 BEFORE_SPLIT_SHA256 = "49a3cd3956814527fde2040f61229f0a746724dfaff6e76b755681b8a8e5fdcf"  # G2 added iam:ListRoleTags
 # A statement added after the split: put its Sid here (a changed one updates the fingerprint instead).
-ADDED_SINCE_SPLIT: set[str] = {"GitHubActionsRoleList"}  # G2: the orphan sweep lists roles
+ADDED_SINCE_SPLIT: set[str] = {
+    "GitHubActionsRoleList",  # G2: the orphan sweep lists roles
+    "AppRunnerVpcConnectorDelete",  # C2-6: the NAT gateway network
+    "InternetRead",
+    "InternetCreate",
+    "InternetTag",
+    "InternetChange",
+}
 
 
 def _size(document: dict) -> int:

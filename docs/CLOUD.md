@@ -15,6 +15,7 @@ and the `deploy-website` skill.
 | **C2-4** | Firebase Realtime Database engine ("C2-4 as built") | **Built** (no migration) |
 | **Firestore backups** | New Firestore databases, managed exports to Cloud Storage and imports, scheduled backups and restores ("Firestore backups as built") | **Built** (no migration) |
 | **C2-5** | MCP roles, data tools on every cloud engine, transfer, project delete keep / delete ("C2-5 as built") | **Built** (no migration) |
+| **C2-6** | Internet access for App Runner apps linked to a database: an opt-in, shared NAT gateway ("C2-6 as built") | **Built** (no migration) |
 | **C3** | GitHub Actions builds with OIDC, so pushes deploy with the PC off ("C3 as built") | **Built** (no migration) |
 | **Delete over API / MCP** | Deleting a cloud database with an admin's session or a service key, MCP `delete_cloud_database` ("Deleting a cloud database over the API and MCP") | **Built** (no migration) |
 | **DynamoDB recovery** | Point-in-time recovery per table and restores of a backup / point in time into a new table and data source ("C2-2 as built": "Point-in-time recovery and restores") | **Built** (no migration) |
@@ -272,7 +273,8 @@ PC off for the apps. Design:
   gets through the firewall, the password is long and random, TLS is required); while the PC's IP
   changes, the PC is locked out for up to 5 minutes; **an App Runner app linked to a database sends all
   its outgoing traffic through the VPC**, which has no internet route by default, so an app that also
-  calls other internet services needs a NAT gateway (about US$32/month) - Deployer does not create one.
+  calls other internet services needs a NAT gateway (about US$32/month) - off by default; the app's
+  *Let this app reach the internet too* switch adds one ("C2-6 as built").
   The alternatives were worse for this audience: a private-only database needs a bastion or VPN for the
   PC, and opening the database to App Runner's public egress would mean `0.0.0.0/0`.
 
@@ -1127,7 +1129,110 @@ and the `confirm_billing` rule are in place; a NoSQL engine without its own driv
 functions of `services/dynamo.py` / `services/firestore.py` / `services/rtdb.py`, returned by `connections.cloud_engine`.
 Left (not built; each is also noted in its section above):
 
-- a NAT gateway for App Runner apps linked to an RDS database that also call the internet (the user adds one).
+- with internet access on (C2-6): a DynamoDB gateway endpoint that already existed before the private route
+  table is not added to it (one created in the same deploy is, as it takes every route table), so such an app
+  goes to DynamoDB through the NAT gateway (works, billed per GB); a VPC whose only free address space is
+  smaller than a /24 per AZ (the app's deploy says so).
+
+## C2-6 as built: internet access for App Runner apps linked to a database (NAT gateway)
+
+### What it is
+
+An `aws_app` with database access reaches its RDS database through the VPC connector (C2-1), and App Runner then
+sends **all** of the app's outgoing traffic through the VPC, which has no internet route - so an app that also
+calls other online services (an API, a payment provider, email) could not. **Let this app reach the internet
+too** (`apps.internet_access`, off by default) adds a **NAT gateway** to that VPC. It is billable, so it is
+confirmed like every other cloud charge (the tick with the cost note in the app form; `confirm_billing: true` on
+the API / MCP; `422 billing_not_confirmed` otherwise), only project **admins** turn it on, and it is only accepted
+on `aws_app` with `database_access` (`422 validation_error`: every other app already reaches the internet).
+Switching database access off, or moving the app elsewhere, drops it.
+
+No migration: the switch lives in `apps.cloud_state.internet_access` and the app's use of the gateway in
+`cloud_state.nat_vpc` (both merged by `save_state`, so deploys keep them; `app_out` returns `internet_access`).
+
+### What the deploy makes (`cloud_deploy.Publish.nat_connector`, `cloud_aws.ensure_nat_network`)
+
+Everything is tagged `managed-by=deployer` plus `Name=deployer-nat-<vpc-id>` and **found by those tags** before it
+is created, so a retried or interrupted deploy never makes a second one and AWS itself is the record:
+
+1. **Private subnets**: one per availability zone the VPC already has a subnet in (the same zones the plain
+   connector uses), each a free **/24** block of the VPC's CIDR that overlaps no existing subnet
+   (`cloud_aws.free_blocks`, `ipaddress`); no room is a plain error naming the VPC's CIDR.
+2. An **Elastic IP** (`AllocateAddress`) and the **NAT gateway** (`CreateNatGateway`, public connectivity) in a
+   **public subnet**: one of the VPC's own subnets whose route table (its own, else the main one) sends
+   `0.0.0.0/0` to an internet gateway; none is a plain error, raised before anything is created (the lookups
+   all come first, so a VPC that cannot take the gateway is left as it was).
+3. A **private route table** with `0.0.0.0/0 -> NAT` (`RouteAlreadyExists` is fine), associated with every
+   private subnet.
+4. The deploy waits for the gateway to be `available` (polled, bounded by the rollout timeout; `failed` fails the
+   deploy with AWS's reason) and logs the public IP the app's traffic leaves from.
+5. A **second VPC connector `deployer-nat-<vpc-id>`** on the private subnets with the same security group
+   `deployer-apprunner-<vpc-id>` (a connector's subnets cannot change after creation; the plain connector
+   `deployer-<vpc-id>` now ignores the tagged private subnets), and the service is created / updated with it.
+   The databases' security-group rules are unchanged (same group).
+
+The app's `nat_vpc` is recorded **before** step 1, so a deploy that fails halfway still counts as a user of the
+gateway and the app's teardown removes it when it is the last one.
+
+### Shared, reference-counted, removed with the last user
+
+One NAT gateway per VPC per AWS connection, shared by every app of the account that turns the switch on there.
+The users are the apps on that connection whose `cloud_state.nat_vpc` is the VPC (`cloud_deploy.nat_users`, no
+table). It is removed when the last user goes:
+
+- **opt-out**: a deployed app is republished at once (G1's `env_deployment_id`; otherwise the next deploy): the
+  deploy points the service back at the plain connector (so the service never loses its connector), clears
+  `nat_vpc` and, when no other app uses it, queues `app.cloud_teardown` with just the NAT part (the build log
+  says so, with the job id); otherwise the log says it stays. The dashboard confirms the opt-out first (the
+  gateway's removal, when the app is the last user, is a few minutes of work and cannot be undone);
+- **delete / move**: `enqueue_teardown` marks the state `nat_last` when no other app uses it, and the teardown
+  job removes it **after** the service (which holds the connector until it is gone), reporting failures like
+  every other step; the confirm dialogs list it ("shared ...: removed when the last one stops using it").
+
+Removal order (`cloud_aws.delete_vpc_connector`, `delete_nat_gateway`, `delete_nat_routes`, `delete_nat_subnets`,
+each bounded by 10 minutes of retries): the private-subnet connector (retried while the deleted service still
+holds it) -> the NAT gateway, waited for until `deleted` (or `failed`: AWS removes those itself within an hour) ->
+its Elastic IP released -> the route table
+(associations first) -> the subnets (retried while the connector's network interfaces still hold them). The plain
+connector and the security group stay, as before.
+
+### Permissions added (`DeployerDatabases` and `DeployerHosting`, shown in Settings -> Cloud accounts)
+
+In `DeployerDatabases` (the databases' VPC): `InternetRead` - `ec2:DescribeAddresses`, `DescribeNatGateways`;
+`InternetCreate` - `ec2:CreateSubnet`, `AllocateAddress`, `CreateNatGateway`, `CreateRouteTable` on the
+`vpc`, `subnet`, `elastic-ip`, `ipv4pool-ec2`, `natgateway` and `route-table` resource types (creating cannot
+touch what exists; `CreateNatGateway` names the account's own public subnet, so no tag condition is possible
+there); `InternetTag` - `ec2:CreateTags` on those four types only while creating one (`ec2:CreateAction`);
+`InternetChange` - `ec2:CreateRoute`, `AssociateRouteTable`, `DisassociateRouteTable`, `DeleteRouteTable`,
+`DeleteNatGateway`, `ReleaseAddress`, `DeleteSubnet` only on resources tagged `managed-by=deployer` (which only
+the create statements can put there). In `DeployerHosting`: `AppRunnerVpcConnectorDelete` -
+`apprunner:DeleteVpcConnector` on `vpcconnector/deployer-nat-*` only. Owners paste the two changed policies over
+their copies (`tests/test_cloud_policies.py` lists the five statements in `ADDED_SINCE_SPLIT`).
+
+### API, MCP, dashboard
+
+- `POST` / `PATCH /projects/{pid}/apps[/{id}]` take `internet_access` (with `confirm_billing: true` to turn it on;
+  admin+); apps return `internet_access`; `cloud.resources` lists the gateway while the app uses it.
+- A changed `internet_access` republishes a deployed app at once, like `env` (G1): `update_app` compares the
+  runtime settings (`env`, `database_access`, `cloud_secrets`, `internet_access`) before and after the PATCH and
+  republishes only when one really changed (the dashboard sends every field whether it changed or not).
+- MCP `set_app_internet_access` (project admin, like `set_app_target`; `app_id`, `enabled`, `confirm_billing` - the
+  description tells the agent to get the user's agreement first). See MCP.md.
+- App form / Settings, under *Connect to this project's AWS databases*: the switch with one plain paragraph, and
+  when turning it on the tick *I understand AWS charges this account for the NAT gateway* with the cost
+  (`cloud.NAT_COST`: about US$32/month plus US$0.045 per GB, plus the public IPv4 address); turning it off on a
+  saved app asks once (the gateway goes with its last user). The build log shows each step and the public IP.
+
+### Not verified against real clouds
+
+Tested with the fake AWS client (`tests/test_cloud_db.py`: the switch's rules and billing confirmation, the deploy
+sequence and the private-subnet connector, sharing between two apps, opt-out (the republish) and delete as the
+last user, the dropped switch, MCP, the policy) and every EC2 / App Runner call of the NAT network against botocore's real
+service models with `Stubber` (create, find-by-tag, the no-public-subnet error, the gateway's states, and the
+removal with its retries). Not yet run against a live account: how long AWS takes to make and delete a NAT
+gateway and to release a deleted connector's network interfaces (the bounds are 10 minutes each), whether App
+Runner accepts the private subnets' zones (the same as the plain connector's), and the public-subnet detection on
+VPCs with several route tables.
 
 ## C3 as built: GitHub Actions builds (pushes deploy with the PC off)
 
@@ -1570,8 +1675,8 @@ policies attached, so the permissions are now three policies, one per purpose:
 
 | Policy | What for | Statements |
 |---|---|---|
-| `DeployerHosting` | static sites, container images, App Runner services, app secrets | `WhoAmI`, `StaticSiteBuckets`, `CloudFront`, `Certificates`, `RegistryLogin`, `ContainerRepositories`, `AppRunner`, `AppSecrets` |
-| `DeployerDatabases` | RDS / Aurora and their firewall, DynamoDB tables, backups, restores, the gateway endpoint | `DatabasesRead`, `Databases`, `DatabaseFirewall*`, `DynamoDB*` |
+| `DeployerHosting` | static sites, container images, App Runner services, app secrets | `WhoAmI`, `StaticSiteBuckets`, `CloudFront`, `Certificates`, `RegistryLogin`, `ContainerRepositories`, `AppRunner`, `AppSecrets`, `AppRunnerVpcConnectorDelete` (added after the split, C2-6) |
+| `DeployerDatabases` | RDS / Aurora and their firewall, DynamoDB tables, backups, restores, the gateway endpoint, the NAT gateway (C2-6) | `DatabasesRead`, `Databases`, `DatabaseFirewall*`, `DynamoDB*`, `Internet*` (added after the split) |
 | `DeployerRoles` | every IAM permission: the roles Deployer creates, always within `deployer-boundary` (G3), GitHub Actions sign-in, service-linked roles | `AppRunnerImageAccessRole`, `RolesWithinBoundary`, `BoundaryPolicy`, `ServiceLinkedRoles`, `AppRunnerInstanceRoles`, `GitHubActionsSignIn`, `GitHubActionsRoles`, `GitHubActionsRoleList` (added after the split by the orphan sweep, "C3 as built") |
 
 The statements are exactly the previous ones, moved verbatim: nothing added, removed or changed by the split. Every `iam:*`

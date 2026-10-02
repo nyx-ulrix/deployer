@@ -135,8 +135,8 @@ NETWORK_NOTE = (
     "in this PC's current public IP (Deployer updates the rule when your IP changes) and your App Runner apps "
     "(through a private network link, a VPC connector). Connections must use TLS (encryption). An App Runner "
     "app linked to a database sends all its outgoing traffic through your VPC, which has no internet route by "
-    "default: if the app also calls other internet services, add a NAT gateway in the VPC console (about "
-    "US$32/month)."
+    "default: if the app also calls other internet services, turn on 'Let this app reach the internet too' in its "
+    "settings (a NAT gateway, about US$32/month)."
 )
 
 DYNAMODB_WHAT = (

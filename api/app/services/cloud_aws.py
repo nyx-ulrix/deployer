@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import functools
+import ipaddress
 import json
 import re
 import time
@@ -22,6 +23,8 @@ from typing import Any
 
 from app.errors import CloudError
 
+POLL_S = 10.0  # tests set 0
+NAT_WAIT_S = 10 * 60  # a NAT gateway takes a few minutes to appear and to go; subnets free up after it
 ACCESS_ROLE = "deployer-apprunner-ecr-access"  # shared by every App Runner service of the account
 INSTANCE_ROLE_PREFIX = "deployer-app-"  # one instance role per App Runner app that uses DynamoDB tables
 INSTANCE_ROLE_POLICY = "deployer-databases"
@@ -144,6 +147,50 @@ def set_factory(factory: Callable[[dict], Any] | None) -> None:
 def _code(exc: Exception) -> str:
     response = getattr(exc, "response", None)
     return str(response.get("Error", {}).get("Code", "")) if isinstance(response, dict) else ""
+
+
+def nat_name(vpc_id: str) -> str:
+    """The Name tag of every NAT resource of a VPC, and the private subnets' VPC connector (<= 40 chars)."""
+    return f"deployer-nat-{vpc_id}"
+
+
+def _ours(resource: dict) -> bool:
+    """A subnet / route table Deployer created (tagged managed-by=deployer)."""
+    return any(t.get("Key") == TAG["Key"] and t.get("Value") == TAG["Value"] for t in resource.get("Tags") or [])
+
+
+def _nat_alive(nat: dict) -> bool:
+    return nat.get("State") not in ("deleting", "deleted", "failed")
+
+
+def _public_subnet(subnets: list[dict], tables: list[dict]) -> str | None:
+    """A subnet whose route table (its own, else the VPC's main one) sends 0.0.0.0/0 to an internet gateway."""
+
+    def to_internet(table: dict | None) -> bool:
+        return any(
+            r.get("DestinationCidrBlock") == "0.0.0.0/0" and str(r.get("GatewayId") or "").startswith("igw-")
+            for r in (table or {}).get("Routes") or []
+        )
+
+    explicit = {a.get("SubnetId"): t for t in tables for a in t.get("Associations") or [] if a.get("SubnetId")}
+    main = next((t for t in tables if any(a.get("Main") for a in t.get("Associations") or [])), None)
+    return next((s["SubnetId"] for s in subnets if to_internet(explicit.get(s["SubnetId"], main))), None)
+
+
+def free_blocks(vpc_cidr: str, used: list[str], count: int, prefix: int = 24) -> list[str]:
+    """`count` /24 blocks of the VPC's CIDR that overlap none of the `used` subnet CIDRs, else CloudError."""
+    taken = [ipaddress.ip_network(c) for c in used]
+    net = ipaddress.ip_network(vpc_cidr)
+    out: list[str] = []
+    for block in net.subnets(new_prefix=prefix) if net.prefixlen <= prefix else ():
+        if not any(block.overlaps(t) for t in taken):
+            out.append(str(block))
+            if len(out) == count:
+                return out
+    raise CloudError(
+        f"No room in the VPC ({vpc_cidr}) for {count} more /{prefix} subnet(s) for the NAT gateway: free up address "
+        "space in it or use a VPC with a larger CIDR block"
+    )
 
 
 def _wrap(fn):
@@ -832,30 +879,191 @@ class AwsClient:
             if _code(exc) != "InvalidGroup.NotFound":
                 raise
 
-    @_wrap
-    def ensure_vpc_connector(self, vpc_id: str) -> dict:
-        """`{arn, group_id}` of the App Runner VPC connector Deployer keeps per VPC (created once, shared
-        by every app of the account that uses a database in that VPC; connectors cost nothing)."""
-        name = f"deployer-{vpc_id}"[:40]
-        group = self.ensure_security_group(
-            f"deployer-apprunner-{vpc_id}", vpc_id, "Deployer: App Runner apps that use a database in this VPC"
-        )
-        ar = self._c("apprunner")
+    def _find_vpc_connector(self, name: str) -> dict | None:
         # botocore has no paginator for list_vpc_connectors: follow NextToken by hand.
         params: dict[str, Any] = {}
         while True:
-            page = ar.list_vpc_connectors(**params)
+            page = self._c("apprunner").list_vpc_connectors(**params)
             for c in page.get("VpcConnectors") or []:
                 if c["VpcConnectorName"] == name and c.get("Status") == "ACTIVE":
-                    return {"arn": c["VpcConnectorArn"], "group_id": group}
+                    return c
             if not page.get("NextToken"):
-                break
+                return None
             params["NextToken"] = page["NextToken"]
-        subnets = self._c("ec2").describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["Subnets"]
-        out = ar.create_vpc_connector(
-            VpcConnectorName=name, Subnets=[s["SubnetId"] for s in subnets], SecurityGroups=[group], Tags=[TAG]
+
+    @_wrap
+    def ensure_vpc_connector(self, vpc_id: str, private_subnets: list[str] | None = None) -> dict:
+        """`{arn, group_id}` of the App Runner VPC connector Deployer keeps per VPC (created once, shared
+        by every app of the account that uses a database in that VPC; connectors cost nothing). With
+        `private_subnets` (docs/CLOUD.md "C2-6"): the second connector `deployer-nat-<vpc>` on the private
+        subnets that route through the NAT gateway (a connector's subnets cannot change after creation)."""
+        name = (nat_name(vpc_id) if private_subnets else f"deployer-{vpc_id}")[:40]
+        group = self.ensure_security_group(
+            f"deployer-apprunner-{vpc_id}", vpc_id, "Deployer: App Runner apps that use a database in this VPC"
+        )
+        found = self._find_vpc_connector(name)
+        if found:
+            return {"arn": found["VpcConnectorArn"], "group_id": group}
+        if private_subnets:
+            subnet_ids = private_subnets
+        else:  # the VPC's own subnets, not the private ones Deployer added for the NAT gateway
+            subnets = self._c("ec2").describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["Subnets"]
+            subnet_ids = [s["SubnetId"] for s in subnets if not _ours(s)]
+        out = self._c("apprunner").create_vpc_connector(
+            VpcConnectorName=name, Subnets=subnet_ids, SecurityGroups=[group], Tags=[TAG]
         )
         return {"arn": out["VpcConnector"]["VpcConnectorArn"], "group_id": group}
+
+    @_wrap
+    def delete_vpc_connector(self, name: str) -> None:
+        """Deletes the connector `name` (gone already is fine). A service that still uses it - one being
+        deleted releases it after a few minutes - is waited for, up to NAT_WAIT_S."""
+        found = self._find_vpc_connector(name)
+        if found is None:
+            return
+        started = time.monotonic()
+        while True:
+            try:
+                self._c("apprunner").delete_vpc_connector(VpcConnectorArn=found["VpcConnectorArn"])
+                return
+            except Exception as exc:  # noqa: BLE001
+                code = _code(exc)
+                if code == "ResourceNotFoundException":
+                    return
+                if code != "InvalidRequestException" or time.monotonic() - started > NAT_WAIT_S:
+                    raise
+                time.sleep(POLL_S)
+
+    # --- NAT gateway: App Runner apps that also need the internet (docs/CLOUD.md "C2-6") ---------------
+
+    def _nat_tags(self, kind: str, vpc_id: str) -> list[dict]:
+        """Every NAT resource carries managed-by=deployer (what the IAM policy scopes deleting to) and a
+        Name the lookups filter on, so AWS itself is the record of what exists."""
+        return [{"ResourceType": kind, "Tags": [TAG, {"Key": "Name", "Value": nat_name(vpc_id)}]}]
+
+    @_wrap
+    def ensure_nat_network(self, vpc_id: str) -> dict:
+        """Private subnets (one per AZ the VPC already has a subnet in, a free /24 each), an Elastic IP, a
+        NAT gateway in a public subnet and a private route table 0.0.0.0/0 -> NAT, all found by tag when
+        they exist. Returns `{subnet_ids, nat_id, public_ip}`; the NAT gateway may still be `pending`."""
+        ec2 = self._c("ec2")
+        in_vpc = {"Name": "vpc-id", "Values": [vpc_id]}
+        named = {"Name": "tag:Name", "Values": [nat_name(vpc_id)]}
+        # Everything is looked up first, so a VPC that cannot take the gateway fails before anything is made.
+        subnets = ec2.describe_subnets(Filters=[in_vpc])["Subnets"]
+        ours = {s["AvailabilityZone"]: s["SubnetId"] for s in subnets if _ours(s)}
+        theirs = [s for s in subnets if not _ours(s)]
+        if not theirs:
+            raise CloudError(f"VPC {vpc_id} has no subnets of its own to put the NAT gateway in")
+        tables = ec2.describe_route_tables(Filters=[in_vpc])["RouteTables"]
+        live = [n for n in ec2.describe_nat_gateways(Filter=[in_vpc, named])["NatGateways"] if _nat_alive(n)]
+        public = None if live else _public_subnet(theirs, tables)
+        if not live and public is None:
+            raise CloudError(
+                f"VPC {vpc_id} has no public subnet (one whose route table sends 0.0.0.0/0 to an internet "
+                "gateway) to put the NAT gateway in"
+            )
+        missing = sorted({s["AvailabilityZone"] for s in theirs} - set(ours))
+        blocks: list[str] = []
+        if missing:
+            vpc = ec2.describe_vpcs(VpcIds=[vpc_id])["Vpcs"][0]
+            blocks = free_blocks(vpc["CidrBlock"], [s["CidrBlock"] for s in subnets], len(missing))
+        for zone, cidr in zip(missing, blocks, strict=True):
+            ours[zone] = ec2.create_subnet(
+                VpcId=vpc_id,
+                AvailabilityZone=zone,
+                CidrBlock=cidr,
+                TagSpecifications=self._nat_tags("subnet", vpc_id),
+            )["Subnet"]["SubnetId"]
+        private = [ours[z] for z in sorted(ours)]
+        addresses = ec2.describe_addresses(Filters=[named])["Addresses"]
+        if addresses:
+            allocation, public_ip = addresses[0]["AllocationId"], addresses[0].get("PublicIp")
+        else:
+            out = ec2.allocate_address(Domain="vpc", TagSpecifications=self._nat_tags("elastic-ip", vpc_id))
+            allocation, public_ip = out["AllocationId"], out.get("PublicIp")
+        if live:
+            nat_id = live[0]["NatGatewayId"]
+        else:
+            nat_id = ec2.create_nat_gateway(
+                SubnetId=public,
+                AllocationId=allocation,
+                ConnectivityType="public",
+                TagSpecifications=self._nat_tags("natgateway", vpc_id),
+            )["NatGateway"]["NatGatewayId"]
+        table = next((t for t in tables if _ours(t)), None)
+        if table is None:
+            table = ec2.create_route_table(VpcId=vpc_id, TagSpecifications=self._nat_tags("route-table", vpc_id))[
+                "RouteTable"
+            ]
+        if not any(r.get("DestinationCidrBlock") == "0.0.0.0/0" for r in table.get("Routes") or []):
+            try:
+                ec2.create_route(
+                    RouteTableId=table["RouteTableId"], DestinationCidrBlock="0.0.0.0/0", NatGatewayId=nat_id
+                )
+            except Exception as exc:  # noqa: BLE001
+                if _code(exc) != "RouteAlreadyExists":
+                    raise
+        associated = {a.get("SubnetId") for a in table.get("Associations") or []}
+        for subnet in private:
+            if subnet not in associated:
+                ec2.associate_route_table(RouteTableId=table["RouteTableId"], SubnetId=subnet)
+        return {"subnet_ids": private, "nat_id": nat_id, "public_ip": public_ip}
+
+    @_wrap
+    def nat_gateway_state(self, nat_id: str) -> tuple[str, str | None]:
+        """(`pending` | `available` | `failed` | `deleting` | `deleted`, AWS's failure message)."""
+        found = self._c("ec2").describe_nat_gateways(NatGatewayIds=[nat_id])["NatGateways"]
+        if not found:
+            return "deleted", None
+        return str(found[0].get("State") or "pending"), found[0].get("FailureMessage")
+
+    @_wrap
+    def delete_nat_gateway(self, vpc_id: str) -> None:
+        """Deletes the VPC's NAT gateway, waits until AWS has removed it (bounded) and releases its IP."""
+        ec2 = self._c("ec2")
+        named = {"Name": "tag:Name", "Values": [nat_name(vpc_id)]}
+        nats = ec2.describe_nat_gateways(Filter=[{"Name": "vpc-id", "Values": [vpc_id]}, named])["NatGateways"]
+        for nat in nats:
+            if nat.get("State") not in ("deleting", "deleted"):
+                ec2.delete_nat_gateway(NatGatewayId=nat["NatGatewayId"])
+            started = time.monotonic()
+            while self.nat_gateway_state(nat["NatGatewayId"])[0] not in ("deleted", "failed"):
+                if time.monotonic() - started > NAT_WAIT_S:
+                    raise CloudError("AWS is still deleting the NAT gateway; its IP address could not be released yet")
+                time.sleep(POLL_S)
+        for address in ec2.describe_addresses(Filters=[named])["Addresses"]:
+            ec2.release_address(AllocationId=address["AllocationId"])
+
+    @_wrap
+    def delete_nat_routes(self, vpc_id: str) -> None:
+        """Removes the private route table (its subnet associations first)."""
+        ec2 = self._c("ec2")
+        filters = [{"Name": "vpc-id", "Values": [vpc_id]}, {"Name": "tag:Name", "Values": [nat_name(vpc_id)]}]
+        for table in ec2.describe_route_tables(Filters=filters)["RouteTables"]:
+            for assoc in table.get("Associations") or []:
+                if not assoc.get("Main"):
+                    ec2.disassociate_route_table(AssociationId=assoc["RouteTableAssociationId"])
+            ec2.delete_route_table(RouteTableId=table["RouteTableId"])
+
+    @_wrap
+    def delete_nat_subnets(self, vpc_id: str) -> None:
+        """Deletes the private subnets; the deleted connector's network interfaces hold them for a while."""
+        ec2 = self._c("ec2")
+        filters = [{"Name": "vpc-id", "Values": [vpc_id]}, {"Name": "tag:Name", "Values": [nat_name(vpc_id)]}]
+        started = time.monotonic()
+        for subnet in ec2.describe_subnets(Filters=filters)["Subnets"]:
+            while True:
+                try:
+                    ec2.delete_subnet(SubnetId=subnet["SubnetId"])
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    code = _code(exc)
+                    if code == "InvalidSubnetID.NotFound":
+                        break
+                    if code != "DependencyViolation" or time.monotonic() - started > NAT_WAIT_S:
+                        raise
+                    time.sleep(POLL_S)
 
     @_wrap
     def ensure_dynamodb_endpoint(self, vpc_id: str) -> str:

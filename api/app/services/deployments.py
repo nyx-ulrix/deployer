@@ -282,6 +282,8 @@ def app_out(db: Session, app: App) -> dict:
         "has_repo_token": app.repo_token_encrypted is not None,
         "api_key_id": app.api_key_id,
         "database_access": bool(app.database_access),
+        # docs/CLOUD.md "C2-6": App Runner + database access: also the internet, through a NAT gateway.
+        "internet_access": bool((app.cloud_state or {}).get("internet_access")),
         "cohost": bool(app.cohost),
         "cohost_share_repo_access": bool(app.cohost_share_repo_access),
         "replicas": cohost_apps.replicas_out(db, app.id),

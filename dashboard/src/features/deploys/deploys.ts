@@ -200,6 +200,10 @@ export type AppDraft = {
   saved_target: AppTarget;
   saved_connection_id: string;
   confirm_billing: boolean;
+  /** docs/CLOUD.md "C2-6": App Runner + database access: also the internet through a NAT gateway (billed, so ticked). */
+  internet_access: boolean;
+  saved_internet_access: boolean;
+  confirm_internet: boolean;
 };
 
 export function emptyDraft(app?: App): AppDraft {
@@ -224,12 +228,25 @@ export function emptyDraft(app?: App): AppDraft {
     saved_target: app?.target ?? "local",
     saved_connection_id: app?.cloud_connection_id ?? "",
     confirm_billing: false,
+    internet_access: app?.internet_access ?? false,
+    saved_internet_access: app?.internet_access ?? false,
+    confirm_internet: false,
   };
 }
 
 /** docs/CLOUD.md: the draft puts the app on a cloud target or account it isn't billed to yet. */
 export function movesToCloud(d: AppDraft): boolean {
   return d.target !== "local" && (d.target !== d.saved_target || d.cloud_connection_id !== d.saved_connection_id);
+}
+
+/** docs/CLOUD.md "C2-6": internet access counts only on App Runner with database access. */
+export function wantsInternet(d: AppDraft): boolean {
+  return d.target === "aws_app" && d.database_access && d.internet_access;
+}
+
+/** The draft turns the (billed) NAT gateway on: it was off, or the app moves onto a cloud account that pays for it. */
+export function addsInternet(d: AppDraft): boolean {
+  return wantsInternet(d) && (!d.saved_internet_access || movesToCloud(d));
 }
 
 export function draftErrors(d: AppDraft): Partial<Record<keyof AppDraft, string>> {
@@ -242,6 +259,7 @@ export function draftErrors(d: AppDraft): Partial<Record<keyof AppDraft, string>
   if (!targetFits(d.target, d.preset)) errors.target = "This target serves static files: pick the Static site preset or a full-app target.";
   else if (d.target !== "local" && !d.cloud_connection_id) errors.target = "Pick the cloud account to deploy to.";
   else if (movesToCloud(d) && !d.confirm_billing) errors.target = "Tick the box to confirm the cloud account pays for this.";
+  if (addsInternet(d) && !d.confirm_internet) errors.internet_access = "Tick the box to confirm the AWS account pays for the NAT gateway.";
   if (d.preset === "dockerfile" && d.container_port.trim()) {
     const n = Number(d.container_port);
     if (!Number.isInteger(n) || n < 1 || n > 65535) errors.container_port = "Port must be 1–65535.";
@@ -272,8 +290,10 @@ export function draftToInput(d: AppDraft, env: EnvRow[]): AppInput {
     database_access: (d.target === "local" || CLOUD_DATABASE_TARGETS.includes(d.target)) && d.database_access,
     target: d.target,
     cloud_connection_id: d.target === "local" ? null : d.cloud_connection_id || null,
+    internet_access: wantsInternet(d),
   };
-  if (movesToCloud(d)) body.confirm_billing = d.confirm_billing;
+  // One confirmation covers both billed changes; draftErrors keeps the form closed until each has its tick.
+  if (movesToCloud(d) || addsInternet(d)) body.confirm_billing = (!movesToCloud(d) || d.confirm_billing) && (!addsInternet(d) || d.confirm_internet);
   if (d.use_github_connection) body.use_github_connection = true;
   else if (d.private_repo && d.repo_token.trim()) body.repo_token = d.repo_token.trim();
   return body;

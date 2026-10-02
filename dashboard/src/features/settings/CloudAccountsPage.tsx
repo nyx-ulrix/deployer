@@ -228,7 +228,7 @@ function AwsGuide({ policies, boundary }: { policies: { name: string; for: strin
           <DoneButton status={steps[0]} onClick={() => ack(0)} />
         </div>
       </StepCard>
-      <StepCard n={2} title={AWS_TITLES[1]} status={steps[1]} summary="S3, CloudFront, ACM, ECR, App Runner, RDS and DynamoDB databases, deployer-* IAM roles, GitHub Actions sign-in">
+      <StepCard n={2} title={AWS_TITLES[1]} status={steps[1]} summary="S3, CloudFront, ACM, ECR, App Runner, RDS and DynamoDB databases, deployer-* IAM roles, GitHub Actions sign-in, NAT gateway">
         <div className="space-y-3">
           <p className="text-muted">
             AWS limits how long one policy can be, so the permissions come as {policies.length || "a few"} policies, one per purpose.

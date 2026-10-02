@@ -15,7 +15,7 @@ import { useToast } from "../../components/ui/toast-context";
 import { relativeTime } from "../../lib/format";
 import { JobProgressPanel } from "../jobs/JobProgress";
 import { AppFormFields } from "./AppForm";
-import { draftErrors, draftToPatch, emptyDraft, envToRows, rowsToEnv, TARGET_SHORT, type EnvRow } from "./deploys";
+import { draftErrors, draftToPatch, emptyDraft, envToRows, rowsToEnv, TARGET_SHORT, wantsInternet, type EnvRow } from "./deploys";
 import { EnvEditor } from "./EnvEditor";
 import { BuildCard } from "./GitHubBuild";
 
@@ -41,10 +41,13 @@ function GeneralCard({ projectId, app, canEdit, isAdmin }: Props) {
   const [draft, setDraft] = useState(() => emptyDraft(app));
   const [submitted, setSubmitted] = useState(false);
   const [confirmMove, setConfirmMove] = useState(false);
+  const [confirmInternetOff, setConfirmInternetOff] = useState(false);
   const [teardownJob, setTeardownJob] = useState<string | null>(null);
   const errors = submitted ? draftErrors(draft) : {};
   const moving =
     draft.target !== app.target || (draft.target !== "local" && draft.cloud_connection_id !== (app.cloud_connection_id ?? ""));
+  // docs/CLOUD.md "C2-6": leaving the NAT gateway removes it when this app was its last user, so it is confirmed.
+  const internetOff = app.internet_access && !wantsInternet(draft);
   const save = useMutation({
     mutationFn: () => api.apps.update(projectId, app.id, draftToPatch(draft, app)),
     onSuccess: ({ teardown_job_id, build_job_id, env_deployment_id, warnings, ...updated }) => {
@@ -52,6 +55,7 @@ function GeneralCard({ projectId, app, canEdit, isAdmin }: Props) {
       setDraft(emptyDraft(updated));
       setSubmitted(false);
       setConfirmMove(false);
+      setConfirmInternetOff(false);
       if (teardown_job_id) setTeardownJob(teardown_job_id);
       toast.success(
         moving
@@ -71,6 +75,7 @@ function GeneralCard({ projectId, app, canEdit, isAdmin }: Props) {
     setSubmitted(true);
     if (Object.keys(draftErrors(draft)).length > 0) return;
     if (moving) setConfirmMove(true);
+    else if (internetOff) setConfirmInternetOff(true);
     else save.mutate();
   };
   return (
@@ -121,6 +126,15 @@ function GeneralCard({ projectId, app, canEdit, isAdmin }: Props) {
       >
         <TeardownList app={app} />
       </ConfirmDialog>
+      <ConfirmDialog
+        open={confirmInternetOff}
+        onClose={() => setConfirmInternetOff(false)}
+        onConfirm={() => save.mutate()}
+        loading={save.isPending}
+        title="Stop this app reaching the internet?"
+        description="The app goes back to the databases' network only: its calls to other online services (APIs, payment providers, email) will fail. If no other app of this AWS account still uses the NAT gateway in that network, it is removed with its public IP address, private subnets and route table (a few minutes; AWS stops billing it). A deployed app is published again with the change right away."
+        confirmLabel="Stop internet access"
+      />
     </Card>
   );
 }

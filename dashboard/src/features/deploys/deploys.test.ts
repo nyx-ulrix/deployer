@@ -153,6 +153,23 @@ describe("app draft", () => {
     expect("env" in patch).toBe(false);
     expect(draftToPatch({ ...d, private_repo: true }, app).repo_token).toBeUndefined();
   });
+  it("internet access (NAT gateway) counts on App Runner with database access and needs its own billing tick", () => {
+    const base = { ...emptyDraft(), name: "Api", repo_url: "https://github.com/me/api", preset: "node" as const };
+    const cloud = { target: "aws_app" as const, cloud_connection_id: "c1", saved_target: "aws_app" as const, saved_connection_id: "c1" };
+    const d = { ...base, ...cloud, database_access: true, internet_access: true };
+    expect(draftErrors(d).internet_access).toBeTruthy();
+    expect(draftErrors({ ...d, confirm_internet: true })).toEqual({});
+    expect(draftToInput({ ...d, confirm_internet: true }, [])).toMatchObject({ internet_access: true, confirm_billing: true });
+    // Already on: no confirmation again; off, or without database access, nothing is sent as on.
+    expect(draftErrors({ ...d, saved_internet_access: true })).toEqual({});
+    expect("confirm_billing" in draftToInput({ ...d, saved_internet_access: true }, [])).toBe(false);
+    expect(draftToInput({ ...d, database_access: false, confirm_internet: true }, []).internet_access).toBe(false);
+    // Moving onto a cloud target with it on: both ticks are needed for the one confirmation.
+    const moving = { ...d, saved_target: "local" as const, saved_connection_id: "", confirm_internet: true };
+    expect(draftErrors(moving).target).toBeTruthy();
+    expect(draftToInput(moving, []).confirm_billing).toBe(false);
+    expect(draftToInput({ ...moving, confirm_billing: true }, []).confirm_billing).toBe(true);
+  });
 });
 
 describe("database access", () => {

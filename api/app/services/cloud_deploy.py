@@ -125,6 +125,12 @@ def resources(target: str, state: dict | None) -> list[str]:
             out.append(f"ECR repository {s['ecr_repository']} and its images")
         if s.get("instance_role"):
             out.append(f"IAM role {s['instance_role']} (what the app may use)")
+        if s.get("nat_vpc"):
+            out.append(
+                f"NAT gateway with its public IP address, private subnets and route table in {s['nat_vpc']} (shared "
+                "with the other apps of this account that reach the internet from that VPC: removed when the last "
+                "one stops using it)"
+            )
     elif target in ("firebase_hosting", "firebase_app"):
         if s.get("run_service"):
             out.append(f"Cloud Run service {s['run_service']}")
@@ -365,6 +371,8 @@ class Publish:
 
         self.wait("App Runner", poll)
         cloud_secrets.cleanup(self, aws, stale)
+        if self.state.get("nat_vpc") and self.state["nat_vpc"] != self.nat_vpc:
+            self.release_nat(self.state["nat_vpc"])  # the service no longer goes through it
         return image, self.state["service_url"]
 
     def databases(self) -> list[dict]:
@@ -433,15 +441,22 @@ class Publish:
         self.save(instance_role=name, instance_role_arn=arn)
         return arn
 
+    nat_vpc: str | None = None  # the VPC whose NAT gateway this deploy points the service at
+
     def connect_databases(self, aws, databases: list[dict]) -> str | None:
         """The VPC connector the service reaches its databases through (None: App Runner's default
-        egress); databases Deployer created let the connector's security group in."""
+        egress); databases Deployer created let the connector's security group in. With internet access
+        (docs/CLOUD.md "C2-6") the connector is the one on the private subnets behind the NAT gateway."""
         vpcs = [d["state"].get("vpc_id") for d in databases if d["state"].get("vpc_id")]
         if not vpcs:
+            if self.state.get("internet_access"):
+                self.log.write("No database in a VPC: the app keeps App Runner's own internet access (no NAT gateway)")
             return None
         vpc = vpcs[0]
         self.log.step(f"Connecting the app to the databases' network ({vpc})")
         connector = aws.ensure_vpc_connector(vpc)
+        if self.state.get("internet_access"):
+            connector = {**connector, "arn": self.nat_connector(aws, vpc)}
         for d in databases:
             s = d["state"]
             if d["engine"] == "dynamodb":
@@ -460,12 +475,58 @@ class Publish:
         if any(d["engine"] == "dynamodb" for d in databases):
             self.log.write(f"Reaching DynamoDB from the VPC through a gateway endpoint (free) in {vpc}")
             aws.ensure_dynamodb_endpoint(vpc)
-        self.log.write(
-            "Outgoing traffic of this app now goes through the VPC: add a NAT gateway there if it also calls "
-            "other internet services"
-        )
+        if not self.nat_vpc:
+            self.log.write(
+                "Outgoing traffic of this app now goes through the VPC, which has no internet route: turn on 'Let "
+                "this app reach the internet too' in its settings if it also calls other internet services"
+            )
         self.save(vpc_connector_arn=connector["arn"])
         return connector["arn"]
+
+    def nat_connector(self, aws, vpc: str) -> str:
+        """docs/CLOUD.md "C2-6": the NAT gateway of `vpc` (created once, shared, found by tag) and the VPC
+        connector on its private subnets. `nat_vpc` is recorded first, so a deploy that fails halfway still
+        counts as a user of the NAT gateway and the app's teardown removes it when it is the last one."""
+        self.log.step(f"Letting the app reach the internet through a NAT gateway in {vpc}")
+        self.save(nat_vpc=vpc)
+        self.nat_vpc = vpc
+        nat = aws.ensure_nat_network(vpc)
+        self.log.write(f"Private subnets {', '.join(nat['subnet_ids'])}; NAT gateway {nat['nat_id']}")
+
+        def poll() -> tuple[bool, str]:
+            state, message = aws.nat_gateway_state(nat["nat_id"])
+            if state in ("failed", "deleting", "deleted"):
+                raise jobs.JobError(f"AWS could not create the NAT gateway ({state}): {message or 'no reason given'}")
+            return state == "available", state
+
+        self.wait("NAT gateway", poll)
+        self.log.write(f"The app's outgoing internet traffic leaves through {nat['public_ip'] or 'the NAT gateway'}")
+        return aws.ensure_vpc_connector(vpc, nat["subnet_ids"])["arn"]
+
+    def release_nat(self, vpc: str) -> None:
+        """The service left the NAT gateway's subnets: forget it, and when no other app of this account uses
+        it, queue its removal (the NAT gateway is billed by the hour)."""
+        self.save(nat_vpc=None)
+        with self.ctx.session_factory() as db:
+            if nat_users(db, self.app.cloud_connection_id, vpc, self.app.id):
+                self.log.write(f"The NAT gateway in {vpc} stays: other apps of this account still use it")
+                return
+            job = jobs.enqueue(
+                db,
+                type="app.cloud_teardown",
+                params={
+                    "app_id": self.app.id,
+                    "name": self.app.name,
+                    "target": "aws_app",
+                    "connection_id": self.app.cloud_connection_id,
+                    "state": {"nat_vpc": vpc, "nat_last": True},
+                    "domains": [],
+                },
+                project_id=self.app.project_id,
+            )
+            db.commit()
+        jobs.dispatch(job.id)
+        self.log.write(f"No app uses the NAT gateway in {vpc} any more: removing it (job {job.id})")
 
     def firebase_identity(self, gcp, databases: list[dict]) -> None:
         """docs/CLOUD.md "C2-3", "C2-4": the service runs as the project's default compute service account, which
@@ -684,6 +745,15 @@ def _job_prune(ctx: jobs.JobContext) -> dict:
 # --- teardown ------------------------------------------------------------------------------------
 
 
+def nat_users(db: Session, connection_id: str | None, vpc: str, except_app_id: str) -> int:
+    """How many other App Runner apps of the connection go through the NAT gateway of `vpc` (their
+    `cloud_state.nat_vpc`): the NAT gateway is shared and removed with its last user."""
+    rows = db.scalars(
+        select(App).where(App.cloud_connection_id == connection_id, App.target == "aws_app", App.id != except_app_id)
+    )
+    return sum(1 for a in rows if (a.cloud_state or {}).get("nat_vpc") == vpc)
+
+
 def enqueue_teardown(db: Session, app: App, user_id: str | None) -> str | None:
     """Queues `app.cloud_teardown` for everything the app's target created (and its cloud domains'
     Cloudflare records). Returns the job id, None when there is nothing to remove. Caller commits."""
@@ -692,8 +762,11 @@ def enqueue_teardown(db: Session, app: App, user_id: str | None) -> str | None:
         {"hostname": d.hostname, "zone_id": d.zone_id, "dns_records": d.dns_records or []}
         for d in db.scalars(select(Domain).where(Domain.app_id == app.id, Domain.target_type == "cloud_app"))
     ]
+    state.pop("internet_access", None)  # a switch, not a resource
     if app.target == "local" or (not state and not domains):
         return None
+    if state.get("nat_vpc") and not nat_users(db, app.cloud_connection_id, state["nat_vpc"], app.id):
+        state["nat_last"] = True  # docs/CLOUD.md "C2-6": the shared NAT gateway goes with its last user
     job = jobs.enqueue(
         db,
         type="app.cloud_teardown",
@@ -778,6 +851,15 @@ def teardown_steps(
                 )
             if s.get("instance_role"):
                 steps.append((f"IAM role {s['instance_role']}", lambda: aws.delete_instance_role(s["instance_role"])))
+            if s.get("nat_vpc") and s.get("nat_last"):  # after the service: it holds the connector until gone
+                vpc = s["nat_vpc"]
+                name = cloud_aws.nat_name(vpc)
+                steps += [
+                    (f"VPC connector {name}", lambda: aws.delete_vpc_connector(name)),
+                    (f"NAT gateway and its IP address in {vpc}", lambda: aws.delete_nat_gateway(vpc)),
+                    (f"Private route table in {vpc}", lambda: aws.delete_nat_routes(vpc)),
+                    (f"Private subnets in {vpc}", lambda: aws.delete_nat_subnets(vpc)),
+                ]
     else:
         gcp = client = cloud_gcp.client(config)
         if s.get("run_service"):

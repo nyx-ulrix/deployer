@@ -276,6 +276,15 @@ def t_set_app_secrets_store(ctx: Ctx, args: dict) -> Any:
     return apps_router.update_app(args["app_id"], body, ctx.request, ctx.access, ctx.db)
 
 
+def t_set_app_internet_access(ctx: Ctx, args: dict) -> Any:
+    body = apps_router.AppFields(
+        internet_access=bool(args["enabled"]), confirm_billing=bool(args.get("confirm_billing"))
+    )
+    out = apps_router.update_app(args["app_id"], body, ctx.request, ctx.access, ctx.db)
+    keys = ("id", "name", "target", "database_access", "internet_access", "cloud", "env_deployment_id")
+    return {k: out.get(k) for k in keys}
+
+
 def t_list_github_runs(ctx: Ctx, args: dict) -> Any:
     return apps_router.github_runs(args["app_id"], ctx.access, ctx.db)
 
@@ -683,6 +692,22 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
             confirm_teardown=_p("boolean", "Must be true when the app's current cloud resources will be deleted"),
         ),
         t_set_app_target,
+    ),
+    "set_app_internet_access": (
+        "admin",
+        "Let an App Runner app (aws_app) with database_access reach the internet too: its traffic goes through the "
+        "VPC of its databases, which has no internet route, so Deployer adds a NAT gateway there (shared by the "
+        "account's apps in that VPC, removed when the last one turns this off or is deleted). Other apps already "
+        f"reach the internet and are refused. BILLABLE: {cloud.NAT_COST} Only call after the user agreed, with "
+        "confirm_billing: true. A deployed app is published again with the change at once (env_deployment_id), "
+        "otherwise it applies on the next deploy.",
+        _schema(
+            ["app_id", "enabled"],
+            app_id=APP,
+            enabled=_p("boolean", "true to add the NAT gateway, false to stop using it"),
+            confirm_billing=_p("boolean", "enabled: must be true - the user agreed to the NAT gateway charges"),
+        ),
+        t_set_app_internet_access,
     ),
     "list_github_runs": (
         "developer",

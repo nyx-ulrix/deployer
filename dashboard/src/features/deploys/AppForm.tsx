@@ -4,7 +4,7 @@ import { useDataSources } from "../../api/hooks";
 import type { AppPreset } from "../../api/types";
 import { Checkbox, Field, Input, Select } from "../../components/ui/Input";
 import { TargetChooser } from "./TargetChooser";
-import { cloudSourcesFor, databaseEnvNames, FIELD_LABELS, PRESETS, reachableSources, REQUIRED_FIELDS, slugify, type AppDraft } from "./deploys";
+import { addsInternet, cloudSourcesFor, databaseEnvNames, FIELD_LABELS, PRESETS, reachableSources, REQUIRED_FIELDS, slugify, type AppDraft } from "./deploys";
 
 const PRESET_ORDER: AppPreset[] = ["static", "node", "python", "dockerfile"];
 
@@ -190,6 +190,56 @@ export function AppFormFields({
           disabled={disabled}
         />
       )}
+      {draft.target === "aws_app" && draft.database_access && (
+        <InternetAccess draft={draft} onChange={onChange} isAdmin={isAdmin} disabled={disabled} error={errors.internet_access} />
+      )}
+    </div>
+  );
+}
+
+const NAT_COST =
+  "AWS bills your account about US$32/month (US$0.045 per hour) plus US$0.045 per GB of traffic through it, and about US$3.60/month for its public IP address.";
+
+/** docs/CLOUD.md "C2-6": an App Runner app with database access sends everything through the VPC, which has no
+ * internet route; this opt-in adds a NAT gateway there (shared per VPC, billed, so confirmed with its own tick). */
+function InternetAccess({
+  draft,
+  onChange,
+  isAdmin,
+  disabled,
+  error,
+}: {
+  draft: AppDraft;
+  onChange: (patch: Partial<AppDraft>) => void;
+  isAdmin: boolean;
+  disabled: boolean;
+  error?: string;
+}) {
+  return (
+    <div className="space-y-2">
+      <Checkbox
+        label="Let this app reach the internet too"
+        description={
+          isAdmin
+            ? "Adds a NAT gateway to the databases' network so the app can also call other online services (APIs, payment providers, email). One gateway is shared by every app of this account that turns this on in the same network; it is removed when the last of them turns it off or is deleted. A deployed app is published again with the change right away."
+            : "Only project admins can change this (it is billed to the AWS account); ask a project admin."
+        }
+        checked={draft.internet_access}
+        onChange={(e) => onChange({ internet_access: e.target.checked, confirm_internet: false })}
+        disabled={disabled || !isAdmin}
+      />
+      {addsInternet(draft) && (
+        <div className="pl-7">
+          <Checkbox
+            label="I understand AWS charges this account for the NAT gateway"
+            description={NAT_COST}
+            checked={draft.confirm_internet}
+            onChange={(e) => onChange({ confirm_internet: e.target.checked })}
+            disabled={disabled}
+          />
+          {error && <p className="mt-1 text-xs text-danger">{error}</p>}
+        </div>
+      )}
     </div>
   );
 }
@@ -259,8 +309,8 @@ function CloudDatabaseAccess({
         ) : (
           <>
             With a SQL (RDS) database, the app sends its outgoing internet traffic through that database&apos;s network, which
-            has no internet route by default: if the app also calls other online services, add a NAT gateway in the AWS VPC
-            console (about US$32/month). DynamoDB alone needs nothing extra.
+            has no internet route by default: if the app also calls other online services, tick <em>Let this app reach the
+            internet too</em> below (a NAT gateway, about US$32/month). DynamoDB alone needs nothing extra.
           </>
         )}
       </div>

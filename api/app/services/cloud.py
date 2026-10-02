@@ -93,6 +93,15 @@ CLOUD_ENV_NOTE = (
     "the app's own service account."
 )
 
+# docs/CLOUD.md "C2-6": an App Runner app with database access sends everything through the VPC, which has no
+# internet route; this opt-in adds a NAT gateway there (billable, so confirmed like every other cloud charge).
+NAT_COST = (
+    "Adds a NAT gateway to the VPC of your databases, which AWS bills to your account while it exists: about "
+    "US$32/month (US$0.045 per hour) plus US$0.045 per GB of traffic through it, and its public IPv4 address "
+    "(about US$3.60/month). One NAT gateway is shared by every app of this account that turns this on in the "
+    "same VPC; it is removed when the last of them turns it off or is deleted."
+)
+
 _AWS_KEY_ID = re.compile(r"^(AKIA|ASIA)[A-Z0-9]{16}$")
 _AWS_REGION = re.compile(r"^[a-z]{2}(-gov)?-[a-z]+-\d$")
 _ROLE_ARN = re.compile(r"^arn:aws(-[a-z]+)?:iam::\d{12}:role/[\w+=,.@/-]{1,512}$")
@@ -185,6 +194,13 @@ AWS_HOSTING_STATEMENTS = [
             "apprunner:ListVpcConnectors",
         ],
         "Resource": "*",
+    },
+    {
+        # docs/CLOUD.md "C2-6": the connector on the NAT gateway's private subnets goes with the gateway.
+        "Sid": "AppRunnerVpcConnectorDelete",
+        "Effect": "Allow",
+        "Action": "apprunner:DeleteVpcConnector",
+        "Resource": "arn:aws:apprunner:*:*:vpcconnector/deployer-nat-*",
     },
     # App secrets (docs/CLOUD.md "G1"): one deployer-* secret per variable of an App Runner app that keeps
     # them in Secrets Manager; GetSecretValue only to skip rewriting an unchanged value.
@@ -324,6 +340,65 @@ AWS_DATABASE_STATEMENTS = [
         "Resource": "arn:aws:ec2:*:*:vpc-endpoint/*",
         "Condition": {"StringEquals": {"ec2:CreateAction": "CreateVpcEndpoint"}},
     },
+    # NAT gateway (docs/CLOUD.md "C2-6"): private subnets, an Elastic IP, the gateway and a route table are
+    # created in the databases' VPC (CreateNatGateway also names the public subnet it goes in, which is the
+    # account's own, so no tag condition there) and tagged only while being created; changing or deleting
+    # them needs the managed-by=deployer tag Deployer put on them.
+    {
+        "Sid": "InternetRead",
+        "Effect": "Allow",
+        "Action": ["ec2:DescribeAddresses", "ec2:DescribeNatGateways"],
+        "Resource": "*",
+    },
+    {
+        "Sid": "InternetCreate",
+        "Effect": "Allow",
+        "Action": ["ec2:CreateSubnet", "ec2:AllocateAddress", "ec2:CreateNatGateway", "ec2:CreateRouteTable"],
+        "Resource": [
+            "arn:aws:ec2:*:*:vpc/*",
+            "arn:aws:ec2:*:*:subnet/*",
+            "arn:aws:ec2:*:*:elastic-ip/*",
+            "arn:aws:ec2:*:*:ipv4pool-ec2/*",
+            "arn:aws:ec2:*:*:natgateway/*",
+            "arn:aws:ec2:*:*:route-table/*",
+        ],
+    },
+    {
+        "Sid": "InternetTag",
+        "Effect": "Allow",
+        "Action": "ec2:CreateTags",
+        "Resource": [
+            "arn:aws:ec2:*:*:subnet/*",
+            "arn:aws:ec2:*:*:elastic-ip/*",
+            "arn:aws:ec2:*:*:natgateway/*",
+            "arn:aws:ec2:*:*:route-table/*",
+        ],
+        "Condition": {
+            "StringEquals": {
+                "ec2:CreateAction": ["CreateSubnet", "AllocateAddress", "CreateNatGateway", "CreateRouteTable"]
+            }
+        },
+    },
+    {
+        "Sid": "InternetChange",
+        "Effect": "Allow",
+        "Action": [
+            "ec2:CreateRoute",
+            "ec2:AssociateRouteTable",
+            "ec2:DisassociateRouteTable",
+            "ec2:DeleteRouteTable",
+            "ec2:DeleteNatGateway",
+            "ec2:ReleaseAddress",
+            "ec2:DeleteSubnet",
+        ],
+        "Resource": [
+            "arn:aws:ec2:*:*:subnet/*",
+            "arn:aws:ec2:*:*:elastic-ip/*",
+            "arn:aws:ec2:*:*:natgateway/*",
+            "arn:aws:ec2:*:*:route-table/*",
+        ],
+        "Condition": {"StringEquals": {"aws:ResourceTag/managed-by": "deployer"}},
+    },
 ]
 # DeployerRoles: every IAM permission - the roles Deployer creates for App Runner and GitHub Actions, always
 # within the deployer-boundary (docs/CLOUD.md "G3"), and the service-linked roles those services need.
@@ -409,7 +484,8 @@ AWS_POLICIES = [
     },
     {
         "name": "DeployerDatabases",
-        "for": "RDS / Aurora databases and their firewall, DynamoDB tables, backups and restores",
+        "for": "RDS / Aurora databases and their firewall, DynamoDB tables, backups and restores, the NAT gateway of "
+        "apps that reach the internet from the databases' network",
         "document": {"Version": "2012-10-17", "Statement": AWS_DATABASE_STATEMENTS},
     },
     {

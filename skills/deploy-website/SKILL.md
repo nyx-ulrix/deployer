@@ -316,8 +316,13 @@ The same app, served from the user's own cloud account so it **keeps running whe
    true`) - it then gets `DEPLOYER_DB_<NAME>_*` pointing at AWS and reaches the database through a
    private VPC connector. Its `_URL` encrypts without checking the server; to verify it, download the
    CA bundle at `DEPLOYER_DB_<NAME>_SSL_CA_URL` in the Dockerfile and pass it to the driver
-   (`sslmode=verify-full&sslrootcert=<file>` / MySQL `ssl.ca`; `docs/CLOUD.md` "C2-1" "Apps"). Tell the user: such an app's other outgoing internet calls need a NAT gateway
-   in their VPC (about US$32/month). A DynamoDB database needs none of that: the app gets
+   (`sslmode=verify-full&sslrootcert=<file>` / MySQL `ssl.ca`; `docs/CLOUD.md` "C2-1" "Apps"). Such an
+   app's other outgoing internet calls (APIs, payment providers, email) need a NAT gateway: off by
+   default; if the app makes them, tell the user the cost (about US$32/month plus US$0.045 per GB,
+   shared by the account's apps in that VPC) and, once they agree, turn on `set_app_internet_access`
+   (`enabled: true, confirm_billing: true`; or the app's *Let this app reach the internet too* tick) -
+   a deployed app is republished with it at once, otherwise the next deploy adds it. A DynamoDB
+   database needs none of that: the app gets
    `DEPLOYER_DB_<NAME>_TABLE` / `_TABLES` / `_REGION` and runs as an AWS role allowed only those tables, so
    the AWS SDK works without keys. On **Cloud Run** (`firebase_app`) connect the Firebase project's
    Firestore database or Realtime Database under *Add database → In your Firebase project* and tick

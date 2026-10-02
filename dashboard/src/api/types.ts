@@ -1476,6 +1476,8 @@ export type App = {
   api_key_id: string | null;
   /** docs/DEPLOYMENTS.md "Database access": joins the databases network + DEPLOYER_DB_* env. Admin-only to enable. */
   database_access: boolean;
+  /** docs/CLOUD.md "C2-6": an App Runner app with database access also reaches the internet (a NAT gateway, billed). */
+  internet_access: boolean;
   /** docs/COHOSTING.md "Websites on both PCs": also runs on the project's co-host PCs (admin-only). */
   cohost: boolean;
   /** Send the repository token to co-host PCs (readable by their owners); admin-only. */
@@ -1523,7 +1525,9 @@ export type AppInput = {
   cloud_connection_id?: string | null;
   /** docs/CLOUD.md "G1": keep the variables in AWS Secrets Manager / Google Secret Manager (admin; `confirm_billing` to switch on). */
   cloud_secrets?: boolean;
-  /** Required (true) when moving onto a cloud target or account: it is billed there. */
+  /** docs/CLOUD.md "C2-6": App Runner + database access only; turning it on needs `confirm_billing` (admin). */
+  internet_access?: boolean;
+  /** Required (true) when moving onto a cloud target or account, or turning on internet access: it is billed there. */
   confirm_billing?: boolean;
 };
 

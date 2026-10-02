@@ -86,6 +86,8 @@ class AppFields(BaseModel):
     # docs/CLOUD.md "G1": keep the variables in AWS Secrets Manager / Google Secret Manager (App Runner / Cloud
     # Run apps, admin-only, billable: confirm_billing when switching it on).
     cloud_secrets: bool | None = None
+    # docs/CLOUD.md "C2-6": an App Runner app with database access also reaches the internet (a NAT gateway).
+    internet_access: bool | None = None
     # Putting the app on a cloud target (or another account) bills that account: the caller confirms it.
     confirm_billing: bool = False
 
@@ -300,6 +302,51 @@ def _set_cloud_secrets(db, access: ProjectAccess, app: App, body: AppFields) -> 
     cloud_secrets.set_enabled(app, enable)
 
 
+def _check_internet(access: ProjectAccess, app: App, body: AppFields) -> None:
+    """docs/CLOUD.md "C2-6": `internet_access` (kept in cloud_state) is for App Runner apps with database
+    access - their traffic goes through the VPC, which has no internet route; every other app already reaches
+    the internet. Turning it on adds a billed NAT gateway: admins only, with confirm_billing: true."""
+    state = dict(app.cloud_state or {})
+    had = bool(state.get("internet_access"))
+    want = had if body.internet_access is None else body.internet_access
+    if want and not (app.target == "aws_app" and app.database_access):
+        if body.internet_access:
+            raise ApiError(
+                422,
+                "validation_error",
+                "'Let this app reach the internet too' is for App Runner apps with database access; other apps "
+                "already reach the internet",
+                {"field": "internet_access"},
+            )
+        want = False  # the switch it depended on went off
+    if want and not had:
+        if not access.at_least("admin"):
+            raise forbidden("Only project admins can add a NAT gateway (it is billed to the cloud account)")
+        if not body.confirm_billing:
+            raise ApiError(
+                422,
+                "billing_not_confirmed",
+                f"{cloud.NAT_COST} Send confirm_billing: true.",
+                {"field": "confirm_billing"},
+            )
+    if want:
+        state["internet_access"] = True
+    else:
+        state.pop("internet_access", None)
+    app.cloud_state = state or None
+
+
+def _runtime_settings(app: App) -> tuple:
+    """What a running App Runner / Cloud Run service was published with: a change republishes it (G1). Compared
+    before and after a PATCH, since the dashboard sends every field whether it changed or not."""
+    return (
+        deployments.env_of(app),
+        bool(app.database_access),
+        cloud_secrets.enabled(app),
+        bool((app.cloud_state or {}).get("internet_access")),
+    )
+
+
 def _switch_target(db, request: Request, access: ProjectAccess, app: App, before: tuple) -> str | None:
     """The target or connection changed: the old target's resources are torn down (job), the local
     container removed, deployments forget their artifacts (they belong to the old target). Returns the job id."""
@@ -413,6 +460,7 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
     _check_billing(app, body)
     if body.cloud_secrets is not None:
         _set_cloud_secrets(db, access, app, body)
+    _check_internet(access, app, body)
     deployments.set_env(app, body.env or {})
     if body.repo_token:
         app.repo_token_encrypted = encrypt_secret(body.repo_token)
@@ -458,6 +506,7 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
     access_before = app.database_access
     cohost_before = app.cohost
     target_before = (app.target, app.cloud_connection_id, app.cloud_state)
+    runtime_before = _runtime_settings(app)
     cohost_changed = _check_cohost(access, app, body)
     if "cohost" in changed and body.cohost and not app.cohost:
         cohost_apps.check_single_cohost(db, app.id)
@@ -498,7 +547,7 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
             setattr(app, field, bool(value))
         elif field == "target":
             app.target = value or "local"
-        elif field == "cloud_secrets":
+        elif field in ("cloud_secrets", "internet_access"):
             pass  # after the target switch below (which resets the cloud state)
         elif value is not None or field in (
             "install_command",
@@ -523,11 +572,12 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
         _check_billing(app, body)
     if "cloud_secrets" in changed:
         _set_cloud_secrets(db, access, app, body)
+    _check_internet(access, app, body)
     build_job = github_actions.refresh_if_needed(db, app, changed, access.user.id)
     # docs/CLOUD.md "G1": a changed environment reaches an App Runner / Cloud Run app right away (republished
     # from this PC with the live artifact) instead of waiting for the next build or rollback.
     env_dep = None
-    if not moved and {"env", "database_access", "cloud_secrets"} & set(changed):
+    if not moved and _runtime_settings(app) != runtime_before:
         env_dep = deployments.republish(db, app, user_id=access.user.id)
     audit.record(
         db,
