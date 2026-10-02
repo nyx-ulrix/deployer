@@ -47,7 +47,7 @@ Any update that fails after the new files are in place ends with the way back: `
 `deployer update -Ref <the version that was running>`, and, if the new version already migrated the
 databases, `deployer restore <that backup>` after going back.
 
-Once the data is on 8.0 (`MONGODB_IMAGE` is in `.env`; every install made since A-143 too), a version
+Once the data is on 8.0 (`MONGODB_IMAGE` is in `.env`; a new install of A-143 or later has it), a version
 from before A-143 cannot open it: it runs MongoDB 5.0. `deployer update -Ref <such a version>` (and
 `install.ps1 -Ref`) refuses it before replacing any file, and an update that failed after moving the
 data says to retry with `deployer update` instead of going back. If you must go back anyway, its

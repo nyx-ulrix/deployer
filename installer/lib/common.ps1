@@ -1194,8 +1194,10 @@ function Initialize-DeployerEnv {
     if ($isNew) {
         foreach ($key in $managed.Keys) { $secrets[$key] = $managed[$key] }
         # A new install has no MongoDB 5.0 data. An existing .env gets this key from Update-DeployerMongo
-        # only once its data is upgraded; until then compose keeps mongo:5.0 (A-143).
-        $secrets['MONGODB_IMAGE'] = 'mongo:8.0'
+        # only once its data is upgraded; until then compose keeps mongo:5.0 (A-143). A version from
+        # before A-143 (install.ps1 -Ref) hardcodes mongo:5.0 and creates 5.0 data, so the key would
+        # wrongly say the data is on 8.0 (V-07).
+        if (Test-DeployerComposeMongoImage -Path (Join-Path $InstallDir 'docker-compose.yml')) { $secrets['MONGODB_IMAGE'] = 'mongo:8.0' }
         Set-DeployerEnvValues -Path $path -Values $secrets
     } else {
         Set-DeployerEnvValues -Path $path -Values $secrets -OnlyIfMissing

@@ -15,7 +15,15 @@ $secretKeys = @('MARIADB_PASSWORD', 'MARIADB_ROOT_PASSWORD', 'MONGO_ROOT_PASSWOR
 $dir = Join-Path $env:TEMP ('deployer-env-test-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $dir | Out-Null
 $envPath = Join-Path $dir '.env'
+$composePath = Join-Path $dir 'docker-compose.yml'
 try {
+    # V-07: a version from before A-143 hardcodes mongo:5.0, so its new .env must not claim 8.0 data.
+    Set-Content -LiteralPath $composePath -Value "services:`n  mongodb:`n    image: mongo:5.0`n"
+    [void](Initialize-DeployerEnv -InstallDir $dir -Port 8080 -MongoEnabled $true -ImagePrefix 'ghcr.io/a' -Version 'v1' -Bind '127.0.0.1')
+    Assert-That (-not (Read-DeployerEnvFile -Path $envPath)['MONGODB_IMAGE']) 'a new install of a pre-A-143 version does not get MONGODB_IMAGE'
+    Remove-Item -LiteralPath $envPath
+    Set-Content -LiteralPath $composePath -Value "services:`n  mongodb:`n    image: `${MONGODB_IMAGE:-mongo:5.0}`n"
+
     # 1. A fresh install writes every secret and managed key once.
     $isNew = Initialize-DeployerEnv -InstallDir $dir -Port 8080 -MongoEnabled $false -ImagePrefix 'ghcr.io/a' -Version 'v1' -Bind '127.0.0.1'
     $first = Read-DeployerEnvFile -Path $envPath
