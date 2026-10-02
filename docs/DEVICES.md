@@ -214,7 +214,8 @@ Errors raised **on the device** and re-raised on the primary with the same statu
   (`POST .../data-sources/{sid}/move`, which snapshots, restores on the target, switches over and
   keeps the old copy for 7 days; a device removed while offline keeps its old copies, delete them on
   the PC by hand), and no co-host copies (COHOSTING.md) — remove them with "Also delete
-  the copy on the device" first (`409 device_has_copies`). `?force=true` (instance owner only) detaches
+  the copy on the device" first (`409 device_has_copies`; copies the owner can no longer remove are
+  deleted with the device instead, which then must be online). `?force=true` (instance owner only) detaches
   anyway, marks hosted sources `status=error` ("This database's PC was removed; its data is still on
   that PC.") and, while the device is online, drops its co-host copies. Such a source never falls back
   to the main server's database of the same name: browsing, connection info, new snapshots, in-place

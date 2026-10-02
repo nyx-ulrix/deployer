@@ -71,7 +71,8 @@ VERSION_KEEP_DAYS = 7
 ABSENT = "-"  # hash of "no row"
 TOO_LARGE = (
     "A single row change is too large to send between the PCs (8 MB limit), so syncing is stuck on it. "
-    "Click Re-copy on this copy to start it again from a fresh copy of the database."
+    "Re-copy starts it again from a fresh copy of the main server's database; changes made on the device "
+    "that have not synced yet are lost, so make them again on the main server if you need them."
 )
 
 # =============================================================================================

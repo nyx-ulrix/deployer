@@ -36,8 +36,10 @@ through the same address whichever PC is up (phase 2, built; not yet exercised w
 6. Moving a database that has copies to another host is refused (`409 has_replicas`); remove the
    copies first. Sources placed on a host device can't be copied (`409 replica_unsupported`, v1).
 7. Removing a device that holds copies is refused too (`409 device_has_copies`); remove them with
-   "Also delete the copy on the device" first. Detaching a device stops its co-hosted apps and its apps
-   tunnel connector.
+   "Also delete the copy on the device" first. Copies the device owner can no longer remove (they left
+   the project, are below developer there, or the database was deleted) don't block: removing the
+   device deletes them, so it must be online (`503 device_offline` otherwise). Detaching a device stops
+   its co-hosted apps and its apps tunnel connector.
 
 ## Roles
 
@@ -170,7 +172,9 @@ row changes a day with 1 KB rows keeps about 90 MB.
 **Offline:** while the device is offline both sides keep their binlog/oplog (7+ days; Mongo oplog
 size permitting); on reconnect the loop catches up. If a position fell out of retention the copy goes
 `error` with `resync_required` ("re-copy needed") and a re-copy fixes it. A single row change over the
-8 MB device message limit can't be sent either way; the copy's error then says so and a Re-copy fixes it.
+8 MB device message limit can't be sent either way; the copy's error then says so and a Re-copy fixes it
+(a Re-copy starts again from the main server's data, so changes made on the device that had not synced
+yet are lost, and the error says that too).
 
 ## Websites on both PCs (phase 2 - built)
 

@@ -155,6 +155,19 @@ def test_enrollment_poll_race_keeps_approved(client, db, fake_primary, fake_redi
     assert json.loads(fake_redis.get(device_local.STATE_KEY))["poll_secret"] is None
 
 
+def test_enrollment_poll_never_overwrites_a_cancel(client, fake_primary, fake_redis, monkeypatch):
+    """L-06: a slow poll finishing after Cancel (or a new start) must not write the old enrollment back."""
+    client.post("/v1/device/enroll/start", json={"primary_url": "https://main.example.com", "device_name": "PC"})
+
+    def cancelled_meanwhile(primary_url, method, path, body=None):
+        fake_redis.delete(device_local.STATE_KEY)
+        return fake_primary(primary_url, method, path, body)
+
+    monkeypatch.setattr(device_local, "primary_request", cancelled_meanwhile)
+    assert client.get("/v1/device/enroll/status").json()["status"] == "idle"
+    assert fake_redis.get(device_local.STATE_KEY) is None
+
+
 @pytest.mark.parametrize("uri", ["http://localhost:8080/devices/approve?code=ABCD-EFGH", "javascript:alert(1)", None])
 def test_verification_url_uses_typed_primary_url(client, fake_primary, fake_redis, monkeypatch, uri):
     # A default LAN install has PUBLIC_URL=http://localhost:8080, which on this PC is our own dashboard.

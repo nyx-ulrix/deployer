@@ -25,7 +25,18 @@ from sqlalchemy import select
 from app.db import get_sessionmaker
 from app.deps import CurrentUser, DbSession, ProjectAccess, client_ip, require_role
 from app.errors import ApiError, forbidden, not_found
-from app.models import App, DataSource, Device, DeviceEnrollment, Job, SourceReplica, User, utcnow
+from app.models import (
+    App,
+    DataSource,
+    Device,
+    DeviceEnrollment,
+    Job,
+    ProjectMember,
+    SourceReplica,
+    User,
+    role_rank,
+    utcnow,
+)
 from app.services import (
     audit,
     cohosting,
@@ -239,6 +250,17 @@ def update_device(device_id: str, body: DeviceUpdate, user: CurrentUser, db: DbS
     return devices.device_out(db, device, user=user)
 
 
+def _can_remove_copy(db: DbSession, user: User, copy) -> bool:
+    """Whether the device owner can still choose Remove copy on it (routers/cohosting.delete_replica: a live
+    source and _require_owner_or_admin's developer role)."""
+    if copy.deleted_at is not None:
+        return False
+    role = db.scalar(
+        select(ProjectMember.role).where(ProjectMember.project_id == copy.project_id, ProjectMember.user_id == user.id)
+    )
+    return role is not None and role_rank(role) >= role_rank("developer")
+
+
 @router.delete("/devices/{device_id}")
 def remove_device(device_id: str, user: CurrentUser, db: DbSession, request: Request, force: bool = False) -> dict:
     device = devices.get_device_for(db, user, device_id)
@@ -257,26 +279,45 @@ def remove_device(device_id: str, user: CurrentUser, db: DbSession, request: Req
         raise forbidden("Only the instance owner can force-remove a device that hosts databases")
     # docs/COHOSTING.md: co-host copies would otherwise cascade away while the full data stays on the PC.
     copies = db.execute(
-        select(SourceReplica.id, DataSource.kind, DataSource.database_name, DataSource.project_id, DataSource.name)
+        select(
+            SourceReplica.id,
+            DataSource.kind,
+            DataSource.database_name,
+            DataSource.project_id,
+            DataSource.name,
+            DataSource.deleted_at,
+        )
         .join(DataSource, DataSource.id == SourceReplica.data_source_id)
         .where(SourceReplica.device_id == device.id)
         .order_by(DataSource.name)
     ).all()
-    if copies and not (force and user.is_instance_owner):
+    forced = force and user.is_instance_owner
+    # L-06: an owner who left a project (or is no longer a developer there, or whose database was deleted)
+    # cannot reach Remove copy on it. The main server keeps the data, so removing the device drops them.
+    stranded = [] if forced else [c for c in copies if device.owner_id == user.id and not _can_remove_copy(db, user, c)]
+    blocking = [c for c in copies if c not in stranded]
+    if blocking and not forced:
         raise ApiError(
             409,
             "device_has_copies",
-            f"This device still holds co-host copies of databases ({', '.join(c.name for c in copies)}). "
+            f"This device still holds co-host copies of databases ({', '.join(c.name for c in blocking)}). "
             'On each of those databases choose Remove copy, with "Also delete the copy on the device", first.',
-            {"replicas": [{"id": c.id, "project_id": c.project_id, "name": c.name} for c in copies]},
+            {"replicas": [{"id": c.id, "project_id": c.project_id, "name": c.name} for c in blocking]},
         )
+    if stranded and not device_rpc.is_online(device.id):
+        raise device_rpc.offline_error(
+            f"Turn on '{device.name}' and let it connect, so its copies of databases you can no longer manage "
+            f"({', '.join(c.name for c in stranded)}) can be deleted, then remove it again."
+        )
+    for c in stranded:  # before anything is changed: a failed drop leaves the device as it was
+        cohosting._drop_device_copy(device.id, c.kind, c.database_name)
     for ds in hosted:
         ds.status = "error"
         ds.status_message = connections.DEVICE_REMOVED
         ds.device_id = None  # A-047: connections.device_removed() keeps it off the main server's namesake
     if device_rpc.is_online(device.id):
         try:
-            for c in copies:  # force only: the main server keeps the data, these are just copies
+            for c in blocking:  # force only: the main server keeps the data, these are just copies
                 cohosting._drop_device_copy(device.id, c.kind, c.database_name)
             if not active:
                 # Old copies of databases moved away are only kept for rollback; the device is leaving.

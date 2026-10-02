@@ -156,6 +156,19 @@ def _linked_to(primary_url: str) -> bool:
     return bool(link and link.get("primary_url") == primary_url and link.get("device_token"))
 
 
+def _save_if_current(state: dict) -> dict:
+    """L-06: a poll can take 15 s or more; meanwhile the enrollment may have been cancelled or replaced by a
+    new one. Never write the old enrollment's result over that; return what is current instead."""
+    current = _load_state()
+    if (current.get("enrollment_id"), current.get("started_at")) != (
+        state.get("enrollment_id"),
+        state.get("started_at"),
+    ):
+        return current
+    _save_state(state)
+    return state
+
+
 def _poll_locked() -> dict:
     state = _load_state()  # re-read: another poll may have finished while we waited for the lock
     if state.get("status") != "pending":
@@ -169,14 +182,12 @@ def _poll_locked() -> dict:
         )
     except (httpx.HTTPError, ApiError) as exc:
         state["message"] = f"Could not reach the main Deployer: {getattr(exc, 'message', None) or exc}"[:300]
-        _save_state(state)
-        return state
+        return _save_if_current(state)
     if resp.status_code == 429:
         return state
     if resp.status_code != 200:
         state.update(status="error", message=f"Enrollment failed: {_primary_error(resp)}")
-        _save_state(state)
-        return state
+        return _save_if_current(state)
     data = resp.json()
     status = data.get("status")
     if status == "approved" and data.get("device_token"):
@@ -204,8 +215,7 @@ def _poll_locked() -> dict:
         state.update(status="error", message="This enrollment was already used")
     else:
         state["message"] = "Waiting for approval on the main Deployer"
-    _save_state(state)
-    return state
+    return _save_if_current(state)
 
 
 def _poll_loop() -> None:

@@ -286,6 +286,34 @@ def test_remove_device_with_cohost_copies(
     assert db.scalars(select(SourceReplica)).first() is None and db.get(DataSource, ds.id).status == "ok"
 
 
+def test_remove_device_deletes_copies_the_owner_can_no_longer_remove(
+    client, db, make_user, make_project, auth_headers, make_device, fake_device
+):
+    # L-06: alice left Shop, so Remove copy (a project route) is out of her reach; her own copies still block.
+    alice, bob = make_user(), make_user()
+    left = make_project(bob, "Shop")
+    own = make_project(alice, "Mine")
+    device, _ = make_device(alice)
+    for project, name in ((left, "p_shop_abc123"), (own, "p_mine_abc123")):
+        ds = device_source(db, project, device, name=name, database_name=name)
+        ds.device_id = None
+        db.add(SourceReplica(data_source_id=ds.id, device_id=device.id, status="paused"))
+    db.commit()
+    url, h = f"/v1/devices/{device.id}", auth_headers(alice)
+    resp = client.delete(url, headers=h)
+    assert resp.status_code == 409 and [r["name"] for r in resp.json()["error"]["details"]["replicas"]] == [
+        "p_mine_abc123"
+    ]
+    db.delete(db.scalar(select(SourceReplica).join(DataSource).where(DataSource.name == "p_mine_abc123")))
+    db.commit()
+    assert client.delete(url, headers=h).status_code == 503  # offline: the copy could not be deleted
+    fd = fake_device(device.id, lambda method, params: {})
+    assert client.delete(url, headers=h).status_code == 200
+    assert fd.calls[0] == ("datasource.drop", {"kind": "sql", "database_name": "p_shop_abc123"})
+    db.expunge_all()
+    assert db.get(Device, device.id) is None and db.scalars(select(SourceReplica)).first() is None
+
+
 def test_force_remove_hosting_device_drops_cohost_copies(
     client, db, owner, owner_headers, make_project, make_device, fake_device
 ):
