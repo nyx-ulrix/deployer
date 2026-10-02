@@ -809,6 +809,8 @@ function Invoke-Uninstall {
             Write-DeployerOk 'WSL distro "deployer" removed'
         } else {
             [void](Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('--terminate', $script:DeployerDistro) -TimeoutSeconds 120)
+            # Its disk is in $InstallDir\wsl, so the distro stays registered for the next install (L-08).
+            Write-DeployerInfo "The WSL distro `"deployer`" (your databases) stays registered on $InstallDir\wsl for the next install. To delete the data instead, run `"wsl --unregister deployer`", then delete $InstallDir."
         }
     }
 

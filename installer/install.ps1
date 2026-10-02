@@ -512,7 +512,17 @@ function Install-WslEngine {
     Initialize-WslPlatform -ResumeScript $ResumeScript
     $wsl = Get-DeployerWslExe
 
+    if ((Test-DeployerWslDistro) -and (Test-DeployerWslDistroDiskMissing)) {
+        # Registered on a folder whose disk was deleted (after `uninstall -KeepData`): unusable, nothing to lose.
+        Write-DeployerWarn "WSL distro '$($script:DeployerDistro)' is registered but its disk is gone; creating it again."
+        [void](Invoke-DeployerNative -FilePath $wsl -ArgumentList @('--unregister', $script:DeployerDistro) -TimeoutSeconds 300)
+    }
     if (Test-DeployerWslDistro) {
+        # An update: the sign-in task's keep-alive loop would run `compose up` once the Docker restart and
+        # `wsl --terminate` below end its keep-alive, racing this install (L-08). Stop it the way
+        # `deployer stop` does; the task's `deployer start` clears the marker when step 10 starts it again.
+        Set-Content -LiteralPath (Join-Path $InstallDir $script:DeployerStopMarker) -Value (Get-Date -Format 'o') -Encoding ASCII
+        Stop-DeployerKeepAlive
         Write-DeployerOk "WSL distro '$($script:DeployerDistro)' already exists"
     } else {
         $image = Get-UbuntuWslImage

@@ -326,6 +326,8 @@ namespace DeployerSetup
             }
             using (UninstallForm u = new UninstallForm(half, 1f, true))
             {
+                Check(u.DoneText().Contains("wsl --unregister deployer"),
+                      "keeping data says to unregister the WSL distro before deleting the folder, so the next install is not stranded (L-08)");
                 u.partial = true;
                 bool honestKeep = u.DoneText().Contains("never finished") && u.DoneText().Contains(half);
                 u.deleteData = true;

@@ -410,6 +410,24 @@ function Test-DeployerWslDistro {
     return $false
 }
 
+function Test-DeployerWslDistroDiskMissing {
+    # True only when the distro is registered on a folder that no longer holds a disk, e.g. one kept by
+    # `uninstall -KeepData` and then deleted by hand (L-08). Unknown location -> $false, so a caller never
+    # unregisters (which deletes the disk) on a guess.
+    param([string]$Name = $script:DeployerDistro)
+    $lxss = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
+    foreach ($key in @(Get-ChildItem -LiteralPath $lxss -ErrorAction SilentlyContinue)) {
+        $p = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction SilentlyContinue
+        if ([string]$p.DistributionName -ine $Name -or -not $p.BasePath) { continue }
+        $base = ([string]$p.BasePath) -replace '^\\\\\?\\', ''
+        # Only "not there" counts; a folder that cannot be read (access denied) is not proof the disk is gone.
+        try { return [IO.Directory]::GetFiles($base, '*.vhdx').Count -eq 0 }
+        catch [IO.DirectoryNotFoundException] { return $true }
+        catch { return $false }
+    }
+    return $false
+}
+
 function Get-DeployerWslVersion {
     # Returns [version] of the Store WSL package, or $null for inbox/legacy WSL.
     $r = Invoke-DeployerNative -FilePath (Get-DeployerWslExe) -ArgumentList @('--version') -TimeoutSeconds 60

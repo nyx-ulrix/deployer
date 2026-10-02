@@ -200,7 +200,7 @@ namespace DeployerSetup
             if (partial)
                 return "Setup never finished here, so only the shortcuts and the Apps & Features entry were removed. Its files are still in " + installDir +
                        ". To free the space, run \"wsl --unregister deployer\" if setup got that far, then delete that folder.";
-            return "Your databases, settings (.env) and backups were kept in " + installDir + ". Install Deployer again to use them, or delete that folder yourself.";
+            return "Your databases, settings (.env) and backups were kept in " + installDir + ". Install Deployer again to use them. To delete them instead, first run \"wsl --unregister deployer\" (if you used the free Docker Engine), then delete that folder.";
         }
 
         FlatButton Button(string text, ButtonStyle style, EventHandler click)
