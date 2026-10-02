@@ -201,7 +201,8 @@ empty. Carry your data over with an export:
 4. Create projects, add SQL/NoSQL data sources and invite collaborators. Invite links use the public
    URL, so while it is `http://localhost:8080` they only open on this PC: set up remote access
    (*Settings -> Domains & remote access*) before inviting someone on another device.
-5. By default only you can create projects; invited people work in the projects you share. Change
+5. By default only you can create projects; invited people work in the projects you share (updating an
+   instance that already had other users keeps project creation open for them). Change
    that, disable an account, or see every project under *Settings -> Instance*.
 
 ## Google and GitHub sign-in (your own OAuth apps)

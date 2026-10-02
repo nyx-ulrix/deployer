@@ -345,7 +345,7 @@ export type InstanceSettings = {
   /** The dashboard on the Deployer PC itself, e.g. http://localhost:8080 (the installation's real port). */
   local_url: string;
   allow_signup: boolean;
-  /** On by default: only the instance owner can create or import projects. */
+  /** On by default for new installs (off after an update if other users already existed): only the instance owner can create or import projects. */
   owner_only_projects: boolean;
   google: ProviderSettings;
   github: ProviderSettings;

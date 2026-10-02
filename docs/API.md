@@ -144,7 +144,7 @@ key and a message saying what to paste, e.g. "Paste only the Google Client ID, e
 type InstanceSettings = {
   public_url: string; allow_signup: boolean;
   local_url: string;                 // the dashboard on the Deployer PC itself, with its real port (http://localhost:8080)
-  owner_only_projects: boolean;      // default true: only the instance owner can create/import projects
+  owner_only_projects: boolean;      // default true on new installs (an update leaves it off where other users already existed): only the instance owner can create/import projects
   google: { client_id: string | null; secret_set: boolean; configured: boolean; callback_url: string };
   github: { client_id: string | null; secret_set: boolean; configured: boolean; callback_url: string };
   alert_webhook_url: string | null;  // https only, no user:password@ (MONITORING.md)
@@ -197,7 +197,7 @@ type Alert = { id: string; alert: string; severity: "warning" | "critical"; mess
 | Method | Path | Role | Body | Response |
 |---|---|---|---|---|
 | GET | `/projects` | member | – | `Project[]` |
-| POST | `/projects` | any user (only the instance owner while `owner_only_projects` is on, the default; 403 otherwise) | `{name, description?, provision?:{sql:boolean, nosql:boolean}}` | `Project` (creates managed MariaDB and/or MongoDB sources when requested) |
+| POST | `/projects` | any user (only the instance owner while `owner_only_projects` is on, the default for new installs; 403 otherwise) | `{name, description?, provision?:{sql:boolean, nosql:boolean}}` | `Project` (creates managed MariaDB and/or MongoDB sources when requested) |
 | GET | `/projects/{project_id}` | viewer+ | – | `Project` |
 | PATCH | `/projects/{project_id}` | admin+ | `{name?, description?}` | `Project` |
 | DELETE | `/projects/{project_id}?confirm=<slug>&cloud=keep\|delete` | owner | – | `{ok:true, cloud?: {choice, resources, job_ids}}` (managed databases get a final snapshot, kept 30 days, then are dropped by a job; for those 30 days the instance owner can restore the project or download the snapshots — [BACKUPS.md](BACKUPS.md)); `409 cloud_resources_left` (`details.resources`) when databases Deployer created in AWS or apps with cloud resources remain and `cloud` is missing: `delete` queues their cleanup, `keep` leaves them running and billed in the account; `409 cloud_connection_in_project` when that cleanup needs a connection that goes with the project ([CLOUD.md](CLOUD.md) "C2-5") |

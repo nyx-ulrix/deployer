@@ -339,6 +339,36 @@ def test_only_owner_creates_projects_by_default(client, owner, owner_headers, ma
     assert client.post("/v1/projects", json={"name": "Mine"}, headers=member).status_code == 200
 
 
+def test_update_keeps_project_creation_open_for_existing_members(migration_db):
+    # L-02: migration 0014 stores owner_only_projects=false only where other users already exist.
+    import sqlite3
+
+    from alembic import command
+
+    cfg, db_file = migration_db
+
+    def run(sql: str) -> list:
+        if db_file.exists():
+            command.downgrade(cfg, "0013")  # 0014's downgrade keeps the stored value
+        else:
+            command.upgrade(cfg, "0013")
+        conn = sqlite3.connect(db_file)
+        conn.execute(sql)
+        conn.commit()
+        conn.close()
+        command.upgrade(cfg, "head")
+        conn = sqlite3.connect(db_file)
+        rows = conn.execute("SELECT value FROM instance_settings WHERE key = 'owner_only_projects'").fetchall()
+        conn.close()
+        return rows
+
+    user = "INSERT INTO users (id, email, is_instance_owner, is_active, created_at, updated_at) VALUES "
+    assert run(user + "('u1', 'owner@example.com', 1, 1, '2026-01-01', '2026-01-01')") == []  # new install
+    assert run(user + "('u2', 'member@example.com', 0, 1, '2026-01-01', '2026-01-01')") == [("false",)]
+    # An owner's explicit choice is kept.
+    assert run("UPDATE instance_settings SET value = 'true'") == [("true",)]
+
+
 def test_is_initialized_is_the_single_setup_check(db, owner):
     # A-105: every "is the instance set up?" gate goes through instance_settings.is_initialized.
     from pathlib import Path

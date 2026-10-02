@@ -33,7 +33,8 @@ SECRET_KEYS = {
 KNOWN_KEYS = {
     "public_url",
     "allow_signup",
-    # A-023: when on (the default), only the instance owner can create or import projects.
+    # A-023: when on (the default), only the instance owner can create or import projects. Migration 0014
+    # (L-02) stores it off on instances that already had other users, so an update changes nothing for them.
     "owner_only_projects",
     "google_client_id",
     "github_client_id",

@@ -363,7 +363,8 @@ platform used, and where the key lives.
   members/keys/settings). The link is built from the public URL, so while that is
   `http://localhost:8080` it only opens on the Deployer PC (the dialog warns): set up remote access
   first to invite someone on another device. Public signup should stay **off** on an internet-facing instance.
-  By default only the instance owner can create projects (a member gets 403 and must ask the owner);
+  By default only the instance owner can create projects (a member gets 403 and must ask the owner;
+  instances that had other users before this setting existed keep creation open);
   if the owner turns that off, any signed-in user can create a project and deploy code that runs on
   the owner's PC. The owner can disable an account and see every project under Settings → Instance.
 - **Sign-in methods:** email + password always works with an invite. Google/GitHub sign-in need the

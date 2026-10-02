@@ -186,7 +186,7 @@ function GeneralCard({ settings }: { settings: InstanceSettings }) {
           checked={ownerOnly}
           onChange={(e) => setOwnerOnly(e.target.checked)}
           label="Only I can create projects"
-          description="Projects get databases and apps on this PC. When off, anyone with an account can create them."
+          description="Projects get databases and apps on this PC. When on, other people can only work in projects they are invited to; they cannot create or import new ones. When off, anyone with an account can create them."
         />
         <Button
           type="submit"
