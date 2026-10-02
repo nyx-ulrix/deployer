@@ -587,8 +587,12 @@ def test_app_runner_app_gets_its_tables_through_an_instance_role(client, db, doc
     assert not any("PASSWORD" in k or "URL" in k for k in env if k.startswith("DEPLOYER_DB_"))
     assert "deployer-app-" in dep.log
 
-    # Database access off: the role stays but may use nothing.
+    # Database access off: the role stays but may use nothing. The change reaches the live service at once
+    # (docs/CLOUD.md "G1": an `env` deployment republishes the live image), and on every later deploy.
     client.patch(f"{base(team)}/apps/{app.id}", json={"database_access": False}, headers=team["admin"])
+    aws.calls.clear()
+    jobs.run_queued()
+    assert aws.args("ensure_instance_role") == [(name, None)]
     aws.calls.clear()
     db.expire_all()
     assert deploy(db, db.get(App, app.id)).status == "live"

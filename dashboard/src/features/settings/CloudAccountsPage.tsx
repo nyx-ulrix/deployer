@@ -306,6 +306,7 @@ const ONLY_FOR: Record<string, string> = {
   firestore: "only needed for Firestore databases",
   firebase_rtdb: "only needed for Realtime Databases",
   github_actions: "only needed to build apps on GitHub Actions",
+  cloud_secrets: "only needed when an app keeps its variables in Secret Manager",
 };
 
 function FirebaseGuide({

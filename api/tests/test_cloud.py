@@ -43,6 +43,7 @@ class FakeCloud:
 
     def __init__(self, **returns):
         self.calls: list[tuple] = []
+        self.kwargs: list[tuple[str, dict]] = []  # (name, keyword arguments) of every call
         self.returns = returns
         self.fail: dict[str, str] = {}
         self.region = "us-central1"
@@ -50,6 +51,7 @@ class FakeCloud:
     def __getattr__(self, name):
         def call(*args, **kwargs):
             self.calls.append((name, *args))
+            self.kwargs.append((name, kwargs))
             if name in self.fail:
                 raise CloudError(self.fail[name])
             value = self.returns.get(name)

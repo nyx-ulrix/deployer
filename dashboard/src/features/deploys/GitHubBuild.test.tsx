@@ -25,7 +25,7 @@ const app = {
   repo_url: "https://github.com/acme/shop",
   branch: "main",
   target: "aws_app",
-  cloud: { provider: "aws", connection_name: "AWS", url: null, resources: [] },
+  cloud: { provider: "aws", connection_name: "AWS", url: null, resources: [], secrets: null },
   build: { location: "pc" },
 } as unknown as App;
 

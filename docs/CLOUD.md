@@ -18,6 +18,7 @@ and the `deploy-website` skill.
 | **Delete over API / MCP** | Deleting a cloud database with an admin's session or a service key, MCP `delete_cloud_database` ("Deleting a cloud database over the API and MCP") | **Built** (no migration) |
 | **DynamoDB recovery** | Point-in-time recovery per table and restores of a backup / point in time into a new table and data source ("C2-2 as built": "Point-in-time recovery and restores") | **Built** (no migration) |
 | **Polish** | Billing confirmation for putting an app on a cloud target, MCP `set_app_target` ("C1 as built": Rules, MCP) | **Built** (no migration) |
+| **G1** | App secrets in AWS Secrets Manager / Google Secret Manager (opt-in), environment changes reaching App Runner / Cloud Run apps at once ("G1 as built") | **Built** (no migration) |
 
 ## Principles
 
@@ -86,8 +87,8 @@ interrupted deploy never creates a second one, and teardown knows what to remove
 the URL it went live on. The last 5 artifacts are kept (older S3 prefixes and ECR images are deleted;
 Hosting versions and Artifact Registry images follow the providers' own retention). Environment:
 the app's own variables minus names the platforms reserve (`PORT`, `K_SERVICE`, `K_REVISION`,
-`K_CONFIGURATION`, `AWSAPPRUNNER*`); secrets are plain runtime environment for now (follow-up: AWS
-Secrets Manager / Google Secret Manager references). Images are built for the PC's architecture (amd64
+`K_CONFIGURATION`, `AWSAPPRUNNER*`); secrets are plain runtime environment unless the app keeps them in the account's secret
+store ("G1 as built"). Images are built for the PC's architecture (amd64
 on typical PCs, which App Runner and Cloud Run need).
 
 **Rules** (`routers/apps.py`): only project **admins** choose or change a cloud target or connection
@@ -276,7 +277,7 @@ On `aws_app`, **database access** is allowed (admins, as on the PC) and means *t
 in the same AWS connection* (so the same account and region). `cloud_deploy.cloud_env` adds
 `DEPLOYER_DB_<NAME>_{HOST,PORT,USER,PASSWORD,DATABASE,URL}` (URL with `ssl=true` / `sslmode=require`)
 before the app's own variables (which win); they go to App Runner as its runtime environment (stored
-encrypted by App Runner; follow-up: Secrets Manager references). For an RDS endpoint the bundle covers
+encrypted by App Runner, or as Secrets Manager references when the app opted in, "G1 as built"). For an RDS endpoint the bundle covers
 it also adds `DEPLOYER_DB_<NAME>_SSL_CA_URL` (the RDS CA bundle's URL above). The URL stays
 `sslmode=require` (encrypted, works with no CA file); to also verify the server, as Deployer does, the
 app fetches that bundle (e.g. in its Dockerfile: `ADD https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/rds-ca.pem`)
@@ -918,7 +919,6 @@ Left (not built; each is also noted in its section above):
 
 - creating Firestore databases, their managed exports to Cloud Storage and scheduled backups / point-in-time
   recovery from Deployer (the Firebase console does them);
-- Secrets Manager / Secret Manager references instead of plain runtime environment;
 - a NAT gateway for App Runner apps linked to an RDS database that also call the internet (the user adds one);
 - a permissions boundary for the `deployer-app-*` / `deployer-gha-*` roles.
 
@@ -1023,8 +1023,8 @@ overlap):
 Every value the app's settings control is a JSON-quoted YAML value or base64, and none may contain `${{` (GitHub
 would evaluate it; the setup fails with a plain error), so a build setting can neither change the workflow nor
 reach repository secrets. Environment variables are **not** in the workflow: App Runner / Cloud Run keep the
-ones Deployer last set; changed variables reach the app with the next rollback (the live deployment's
-*Rollback* republishes it from this PC with today's variables).
+ones Deployer last set, and a changed variable is applied by this PC right away ("G1 as built": an `env`
+deployment republishes the live artifact with today's variables; GitHub never sees them).
 
 ### Reports, Deploy now, runs
 
@@ -1049,7 +1049,8 @@ ones Deployer last set; changed variables reach the app with the next rollback (
   sha, message, created_at, updated_at, url}], runs_url}`, the workflow's newest 10 runs from the GitHub API with
   the setup admin's connection - including runs that finished while this PC was off, which have no deployment
   row (and whose artifacts are not pruned).
-- **Rollbacks** still run on this PC (the `app.deploy` job republishes the old artifact).
+- **Rollbacks** still run on this PC (the `app.deploy` job republishes the old artifact), and so do
+  environment changes ("G1 as built").
 
 ### Switching back, teardown
 
@@ -1120,3 +1121,103 @@ through the workload identity credentials file), the IAM / IAM Credentials reque
 accounts, GitHub's `sub` claim for organisations that customised it (the AWS trust expects the default
 `repo:<owner>/<repo>:ref:<ref>`), and committing to a protected branch (the setup then fails with GitHub's
 message).
+
+## G1 as built: app secrets in a secret store, environment changes without a rollback
+
+### Secrets in AWS Secrets Manager / Google Secret Manager (opt-in)
+
+An App Runner or Cloud Run app (`cloud.DATABASE_TARGETS`) can keep its secrets in the cloud account's secret
+store instead of the service's plain environment: **Settings -> Environment variables -> "Keep these in AWS
+Secrets Manager / Google Secret Manager"** (project admin; off by default). Switching it on is billable, so the
+dialog shows the cost (`cloud_secrets.COST`: AWS about US$0.40 per secret per month plus reads; Google 6 active
+versions free, then about US$0.06 per version per month plus reads) and needs a ticked *I understand AWS /
+Google charges this cloud account for it* - over the API `PATCH .../apps/{id} {cloud_secrets: true,
+confirm_billing: true}` (`422 billing_not_confirmed` otherwise; `422` on a static target; developers get `403`).
+No migration: `apps.cloud_state["secrets"] = {enabled, stored: {NAME: ARN | secret id}}` (`services/cloud_secrets.py`).
+
+**What is a secret**: every variable of the app's own - Deployer stores them all encrypted, reveals them to
+admins only and redacts them from logs, and has no per-variable flag - plus the `DEPLOYER_DB_*` values that carry
+a database password (RDS `_PASSWORD` and `_URL`). Hosts, ports, user names, database and table names, project
+ids and Realtime Database URLs stay plain environment. Values are never logged, never returned by the API and
+never shown again by the dashboard (`cloud.secrets` lists only the **names** in the store).
+
+On every deploy, rollback and environment change (`Publish.aws_app` / `firebase_app`, after the environment is
+assembled):
+
+- **AWS**: one secret `deployer-<slug>-<id8>-<NAME>` per value (`CreateSecret`, tagged `managed-by=deployer`;
+  when it exists, `GetSecretValue` and `PutSecretValue` only if the value changed, so an unchanged redeploy
+  writes nothing). Its ARN is written to `cloud_state` the moment it exists. The app's instance role
+  `deployer-app-<slug>-<id8>` (C2-2; created on first use) gets a statement `secretsmanager:GetSecretValue` on
+  **exactly those ARNs** next to its DynamoDB statement, and the service's `RuntimeEnvironmentSecrets` maps each
+  name to its ARN (`RuntimeEnvironmentVariables` keeps the rest). App Runner reads them when an instance starts.
+- **Google**: one secret `deployer-<slug>-<id8>-<NAME>` (`POST projects/<p>/secrets?secretId=`, automatic
+  replication, label `managed-by=deployer`; `409` = exists), `versions/latest:access` to compare and
+  `:addVersion` only when the value changed (Google bills per active version), then `:setIamPolicy` on **each
+  secret** giving `roles/secretmanager.secretAccessor` to the project's default compute service account
+  (`<number>-compute@developer.gserviceaccount.com`, the identity the Cloud Run service runs as; the project
+  number comes from the Firebase project info - without it the deploy fails with a plain error). The Cloud Run
+  container's `env` carries `{name, valueSource: {secretKeyRef: {secret, version: "latest"}}}` for them.
+- After the rollout succeeded, secrets the new version no longer references are **deleted** (`DeleteSecret` with
+  `ForceDeleteWithoutRecovery`, `DELETE secrets/<id>`): variables that were removed, and all of them when the
+  option was switched off (the secret store is then plain environment again; the AWS role keeps no secret
+  statement). Deleting after the rollout means a failed one, which keeps the previous version serving, still
+  finds its secrets. Deleting the app or moving it to another target deletes every stored secret with the
+  rest (`app.cloud_teardown`; the confirm dialogs list them as "AWS Secrets Manager secrets A, B").
+
+GitHub Actions builds (C3) keep working unchanged: the workflow only swaps the image and keeps the service's
+source configuration / environment, references included.
+
+### Environment changes reach App Runner / Cloud Run apps at once
+
+`PATCH .../apps/{id}` with `env`, `database_access` or `cloud_secrets` on an `aws_app` / `firebase_app` that
+has a live deployment with an artifact starts a deployment of trigger **`env`** right away
+(`deployments.republish`; the response carries `env_deployment_id`): the `app.deploy` job on this PC
+republishes the live artifact - no clone, no build - with today's variables, databases and secrets, exactly like
+a rollback to the live deployment (`rollback_of` = the live one), and goes live when the provider's operation
+succeeded (the previous version keeps serving on failure). **Path chosen: from the PC**, also for apps whose
+pushes build on GitHub Actions: the workflow never sees the variables (they would otherwise have to be
+written into the repository's workflow or GitHub secrets), the PC already holds everything the service needs,
+and the user is on the dashboard at that moment anyway. Changing the variables of a static target (where they
+are build-time only) or of a local app still applies on the next deploy, as before. A run of the app's GitHub
+workflow at the same moment makes the provider refuse one of the two updates ("operation in progress"): the
+`env` deployment then fails with the provider's message and can be repeated.
+
+### Permissions added
+
+- **AWS** (`cloud.AWS_POLICY`, statement `AppSecrets`): `secretsmanager:CreateSecret`, `GetSecretValue`,
+  `PutSecretValue`, `DeleteSecret`, `TagResource` on `secret:deployer-*` only (GetSecretValue is what skips
+  rewriting an unchanged value). The policy stays under IAM's 6,144-character limit (test-enforced). The
+  instance roles' `GetSecretValue` statements are written by Deployer through the existing `iam:PutRolePolicy`
+  on `role/deployer-app-*`.
+- **Google** (`cloud.GOOGLE_ROLES` / `GOOGLE_APIS`, marked "only needed when an app keeps its variables in
+  Secret Manager"): **Secret Manager Admin** (`roles/secretmanager.admin`: create the secrets, add versions,
+  set each secret's own IAM policy, delete) and the **Secret Manager API** (`secretmanager.googleapis.com`).
+  Google has no predefined role scoped to a name prefix; an owner who wants to narrow it adds an IAM condition
+  `resource.name.startsWith("projects/<number>/secrets/deployer-")` to the binding.
+
+### API, dashboard, MCP
+
+| Method | Path | Role | Body / Query | Response |
+|---|---|---|---|---|
+| PATCH | `/projects/{pid}/apps/{id}` | admin+ for `cloud_secrets` | `{cloud_secrets: true, confirm_billing: true}` / `{cloud_secrets: false}` | `App & {env_deployment_id}`; `422 billing_not_confirmed` (with the cost note), `422` on a static target |
+| POST | `/projects/{pid}/apps` | admin+ | `cloud_secrets?: true` with the usual `confirm_billing: true` of a cloud target | `App` (201) |
+
+Apps' `cloud` gains `secrets: {enabled, store, note, cost, stored: [names]} | null` (null outside App Runner /
+Cloud Run); deployments gain the trigger `env`; `PATCH` returns `env_deployment_id`. Dashboard: the Environment
+card of an App Runner / Cloud Run app has the tick with the cost and the names in the store, its save toast
+says the live version is being republished, the Deploys table labels `env` deployments *Environment*, the
+"Where it builds" note says changed variables are applied right away, and Settings -> Cloud accounts marks the
+new Google role and API. MCP: `set_app_secrets_store` (project admin, like its route; `app_id`, `enabled`,
+`confirm_billing` - the description tells the agent to get the user's agreement first). See MCP.md.
+
+### Not verified against real clouds
+
+Tested with the fakes (`tests/test_cloud_secrets.py`: which values go to the store, the references and the
+role statement, nothing in logs or responses, the `env` deployment on a variable change - also for a
+GitHub-built app - stale secrets deleted after the rollout, switching off, teardown on delete / move, the
+billing confirmation and roles, MCP, the policy statements), the real `AwsClient` secret calls against
+botocore's models (`Stubber`: create / exists-unchanged / exists-changed / delete / already gone) and the real
+`GcpClient` secret calls against `httpx.MockTransport` (paths, bodies, the unchanged-value check, the Cloud
+Run `secretKeyRef` body). Not yet run for real: App Runner taking `RuntimeEnvironmentSecrets` together with
+an instance role created in the same `UpdateService`, Cloud Run's permission check on `secretKeyRef` at
+revision time, and `versions/latest:access` on a secret whose latest version was disabled in the console.

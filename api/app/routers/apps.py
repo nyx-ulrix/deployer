@@ -24,6 +24,7 @@ from app.services import (
     audit,
     cloud,
     cloud_deploy,
+    cloud_secrets,
     cohost_apps,
     deployments,
     device_rpc,
@@ -82,6 +83,9 @@ class AppFields(BaseModel):
     # docs/CLOUD.md: where it runs (admin-only to change) and with which cloud connection.
     target: Target | None = None
     cloud_connection_id: str | None = Field(default=None, max_length=36)
+    # docs/CLOUD.md "G1": keep the variables in AWS Secrets Manager / Google Secret Manager (App Runner / Cloud
+    # Run apps, admin-only, billable: confirm_billing when switching it on).
+    cloud_secrets: bool | None = None
     # Putting the app on a cloud target (or another account) bills that account: the caller confirms it.
     confirm_billing: bool = False
 
@@ -269,6 +273,33 @@ def _check_billing(app: App, body: AppFields) -> None:
         )
 
 
+def _set_cloud_secrets(db, access: ProjectAccess, app: App, body: AppFields) -> None:
+    """docs/CLOUD.md "G1": admins switch the secret store on (billable: confirm_billing) or off; App Runner /
+    Cloud Run apps only. Called after a target switch, which starts the app's cloud state afresh."""
+    if not access.at_least("admin"):
+        raise forbidden("Only project admins can change where an app's secrets are kept (it is billed)")
+    enable = bool(body.cloud_secrets)
+    if not enable and app.target not in cloud.DATABASE_TARGETS:
+        return  # nothing to switch off
+    if app.target not in cloud.DATABASE_TARGETS:
+        raise ApiError(
+            422,
+            "validation_error",
+            "Keeping variables in the cloud secret store is for App Runner and Cloud Run apps",
+            {"field": "cloud_secrets"},
+        )
+    if enable and not cloud_secrets.enabled(app) and not body.confirm_billing:
+        provider = cloud.TARGETS[app.target]["provider"]
+        raise ApiError(
+            422,
+            "billing_not_confirmed",
+            f"{cloud_secrets.STORE[provider]} is billed to the cloud account: {cloud_secrets.COST[provider]} "
+            "Send confirm_billing: true.",
+            {"field": "confirm_billing"},
+        )
+    cloud_secrets.set_enabled(app, enable)
+
+
 def _switch_target(db, request: Request, access: ProjectAccess, app: App, before: tuple) -> str | None:
     """The target or connection changed: the old target's resources are torn down (job), the local
     container removed, deployments forget their artifacts (they belong to the old target). Returns the job id."""
@@ -372,6 +403,8 @@ def create_app(body: AppCreate, request: Request, access: Developer, db: DbSessi
         raise forbidden("Only project admins can put an app on a cloud target (it is billed to the cloud account)")
     _check_target(db, app)
     _check_billing(app, body)
+    if body.cloud_secrets is not None:
+        _set_cloud_secrets(db, access, app, body)
     deployments.set_env(app, body.env or {})
     if body.repo_token:
         app.repo_token_encrypted = encrypt_secret(body.repo_token)
@@ -457,6 +490,8 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
             setattr(app, field, bool(value))
         elif field == "target":
             app.target = value or "local"
+        elif field == "cloud_secrets":
+            pass  # after the target switch below (which resets the cloud state)
         elif value is not None or field in (
             "install_command",
             "build_command",
@@ -478,7 +513,14 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
     _check_target(db, app)
     if moved:
         _check_billing(app, body)
+    if "cloud_secrets" in changed:
+        _set_cloud_secrets(db, access, app, body)
     build_job = github_actions.refresh_if_needed(db, app, changed, access.user.id)
+    # docs/CLOUD.md "G1": a changed environment reaches an App Runner / Cloud Run app right away (republished
+    # from this PC with the live artifact) instead of waiting for the next build or rollback.
+    env_dep = None
+    if not moved and {"env", "database_access", "cloud_secrets"} & set(changed):
+        env_dep = deployments.republish(db, app, user_id=access.user.id)
     audit.record(
         db,
         "app.update",
@@ -511,6 +553,8 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
     for job_id in (teardown_job, build_job):
         if job_id:
             jobs.dispatch(job_id)
+    if env_dep is not None:
+        _dispatch(env_dep[1])
     if cohost_changed:
         cohost_apps.replicate(get_sessionmaker(), app.id, user_id=access.user.id, retry=True)
         ra.sync_desired(db)  # the apps tunnel may be new: start its connector on this PC
@@ -519,6 +563,7 @@ def update_app(app_id: str, body: AppFields, request: Request, access: Developer
         **deployments.app_out(db, app),
         "teardown_job_id": teardown_job,
         "build_job_id": build_job,
+        "env_deployment_id": env_dep[0].id if env_dep else None,
         "warnings": warnings,
     }
 

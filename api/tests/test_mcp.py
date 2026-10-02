@@ -44,6 +44,7 @@ ADMIN_TOOLS = {
     "restore_cloud_backup",
     "set_build_location",
     "set_app_target",
+    "set_app_secrets_store",
 }
 # Admin tools whose route also takes a service key (require_role(..., service_keys=True)): not developers.
 KEY_ADMIN_TOOLS = {"delete_cloud_database"}
@@ -164,6 +165,7 @@ TOOL_ROUTES = {
     "deploy_app": [("POST", "/apps/{app_id}/deploy")],
     "set_build_location": [("PUT", "/apps/{app_id}/build")],
     "set_app_target": [("PATCH", "/apps/{app_id}")],
+    "set_app_secrets_store": [("PATCH", "/apps/{app_id}")],
     "list_github_runs": [("GET", "/apps/{app_id}/github-runs")],
     "deployment_status": [("GET", "/apps/{app_id}/deployments/{deployment_id}")],
     "app_logs": [("GET", "/apps/{app_id}/logs")],

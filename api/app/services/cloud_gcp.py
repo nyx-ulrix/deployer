@@ -20,6 +20,7 @@ cryptography, already dependencies) and every call is plain httpx. Rules:
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import re
@@ -42,6 +43,8 @@ REGISTRY = "https://artifactregistry.googleapis.com/v1"
 FIRESTORE = "https://firestore.googleapis.com/v1"
 RTDB_MANAGEMENT = "https://firebasedatabase.googleapis.com/v1beta"
 IAM = "https://iam.googleapis.com/v1"
+SECRETS = "https://secretmanager.googleapis.com/v1"
+SECRET_ACCESSOR = "roles/secretmanager.secretAccessor"
 GITHUB_ISSUER = "https://token.actions.githubusercontent.com"
 # The Realtime Database's own REST API takes a token with these scopes (docs/CLOUD.md "C2-4").
 RTDB_SCOPES = "https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email"
@@ -54,6 +57,7 @@ PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 REGION_RE = re.compile(r"^[a-z]+-[a-z]+\d{1,2}$")
 _NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 _SA_EMAIL = re.compile(r"^[a-z0-9-]{6,30}@[a-z0-9-]+\.iam\.gserviceaccount\.com$")
+_SECRET_ID = re.compile(r"^[A-Za-z0-9_-]{1,255}$")  # Secret Manager ids: deployer-<slug>-<id8>-<VARIABLE>
 _OPERATION = re.compile(r"^projects/[\w.-]+/locations/[\w-]+/operations/[\w.-]+$")
 _VERSION = re.compile(r"^(projects/[\w-]+/)?sites/[a-z0-9-]+/versions/[\w-]+$")
 # A Firestore path under projects/<project>/ (segments already percent-encoded by services/firestore.py):
@@ -90,6 +94,12 @@ def set_transport(transport: httpx.BaseTransport | None) -> None:
 def _name(value: str) -> str:
     if not _NAME.match(value):
         raise CloudError(f"Invalid Google resource name {value[:70]!r}")
+    return value
+
+
+def _secret_id(value: str) -> str:
+    if not _SECRET_ID.match(value):
+        raise CloudError(f"Invalid Secret Manager secret id {value[:70]!r}")
     return value
 
 
@@ -345,7 +355,12 @@ class GcpClient:
         return f"{RUN}/projects/{self.project}/locations/{self.region}/services"
 
     @staticmethod
-    def _service_body(image: str, port: int, env: dict[str, str]) -> dict:
+    def _service_body(image: str, port: int, env: dict[str, str], secrets: dict[str, str] | None) -> dict:
+        # docs/CLOUD.md "G1": `secrets` = NAME -> Secret Manager secret id, read as the service's own account.
+        refs = [
+            {"name": k, "valueSource": {"secretKeyRef": {"secret": _secret_id(v), "version": "latest"}}}
+            for k, v in sorted((secrets or {}).items())
+        ]
         return {
             "ingress": "INGRESS_TRAFFIC_ALL",
             "template": {
@@ -354,20 +369,24 @@ class GcpClient:
                     {
                         "image": image,
                         "ports": [{"containerPort": port}],
-                        "env": [{"name": k, "value": v} for k, v in sorted(env.items())],
+                        "env": [{"name": k, "value": v} for k, v in sorted(env.items())] + refs,
                         "resources": {"limits": {"cpu": "1", "memory": "512Mi"}},
                     }
                 ],
             },
         }
 
-    def create_service(self, name: str, image: str, port: int, env: dict[str, str]) -> str:
+    def create_service(
+        self, name: str, image: str, port: int, env: dict[str, str], secrets: dict[str, str] | None = None
+    ) -> str:
         """Returns the long-running operation's name."""
-        body = self._service_body(image, port, env)
+        body = self._service_body(image, port, env, secrets)
         return str(self._json("POST", self._services(), body, params={"serviceId": _name(name)}).get("name") or "")
 
-    def update_service(self, name: str, image: str, port: int, env: dict[str, str]) -> str:
-        body = self._service_body(image, port, env)
+    def update_service(
+        self, name: str, image: str, port: int, env: dict[str, str], secrets: dict[str, str] | None = None
+    ) -> str:
+        body = self._service_body(image, port, env, secrets)
         return str(self._json("PATCH", f"{self._services()}/{_name(name)}", body).get("name") or "")
 
     def operation(self, base: str, name: str) -> dict:
@@ -387,6 +406,37 @@ class GcpClient:
 
     def delete_service(self, name: str) -> None:
         self._send("DELETE", f"{self._services()}/{_name(name)}", ok=(200, 404))
+
+    # --- Secret Manager (docs/CLOUD.md "G1"; services/cloud_secrets.py) ----------------------------------
+
+    def _secret(self, name: str) -> str:
+        return f"{SECRETS}/projects/{self.project}/secrets/{_secret_id(name)}"
+
+    def put_secret(self, name: str, value: str) -> str:
+        """The secret `name` holds `value`: created once (automatic replication), a new version only when the
+        value changed (Google bills per active version). Returns the secret id the service references."""
+        url = f"{SECRETS}/projects/{self.project}/secrets"
+        body = {"replication": {"automatic": {}}, "labels": {"managed-by": "deployer"}}
+        self._json("POST", url, body, params={"secretId": _secret_id(name)}, ok=(200, 409))
+        try:
+            current = self._send("GET", f"{self._secret(name)}/versions/latest:access")
+            data = base64.b64decode(str((current.get("payload") or {}).get("data") or ""))
+        except CloudError as exc:
+            if exc.status not in (400, 404):  # no version yet, or the latest one is disabled / destroyed
+                raise
+            data = None
+        if data != value.encode("utf-8"):
+            payload = {"payload": {"data": base64.b64encode(value.encode("utf-8")).decode("ascii")}}
+            self._json("POST", f"{self._secret(name)}:addVersion", payload)
+        return name
+
+    def allow_secret(self, name: str, member: str) -> None:
+        """Only `member` (the Cloud Run service's account) may read this secret: the whole policy is ours."""
+        policy = {"policy": {"bindings": [{"role": SECRET_ACCESSOR, "members": [member]}]}}
+        self._json("POST", f"{self._secret(name)}:setIamPolicy", policy)
+
+    def delete_secret(self, name: str) -> None:
+        self._send("DELETE", self._secret(name), ok=(200, 404))
 
     # --- GitHub Actions builds: workload identity federation (docs/CLOUD.md "C3") ------------------
 

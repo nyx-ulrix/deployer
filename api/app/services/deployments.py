@@ -40,7 +40,7 @@ from app.errors import ApiError, conflict, not_found
 from app.models import ApiKey, App, CloudConnection, DataSource, Deployment, Domain, Job, User, utcnow
 from app.redis_client import get_redis
 from app.serializers import iso
-from app.services import github, github_actions, jobs
+from app.services import cloud, cloud_secrets, github, github_actions, jobs
 from app.services.app_runner import DockerCli, DockerError, cancel_check, get_docker
 from app.services.connections import (
     RDS_CA_URL,
@@ -245,11 +245,14 @@ def cloud_out(db: Session, app: App) -> dict | None:
     if app.target == "local":
         return None
     conn = db.get(CloudConnection, app.cloud_connection_id) if app.cloud_connection_id else None
+    provider = conn.provider if conn else None
     return {
-        "provider": conn.provider if conn else None,
+        "provider": provider,
         "connection_name": conn.name if conn else None,
         "url": cloud_deploy.cloud_url(app),
         "resources": cloud_deploy.resources(app.target, app.cloud_state),
+        # docs/CLOUD.md "G1": variables in the account's secret store (App Runner / Cloud Run only)
+        "secrets": cloud_secrets.out(app, provider) if app.target in cloud.DATABASE_TARGETS else None,
     }
 
 
@@ -406,6 +409,16 @@ def cancel_deployment(db: Session, dep: Deployment) -> Deployment:
     else:
         raise conflict("not_cancellable", f"This deployment is {dep.status}")
     return dep
+
+
+def republish(db: Session, app: App, *, user_id: str | None) -> tuple[Deployment, Job | None] | None:
+    """docs/CLOUD.md "G1": an App Runner / Cloud Run app's environment changed, so the live version is published
+    again from this PC with today's variables (trigger `env`; no build) - also for apps whose pushes build on
+    GitHub Actions, where nothing else would carry the change. None: nothing live to republish."""
+    live = db.get(Deployment, app.live_deployment_id) if app.live_deployment_id else None
+    if app.target not in cloud.DATABASE_TARGETS or live is None or not live.image_tag:
+        return None
+    return start_deployment(db, app, trigger="env", user_id=user_id, rollback_of=live)
 
 
 def rollback(db: Session, app: App, old: Deployment, *, user_id: str) -> tuple[Deployment, Job | None]:
@@ -920,9 +933,10 @@ def _job_deploy(ctx: jobs.JobContext) -> dict:
     cancel_token = cancel_check.set(ctx.cancelled)  # a cancel stops the running clone/build/push too
     try:
         try:
-            if dep.trigger == "rollback" and dep.image_tag:
+            if dep.trigger in ("rollback", "env") and dep.image_tag:
                 tag = dep.image_tag
-                log_.step(f"Reusing image {tag} (rollback of {dep.rollback_of})")
+                what = "rollback of" if dep.trigger == "rollback" else "new environment for"
+                log_.step(f"Reusing image {tag} ({what} {dep.rollback_of})")
             else:
                 ctx.progress(0.05, "Cloning", force=True)
                 checkout = _checkout(ctx, cli, app, dep, workdir, log_)

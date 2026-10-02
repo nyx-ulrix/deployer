@@ -80,6 +80,7 @@ export const TRIGGER_LABELS: Record<DeploymentTrigger, string> = {
   webhook: "Push",
   rollback: "Rollback",
   github: "GitHub Actions",
+  env: "Environment",
 };
 
 /** docs/CLOUD.md "C3": the "Where it builds" choices, in plain words (the API's github_actions.LOCATIONS). */

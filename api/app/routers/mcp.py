@@ -270,6 +270,11 @@ def t_set_app_target(ctx: Ctx, args: dict) -> Any:
     return apps_router.update_app(args["app_id"], body, ctx.request, ctx.access, ctx.db)
 
 
+def t_set_app_secrets_store(ctx: Ctx, args: dict) -> Any:
+    body = apps_router.AppFields(cloud_secrets=bool(args["enabled"]), confirm_billing=bool(args.get("confirm_billing")))
+    return apps_router.update_app(args["app_id"], body, ctx.request, ctx.access, ctx.db)
+
+
 def t_list_github_runs(ctx: Ctx, args: dict) -> Any:
     return apps_router.github_runs(args["app_id"], ctx.access, ctx.db)
 
@@ -575,6 +580,22 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
             confirm_billing=_p("boolean", "github: must be true - the user agreed GitHub may bill build minutes"),
         ),
         t_set_build_location,
+    ),
+    "set_app_secrets_store": (
+        "admin",
+        "Keep an App Runner / Cloud Run app's environment variables and database passwords in AWS Secrets Manager / "
+        "Google Secret Manager instead of the service's plain environment (one secret per variable, read only by "
+        "the app's own identity; values are never shown again). BILLABLE: AWS about US$0.40 per secret per month, "
+        "Google a small per-version cost beyond its free tier - only call with enabled: true after the user agreed, "
+        "with confirm_billing: true. Switching it on or off republishes the live version at once "
+        "(env_deployment_id); switching off deletes the stored secrets.",
+        _schema(
+            ["app_id", "enabled"],
+            app_id=APP,
+            enabled=_p("boolean", "true: keep the variables in the secret store; false: plain environment again"),
+            confirm_billing=_p("boolean", "enabled: must be true - the user agreed to the secret store's cost"),
+        ),
+        t_set_app_secrets_store,
     ),
     "set_app_target": (
         "admin",

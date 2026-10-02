@@ -786,6 +786,8 @@ export const api = {
         App & {
           teardown_job_id?: string | null;
           build_job_id?: string | null;
+          /** docs/CLOUD.md "G1": the `env` deployment republishing the live version with the new variables. */
+          env_deployment_id?: string | null;
           warnings?: string[];
         }
       >(`/projects/${e(pid)}/apps/${e(id)}`, body),

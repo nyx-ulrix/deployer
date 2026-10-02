@@ -4,7 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { Eye, Globe, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
-import type { App, AppPatch, AppReplica, AppWebhook, DnsRecord, Domain } from "../../api/types";
+import type { App, AppPatch, AppReplica, AppSecrets, AppWebhook, DnsRecord, Domain } from "../../api/types";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
@@ -47,7 +47,7 @@ function GeneralCard({ projectId, app, canEdit, isAdmin }: Props) {
     draft.target !== app.target || (draft.target !== "local" && draft.cloud_connection_id !== (app.cloud_connection_id ?? ""));
   const save = useMutation({
     mutationFn: () => api.apps.update(projectId, app.id, draftToPatch(draft, app)),
-    onSuccess: ({ teardown_job_id, build_job_id, warnings, ...updated }) => {
+    onSuccess: ({ teardown_job_id, build_job_id, env_deployment_id, warnings, ...updated }) => {
       queryClient.setQueryData(qk.app(projectId, app.id), updated);
       setDraft(emptyDraft(updated));
       setSubmitted(false);
@@ -58,7 +58,9 @@ function GeneralCard({ projectId, app, canEdit, isAdmin }: Props) {
           ? "Target changed. Deploy to publish the app there."
           : build_job_id
             ? "Settings saved. Deployer is updating the GitHub Actions workflow with them."
-            : "Settings saved. They apply on the next deploy.",
+            : env_deployment_id
+              ? "Settings saved. The live version is being published again with them."
+              : "Settings saved. They apply on the next deploy.",
       );
       for (const w of warnings ?? []) toast.info(w, "GitHub webhook");
     },
@@ -147,6 +149,7 @@ function EnvCard({ projectId, app, isAdmin }: Props) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [rows, setRows] = useState<EnvRow[] | null>(null);
+  const secrets = app.cloud?.secrets ?? null; // App Runner / Cloud Run apps only (docs/CLOUD.md "G1")
   const reveal = useMutation({
     mutationFn: () => api.apps.env(projectId, app.id),
     onSuccess: (r) => setRows(envToRows(r.env)),
@@ -154,10 +157,10 @@ function EnvCard({ projectId, app, isAdmin }: Props) {
   });
   const save = useMutation({
     mutationFn: () => api.apps.update(projectId, app.id, { env: rowsToEnv(rows ?? []) }),
-    onSuccess: (updated) => {
+    onSuccess: ({ env_deployment_id, ...updated }) => {
       queryClient.setQueryData(qk.app(projectId, app.id), updated);
       setRows(null);
-      toast.success("Variables saved. They apply on the next deploy.");
+      toast.success(env_deployment_id ? "Variables saved. The live version is being published again with them." : "Variables saved. They apply on the next deploy.");
     },
     onError: (e) => toast.error(errorMessage(e), "Couldn't save variables"),
   });
@@ -167,7 +170,9 @@ function EnvCard({ projectId, app, isAdmin }: Props) {
       description={
         app.target === "local"
           ? "Stored encrypted; PORT, DEPLOYER_URL and DEPLOYER_PROJECT_ID are always added."
-          : "Stored encrypted and sent to the cloud service as its environment: only these, plus DEPLOYER_DB_* for the AWS databases when an App Runner app has database access - nothing that points at this PC."
+          : secrets
+            ? "Stored encrypted and sent to the cloud service as its environment (plus DEPLOYER_DB_* for the project's databases in the same cloud account when the app has database access) - nothing that points at this PC. Saving publishes the live version again with the new values right away."
+            : "Stored encrypted and sent to the cloud service as its environment: only these - nothing that points at this PC."
       }
       actions={
         isAdmin && rows === null ? (
@@ -201,7 +206,60 @@ function EnvCard({ projectId, app, isAdmin }: Props) {
         </ul>
       )}
       {!isAdmin && <p className="mt-2 text-xs text-muted">Project admins can reveal and edit values.</p>}
+      {secrets && <SecretStore projectId={projectId} app={app} secrets={secrets} isAdmin={isAdmin} />}
     </Card>
+  );
+}
+
+/** docs/CLOUD.md "G1": keep the variables in AWS Secrets Manager / Google Secret Manager (billable, admin). */
+function SecretStore({ projectId, app, secrets, isAdmin }: { projectId: string; app: App; secrets: AppSecrets; isAdmin: boolean }) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+  const [agreed, setAgreed] = useState(false);
+  const change = useMutation({
+    mutationFn: (enabled: boolean) => api.apps.update(projectId, app.id, enabled ? { cloud_secrets: true, confirm_billing: true } : { cloud_secrets: false }),
+    onSuccess: ({ env_deployment_id, ...updated }, enabled) => {
+      queryClient.setQueryData(qk.app(projectId, app.id), updated);
+      setConfirming(false);
+      setAgreed(false);
+      const applied = env_deployment_id ? " The live version is being published again with the change." : " It applies on the next deploy.";
+      toast.success((enabled ? `Variables will be kept in ${secrets.store}.` : "Variables go to the service as plain environment again; the stored secrets are deleted.") + applied);
+    },
+    onError: (e) => toast.error(errorMessage(e), "Couldn't change the secret store"),
+  });
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <Checkbox
+        label={`Keep these in ${secrets.store}`}
+        description={
+          <>
+            {secrets.note}
+            {isAdmin ? ` Cost: ${secrets.cost}` : " Only project admins can change this."}
+            {secrets.stored.length > 0 && <span className="mt-0.5 block font-mono">In the store now: {secrets.stored.join(", ")}</span>}
+          </>
+        }
+        checked={secrets.enabled}
+        disabled={!isAdmin || change.isPending}
+        onChange={(e) => (e.target.checked ? setConfirming(true) : change.mutate(false))}
+      />
+      <ConfirmDialog
+        open={confirming}
+        onClose={() => setConfirming(false)}
+        onConfirm={() => change.mutate(true)}
+        loading={change.isPending}
+        destructive={false}
+        disabled={!agreed}
+        title={`Keep the variables in ${secrets.store}?`}
+        description="Each variable (and each database password) becomes one secret in your cloud account that only this app's own identity may read. Deployer updates them on every deploy and deletes them when the app is deleted or moved."
+        confirmLabel="Use the secret store"
+      >
+        <Alert tone="warning">{secrets.cost}</Alert>
+        <div className="mt-3">
+          <Checkbox label={`I understand ${app.cloud?.provider === "aws" ? "AWS" : "Google"} charges this cloud account for it`} checked={agreed} onChange={(e) => setAgreed(e.target.checked)} />
+        </div>
+      </ConfirmDialog>
+    </div>
   );
 }
 

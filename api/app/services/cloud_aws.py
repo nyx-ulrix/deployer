@@ -434,10 +434,12 @@ class AwsClient:
     # --- App Runner ------------------------------------------------------------------------------
 
     @staticmethod
-    def _source(image: str, port: int, env: dict[str, str], role_arn: str) -> dict:
+    def _source(image: str, port: int, env: dict[str, str], role_arn: str, secrets: dict[str, str] | None) -> dict:
         image_config: dict[str, Any] = {"Port": str(port)}
         if env:
             image_config["RuntimeEnvironmentVariables"] = env
+        if secrets:  # docs/CLOUD.md "G1": NAME -> Secrets Manager ARN, read by the instance role at start
+            image_config["RuntimeEnvironmentSecrets"] = secrets
         return {
             "ImageRepository": {
                 "ImageIdentifier": image,
@@ -469,13 +471,14 @@ class AwsClient:
         role_arn: str,
         connector_arn: str | None = None,
         instance_role_arn: str | None = None,
+        secret_arns: dict[str, str] | None = None,
     ) -> dict:
         ar = self._c("apprunner")
         for attempt in range(6):
             try:
                 out = ar.create_service(
                     ServiceName=name,
-                    SourceConfiguration=self._source(image, port, env, role_arn),
+                    SourceConfiguration=self._source(image, port, env, role_arn, secret_arns),
                     InstanceConfiguration=self._instance(instance_role_arn),
                     NetworkConfiguration=self._network(connector_arn),
                 )
@@ -502,10 +505,11 @@ class AwsClient:
         role_arn: str,
         connector_arn: str | None = None,
         instance_role_arn: str | None = None,
+        secret_arns: dict[str, str] | None = None,
     ) -> str:
         out = self._c("apprunner").update_service(
             ServiceArn=arn,
-            SourceConfiguration=self._source(image, port, env, role_arn),
+            SourceConfiguration=self._source(image, port, env, role_arn, secret_arns),
             InstanceConfiguration=self._instance(instance_role_arn),
             NetworkConfiguration=self._network(connector_arn),
         )
@@ -822,6 +826,32 @@ class AwsClient:
             except Exception as exc:  # noqa: BLE001
                 if _code(exc) != "NoSuchEntity":
                     raise
+
+    # --- Secrets Manager (docs/CLOUD.md "G1"; services/cloud_secrets.py) ---------------------------------
+
+    @_wrap
+    def put_secret(self, name: str, value: str) -> str:
+        """The secret `name` holds `value`: created once, a new version only when the value changed (so a
+        redeploy with the same variables writes nothing). Returns its ARN (what the service references)."""
+        sm = self._c("secretsmanager")
+        try:
+            return sm.create_secret(Name=name, SecretString=value, Tags=[TAG])["ARN"]
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) != "ResourceExistsException":
+                raise
+        current = sm.get_secret_value(SecretId=name)
+        if current.get("SecretString") == value:
+            return current["ARN"]
+        return sm.put_secret_value(SecretId=name, SecretString=value)["ARN"]
+
+    @_wrap
+    def delete_secret(self, secret_id: str) -> None:
+        """By ARN or name; at once (no recovery window), so the name can be used again right away."""
+        try:
+            self._c("secretsmanager").delete_secret(SecretId=secret_id, ForceDeleteWithoutRecovery=True)
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) != "ResourceNotFoundException":
+                raise
 
     # --- GitHub Actions builds (docs/CLOUD.md "C3") -------------------------------------------------
 

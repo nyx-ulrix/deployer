@@ -89,8 +89,8 @@ export function BuildCard({ projectId, app, isAdmin }: { projectId: string; app:
                   <ExternalLink className="size-3" />
                 </a>
               )}
-              . Environment variables you change here reach the app with the next <strong>Rollback</strong> to the live deployment (GitHub
-              never sees them).
+              . Environment variables you change here are applied by this PC right away (the live version is published again with them;
+              GitHub never sees them).
             </p>
           )}
           {github.message && <Alert tone={github.status === "error" ? "danger" : "info"}>{github.message}</Alert>}

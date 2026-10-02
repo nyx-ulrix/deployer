@@ -337,6 +337,20 @@ AWS_POLICY = {
             "Resource": "arn:aws:ec2:*:*:vpc-endpoint/*",
             "Condition": {"StringEquals": {"ec2:CreateAction": "CreateVpcEndpoint"}},
         },
+        # App secrets (docs/CLOUD.md "G1"): one deployer-* secret per variable of an App Runner app that keeps
+        # them in Secrets Manager; GetSecretValue only to skip rewriting an unchanged value.
+        {
+            "Sid": "AppSecrets",
+            "Effect": "Allow",
+            "Action": [
+                "secretsmanager:CreateSecret",
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:PutSecretValue",
+                "secretsmanager:DeleteSecret",
+                "secretsmanager:TagResource",
+            ],
+            "Resource": "arn:aws:secretsmanager:*:*:secret:deployer-*",
+        },
         # GitHub Actions builds (docs/CLOUD.md "C3"): the account's identity provider for GitHub's OIDC tokens
         # (one, shared) and one deployer-gha-* role per app that only its repository's branch may assume.
         {
@@ -380,6 +394,12 @@ GOOGLE_ROLES = [
         "only_for": "firebase_rtdb",
     },
     {
+        "role": "roles/secretmanager.admin",
+        "title": "Secret Manager Admin",
+        "why": "create an app's secrets, store new values and let only the app's own account read them",
+        "only_for": "cloud_secrets",
+    },
+    {
         "role": "roles/iam.workloadIdentityPoolAdmin",
         "title": "IAM Workload Identity Pool Admin",
         "why": "let GitHub Actions sign in without a key (one pool, one provider per app)",
@@ -405,6 +425,7 @@ GOOGLE_APIS = [
         "title": "Firebase Realtime Database Management API",
         "only_for": "firebase_rtdb",
     },
+    {"api": "secretmanager.googleapis.com", "title": "Secret Manager API", "only_for": "cloud_secrets"},
     {"api": "iam.googleapis.com", "title": "Identity and Access Management (IAM) API", "only_for": "github_actions"},
     {"api": "sts.googleapis.com", "title": "Security Token Service API", "only_for": "github_actions"},
     {

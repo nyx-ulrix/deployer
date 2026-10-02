@@ -1240,7 +1240,8 @@ export type DeploymentStatus =
   | "superseded";
 
 /** `github`: built and deployed by the app's GitHub Actions workflow, which reported the run (docs/CLOUD.md "C3"). */
-export type DeploymentTrigger = "manual" | "webhook" | "rollback" | "github";
+/** `env`: an App Runner / Cloud Run app's variables changed, so the live version was published again (docs/CLOUD.md "G1"). */
+export type DeploymentTrigger = "manual" | "webhook" | "rollback" | "github" | "env";
 
 export type Deployment = {
   id: string;
@@ -1340,6 +1341,17 @@ export type AppCloud = {
   url: string | null;
   /** What Deployer created in the cloud account (removed on delete / target switch). */
   resources: string[];
+  /** docs/CLOUD.md "G1": variables in the account's secret store (App Runner / Cloud Run only, else null). */
+  secrets: AppSecrets | null;
+};
+
+export type AppSecrets = {
+  enabled: boolean;
+  store: string | null;
+  note: string;
+  cost: string | null;
+  /** Names of the variables now in the store (never values). */
+  stored: string[];
 };
 
 export type AppBuild =
@@ -1449,6 +1461,8 @@ export type AppInput = {
   /** docs/CLOUD.md (admin-only to change). */
   target?: AppTarget;
   cloud_connection_id?: string | null;
+  /** docs/CLOUD.md "G1": keep the variables in AWS Secrets Manager / Google Secret Manager (admin; `confirm_billing` to switch on). */
+  cloud_secrets?: boolean;
   /** Required (true) when moving onto a cloud target or account: it is billed there. */
   confirm_billing?: boolean;
 };

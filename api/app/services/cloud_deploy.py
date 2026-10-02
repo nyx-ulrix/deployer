@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 
 from app.errors import ApiError, CloudError, conflict
 from app.models import App, CloudConnection, Deployment, Domain, utcnow
-from app.services import cloud, cloud_aws, cloud_gcp, github_actions, jobs
+from app.services import cloud, cloud_aws, cloud_gcp, cloud_secrets, github_actions, jobs
 from app.services import cloudflare as cf
 from app.services.instance_settings import get_value
 
@@ -132,7 +132,8 @@ def resources(target: str, state: dict | None) -> list[str]:
             out.append(f"Artifact Registry images {AR_REPOSITORY}/{s['ar_package']}")
         if s.get("site"):
             out.append(f"Firebase Hosting site {s['site']} (all versions, preview channels and domains)")
-    return out + github_actions.resources(s.get("github"))
+    provider = cloud.TARGETS[target]["provider"] if target in cloud.TARGETS else None
+    return out + (cloud_secrets.resources(provider, s) if provider else []) + github_actions.resources(s.get("github"))
 
 
 def cloud_url(app: App) -> str | None:
@@ -235,7 +236,8 @@ class Publish:
     def __init__(self, ctx: jobs.JobContext, cli, app: App, dep: Deployment, tag: str, workdir: str, log_, secrets):
         self.ctx, self.cli, self.app, self.dep, self.tag, self.workdir = ctx, cli, app, dep, tag, workdir
         self.log, self.secrets = log_, secrets
-        self.reuse = dep.trigger == "rollback" and tag == dep.image_tag and not tag.startswith("deployer-app/")
+        # A rollback, or an environment change (trigger `env`, docs/CLOUD.md "G1"): the cloud artifact is republished.
+        self.reuse = dep.trigger in ("rollback", "env") and tag == dep.image_tag and not tag.startswith("deployer-app/")
         self.state = dict(app.cloud_state or {})
         self.provider, self.config = _connection(ctx.session_factory, app)
         secrets.extend(cloud.secrets_of(self.config))
@@ -331,9 +333,12 @@ class Publish:
         if dropped:
             self.log.write("Not sent (set by App Runner itself): " + ", ".join(sorted(dropped)))
         self.log.write("Environment: " + (", ".join(sorted(env)) or "(none)") + " - nothing that points at this PC")
+        env, secret_arns, stale = cloud_secrets.sync(self, aws, env, databases)
         connector = self.connect_databases(aws, databases)
-        instance_role = self.instance_role(aws, databases)
+        instance_role = self.instance_role(aws, databases, list(secret_arns.values()))
         extra = {"instance_role_arn": instance_role} if instance_role else {}
+        if secret_arns:
+            extra["secret_arns"] = secret_arns
         if not self.state.get("access_role_arn"):
             self.save(access_role_arn=aws.ensure_access_role())
         port = internal_port(self.app)
@@ -358,6 +363,7 @@ class Publish:
             return status == "SUCCEEDED", status
 
         self.wait("App Runner", poll)
+        cloud_secrets.cleanup(self, aws, stale)
         return image, self.state["service_url"]
 
     def databases(self) -> list[dict]:
@@ -374,9 +380,10 @@ class Publish:
             self.log.write("Databases (in your cloud account): " + ", ".join(d["name"] for d in databases))
         return databases
 
-    def instance_role(self, aws, databases: list[dict]) -> str | None:
-        """docs/CLOUD.md "C2-2": the IAM role the app's code runs as, allowed to use exactly the project's
-        DynamoDB tables (created on first use, emptied when the app has none). None: no role needed."""
+    def instance_role(self, aws, databases: list[dict], secret_arns: list[str]) -> str | None:
+        """docs/CLOUD.md "C2-2", "G1": the IAM role the app's code runs as, allowed to use exactly the project's
+        DynamoDB tables and to read exactly its own secrets (created on first use, emptied when the app has
+        neither). None: no role needed."""
         account, region = self.config.get("account_id") or "*", self.config.get("region")
         arns = [
             f"arn:aws:dynamodb:{region}:{account}:table/{t}"
@@ -384,10 +391,13 @@ class Publish:
             if d["engine"] == "dynamodb"
             for t in d["config"].get("tables") or []
         ]
-        if not arns and not self.state.get("instance_role"):
+        if not arns and not secret_arns and not self.state.get("instance_role"):
             return None
         name = instance_role_name(self.app)
-        policy = None
+        statements = []
+        if secret_arns:
+            self.log.write(f"Letting the app read its secrets (IAM role {name})")
+            statements.append({"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": secret_arns})
         if arns:
             self.log.step(f"Letting the app use its DynamoDB tables (IAM role {name})")
             actions = [
@@ -403,10 +413,8 @@ class Publish:
                 "dynamodb:DescribeTable",
             ]
             resources = arns + [f"{a}/index/*" for a in arns]
-            policy = {
-                "Version": "2012-10-17",
-                "Statement": [{"Effect": "Allow", "Action": actions, "Resource": resources}],
-            }
+            statements.append({"Effect": "Allow", "Action": actions, "Resource": resources})
+        policy = {"Version": "2012-10-17", "Statement": statements} if statements else None
         arn = aws.ensure_instance_role(name, policy)
         self.save(instance_role=name, instance_role_arn=arn)
         return arn
@@ -463,6 +471,17 @@ class Publish:
             f"The app reaches its databases as {account}: it needs the role(s) {'; '.join(needed)} (Google Cloud "
             "console -> IAM -> Grant access), unless it already has Editor"
         )
+
+    def allow_secrets(self, gcp, secrets: dict[str, str]) -> None:
+        """docs/CLOUD.md "G1": the service runs as the project's default compute service account, which may read
+        exactly these secrets (a binding on each secret, not on the project)."""
+        number = str(gcp.project_info().get("projectNumber") or "")
+        if not number.isdigit():
+            raise jobs.JobError("Firebase did not say the project's number, needed to let the app read its secrets")
+        member = f"serviceAccount:{number}-compute@developer.gserviceaccount.com"
+        self.log.write(f"Letting {member.removeprefix('serviceAccount:')} read the app's secrets (and nothing else)")
+        for name in sorted(secrets.values()):
+            gcp.allow_secret(name, member)
 
     def _hosting_site(self, gcp) -> str:
         if not self.state.get("site"):
@@ -530,16 +549,20 @@ class Publish:
         if dropped:
             self.log.write("Not sent (set by Cloud Run itself): " + ", ".join(sorted(dropped)))
         self.log.write("Environment: " + (", ".join(sorted(env)) or "(none)") + " - nothing from Deployer itself")
+        env, secrets, stale = cloud_secrets.sync(self, gcp, env, databases)
+        if secrets:
+            self.allow_secrets(gcp, secrets)
         port = internal_port(self.app)
         name = resource_name(self.app)
         self.ctx.progress(0.85, "Rolling out", force=True)
+        extra = {"secrets": secrets} if secrets else {}
         if not self.state.get("run_service"):
             self.log.step(f"Creating the Cloud Run service {name} in {gcp.region}")
-            operation = gcp.create_service(name, image, port, env)
+            operation = gcp.create_service(name, image, port, env, **extra)
             self.save(run_service=name, run_region=gcp.region)
         else:
             self.log.step("Deploying the new image to Cloud Run")
-            operation = gcp.update_service(self.state["run_service"], image, port, env)
+            operation = gcp.update_service(self.state["run_service"], image, port, env, **extra)
 
         def poll() -> tuple[bool, str]:
             op = gcp.operation(cloud_gcp.RUN, operation)
@@ -548,6 +571,7 @@ class Publish:
             return op["done"], "done" if op["done"] else "rolling out"
 
         self.wait("Cloud Run", poll)
+        cloud_secrets.cleanup(self, gcp, stale)
         if not self.state.get("run_public"):
             self.log.write("Allowing public (unauthenticated) access to the service")
             gcp.make_public(self.state["run_service"])
@@ -742,6 +766,7 @@ def teardown_steps(
             )
         if s.get("site"):
             steps.append((f"Firebase Hosting site {s['site']}", lambda: gcp.delete_site(s["site"])))
+    steps += cloud_secrets.teardown_steps(client, cloud.TARGETS[target]["provider"], s)
     if s.get("github"):
         steps += github_actions.teardown_steps(client, target, s["github"], github_token, keep_member)
     return steps
