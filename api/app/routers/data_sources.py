@@ -288,20 +288,19 @@ def update_data_source(source_id: str, body: DataSourceUpdate, access: Admin, db
         raise validation_error("Managed databases have no connection settings to edit")
     if body.config is not None and connections.cloud_engine(ds.engine) is not None:
         raise validation_error("This database uses its cloud account's key; connect another one as a new database")
-    if body.config is not None and cloud_db.is_created(ds):
-        old = decrypt_json(ds.config_encrypted)
-        if any(k in body.config and body.config[k] != old.get(k) for k in ("host", "port")):
-            # Its cloud metadata (instance, firewall, delete) would still describe the RDS instance.
-            raise validation_error("Deployer created this database in AWS, so its host and port cannot change")
     name = (body.name or ds.name).strip()
     if not name:
         raise validation_error("name is required")
     config = None
     if body.config is not None:
-        merged = {**decrypt_json(ds.config_encrypted), **body.config}
+        old = decrypt_json(ds.config_encrypted)
         _, config = external_config(
-            DataSourceInput(kind=ds.kind, mode=ds.mode, engine=ds.engine, name=name, config=merged), access
+            DataSourceInput(kind=ds.kind, mode=ds.mode, engine=ds.engine, name=name, config={**old, **body.config}),
+            access,
         )
+        # Normalized first ("5432" == 5432); its cloud metadata (instance, firewall, delete) describes that RDS.
+        if cloud_db.is_created(ds) and (config["host"], config["port"]) != (old.get("host"), old.get("port")):
+            raise validation_error("Deployer created this database in AWS, so its host and port cannot change")
     changed = []
     if name != ds.name:
         _ensure_name_free(db, access.project.id, name, except_id=ds.id)

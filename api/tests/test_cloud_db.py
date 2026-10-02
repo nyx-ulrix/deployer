@@ -201,6 +201,8 @@ def test_created_database_ip_for_admins_and_fixed_host(client, db, team, aws):
     # Its cloud metadata describes the RDS instance, so the Edit dialog cannot re-point it.
     moved = client.patch(f"{url}/{source['id']}", json={"config": {"host": "db.example.com"}}, headers=team["admin"])
     assert moved.status_code == 422 and "host and port" in moved.json()["error"]["message"]
+    same = {"host": f" {HOST} ", "port": "3306"}  # the same endpoint, written differently
+    assert client.patch(f"{url}/{source['id']}", json={"config": same}, headers=team["admin"]).status_code == 200
     db.expire_all()
     assert decrypt_json(db.get(DataSource, source["id"]).config_encrypted)["host"] == HOST
 
