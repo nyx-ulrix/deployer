@@ -289,10 +289,28 @@ def test_instance_roundtrip(db, populated):
     assert ext.status == "unknown"
     assert instance_settings.get_value(db, "google_client_secret") == "g-secret"
     assert instance_settings.get_value(db, "allow_signup") is True
+    assert instance_settings.owner_only_projects(db) is True  # L-02: the default travels explicitly
     assert db.scalar(select(func.count()).select_from(ProjectMember)) == 2
     assert db.scalar(select(func.count()).select_from(ProjectInvite)) == 1
     assert db.scalar(select(func.count()).select_from(SchemaLink)) == 1
     assert db.scalar(select(func.count()).select_from(UserIdentity)) == 1
+
+
+def test_old_instance_export_keeps_project_creation_open(db, populated):
+    # L-02: an export from before owner_only_projects (no such key, a non-owner user) imports with it off.
+    path, _ = transfer.build_export_file(db, scope="instance", projects=[populated["project"]], passphrase=PASS)
+    try:
+        payload = transfer.read_export_file(path, PASS, "instance")
+    finally:
+        os.unlink(path)
+    payload["instance_settings"] = [s for s in payload["instance_settings"] if s["key"] != "owner_only_projects"]
+    for model in (SchemaLink, ApiKey, ProjectInvite, ProjectMember, DataSource, Project, UserIdentity, InstanceSetting):
+        db.query(model).delete()
+    db.query(User).delete()
+    db.commit()
+
+    transfer.import_instance(db, payload)
+    assert instance_settings.owner_only_projects(db) is False
 
 
 def test_projects_roundtrip_via_api(client, db, populated, make_user, auth_headers, set_setting):

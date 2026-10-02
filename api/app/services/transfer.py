@@ -111,6 +111,7 @@ from app.services import (
     ddl_export,
     device_host,
     device_rpc,
+    instance_settings,
     jobs,
     provisioning,
 )
@@ -525,10 +526,15 @@ def write_payload(
     w.field("created_at", created_at)
 
     if scope == "instance":
-        w.field(
-            "instance_settings",
-            [_setting_out(s) for s in db.scalars(select(InstanceSetting)) if s.key not in DEVICE_LOCAL_SETTINGS],
-        )
+        settings_out = [
+            _setting_out(s) for s in db.scalars(select(InstanceSetting)) if s.key not in DEVICE_LOCAL_SETTINGS
+        ]
+        if not any(s["key"] == "owner_only_projects" for s in settings_out):
+            # L-02: always explicit, so import can tell a default "on" from an export made before the setting.
+            settings_out.append(
+                {"key": "owner_only_projects", "value": instance_settings.owner_only_projects(db), "is_secret": False}
+            )
+        w.field("instance_settings", settings_out)
         users = list(db.scalars(select(User).order_by(User.created_at)))
         counts["users"] = len(users)
         w.field("users", [model_to_dict(u) for u in users])
@@ -1211,6 +1217,11 @@ def import_instance(db: Session, payload: dict) -> dict:
         for u in _list(payload, "users"):
             db.add(dict_to_model(User, u))
             totals["users"] += 1
+        # L-02 (as migration 0014): an export from before owner_only_projects keeps creation open for its members.
+        if not any(s["key"] == "owner_only_projects" for s in _list(payload, "instance_settings")) and any(
+            not u.get("is_instance_owner") for u in _list(payload, "users")
+        ):
+            instance_settings.set_value(db, "owner_only_projects", False)
         db.flush()
         for i in _list(payload, "user_identities"):
             db.add(dict_to_model(UserIdentity, i))
