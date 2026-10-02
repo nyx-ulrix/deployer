@@ -43,8 +43,8 @@ from app.services.metrics import RequestMetricsMiddleware
 # Routes that accept project API keys (docs/DATA_API.md "Calling from a browser"). Only these get CORS.
 KEY_ROUTES = re.compile(
     r"^/v1/projects/[^/]+/(schema(/export|/links)?"
-    r"|data-sources/[^/]+/(query|tables/[^/]+/rows|collections/[^/]+/documents(/[^/]+)?))$"
-)
+    r"|data-sources/[^/]+/(query|tables/[^/]+/rows|collections/.+/documents(/[^/]+(/collections)?)?))$"
+)  # `.+`: a Firestore collection is a path (users/u1/orders), routed as `{name:path}` in routers/data.py
 
 
 class KeyRoutesCORS:

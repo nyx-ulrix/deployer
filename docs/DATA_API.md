@@ -30,7 +30,7 @@ Base URL: `<public_url>/v1`, e.g. `http://localhost:8080/v1` on a fresh install 
 
 ### Calling from a browser
 
-The rows, documents, query and schema endpoints answer CORS requests from any origin (no cookies:
+The rows, documents (Firestore subcollection paths and listings included), query and schema endpoints answer CORS requests from any origin (no cookies:
 `Access-Control-Allow-Credentials` is never sent), so a web page on another origin can `fetch` them
 with the `Authorization` and `Content-Type` headers. No other endpoint sends CORS headers, and the MCP
 endpoint is for agents, not browsers. A page served over `https` can only call an `https` Deployer URL

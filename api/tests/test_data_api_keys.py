@@ -219,6 +219,16 @@ def test_cors_only_on_key_routes_and_without_credentials(client, setup):
     resp = client.get(setup["rows"], headers={**h, **origin})
     assert resp.status_code == 200 and resp.headers["access-control-allow-origin"] == "*"
 
-    for path in ("/v1/auth/refresh", f"/v1/projects/{setup['project'].id}/api-keys"):
+    # V-04: Firestore subcollection paths (encoded, as docs/DATA_API.md fetches them) and the listing.
+    docs = f"{setup['base']}/{setup['ds'].id}/collections"
+    for path in (
+        f"{docs}/users%2Fu1%2Forders/documents",
+        f"{docs}/users/u1/orders/documents/o1",
+        f"{docs}/users/documents/x/collections",
+    ):
+        resp = client.options(path, headers=preflight)
+        assert resp.status_code == 200 and resp.headers["access-control-allow-origin"] == "*", path
+
+    for path in ("/v1/auth/refresh", f"/v1/projects/{setup['project'].id}/api-keys", f"{docs}/users"):
         resp = client.options(path, headers=preflight)
         assert "access-control-allow-origin" not in resp.headers, path
