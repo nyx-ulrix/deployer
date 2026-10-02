@@ -16,6 +16,7 @@ import hashlib
 import re
 import ssl
 import threading
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote, urlsplit
 
@@ -34,6 +35,14 @@ from app.models import DataSource, utcnow
 CONNECT_TIMEOUT_S = 5
 TEST_IO_TIMEOUT_S = 10  # A-113: a connection test's MySQL handshake/query read, not the 300 s of real work
 DEFAULT_PORTS = {"mariadb": 3306, "mysql": 3306, "postgresql": 5432, "mongodb": 27017}
+# docs/CLOUD.md "C2-1": RDS / Aurora sign with Amazon's own RDS CA, which is not in the system store. The
+# bundle is AWS's global one (every commercial region), vendored from RDS_CA_URL; refresh it by downloading
+# that URL over app/certs/rds-global-bundle.pem (AWS adds a region's CA before the region opens).
+RDS_CA_URL = "https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem"
+RDS_CA_BUNDLE = str(Path(__file__).resolve().parent.parent / "certs" / "rds-global-bundle.pem")
+# <name>.<id>.<region>.rds.amazonaws.com and Aurora's cluster-* endpoints. Not RDS Proxy (a public ACM
+# certificate, in the system store) nor GovCloud / China (other partitions, other bundles).
+_RDS_HOST = re.compile(r"^[a-z0-9-]+\.(?!proxy-)[a-z0-9-]+\.(?!us-gov-)[a-z]{2}-[a-z]+-\d\.rds\.amazonaws\.com\.?$")
 
 _lock = threading.Lock()
 _sql_cache: dict[str, tuple[str, Engine]] = {}
@@ -108,8 +117,18 @@ def sql_url(engine_name: str, config: dict[str, Any]) -> URL:
     )
 
 
+def rds_ca(config: dict[str, Any]) -> str | None:
+    """The RDS CA bundle when this is a TLS connection to an RDS / Aurora endpoint (created, connected or
+    added by hand), else None: those are verified against it, certificate and host name."""
+    host = str(config.get("host") or "").strip().lower()
+    return RDS_CA_BUNDLE if config.get("tls") and _RDS_HOST.match(host) else None
+
+
 def _connect_args(engine_name: str, config: dict[str, Any], io_timeout: int = 300) -> dict[str, Any]:
+    ca = rds_ca(config)
     if engine_name == "postgresql":  # libpq's connect_timeout already covers the handshake
+        if ca:
+            return {"connect_timeout": CONNECT_TIMEOUT_S, "sslmode": "verify-full", "sslrootcert": ca}
         return {"connect_timeout": CONNECT_TIMEOUT_S, "sslmode": "require" if config.get("tls") else "prefer"}
     # PyMySQL's connect_timeout covers only the TCP connect; the greeting/auth reads use read_timeout.
     args: dict[str, Any] = {
@@ -118,11 +137,10 @@ def _connect_args(engine_name: str, config: dict[str, Any], io_timeout: int = 30
         "write_timeout": io_timeout,
     }
     if config.get("tls"):
-        args["ssl"] = ssl.create_default_context()
-        if config.get("tls_verify") is False:
-            # docs/CLOUD.md: AWS RDS signs with its own CA, which is not in the system store. Encrypted but
-            # not authenticated, like PostgreSQL's sslmode=require above.
-            # ponytail: pin the RDS CA bundle (truststore.pki.rds.amazonaws.com) to verify the server too.
+        args["ssl"] = ssl.create_default_context(cafile=ca)  # RDS: only the RDS CAs; else the system store
+        if ca is None and config.get("tls_verify") is False:
+            # Encrypted but not authenticated, like PostgreSQL's sslmode=require above: what cloud_db stores
+            # for RDS, kept for an endpoint the bundle does not cover (GovCloud).
             args["ssl"].check_hostname = False
             args["ssl"].verify_mode = ssl.CERT_NONE
     return args
@@ -211,6 +229,10 @@ _UNREACHABLE = (
 )
 _BAD_HOST = "The host name {host} could not be found. Check its spelling."
 _ATLAS = " For MongoDB Atlas, add this PC's public IP address under Network Access."
+_CERT = (
+    "The server's TLS certificate could not be verified for {host}. Use the host name the provider shows "
+    "(for AWS RDS the endpoint, with the instance on a current certificate authority such as rds-ca-rsa2048-g1)."
+)
 # PyMySQL error codes -> hint
 _MYSQL_HINTS = {
     1044: "This user has no access to database '{database}'. Grant it privileges on that database.",
@@ -265,6 +287,8 @@ def _hint(kind: str, exc: BaseException, config: dict[str, Any]) -> str | None:
         "database": config.get("database"),
         "username": config.get("username"),
     }
+    if any(f in str(exc).lower() for f in ("certificate verify failed", "does not match host name")):
+        return _CERT.format(**fields)  # Python's ssl (PyMySQL reports it as 2003) / libpq
     args = getattr(exc, "args", ())
     if args and isinstance(args[0], int):  # PyMySQL: (code, message)
         hint = _MYSQL_HINTS.get(args[0])

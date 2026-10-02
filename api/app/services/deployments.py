@@ -42,7 +42,15 @@ from app.redis_client import get_redis
 from app.serializers import iso
 from app.services import github, github_actions, jobs
 from app.services.app_runner import DockerCli, DockerError, cancel_check, get_docker
-from app.services.connections import device_removed, load_config, parse_mongo_uri, redact, sql_app_uri
+from app.services.connections import (
+    RDS_CA_URL,
+    device_removed,
+    load_config,
+    parse_mongo_uri,
+    rds_ca,
+    redact,
+    sql_app_uri,
+)
 from app.services.instance_settings import public_url
 from app.services.remote_access import domain_out
 
@@ -838,6 +846,8 @@ def source_env(name: str, kind: str, engine: str, config: dict, database_name: s
         env[prefix + "USER"] = str(config.get("username") or "")
         env[prefix + "PASSWORD"] = str(config.get("password") or "")
         env[prefix + "URL"] = sql_app_uri(engine, config)
+        if rds_ca(config):  # docs/CLOUD.md "C2-1": where the app gets the CA to verify the RDS certificate
+            env[prefix + "SSL_CA_URL"] = RDS_CA_URL
     else:
         parsed = parse_mongo_uri(config.get("uri", ""))
         user = quote(str(config.get("username") or parsed["username"] or ""), safe="")

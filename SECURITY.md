@@ -112,8 +112,9 @@ Security fixes are made for the latest release. Update with `deployer update`.
   only through the audited connection details. Its endpoint is public, but its security group (tagged
   `managed-by=deployer`; the IAM policy lets Deployer change only groups with that tag) lets in only
   this PC's current public IP and the App Runner VPC connector's group; MySQL / MariaDB users must use
-  TLS (`REQUIRE SSL`), PostgreSQL forces it. Deployer does not verify the RDS server certificate yet
-  (encrypted, not authenticated). App Runner apps with database access get the credentials as runtime
+  TLS (`REQUIRE SSL`), PostgreSQL forces it. Deployer verifies the RDS server certificate and host
+  name against AWS's RDS CA bundle shipped in the API image (GovCloud / China endpoints and RDS Proxy
+  excepted, see "Networking" there). App Runner apps with database access get the credentials as runtime
   environment, never anything of this PC. Connected (not created) databases are never modified.
   DynamoDB databases ("C2-2") hold no credential of their own: Deployer uses the AWS connection's key
   and a source only reaches the tables it was given (so the project's API keys can't read the

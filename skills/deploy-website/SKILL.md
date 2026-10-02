@@ -297,7 +297,9 @@ The same app, served from the user's own cloud account so it **keeps running whe
    uses a database in the cloud: on **App Runner** (`aws_app`) add one under *Add database → In your
    AWS account* and tick *Connect to this project's AWS databases* in the app (admin; `database_access:
    true`) - it then gets `DEPLOYER_DB_<NAME>_*` pointing at AWS and reaches the database through a
-   private VPC connector. Tell the user: such an app's other outgoing internet calls need a NAT gateway
+   private VPC connector. Its `_URL` encrypts without checking the server; to verify it, download the
+   CA bundle at `DEPLOYER_DB_<NAME>_SSL_CA_URL` in the Dockerfile and pass it to the driver
+   (`sslmode=verify-full&sslrootcert=<file>` / MySQL `ssl.ca`; `docs/CLOUD.md` "C2-1" "Apps"). Tell the user: such an app's other outgoing internet calls need a NAT gateway
    in their VPC (about US$32/month). A DynamoDB database needs none of that: the app gets
    `DEPLOYER_DB_<NAME>_TABLE` / `_TABLES` / `_REGION` and runs as an AWS role allowed only those tables, so
    the AWS SDK works without keys. On **Cloud Run** (`firebase_app`) connect the Firebase project's

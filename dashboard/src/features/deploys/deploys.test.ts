@@ -165,6 +165,9 @@ describe("database access", () => {
       "DEPLOYER_DB_SHOP_DB_DATABASE",
       "DEPLOYER_DB_SHOP_DB_URL",
     ]);
+    expect(databaseEnvNames({ name: "Orders", kind: "sql", engine: "mysql", cloud: { service: "rds" } }).at(-1)).toBe(
+      "DEPLOYER_DB_ORDERS_SSL_CA_URL",
+    );
     expect(databaseEnvNames({ name: "Docs Store", kind: "nosql" })).toEqual(["DEPLOYER_DB_DOCS_STORE_URL", "DEPLOYER_DB_DOCS_STORE_DATABASE"]);
     expect(databaseEnvNames({ name: "Events", kind: "nosql", engine: "dynamodb" })).toEqual([
       "DEPLOYER_DB_EVENTS_TABLE",

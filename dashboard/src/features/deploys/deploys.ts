@@ -291,7 +291,9 @@ export function draftToPatch(d: AppDraft, app: App): AppPatch {
 export const CLOUD_DATABASE_TARGETS: AppTarget[] = ["aws_app", "firebase_app"];
 
 /** Variable names "database access" injects for a source (mirrors `deployments.database_env`). Values are never shown. */
-export function databaseEnvNames(source: Pick<DataSource, "name" | "kind"> & { engine?: string }): string[] {
+export function databaseEnvNames(
+  source: Pick<DataSource, "name" | "kind"> & { engine?: string; cloud?: { service: string } | null },
+): string[] {
   const prefix = `DEPLOYER_DB_${source.name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}_`;
   const suffixes =
     source.engine === "dynamodb" // docs/CLOUD.md "C2-2": table names and region; the app's IAM role grants access
@@ -301,7 +303,7 @@ export function databaseEnvNames(source: Pick<DataSource, "name" | "kind"> & { e
         : source.engine === "firebase_rtdb" // "C2-4": also the database URL the Firebase Admin SDK takes
           ? ["PROJECT", "URL", "DATABASE"]
         : source.kind === "sql"
-        ? ["HOST", "PORT", "USER", "PASSWORD", "DATABASE", "URL"]
+        ? ["HOST", "PORT", "USER", "PASSWORD", "DATABASE", "URL", ...(source.cloud?.service === "rds" ? ["SSL_CA_URL"] : [])] // "C2-1": the RDS CA to verify with
         : ["URL", "DATABASE"];
   return suffixes.map((s) => prefix + s);
 }

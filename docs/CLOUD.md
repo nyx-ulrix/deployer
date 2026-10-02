@@ -183,7 +183,8 @@ A cloud database is an ordinary **`external`** data source - so the SQL browser,
 DDL export and the data API work through the normal external-source path - with two new columns
 (migration `0013`): `data_sources.cloud_connection_id` (FK `cloud_connections`, `SET NULL`) and
 `cloud_state` (JSON, never secrets). `status` gains `creating`. `config_encrypted` holds the usual
-`{host, port, username, password, database, tls: true, tls_verify: false}` (`encrypt_json`); the
+`{host, port, username, password, database, tls: true, tls_verify: false}` (`encrypt_json`; `tls_verify:
+false` only matters for an endpoint the RDS CA bundle does not cover, see "Networking"); the
 password is shown only through `GET .../data-sources/{id}/connection` (developer+, audited), like every
 other source. `cloud_state`:
 
@@ -244,9 +245,18 @@ PC off for the apps. Design:
 - **The PC** connects to a *publicly accessible* endpoint whose security group lets in only the PC's
   current public IP `/32`. The scheduler checks the IP every 5 minutes (`cloud_db.refresh_pc_ips`, also
   on **Check status**): when it changed, the new IP is allowed and the old one revoked. Connections use
-  TLS; Deployer does not verify the RDS certificate yet (RDS signs with its own CA, which is not in the
-  system store - encrypted but not authenticated, like PostgreSQL's `sslmode=require`; follow-up: pin
-  the RDS CA bundle).
+  TLS and **verify the server**: RDS signs with Amazon's own CA, which is not in the system store, so the
+  API image ships AWS's global RDS CA bundle (`api/app/certs/rds-global-bundle.pem`, vendored from
+  `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem`; refresh by downloading that URL over
+  it) and every TLS connection to an RDS / Aurora endpoint (`<name>.<id>.<region>.rds.amazonaws.com`,
+  cluster endpoints included - created, connected or added by hand as an external database) trusts only
+  that bundle and checks the host name: PyMySQL gets an `ssl` context with that CA file,
+  `CERT_REQUIRED` and `check_hostname`; psycopg gets `sslmode=verify-full` and `sslrootcert` (the SQL
+  browser, query console, schema / DDL, data API, connection tests and the `REQUIRE SSL` step all connect
+  this way, `connections._connect_args`). A certificate that does not verify fails with a plain hint
+  (use the endpoint AWS shows; the instance must be on a current CA such as `rds-ca-rsa2048-g1`). Other
+  external databases keep their settings; RDS Proxy endpoints (a public certificate, in the system
+  store) and GovCloud / China endpoints (other bundles) keep the old encrypted-but-unverified mode.
 - **App Runner apps** reach it privately: an App Runner **VPC connector** `deployer-<vpc-id>` (one per
   VPC, created once, shared, free) with its own security group `deployer-apprunner-<vpc-id>`, which the
   database's group lets in on the database port. Apps without database access keep App Runner's default
@@ -265,7 +275,13 @@ On `aws_app`, **database access** is allowed (admins, as on the PC) and means *t
 in the same AWS connection* (so the same account and region). `cloud_deploy.cloud_env` adds
 `DEPLOYER_DB_<NAME>_{HOST,PORT,USER,PASSWORD,DATABASE,URL}` (URL with `ssl=true` / `sslmode=require`)
 before the app's own variables (which win); they go to App Runner as its runtime environment (stored
-encrypted by App Runner; follow-up: Secrets Manager references). The deploy then ensures the VPC
+encrypted by App Runner; follow-up: Secrets Manager references). For an RDS endpoint the bundle covers
+it also adds `DEPLOYER_DB_<NAME>_SSL_CA_URL` (the RDS CA bundle's URL above). The URL stays
+`sslmode=require` (encrypted, works with no CA file); to also verify the server, as Deployer does, the
+app fetches that bundle (e.g. in its Dockerfile: `ADD https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem /etc/ssl/rds-ca.pem`)
+and connects with it: PostgreSQL `sslmode=verify-full&sslrootcert=/etc/ssl/rds-ca.pem`; MySQL / MariaDB
+the driver's CA option (Node `ssl: { ca: fs.readFileSync("/etc/ssl/rds-ca.pem") }`, PyMySQL
+`ssl={"ca": "/etc/ssl/rds-ca.pem"}`, `mysql` CLI `--ssl-ca=... --ssl-verify-server-cert`). The deploy then ensures the VPC
 connector, lets its security group into each created database's group, and creates / updates the
 service with `EgressType: VPC` (back to `DEFAULT` once database access is off). A connected (not
 created) database's firewall is the user's: the build log names the connector's security group to
@@ -318,6 +334,11 @@ confirmation, IP refresh, delete with snapshot and failure report, connect, App 
 MCP, migration). Not yet run against a live account: the RDS / EC2 / App Runner VPC connector request
 shapes, whether App Runner accepts every default-VPC subnet for a connector (some AZs are unsupported in
 a few regions), the `ALTER USER ... REQUIRE SSL` step on RDS, and the time AWS takes.
+Certificate verification is tested by capturing what reaches the drivers (`tests/test_rds_tls.py`: the
+PyMySQL context trusts exactly the vendored bundle's CAs with `CERT_REQUIRED` + `check_hostname`, psycopg
+gets `verify-full` + `sslrootcert`, other hosts unchanged, the app's `SSL_CA_URL`, the hint); no TLS
+handshake with a real RDS instance has been made with it yet (instance vs. cluster vs. reader endpoint
+host names, MariaDB on RDS).
 
 ## C2-2 as built: DynamoDB
 
@@ -853,7 +874,6 @@ Left (not built; each is also noted in its section above):
 - creating Firestore databases, their managed exports to Cloud Storage and scheduled backups / point-in-time
   recovery from Deployer (the Firebase console does them);
 - DynamoDB point-in-time recovery and restoring a backup from the dashboard (the AWS console does it);
-- verifying the RDS server certificate (pinning the RDS CA bundle);
 - Secrets Manager / Secret Manager references instead of plain runtime environment;
 - a NAT gateway for App Runner apps linked to an RDS database that also call the internet (the user adds one);
 - a permissions boundary for the `deployer-app-*` / `deployer-gha-*` roles.

@@ -19,6 +19,8 @@
 id_rsa*
 id_ed25519*
 *.kdbx
+# Public CA certificates only (AWS RDS trust bundle, docs/CLOUD.md "C2-1")
+!api/app/certs/rds-global-bundle.pem
 
 # Cloud / OAuth credential downloads (e.g. Google "Download JSON" for an OAuth client or service account)
 client_secret*.json
