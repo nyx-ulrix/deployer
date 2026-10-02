@@ -16,8 +16,10 @@ emails, password hashes and orders. It cannot write, but it is not a "public" ke
 or per-row restriction yet. Only put it in a browser, a mobile app or a public repository if everything
 in the project is meant to be public. Otherwise keep the key on a server (a backend or serverless
 function) that calls Deployer and returns only what the page needs.
-Keys are project-scoped and only work on the data, query and schema endpoints listed below and on the
-MCP endpoint for AI agents ([MCP.md](MCP.md)); every other endpoint answers `401 api_key_not_allowed`.
+Keys are project-scoped and only work on the data, query and schema endpoints listed below, on the
+MCP endpoint for AI agents ([MCP.md](MCP.md)) and - service keys only - on deleting a cloud database
+(`DELETE /projects/{id}/cloud/databases/{sid}?confirm_name=<name>&confirm_delete=true`, [CLOUD.md](CLOUD.md)
+"Deleting a cloud database over the API and MCP"); every other endpoint answers `401 api_key_not_allowed`.
 
 ## Sending the key
 
@@ -314,7 +316,7 @@ Every error is `{"error": {"code": "...", "message": "...", "details": {}}}`:
 |---|---|---|
 | 401 | `unauthorized` | missing header, or the key does not exist |
 | 401 | `api_key_revoked` | the key was revoked; switch to a new key |
-| 401 | `api_key_not_allowed` | a key was used outside the data, query, schema and MCP endpoints |
+| 401 | `api_key_not_allowed` | a key was used outside the data, query, schema, cloud database delete and MCP endpoints |
 | 403 | `forbidden` | an `anon` key on a write endpoint or the query endpoint (the message says the key is read-only; use a `service` key) |
 | 403 | `shell_code_refused` | MongoDB shell code named a Node.js escape hatch (`require`, `process`, ...; any key) |
 | 404 | `not_found` | wrong project id for this key, unknown data source, table or collection |

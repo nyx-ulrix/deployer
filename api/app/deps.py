@@ -95,6 +95,10 @@ class ProjectAccess:
     def is_anon_key(self) -> bool:
         return self.api_key is not None and self.api_key.role == "anon"
 
+    @property
+    def is_service_key(self) -> bool:
+        return self.api_key is not None and self.api_key.role == "service"
+
 
 API_KEY_PREFIX = "dpl_"
 API_KEY_ROLES = {"anon": "viewer", "service": "developer"}
@@ -157,21 +161,23 @@ def load_project_access(db: Session, user: User, project_id: str) -> ProjectAcce
     return ProjectAccess(project=project, user=user, role=member.role)
 
 
-def require_role(minimum: str, *, api_keys: bool = False):
+def require_role(minimum: str, *, api_keys: bool = False, service_keys: bool = False):
     """Dependency factory for routes with a `project_id` path parameter.
 
     Usage: `access: Annotated[ProjectAccess, Depends(require_role("admin"))]`
     `api_keys=True` also accepts a project API key (`dpl_...`, docs/DATA_API.md): anon keys act as
     viewer, service keys as developer. Elsewhere a key gets 401 `api_key_not_allowed`.
+    `service_keys=True` also lets a service key through a route whose `minimum` is above developer (a
+    session still needs `minimum`); such a route asks for its own typed confirmation instead.
     """
 
     def dependency(project_id: str, request: Request, db: DbSession) -> ProjectAccess:
         token = bearer_token(request)
-        if api_keys and token.startswith(API_KEY_PREFIX):
+        if (api_keys or service_keys) and token.startswith(API_KEY_PREFIX):
             access = load_api_key_access(db, token, project_id)
         else:
             access = load_project_access(db, get_current_user(request, db), project_id)
-        if not access.at_least(minimum):
+        if not access.at_least(minimum) and not (service_keys and access.is_service_key):
             if access.is_anon_key:  # A-196: say what to do, not which internal role the key maps to
                 raise forbidden("This anon key is read-only; use a service key to change data")
             raise forbidden(f"Requires the {minimum} role or higher on this project")

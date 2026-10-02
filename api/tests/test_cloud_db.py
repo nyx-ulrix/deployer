@@ -338,6 +338,72 @@ def test_delete_reports_what_is_left(client, db, team, aws):
     assert job.status == "failed" and "AccessDenied" in job.error and "RDS instance" in job.error
 
 
+def test_delete_over_the_api_and_mcp_needs_the_name_and_keeps_the_final_snapshot(client, db, team, aws, make_source):
+    source = create(client, team, connection(db)).json()["data_source"]
+    jobs.run_queued()
+    db.expire_all()
+    instance = db.get(DataSource, source["id"]).cloud_state["instance_id"]
+    aws.calls.clear()
+    aws.returns["db_instance"] = None  # gone once deleted
+    keys = {
+        role: {
+            "Authorization": "Bearer "
+            + client.post(f"{base(team)}/api-keys", json={"name": role, "role": role}, headers=team["admin"]).json()[
+                "secret"
+            ]
+        }
+        for role in ("anon", "service")
+    }
+    url = f"{base(team)}/cloud/databases/{source['id']}"
+    ok = {"confirm_name": "Shop DB", "confirm_delete": "true"}
+    # A developer's session and an anon key may not; an admin's session or a service key may.
+    assert client.delete(url, params=ok, headers=team["dev"]).status_code == 403
+    assert client.delete(url, params=ok, headers=keys["anon"]).status_code == 403
+    for params in ({}, {"confirm_name": "Shop DB"}, {"confirm_name": "shop db", "confirm_delete": "true"}):
+        refused = client.delete(url, params=params, headers=keys["service"])
+        assert refused.status_code == 422 and refused.json()["error"]["code"] == "delete_not_confirmed"
+    details = refused.json()["error"]["details"]
+    assert details["name"] == "Shop DB" and details["removes"][0].startswith(f"RDS instance {instance}")
+    assert "final snapshot" in details["keeps"] and aws.calls == []
+    # Databases that are not in a cloud account stay a dashboard action.
+    local = make_source(team["project"])
+    plain = client.delete(f"{base(team)}/cloud/databases/{local.id}", params=ok, headers=keys["service"])
+    assert plain.status_code == 400 and plain.json()["error"]["code"] == "not_a_cloud_database"
+
+    def call(**arguments):
+        body = {"jsonrpc": "2.0", "id": 1, "method": "tools/call"}
+        body["params"] = {"name": "delete_cloud_database", "arguments": {"source_id": source["id"], **arguments}}
+        out = client.post(f"{base(team)}/mcp", json=body, headers=keys["service"]).json()["result"]
+        return out["isError"], json.loads(out["content"][0]["text"])
+
+    err, out = call(confirm_name="Shop DB", confirm_delete=False)
+    assert err and out["error"]["code"] == "delete_not_confirmed" and out["error"]["details"] == details
+    err, out = call(confirm_name="Shop DB", confirm_delete=True)
+    assert not err and out["ok"] and out["job"]["type"] == "data_source.cloud_delete"
+    assert out["removes"] == details["removes"] and out["keeps"] == details["keeps"]
+    db.expire_all()
+    assert db.get(DataSource, source["id"]) is None
+    jobs.run_queued()
+    job = db.get(Job, out["job"]["id"])
+    assert job.status == "succeeded", job.error
+    (deleted, snapshot) = aws.args("delete_db_instance")[0]
+    assert deleted == instance and snapshot.startswith(f"{instance}-final-")
+    audit = db.scalars(select(AuditLog).where(AuditLog.action == "data_source.delete")).one()
+    assert audit.details["api_key_id"] and audit.details["name"] == "Shop DB"
+
+    # A connected database is only forgotten; nothing in AWS changes.
+    body = {"connection_id": source["cloud"]["connection_id"], "name": "Prod", "resource_id": "shop-prod"}
+    body |= {"username": "app", "password": "pw"}
+    prod = client.post(f"{base(team)}/cloud/databases/connect", json=body, headers=team["admin"]).json()
+    aws.calls.clear()
+    resp = client.delete(
+        f"{base(team)}/cloud/databases/{prod['id']}", params={**ok, "confirm_name": "Prod"}, headers=team["admin"]
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["removes"] == [] and "only forgets" in resp.json()["keeps"] and "job" not in resp.json()
+    assert aws.calls == [] and db.get(DataSource, prod["id"]) is None
+
+
 def test_connect_existing_instance(client, db, team, aws):
     conn = connection(db)
     url = f"{base(team)}/cloud/connections/{conn.id}/databases"

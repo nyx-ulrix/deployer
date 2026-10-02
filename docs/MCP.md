@@ -83,6 +83,7 @@ Results are text content holding compact JSON. API errors come back as tool resu
 | `connect_cloud_database` | `connection_id`, `name`, `resource_id?`, `username?`, `password?`, `database?`, `tables?`, `instance?` | admin | connects an existing RDS / Aurora database (`resource_id` + login), existing DynamoDB `tables`, or - with a Firebase `connection_id` - the project's Firestore database (`database`, default `(default)`; free to connect, Google bills reads and writes) or a Realtime Database (`instance`, an id from `list_cloud_databases`' `rtdb`); never changes them |
 | `list_cloud_backups` | `source_id` | anon | a DynamoDB database's on-demand backups in AWS, newest first, and how to restore one |
 | `create_cloud_backup` | `source_id`, `table?`, `confirm_billing` | admin | **billable** (about US$0.10 per GB per month until deleted in AWS): an on-demand backup of the tables (or one) - ask the user first |
+| `delete_cloud_database` | `source_id`, `confirm_name`, `confirm_delete` | admin or service key | **destructive**: deletes a database in the user's AWS account or Firebase project ([CLOUD.md](CLOUD.md) "Deleting a cloud database over the API and MCP"). One Deployer created (RDS, DynamoDB) is deleted in AWS by a cleanup job after a final snapshot / backup that stays there (billed for storage until the user deletes it); a connected one (Firestore, Realtime Database, connected RDS / DynamoDB) is only forgotten. Without `confirm_name` equal to the database's exact name and `confirm_delete: true` it answers `delete_not_confirmed` with `details: {name, removes, keeps}` - call it that way first, show the user the list and only after their yes call again confirmed. Returns `{ok, job?, name, removes, keeps}`; `not_a_cloud_database` for a database on this PC |
 | `app_logs` | `app_id`, `tail?` | service | runtime log lines of the live container (1..500, default 100) |
 
 Tools a key's role can't use are **not listed** by `tools/list` and calling them is a JSON-RPC error
@@ -91,7 +92,8 @@ project role decides the tools (viewer = anon's tools plus read-only `run_query`
 key's tools, admin and owner = all). The **Role** column is never below the role of the REST route a tool
 wraps (a test compares them): the `admin` tools - the user's cloud accounts and creating / connecting cloud
 databases, which bill or reach those accounts - need a project admin's session; service keys act as
-developer and don't get them.
+developer and don't get them. The one exception is `delete_cloud_database` ("admin or service key"): its
+REST route takes an admin's session or a service key (not a developer's session), so the tool does too.
 
 ## Roles and security
 
@@ -116,8 +118,9 @@ developer and don't get them.
   Database, `instance`), back up DynamoDB tables (`create_cloud_backup`, same rule) and move a cloud app's
   builds to GitHub Actions (`set_build_location`, same rule for GitHub's build minutes). A service key can
   read and change the data of every cloud database the project has (the data tools above, the same as for
-  databases on this PC) and export Firestore / Realtime Database JSON (`export_documents`); deleting a cloud
-  database or a project is a dashboard action.
+  databases on this PC), export Firestore / Realtime Database JSON (`export_documents`) and delete a cloud
+  database (`delete_cloud_database`: only after the user said yes, with its exact name and
+  `confirm_delete: true`; the final snapshot / backup stays in AWS). Deleting a project is a dashboard action.
 
 ## Limits
 

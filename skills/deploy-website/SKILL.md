@@ -162,7 +162,11 @@ key). The cloud account tools - `list_cloud_connections`, `list_cloud_databases`
 and `confirm_billing: true`; `set_app_target` also needs `confirm_teardown: true` to delete an app's resources
 on its old cloud target) and `connect_cloud_database` - need a project **admin** like their REST routes: a
 service key doesn't see them, so ask the user to add the database or pick the target in the dashboard (*Add database → In your AWS account / In your Firebase
-project*), then work on its data with the service key. App tools report each app's `target` and cloud URL;
+project*), then work on its data with the service key. `delete_cloud_database` (service key or admin) deletes a
+cloud database: **always ask the user first** - call it with `confirm_delete: false`, show them what
+`details.removes` / `keeps` say (a database Deployer created goes from AWS after a final snapshot / backup that
+stays, billed for storage; a connected one is only forgotten), and only after a clear yes call it again with
+`confirm_name` (the exact name) and `confirm_delete: true`. App tools report each app's `target` and cloud URL;
 the data tools work on cloud databases exactly like on the PC's (RDS / Aurora are SQL sources).
 DynamoDB tables use the document tools (`collection` = table, page with `cursor`) and `run_query` takes
 one JSON request (`{"operation": "Query", "TableName": ..., ...}`; docs/QUERY_CONSOLE.md). Firestore

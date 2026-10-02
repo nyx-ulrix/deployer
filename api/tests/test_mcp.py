@@ -43,6 +43,8 @@ ADMIN_TOOLS = {
     "set_build_location",
     "set_app_target",
 }
+# Admin tools whose route also takes a service key (require_role(..., service_keys=True)): not developers.
+KEY_ADMIN_TOOLS = {"delete_cloud_database"}
 WRITE_TOOLS = {
     "insert_row",
     "update_row",
@@ -116,10 +118,10 @@ def test_tools_list_depends_on_role(env):
         return {t["name"] for t in tools}
 
     assert names(env["anon"]) == READ_TOOLS - {"run_query"}  # A-031: queries need a service key
-    assert names(env["service"]) == READ_TOOLS | WRITE_TOOLS | APP_TOOLS
+    assert names(env["service"]) == READ_TOOLS | WRITE_TOOLS | APP_TOOLS | KEY_ADMIN_TOOLS
     assert names(env["viewer"]) == READ_TOOLS  # JWT sessions work too, with the member's role
     assert names(env["dev"]) == READ_TOOLS | WRITE_TOOLS | APP_TOOLS
-    assert names(env["owner"]) == READ_TOOLS | WRITE_TOOLS | APP_TOOLS | ADMIN_TOOLS
+    assert names(env["owner"]) == READ_TOOLS | WRITE_TOOLS | APP_TOOLS | ADMIN_TOOLS | KEY_ADMIN_TOOLS
 
 
 def test_admin_tools_refuse_service_keys_and_developers(env):
@@ -171,17 +173,18 @@ TOOL_ROUTES = {
     "connect_cloud_database": [("POST", "/cloud/databases/connect")],
     "list_cloud_backups": [("GET", "/data-sources/{source_id}/cloud-backups")],
     "create_cloud_backup": [("POST", "/data-sources/{source_id}/cloud-backups")],
+    "delete_cloud_database": [("DELETE", "/cloud/databases/{source_id}")],
 }
 
 
-def _route_role(method: str, path: str) -> str:
-    """The `minimum` of the route's require_role dependency."""
+def _route_role(method: str, path: str, var: str = "minimum"):
+    """The `minimum` (or another argument, e.g. `service_keys`) of the route's require_role dependency."""
     full = "/v1/projects/{project_id}" + path
     route = next(r for r in fastapi_app.routes if getattr(r, "path", None) == full and method in r.methods)
     for dep in route.dependant.dependencies:
         call = dep.call
         if call.__name__ == "dependency" and "minimum" in call.__code__.co_freevars:
-            return call.__closure__[call.__code__.co_freevars.index("minimum")].cell_contents
+            return call.__closure__[call.__code__.co_freevars.index(var)].cell_contents
     raise AssertionError(f"no role dependency on {method} {full}")
 
 
@@ -190,6 +193,9 @@ def test_every_tool_needs_at_least_its_routes_role():
     for tool, routes in TOOL_ROUTES.items():
         needed = max((_route_role(m, p) for m, p in routes), key=role_rank)
         assert role_rank(mcp.TOOLS[tool][0]) >= role_rank(needed), (tool, needed)
+        # A service key gets an admin tool only when every route it wraps takes one too.
+        if tool in mcp.SERVICE_KEY_TOOLS:
+            assert all(_route_role(m, p, "service_keys") for m, p in routes), tool
 
 
 def test_anon_cannot_write(env):

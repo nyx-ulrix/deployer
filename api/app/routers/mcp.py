@@ -59,8 +59,10 @@ INSTRUCTIONS = (
     "tools. Databases can also live in the user's own AWS account - RDS SQL or DynamoDB (cloud_database_options; "
     "creating one is billable and needs the user's agreement) - or in the user's Firebase project: its Cloud "
     "Firestore database or its Realtime Database (connect_cloud_database / create_cloud_database; those and "
-    "the other cloud account tools need a project admin, not a service key). A cloud app can build on GitHub "
-    "Actions (set_build_location, admin, billable minutes) so pushes deploy while the PC is off. "
+    "the other cloud account tools need a project admin, not a service key). Deleting a cloud database "
+    "(delete_cloud_database, also with a service key) needs the user's yes and its exact name. "
+    "A cloud app can build on GitHub Actions (set_build_location, admin, billable minutes) so pushes deploy "
+    "while the PC is off. "
     "An admin can also move an app between this PC and a cloud target (set_app_target, billable). "
     "Results are compact JSON, capped at 200 rows / 256 KB."
 )
@@ -298,6 +300,17 @@ def t_connect_cloud_database(ctx: Ctx, args: dict) -> Any:
     return cloud_router.connect_database(body, ctx.request, ctx.access, ctx.db)
 
 
+def t_delete_cloud_database(ctx: Ctx, args: dict) -> Any:
+    return cloud_router.delete_database(
+        args["source_id"],
+        ctx.request,
+        ctx.access,
+        ctx.db,
+        confirm_name=args.get("confirm_name", ""),
+        confirm_delete=bool(args.get("confirm_delete")),
+    )
+
+
 def t_list_cloud_backups(ctx: Ctx, args: dict) -> Any:
     return cloud_router.list_cloud_backups(args["source_id"], ctx.access, ctx.db)
 
@@ -314,7 +327,8 @@ def t_app_logs(ctx: Ctx, args: dict) -> Any:
 
 # name: (minimum project role, description, input schema, handler). The role is never below the role of the
 # REST route a tool wraps (the handlers call route functions directly, skipping their Depends): the cloud
-# account tools are admin-only like their routes, so service keys (developer) don't get them.
+# account tools are admin-only like their routes, so service keys (developer) don't get them - except the
+# SERVICE_KEY_TOOLS, whose routes also take a service key (require_role(..., service_keys=True)).
 TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     "list_data_sources": (
         "viewer",
@@ -673,6 +687,23 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         ),
         t_connect_cloud_database,
     ),
+    "delete_cloud_database": (
+        "admin",
+        "DESTRUCTIVE: delete a database in the user's AWS account or Firebase project (source_id from "
+        "list_data_sources; it must have `cloud`). One Deployer created (RDS, DynamoDB) is deleted in AWS after a "
+        "final snapshot / backup that stays there, billed for storage until the user deletes it; a connected one "
+        "(Firestore, Realtime Database, connected RDS / DynamoDB) is only forgotten. Apps lose its DEPLOYER_DB_* "
+        "settings on their next deploy. First call with confirm_delete: false: the answer (delete_not_confirmed) "
+        "lists what would be removed and kept. Tell the user, and only after they say yes call again with "
+        "confirm_name (the database's exact name) and confirm_delete: true. Returns the cleanup job.",
+        _schema(
+            ["source_id", "confirm_name", "confirm_delete"],
+            source_id=SOURCE,
+            confirm_name=_p("string", "The database's exact name (from list_data_sources)"),
+            confirm_delete=_p("boolean", "Must be true: the user agreed to delete it"),
+        ),
+        t_delete_cloud_database,
+    ),
     "list_cloud_backups": (
         "viewer",
         "On-demand backups in AWS of a DynamoDB data source's tables, newest first, with how to restore one.",
@@ -700,6 +731,9 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         t_app_logs,
     ),
 }
+
+
+SERVICE_KEY_TOOLS = {"delete_cloud_database"}
 
 
 class Ctx:
@@ -744,7 +778,8 @@ def _visible(access: ProjectAccess) -> list[str]:
     return [
         name
         for name, (role, *_) in TOOLS.items()
-        if access.at_least(role) and not (name == "run_query" and access.is_anon_key)
+        if (access.at_least(role) or (name in SERVICE_KEY_TOOLS and access.is_service_key))
+        and not (name == "run_query" and access.is_anon_key)
     ]
 
 

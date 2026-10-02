@@ -17,6 +17,8 @@ router = APIRouter(tags=["cloud"])
 
 Admin = Annotated[ProjectAccess, Depends(require_role("admin"))]
 Viewer = Annotated[ProjectAccess, Depends(require_role("viewer"))]
+# docs/CLOUD.md "Deleting a cloud database over the API and MCP": also a service key (typed confirmation).
+AdminOrServiceKey = Annotated[ProjectAccess, Depends(require_role("admin", service_keys=True))]
 
 BACKUP_COST = (
     "An on-demand backup is a full copy of the table kept by AWS until you delete it (in the AWS console, "
@@ -296,6 +298,36 @@ def connect_database(body: CloudDatabaseConnect, request: Request, access: Admin
     _audit(db, request, access, ds, "connect")
     db.commit()
     return data_source_out(ds)
+
+
+@router.delete("/projects/{project_id}/cloud/databases/{source_id}")
+def delete_database(
+    source_id: str,
+    request: Request,
+    access: AdminOrServiceKey,
+    db: DbSession,
+    confirm_name: Annotated[str, Query(max_length=63)] = "",
+    confirm_delete: bool = False,
+) -> dict:
+    """Deletes a cloud database like the dashboard does (a created one after its final snapshot / backup, a
+    connected one is only forgotten), for an admin's session or a service key; both confirmations needed."""
+    from app.routers.data_sources import delete_data_source
+
+    ds = get_source(db, access.project.id, source_id)
+    if not ds.cloud_connection_id and not ds.cloud_state:
+        raise ApiError(
+            400, "not_a_cloud_database", "This database is not in a cloud account; remove it in the dashboard"
+        )
+    summary = cloud_db.delete_summary(ds)
+    if confirm_name != ds.name or not confirm_delete:
+        raise ApiError(
+            422,
+            "delete_not_confirmed",
+            f"Deleting '{ds.name}' removes what details.removes lists; {summary['keeps']} Ask the user, then send "
+            "confirm_name (the database's exact name) and confirm_delete: true.",
+            summary,
+        )
+    return {**delete_data_source(source_id, access, db, request), **summary}
 
 
 # --- DynamoDB on-demand backups (docs/CLOUD.md "C2-2") --------------------------------------------

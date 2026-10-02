@@ -15,6 +15,7 @@ and the `deploy-website` skill.
 | **C2-4** | Firebase Realtime Database engine ("C2-4 as built") | **Built** (no migration) |
 | **C2-5** | MCP roles, data tools on every cloud engine, transfer, project delete keep / delete ("C2-5 as built") | **Built** (no migration) |
 | **C3** | GitHub Actions builds with OIDC, so pushes deploy with the PC off ("C3 as built") | **Built** (no migration) |
+| **Delete over API / MCP** | Deleting a cloud database with an admin's session or a service key, MCP `delete_cloud_database` ("Deleting a cloud database over the API and MCP") | **Built** (no migration) |
 | **Polish** | Billing confirmation for putting an app on a cloud target, MCP `set_app_target` ("C1 as built": Rules, MCP) | **Built** (no migration) |
 
 ## Principles
@@ -307,7 +308,8 @@ change its user, password, database and TLS, but answers 422 to a new host or po
 the agent to get the user's agreement first; `confirm_billing: false` returns `billing_not_confirmed`),
 `connect_cloud_database`; `list_data_sources` adds `cloud` for cloud databases. Like their REST routes, the
 account tools need a project **admin** (C2-5: an admin's session, not a service key). Deleting a cloud
-database stays a dashboard action.
+database: `delete_cloud_database` (an admin's session or a service key, with the database's name typed;
+"Deleting a cloud database over the API and MCP").
 
 ### Not verified against real clouds
 
@@ -790,6 +792,46 @@ choices, the alert, the project-scoped connection refusal; the dashboard dialog 
 `ProjectSettingsTab.test.tsx`). The cleanup jobs are the C2-1 / C2-2 / C1 ones, unverified against live
 accounts as noted there.
 
+## Deleting a cloud database over the API and MCP (as built)
+
+Until now only the dashboard deleted a cloud database (typing its name). Agents and scripts now can too, with
+the same effect and two confirmations instead of the typed dialog. No migration, no new cloud permission (the
+cleanup is C2-1 / C2-2's `data_source.cloud_delete` job, already in `cloud.AWS_POLICY`).
+
+- **Route**: `DELETE /projects/{pid}/cloud/databases/{sid}?confirm_name=<name>&confirm_delete=true`. It calls
+  the dashboard's `DELETE .../data-sources/{sid}` route function, so everything is the same: a database
+  Deployer **created** (RDS, DynamoDB) is deleted in AWS by the cleanup job after its **final snapshot** (RDS,
+  `<instance>-final-<UTC yyyymmddHHMM>`) or **final backup** of each table (DynamoDB), which stay in the account
+  billed for storage until the user deletes them; its security group goes too; `409 cloud_database_creating`
+  while AWS is still making it. A **connected** one (Firestore, Realtime Database, connected RDS / DynamoDB) is
+  only forgotten - nothing in AWS / Google changes. The source row goes at once either way; apps lose its
+  `DEPLOYER_DB_<NAME>_*` settings on their next deploy. Audited as `data_source.delete` (with `api_key_id`
+  for a key).
+- **Who**: a project **admin's** session, or a project **service key** (`require_role("admin",
+  service_keys=True)`: a key gets through although service keys otherwise act as developer). A developer's
+  session and anon keys get `403`. A service key can already change or drop all of the project's data
+  (`run_query`); here the exact name, `confirm_delete` and the kept final snapshot / backup are the guard.
+- **Confirmation**: `confirm_name` must equal the database's name exactly and `confirm_delete` must be
+  `true`; otherwise `422 delete_not_confirmed` with `details: {name, removes, keeps}` - what would be
+  deleted in the cloud account (`cloud_db.resources`, the dashboard dialog's list) and, in plain words, what
+  stays (the final snapshot / backups and their storage cost, or "Deployer only forgets this database"). So
+  calling without the confirmations is the dry run. Success answers `{ok, job?, name, removes, keeps}` (`job`:
+  the cleanup job, for created databases). A source without a cloud link answers `400 not_a_cloud_database`
+  (databases on this PC are still deleted in the dashboard only).
+- **MCP**: `delete_cloud_database` (`source_id`, `confirm_name`, `confirm_delete`) wraps the route. Its role is
+  `admin` like the route's, and `mcp.SERVICE_KEY_TOOLS` lets service keys see it because the route takes them
+  (`tests/test_mcp.py` checks both against the route's dependency). The description tells the agent to call
+  with `confirm_delete: false` first, tell the user what `removes` / `keeps` say, and only after their yes
+  send the name and `confirm_delete: true`. The `deploy-website` skill says the same.
+
+### Not verified against real clouds
+
+Tested with the fake AWS client (`tests/test_cloud_db.py`: roles, anon / developer refusal, the dry-run
+details, wrong or missing confirmations, a non-cloud source, the MCP tool with a service key through to the
+final snapshot and the audit's key id, a connected database only forgotten; `tests/test_mcp.py`: tool lists
+and the role mapping). The cleanup itself is the C2-1 / C2-2 job, unverified against live accounts as noted
+there.
+
 ## C2 - cloud databases (what is left)
 
 | Provider | Engine | Support |
@@ -799,6 +841,7 @@ accounts as noted there.
 | Firebase | **Cloud Firestore** | **built in C2-3** (above) |
 | Firebase | **Realtime Database** | **built in C2-4** (above) |
 | all | MCP, transfer, project delete | **built in C2-5** (above) |
+| all | deleting one over the API / MCP (admin session or service key) | **built** ("Deleting a cloud database over the API and MCP", above) |
 
 Seams left by C1 and C2-1..4: data sources carry `cloud_connection_id` / `cloud_state` and the Add
 database dialog has the AWS / Firebase cards (`cloud_db.LOCATIONS`); cloud apps get their database
@@ -810,7 +853,6 @@ Left (not built; each is also noted in its section above):
 - creating Firestore databases, their managed exports to Cloud Storage and scheduled backups / point-in-time
   recovery from Deployer (the Firebase console does them);
 - DynamoDB point-in-time recovery and restoring a backup from the dashboard (the AWS console does it);
-- deleting a cloud database over MCP or the API keys (dashboard only, with the name typed);
 - verifying the RDS server certificate (pinning the RDS CA bundle);
 - Secrets Manager / Secret Manager references instead of plain runtime environment;
 - a NAT gateway for App Runner apps linked to an RDS database that also call the internet (the user adds one);

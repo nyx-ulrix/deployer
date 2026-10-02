@@ -392,6 +392,7 @@ def delete_data_source(source_id: str, access: Admin, db: DbSession, request: Re
         mode=ds.mode,
         database_name=ds.database_name,
         dropped=bool(drop),
+        **({"api_key_id": access.api_key_id} if access.api_key else {}),  # a service key (cloud delete)
     )
     # docs/CLOUD.md: a database Deployer created in AWS is deleted there too (final snapshot first).
     cloud_job = cloud_db.enqueue_delete(db, ds, access.user.id)

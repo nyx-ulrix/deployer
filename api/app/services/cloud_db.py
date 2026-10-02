@@ -242,6 +242,26 @@ def resources(state: dict | None) -> list[str]:
     return out
 
 
+def delete_summary(ds: DataSource) -> dict:
+    """What deleting this cloud database removes and keeps, in plain words (the delete route and MCP tool)."""
+    s = ds.cloud_state or {}
+    removes = resources(s)
+    if not removes:
+        where = "Firebase project" if s.get("provider") == "firebase" else "AWS account"
+        keeps = f"Deployer only forgets this database; nothing in your {where} changes and its data stays there."
+    elif s.get("service") == "dynamodb":
+        keeps = (
+            "A final backup of each table stays in your AWS account (DynamoDB -> Backups), billed for storage "
+            "until you delete it there."
+        )
+    else:
+        keeps = (
+            "A final snapshot of the database stays in your AWS account (RDS -> Snapshots), billed for storage "
+            "until you delete it there."
+        )
+    return {"name": ds.name, "removes": removes, "keeps": keeps}
+
+
 def cloud_out(ds: DataSource, db: Session | None = None) -> dict | None:
     """The `cloud` field of a data source: where it lives, what Deployer created; never secrets."""
     if not ds.cloud_connection_id and not ds.cloud_state:
