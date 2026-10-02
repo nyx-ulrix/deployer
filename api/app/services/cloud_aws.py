@@ -721,10 +721,16 @@ class AwsClient:
             f"deployer-apprunner-{vpc_id}", vpc_id, "Deployer: App Runner apps that use a database in this VPC"
         )
         ar = self._c("apprunner")
-        for page in ar.get_paginator("list_vpc_connectors").paginate():
+        # botocore has no paginator for list_vpc_connectors: follow NextToken by hand.
+        params: dict[str, Any] = {}
+        while True:
+            page = ar.list_vpc_connectors(**params)
             for c in page.get("VpcConnectors") or []:
                 if c["VpcConnectorName"] == name and c.get("Status") == "ACTIVE":
                     return {"arn": c["VpcConnectorArn"], "group_id": group}
+            if not page.get("NextToken"):
+                break
+            params["NextToken"] = page["NextToken"]
         subnets = self._c("ec2").describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["Subnets"]
         out = ar.create_vpc_connector(
             VpcConnectorName=name, Subnets=[s["SubnetId"] for s in subnets], SecurityGroups=[group], Tags=[TAG]

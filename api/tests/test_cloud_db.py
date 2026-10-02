@@ -461,3 +461,43 @@ def test_migration_0013(migration_db):
     assert "cloud_state" not in {row[1] for row in conn.execute("PRAGMA table_info(data_sources)")}
     conn.close()
     command.upgrade(cfg, "head")
+
+
+def test_ensure_vpc_connector_runs_against_the_real_botocore_models():
+    """V-02: the real AwsClient body against botocore's service models (Stubber validates every request
+    and response). App Runner has no list_vpc_connectors paginator, so the lookup follows NextToken."""
+    from botocore.stub import Stubber
+
+    from app.services.cloud_aws import TAG, AwsClient
+
+    aws = AwsClient({"region": "eu-west-1", "access_key_id": "test", "secret_access_key": "test"})
+    clients = {s: aws._session.client(s, region_name="eu-west-1") for s in ("ec2", "apprunner")}
+    aws._c = lambda service, region=None: clients[service]
+    vpc, arn = "vpc-1", "arn:aws:apprunner:eu-west-1:123456789012:vpcconnector/deployer-vpc-1/1/abc"
+
+    def connector(name, status="ACTIVE"):
+        return {"VpcConnectorName": name, "VpcConnectorArn": arn, "Status": status}
+
+    with Stubber(clients["ec2"]) as ec2, Stubber(clients["apprunner"]) as ar:
+        for _ in range(2):
+            ec2.add_response("create_security_group", {"GroupId": "sg-1"})
+        # Found on the second page.
+        ar.add_response("list_vpc_connectors", {"VpcConnectors": [connector("other")], "NextToken": "t1"}, {})
+        ar.add_response("list_vpc_connectors", {"VpcConnectors": [connector("deployer-vpc-1")]}, {"NextToken": "t1"})
+        # Missing (only an inactive one): created in the VPC's subnets.
+        ar.add_response("list_vpc_connectors", {"VpcConnectors": [connector("deployer-vpc-1", "INACTIVE")]}, {})
+        ec2.add_response("describe_subnets", {"Subnets": [{"SubnetId": "subnet-a"}, {"SubnetId": "subnet-b"}]})
+        ar.add_response(
+            "create_vpc_connector",
+            {"VpcConnector": connector("deployer-vpc-1")},
+            {
+                "VpcConnectorName": "deployer-vpc-1",
+                "Subnets": ["subnet-a", "subnet-b"],
+                "SecurityGroups": ["sg-1"],
+                "Tags": [TAG],
+            },
+        )
+        assert aws.ensure_vpc_connector(vpc) == {"arn": arn, "group_id": "sg-1"}
+        assert aws.ensure_vpc_connector(vpc) == {"arn": arn, "group_id": "sg-1"}
+        ar.assert_no_pending_responses()
+        ec2.assert_no_pending_responses()
