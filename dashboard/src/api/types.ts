@@ -68,7 +68,14 @@ export type DataSourceKind = "sql" | "nosql";
 /** `dynamodb`: tables in the user's AWS account (docs/CLOUD.md "C2-2"); `firestore`: a Firebase project's Cloud
  * Firestore database ("C2-3"), both browsed like MongoDB collections; `firebase_rtdb`: a Firebase Realtime Database
  * ("C2-4"), one JSON tree browsed by path. */
-export type DataSourceEngine = "mariadb" | "mysql" | "postgresql" | "mongodb" | "dynamodb" | "firestore" | "firebase_rtdb";
+export type DataSourceEngine =
+  | "mariadb"
+  | "mysql"
+  | "postgresql"
+  | "mongodb"
+  | "dynamodb"
+  | "firestore"
+  | "firebase_rtdb";
 
 export type DataSource = {
   id: string;
@@ -82,7 +89,12 @@ export type DataSource = {
   status: "ok" | "error" | "unknown" | "creating";
   status_message: string | null;
   last_checked_at: string | null;
-  display: { host: string | null; port: number | null; username: string | null; tls: boolean };
+  display: {
+    host: string | null;
+    port: number | null;
+    username: string | null;
+    tls: boolean;
+  };
   created_at: string;
   /** Host device (docs/DEVICES.md). `null`/absent = main server. */
   device_id?: string | null;
@@ -150,8 +162,21 @@ export type CloudDatabaseOptions = {
     network: string;
   };
   /** `short`: one plain sentence on how it differs from the other Firebase database. */
-  firestore: { short: string; what: string; connect: string; cost: string; network: string };
-  rtdb: { short: string; what: string; connect: string; cost: string; network: string; locations: { id: string; label: string }[] };
+  firestore: {
+    short: string;
+    what: string;
+    connect: string;
+    cost: string;
+    network: string;
+  };
+  rtdb: {
+    short: string;
+    what: string;
+    connect: string;
+    cost: string;
+    network: string;
+    locations: { id: string; label: string }[];
+  };
 };
 
 /** A Realtime Database of a Firebase project (`problem`: why Deployer can't use it). */
@@ -165,10 +190,19 @@ export type RtdbInstance = {
 };
 
 /** `GET .../rtdb`: the value at a path; `children` (in Firebase's order) for shallow or ordered reads. */
-export type RtdbRead = { path: string; value: JsonValue; children?: { key: string; value: JsonValue }[] };
+export type RtdbRead = {
+  path: string;
+  value: JsonValue;
+  children?: { key: string; value: JsonValue }[];
+};
 
 /** A Firestore database of a Firebase project (`problem`: why Deployer can't use it). */
-export type FirestoreDatabase = { id: string; location: string | null; type: string | null; problem: string | null };
+export type FirestoreDatabase = {
+  id: string;
+  location: string | null;
+  type: string | null;
+  problem: string | null;
+};
 
 /** DynamoDB key attribute types: text, number, binary. */
 export type DynamoKeyType = "S" | "N" | "B";
@@ -230,6 +264,13 @@ export type ApiKey = {
 /** A-024: live keys a removed or demoted admin created or revealed; they keep working until revoked. */
 export type KeysToRotate = { api_keys_to_rotate: ApiKey[] };
 
+/** V-06: `PATCH /instance/users/{id}` names, per project, the live keys a disabled account created or revealed. */
+export type ProjectKeysToRotate = {
+  project_id: string;
+  project_name: string;
+  keys: ApiKey[];
+};
+
 /** `GET /projects/{pid}/api-keys/{id}/config`: a ready-to-use client config (docs/DATA_API.md). */
 export type ApiKeyConfig = {
   deployer: {
@@ -238,8 +279,18 @@ export type ApiKeyConfig = {
     project: string;
     role: ApiKeyRole;
     api_key: string;
-    data_sources: { id: string; name: string; kind: DataSourceKind; engine: string }[];
-    endpoints: { rows: string; documents: string; query: string; schema: string };
+    data_sources: {
+      id: string;
+      name: string;
+      kind: DataSourceKind;
+      engine: string;
+    }[];
+    endpoints: {
+      rows: string;
+      documents: string;
+      query: string;
+      schema: string;
+    };
     generated_at: string;
   };
 };
@@ -274,7 +325,11 @@ export type SetupImportResponse = { ok: true; summary: ImportSummary };
 
 // ---- Auth ----
 
-export type ProvidersResponse = { google: boolean; github: boolean; allow_signup: boolean };
+export type ProvidersResponse = {
+  google: boolean;
+  github: boolean;
+  allow_signup: boolean;
+};
 
 // ---- Instance ----
 
@@ -329,14 +384,25 @@ export type ProjectCreate = {
 };
 
 /** `result` of a finished `transfer.import` job (GET /transfers). */
-export type ImportJobResult = { projects: { id: string; name: string }[]; summary: ImportSummary };
+export type ImportJobResult = {
+  projects: { id: string; name: string }[];
+  summary: ImportSummary;
+};
 
 // ---- Invites ----
 
 export type InviteRole = Exclude<Role, "owner">;
-export type InviteCreate = { email?: string; role: InviteRole; expires_in_days?: number };
+export type InviteCreate = {
+  email?: string;
+  role: InviteRole;
+  expires_in_days?: number;
+};
 /** reachable_elsewhere is false while the public URL is localhost: the link only opens on this PC. */
-export type InviteCreateResponse = { invite: Invite; invite_url: string; reachable_elsewhere?: boolean };
+export type InviteCreateResponse = {
+  invite: Invite;
+  invite_url: string;
+  reachable_elsewhere?: boolean;
+};
 export type InvitePreview = {
   project_name: string;
   role: Role;
@@ -354,8 +420,20 @@ export type ApiKeyCreateResponse = { api_key: ApiKey; secret: string };
 export type SqlExternalEngine = "mariadb" | "mysql" | "postgresql";
 
 export type DataSourceInput =
-  | { kind: "sql"; mode: "managed"; engine: "mariadb"; name: string; device_id?: string | null }
-  | { kind: "nosql"; mode: "managed"; engine: "mongodb"; name: string; device_id?: string | null }
+  | {
+      kind: "sql";
+      mode: "managed";
+      engine: "mariadb";
+      name: string;
+      device_id?: string | null;
+    }
+  | {
+      kind: "nosql";
+      mode: "managed";
+      engine: "mongodb";
+      name: string;
+      device_id?: string | null;
+    }
   | {
       kind: "sql";
       mode: "external";
@@ -378,7 +456,11 @@ export type DataSourceInput =
       config: { uri: string; database: string };
     };
 
-export type ConnectionTestResult = { ok: boolean; message: string; server_version: string | null };
+export type ConnectionTestResult = {
+  ok: boolean;
+  message: string;
+  server_version: string | null;
+};
 
 export type ConnectionDetails = {
   /** null for DynamoDB, which has no URI, user or password (apps use AWS credentials). */
@@ -416,7 +498,8 @@ export type SourceSchema = {
   relationships: Relationship[];
 };
 
-export type JsonValue = string | number | boolean | null | JsonValue[] | JsonObject;
+export type JsonValue =
+  string | number | boolean | null | JsonValue[] | JsonObject;
 export type JsonObject = { [key: string]: JsonValue };
 
 export type EntityIndex = { name: string; fields: string[]; unique: boolean };
@@ -453,7 +536,8 @@ export type Relationship = {
   origin: "foreign_key" | "inferred";
 };
 
-export type LinkCardinality = "one_to_one" | "one_to_many" | "many_to_one" | "many_to_many";
+export type LinkCardinality =
+  "one_to_one" | "one_to_many" | "many_to_one" | "many_to_many";
 
 export type SchemaLink = {
   id: string;
@@ -584,7 +668,8 @@ export type DeviceUpdate = {
   status?: "active" | "disabled";
 };
 
-export type DeviceEnrollmentStatus = "pending" | "approved" | "denied" | "expired" | "consumed";
+export type DeviceEnrollmentStatus =
+  "pending" | "approved" | "denied" | "expired" | "consumed";
 
 export type DeviceEnrollment = {
   id: string;
@@ -642,18 +727,27 @@ export type LocalDeviceStatus = {
   metrics: DeviceMetrics | null;
 };
 
-export type EnrollStartResponse = { user_code: string; verification_url: string; expires_in: number };
+export type EnrollStartResponse = {
+  user_code: string;
+  verification_url: string;
+  expires_in: number;
+};
 
-export type EnrollState = "idle" | "pending" | "approved" | "denied" | "expired" | "error";
+export type EnrollState =
+  "idle" | "pending" | "approved" | "denied" | "expired" | "error";
 
 /** While pending, the code fields are included so a refreshed page can show them again. */
-export type EnrollStatus = { status: EnrollState; message: string | null } & Partial<EnrollStartResponse> & {
+export type EnrollStatus = {
+  status: EnrollState;
+  message: string | null;
+} & Partial<EnrollStartResponse> & {
     expires_at?: number;
   };
 
 // ---- Jobs, backups & recovery (docs/BACKUPS.md) ----
 
-export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
+export type JobStatus =
+  "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 export type Job = {
   id: string;
@@ -689,11 +783,22 @@ export type BackupPolicy = {
 
 export type BackupPolicyUpdate = Partial<Omit<BackupPolicy, "updated_at">>;
 
-export type BackupTrigger = "scheduled" | "manual" | "pre_restore" | "pre_drop" | "pre_delete" | "pre_move" | "final";
+export type BackupTrigger =
+  | "scheduled"
+  | "manual"
+  | "pre_restore"
+  | "pre_drop"
+  | "pre_delete"
+  | "pre_move"
+  | "final";
 
 export type BackupCopyLocation = "local" | "device" | "primary";
 
-export type BackupCopy = { location: BackupCopyLocation; device_id: string | null; status: string };
+export type BackupCopy = {
+  location: BackupCopyLocation;
+  device_id: string | null;
+  status: string;
+};
 
 export type Backup = {
   id: string;
@@ -714,11 +819,25 @@ export type Backup = {
   kept_as: KeptAs | null;
 };
 
-export type KeptAs = "pinned" | "safety" | "hourly" | "daily" | "weekly" | "monthly" | "latest" | "running" | "recent_failure";
+export type KeptAs =
+  | "pinned"
+  | "safety"
+  | "hourly"
+  | "daily"
+  | "weekly"
+  | "monthly"
+  | "latest"
+  | "running"
+  | "recent_failure";
 
 export type DiffChange = "added" | "removed" | "changed";
 
-export type FieldDiff = { name: string; change: DiffChange; before: Field | null; after: Field | null };
+export type FieldDiff = {
+  name: string;
+  change: DiffChange;
+  before: Field | null;
+  after: Field | null;
+};
 
 export type SchemaDiffEntity = {
   name: string;
@@ -754,7 +873,10 @@ export type RestoreRequest = {
 
 export type JobResponse = { job: Job };
 
-export type DeletedSource = DataSource & { deleted_at: string; purge_at: string };
+export type DeletedSource = DataSource & {
+  deleted_at: string;
+  purge_at: string;
+};
 
 export type InstanceBackupSource = {
   data_source_id: string;
@@ -776,8 +898,17 @@ export type InstanceBackupSource = {
 
 export type InstanceBackups = {
   sources: InstanceBackupSource[];
-  platform: { last_success_at: string | null; last_error: string | null; latest_backup_id: string | null };
-  storage: { location: string; device_id: string | null; used_bytes: number | null; free_bytes: number | null }[];
+  platform: {
+    last_success_at: string | null;
+    last_error: string | null;
+    latest_backup_id: string | null;
+  };
+  storage: {
+    location: string;
+    device_id: string | null;
+    used_bytes: number | null;
+    free_bytes: number | null;
+  }[];
   /** The latest whole-instance export (Settings → Export & import); null when never. */
   last_export_at: string | null;
   /** A-195: final snapshots of deleted projects' databases, downloadable until `expires_at`. */
@@ -825,9 +956,19 @@ export type SqlStatementResult =
       truncated: boolean;
       duration_ms: number;
     }
-  | { type: "count"; statement: string; affected_rows: number; duration_ms: number }
+  | {
+      type: "count";
+      statement: string;
+      affected_rows: number;
+      duration_ms: number;
+    }
   | { type: "empty"; statement: string; duration_ms: number }
-  | { type: "error"; statement: string; error: QueryError; duration_ms?: number };
+  | {
+      type: "error";
+      statement: string;
+      error: QueryError;
+      duration_ms?: number;
+    };
 
 export type SqlQueryResponse = {
   kind: "sql";
@@ -891,7 +1032,10 @@ export type SavedQueryInput = {
 };
 
 /** A PATCH always carries the version the client loaded; the API answers `409 version_conflict` otherwise. */
-export type SavedQueryUpdate = Partial<SavedQueryInput> & { version: number; message?: string };
+export type SavedQueryUpdate = Partial<SavedQueryInput> & {
+  version: number;
+  message?: string;
+};
 
 export type SavedQueryVersion = {
   id: string;
@@ -904,7 +1048,11 @@ export type SavedQueryVersion = {
   chars: number;
 };
 
-export type SavedQueryRestore = { version: number; current_version: number; message?: string };
+export type SavedQueryRestore = {
+  version: number;
+  current_version: number;
+  message?: string;
+};
 
 export type QueryRunStatus = "ok" | "error" | "timeout" | "refused";
 
@@ -934,7 +1082,13 @@ export type QueryRun = {
 
 export type QueryLogPage = { runs: QueryRun[]; has_more: boolean };
 
-export type QueryLogParams = { source_id?: string; user?: "me" | "all"; limit?: number; before?: string; before_id?: string };
+export type QueryLogParams = {
+  source_id?: string;
+  user?: "me" | "all";
+  limit?: number;
+  before?: string;
+  before_id?: string;
+};
 
 // ---- Remote access (docs/REMOTE_ACCESS.md) ----
 
@@ -956,7 +1110,13 @@ export type Domain = {
   dns_records?: DnsRecord[];
 };
 
-export type DnsRecord = { type: string; name: string; value: string; created: boolean; error: string | null };
+export type DnsRecord = {
+  type: string;
+  name: string;
+  value: string;
+  created: boolean;
+  error: string | null;
+};
 
 export type RemoteAccessMode = "off" | "cloudflare" | "quick";
 
@@ -965,12 +1125,21 @@ export type RemoteAccess = {
   public_url: string;
   /** The dashboard on the Deployer PC itself, e.g. http://localhost:8080 (the installation's real port). */
   local_url: string;
-  connector: { running: boolean; started_at: string | null; last_error: string | null };
+  connector: {
+    running: boolean;
+    started_at: string | null;
+    last_error: string | null;
+  };
   cloudflare: {
     linked: boolean;
     token_valid: boolean | null;
     account: { id: string; name: string } | null;
-    tunnel: { id: string; name: string; status: string | null; connections: number } | null;
+    tunnel: {
+      id: string;
+      name: string;
+      status: string | null;
+      connections: number;
+    } | null;
     domains: Domain[];
     /** Not in REMOTE_ACCESS.md; used when present so zones survive a page reload after linking. */
     zones?: CloudflareZone[];
@@ -978,7 +1147,12 @@ export type RemoteAccess = {
   quick: { url: string | null };
 };
 
-export type CloudflareZone = { id: string; name: string; account_id: string; status: string };
+export type CloudflareZone = {
+  id: string;
+  name: string;
+  account_id: string;
+  status: string;
+};
 
 export type CloudflareVerifyResult = {
   ok: boolean;
@@ -987,7 +1161,8 @@ export type CloudflareVerifyResult = {
   missing_permissions: string[];
 };
 
-export type PublicUrlRequest = { domain_id: string } | { quick: true } | { local: true };
+export type PublicUrlRequest =
+  { domain_id: string } | { quick: true } | { local: true };
 
 export type PublicUrlResponse = {
   settings: InstanceSettings;
@@ -1001,7 +1176,14 @@ export type PublicUrlResponse = {
 
 export type AppPreset = "static" | "node" | "python" | "dockerfile";
 
-export type DeploymentStatus = "queued" | "building" | "deploying" | "live" | "failed" | "cancelled" | "superseded";
+export type DeploymentStatus =
+  | "queued"
+  | "building"
+  | "deploying"
+  | "live"
+  | "failed"
+  | "cancelled"
+  | "superseded";
 
 /** `github`: built and deployed by the app's GitHub Actions workflow, which reported the run (docs/CLOUD.md "C3"). */
 export type DeploymentTrigger = "manual" | "webhook" | "rollback" | "github";
@@ -1029,7 +1211,8 @@ export type Deployment = {
 
 // ---- Cloud hosting (docs/CLOUD.md) ----
 
-export type AppTarget = "local" | "aws_static" | "aws_app" | "firebase_hosting" | "firebase_app";
+export type AppTarget =
+  "local" | "aws_static" | "aws_app" | "firebase_hosting" | "firebase_app";
 export type CloudProvider = "aws" | "firebase";
 
 export type CloudTarget = {
@@ -1069,15 +1252,30 @@ export type CloudConnectionInput = {
   provider: CloudProvider;
   name: string;
   project_id?: string | null;
-  aws?: { access_key_id: string; secret_access_key: string; region: string; role_arn?: string | null };
-  firebase?: { service_account_json: string; project_id?: string | null; region?: string | null };
+  aws?: {
+    access_key_id: string;
+    secret_access_key: string;
+    region: string;
+    role_arn?: string | null;
+  };
+  firebase?: {
+    service_account_json: string;
+    project_id?: string | null;
+    region?: string | null;
+  };
 };
 
 export type CloudRequirements = {
   aws: { policy: unknown };
   firebase: {
     /** `on: "service_account"`: granted on the deployer service account itself, not the project. */
-    roles: { role: string; title: string; why: string; only_for?: string; on?: string }[];
+    roles: {
+      role: string;
+      title: string;
+      why: string;
+      only_for?: string;
+      on?: string;
+    }[];
     apis: { api: string; title: string; only_for?: string }[];
   };
 };
@@ -1109,7 +1307,13 @@ export type AppBuild =
 export type GitHubRun = {
   id: number;
   attempt: number | null;
-  status: "queued" | "in_progress" | "completed" | "waiting" | "requested" | "pending";
+  status:
+    | "queued"
+    | "in_progress"
+    | "completed"
+    | "waiting"
+    | "requested"
+    | "pending";
   conclusion: string | null;
   event: string | null;
   branch: string | null;
@@ -1121,7 +1325,11 @@ export type GitHubRun = {
 };
 
 /** `POST .../deploy` on an app that builds on GitHub Actions: the workflow was started there. */
-export type GitHubDispatch = { github_actions: true; status: "dispatched"; runs_url: string | null };
+export type GitHubDispatch = {
+  github_actions: true;
+  status: "dispatched";
+  runs_url: string | null;
+};
 
 export type App = {
   id: string;
@@ -1195,10 +1403,17 @@ export type AppInput = {
 export type AppCreated = App & { warnings: string[] };
 
 /** `repo_token: null` clears the stored token. */
-export type AppPatch = Partial<Omit<AppInput, "repo_token" | "use_github_connection">> & { repo_token?: string | null };
+export type AppPatch = Partial<
+  Omit<AppInput, "repo_token" | "use_github_connection">
+> & { repo_token?: string | null };
 
 /** docs/DEPLOYMENTS.md "Connect a Git repository". */
-export type GitHubStatus = { connected: boolean; login: string | null; scopes: string[]; configured: boolean };
+export type GitHubStatus = {
+  connected: boolean;
+  login: string | null;
+  scopes: string[];
+  configured: boolean;
+};
 
 export type GitHubRepo = {
   full_name: string;
@@ -1232,9 +1447,18 @@ export type AppDetectDraft = {
 
 export type DeploymentPage = { deployments: Deployment[]; has_more: boolean };
 
-export type AppWebhook = { url: string; secret: string; hook_active?: boolean; warnings?: string[] };
+export type AppWebhook = {
+  url: string;
+  secret: string;
+  hook_active?: boolean;
+  warnings?: string[];
+};
 
-export type AppLogs = { lines: string[]; container: string | null; device_id?: string };
+export type AppLogs = {
+  lines: string[];
+  container: string | null;
+  device_id?: string;
+};
 
 /** A co-hosted app's copy on a co-host PC (docs/COHOSTING.md "Websites on both PCs"). */
 export type AppReplica = {
@@ -1399,5 +1623,10 @@ export type MetricsSummary = {
   current: HostMetrics | null;
   requests_5m: RequestTotals;
   containers: { total: number; running: number; problems: number } | null;
-  alerts: { active: number; visible: number; critical: number; top: InstanceAlert | null };
+  alerts: {
+    active: number;
+    visible: number;
+    critical: number;
+    top: InstanceAlert | null;
+  };
 };

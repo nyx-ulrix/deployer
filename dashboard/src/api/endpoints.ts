@@ -68,6 +68,7 @@ import type {
   DocumentsResponse,
   Entity,
   InstanceProject,
+  ProjectKeysToRotate,
   InstanceSettings,
   InstanceSettingsUpdate,
   Invite,
@@ -117,31 +118,60 @@ function importForm(file: File, passphrase: string): FormData {
 }
 
 /** QUERY_CONSOLE.md: `POST /projects/{id}/data-sources/{sid}/query` (SQL or MongoDB shell code). */
-export function runQuery(projectId: string, sid: string, body: QueryRequest, signal?: AbortSignal) {
-  return client.post<QueryResponse>(`/projects/${e(projectId)}/data-sources/${e(sid)}/query`, body, { signal });
+export function runQuery(
+  projectId: string,
+  sid: string,
+  body: QueryRequest,
+  signal?: AbortSignal,
+) {
+  return client.post<QueryResponse>(
+    `/projects/${e(projectId)}/data-sources/${e(sid)}/query`,
+    body,
+    { signal },
+  );
 }
 
 export const api = {
   setup: {
     status: () => client.get<SetupStatus>("/setup/status", { auth: false }),
-    createOwner: async (body: { email: string; password: string; display_name?: string }) => {
-      const res = await client.post<AuthResponse>("/setup/owner", body, { auth: false });
+    createOwner: async (body: {
+      email: string;
+      password: string;
+      display_name?: string;
+    }) => {
+      const res = await client.post<AuthResponse>("/setup/owner", body, {
+        auth: false,
+      });
       client.setSession(res);
       return res;
     },
     importInstance: (file: File, passphrase: string) =>
-      client.upload<SetupImportResponse>("/setup/import", importForm(file, passphrase), { auth: false }),
+      client.upload<SetupImportResponse>(
+        "/setup/import",
+        importForm(file, passphrase),
+        { auth: false },
+      ),
   },
 
   auth: {
-    providers: () => client.get<ProvidersResponse>("/auth/providers", { auth: false }),
+    providers: () =>
+      client.get<ProvidersResponse>("/auth/providers", { auth: false }),
     login: async (body: { email: string; password: string }) => {
-      const res = await client.post<AuthResponse>("/auth/login", body, { auth: false });
+      const res = await client.post<AuthResponse>("/auth/login", body, {
+        auth: false,
+      });
       client.setSession(res);
       return res;
     },
-    signup: async (body: { email: string; password: string; display_name?: string; invite_token?: string }) => {
-      const res = await client.post<AuthResponse>("/auth/signup", body, { auth: false });
+    signup: async (body: {
+      email: string;
+      password: string;
+      display_name?: string;
+      invite_token?: string;
+    }) => {
+      const res = await client.post<AuthResponse>("/auth/signup", body, {
+        auth: false,
+      });
       client.setSession(res);
       return res;
     },
@@ -153,38 +183,68 @@ export const api = {
       }
     },
     me: () => client.get<User>("/auth/me"),
-    updateMe: (body: { display_name?: string }) => client.patch<User>("/auth/me", body),
+    updateMe: (body: { display_name?: string }) =>
+      client.patch<User>("/auth/me", body),
     setPassword: (body: { current_password?: string; new_password: string }) =>
       client.post<Ok>("/auth/password", body),
-    oauthStartUrl: (provider: ProviderName, redirect: string, inviteToken?: string) => {
+    oauthStartUrl: (
+      provider: ProviderName,
+      redirect: string,
+      inviteToken?: string,
+    ) => {
       const params = new URLSearchParams({ redirect });
       if (inviteToken) params.set("invite_token", inviteToken);
       return `/v1/auth/oauth/${provider}/start?${params.toString()}`;
     },
     linkProvider: (provider: ProviderName, redirect = "/settings/account") =>
-      client.post<{ authorize_url: string }>(`/auth/oauth/${provider}/link`, { redirect }),
-    unlinkIdentity: (identityId: string) => client.del<User>(`/auth/identities/${e(identityId)}`),
+      client.post<{ authorize_url: string }>(`/auth/oauth/${provider}/link`, {
+        redirect,
+      }),
+    unlinkIdentity: (identityId: string) =>
+      client.del<User>(`/auth/identities/${e(identityId)}`),
   },
 
   instance: {
     settings: () => client.get<InstanceSettings>("/instance/settings"),
-    updateSettings: (body: InstanceSettingsUpdate) => client.put<InstanceSettings & { warnings?: string[] }>("/instance/settings", body),
+    updateSettings: (body: InstanceSettingsUpdate) =>
+      client.put<InstanceSettings & { warnings?: string[] }>(
+        "/instance/settings",
+        body,
+      ),
     users: () => client.get<User[]>("/instance/users"),
     setUserActive: (userId: string, isActive: boolean) =>
-      client.patch<User>(`/instance/users/${e(userId)}`, { is_active: isActive }),
+      client.patch<User & { api_keys_to_rotate: ProjectKeysToRotate[] }>(
+        `/instance/users/${e(userId)}`,
+        {
+          is_active: isActive,
+        },
+      ),
     projects: () => client.get<InstanceProject[]>("/instance/projects"),
   },
 
   /** Exports and imports run as jobs (A-044); the finished export is fetched with `download`. */
   transfers: {
     list: () => client.get<Job[]>("/transfers"),
-    exportInstance: (passphrase: string) => client.post<JobResponse>("/instance/export/jobs", { passphrase }),
+    exportInstance: (passphrase: string) =>
+      client.post<JobResponse>("/instance/export/jobs", { passphrase }),
     exportProjects: (projectIds: string[], passphrase: string) =>
-      client.post<JobResponse>("/projects/export/jobs", { project_ids: projectIds, passphrase }),
+      client.post<JobResponse>("/projects/export/jobs", {
+        project_ids: projectIds,
+        passphrase,
+      }),
     importProjects: (file: File, passphrase: string) =>
-      client.upload<JobResponse>("/projects/import/jobs", importForm(file, passphrase)),
-    download: (jobId: string) => client.download("GET", `/transfers/${e(jobId)}/download`, "deployer-export.json"),
-    cancel: (jobId: string) => client.post<Job>(`/transfers/${e(jobId)}/cancel`),
+      client.upload<JobResponse>(
+        "/projects/import/jobs",
+        importForm(file, passphrase),
+      ),
+    download: (jobId: string) =>
+      client.download(
+        "GET",
+        `/transfers/${e(jobId)}/download`,
+        "deployer-export.json",
+      ),
+    cancel: (jobId: string) =>
+      client.post<Job>(`/transfers/${e(jobId)}/cancel`),
   },
 
   projects: {
@@ -196,15 +256,21 @@ export const api = {
     /** `cloud`: what happens to what Deployer created in a cloud account (docs/CLOUD.md "C2-5"); required when
      * there is any (409 `cloud_resources_left` otherwise). */
     remove: (id: string, slug: string, cloud?: "keep" | "delete") =>
-      client.del<Ok & { cloud?: { choice: string; job_ids: string[] } }>(`/projects/${e(id)}`, {
-        query: cloud ? { confirm: slug, cloud } : { confirm: slug },
-      }),
+      client.del<Ok & { cloud?: { choice: string; job_ids: string[] } }>(
+        `/projects/${e(id)}`,
+        {
+          query: cloud ? { confirm: slug, cloud } : { confirm: slug },
+        },
+      ),
   },
 
   members: {
     list: (pid: string) => client.get<Member[]>(`/projects/${e(pid)}/members`),
     update: (pid: string, userId: string, role: Exclude<Role, "owner">) =>
-      client.patch<Member & KeysToRotate>(`/projects/${e(pid)}/members/${e(userId)}`, { role }),
+      client.patch<Member & KeysToRotate>(
+        `/projects/${e(pid)}/members/${e(userId)}`,
+        { role },
+      ),
     remove: (pid: string, userId: string) =>
       client.del<Ok & KeysToRotate>(`/projects/${e(pid)}/members/${e(userId)}`),
   },
@@ -213,63 +279,110 @@ export const api = {
     list: (pid: string) => client.get<Invite[]>(`/projects/${e(pid)}/invites`),
     create: (pid: string, body: InviteCreate) =>
       client.post<InviteCreateResponse>(`/projects/${e(pid)}/invites`, body),
-    revoke: (pid: string, inviteId: string) => client.del<Ok>(`/projects/${e(pid)}/invites/${e(inviteId)}`),
-    preview: (token: string) => client.get<InvitePreview>(`/invites/${e(token)}`, { auth: false }),
-    accept: (token: string) => client.post<{ project_id: string }>(`/invites/${e(token)}/accept`),
+    revoke: (pid: string, inviteId: string) =>
+      client.del<Ok>(`/projects/${e(pid)}/invites/${e(inviteId)}`),
+    preview: (token: string) =>
+      client.get<InvitePreview>(`/invites/${e(token)}`, { auth: false }),
+    accept: (token: string) =>
+      client.post<{ project_id: string }>(`/invites/${e(token)}/accept`),
   },
 
   apiKeys: {
     list: (pid: string) => client.get<ApiKey[]>(`/projects/${e(pid)}/api-keys`),
     create: (pid: string, body: { name: string; role: ApiKeyRole }) =>
       client.post<ApiKeyCreateResponse>(`/projects/${e(pid)}/api-keys`, body),
-    revoke: (pid: string, keyId: string) => client.del<Ok>(`/projects/${e(pid)}/api-keys/${e(keyId)}`),
+    revoke: (pid: string, keyId: string) =>
+      client.del<Ok>(`/projects/${e(pid)}/api-keys/${e(keyId)}`),
     reveal: (pid: string, keyId: string) =>
-      client.get<{ secret: string }>(`/projects/${e(pid)}/api-keys/${e(keyId)}/reveal`),
+      client.get<{ secret: string }>(
+        `/projects/${e(pid)}/api-keys/${e(keyId)}/reveal`,
+      ),
     // Served as a download by the API; fetched as JSON so auth/refresh apply and the dashboard names the file.
     config: (pid: string, keyId: string) =>
-      client.get<ApiKeyConfig>(`/projects/${e(pid)}/api-keys/${e(keyId)}/config`),
+      client.get<ApiKeyConfig>(
+        `/projects/${e(pid)}/api-keys/${e(keyId)}/config`,
+      ),
   },
 
   dataSources: {
-    list: (pid: string) => client.get<DataSource[]>(`/projects/${e(pid)}/data-sources`),
+    list: (pid: string) =>
+      client.get<DataSource[]>(`/projects/${e(pid)}/data-sources`),
     test: (pid: string, body: DataSourceInput) =>
-      client.post<ConnectionTestResult>(`/projects/${e(pid)}/data-sources/test`, body),
-    create: (pid: string, body: DataSourceInput) => client.post<DataSource>(`/projects/${e(pid)}/data-sources`, body),
+      client.post<ConnectionTestResult>(
+        `/projects/${e(pid)}/data-sources/test`,
+        body,
+      ),
+    create: (pid: string, body: DataSourceInput) =>
+      client.post<DataSource>(`/projects/${e(pid)}/data-sources`, body),
     /** A-030: rename, or change an external source's connection; only the config keys given change. */
-    update: (pid: string, sid: string, body: { name?: string; config?: Record<string, unknown> }) =>
-      client.patch<DataSource>(`/projects/${e(pid)}/data-sources/${e(sid)}`, body),
+    update: (
+      pid: string,
+      sid: string,
+      body: { name?: string; config?: Record<string, unknown> },
+    ) =>
+      client.patch<DataSource>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}`,
+        body,
+      ),
     check: (pid: string, sid: string) =>
-      client.post<DataSource>(`/projects/${e(pid)}/data-sources/${e(sid)}/check`),
+      client.post<DataSource>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/check`,
+      ),
     connection: (pid: string, sid: string) =>
-      client.get<ConnectionDetails>(`/projects/${e(pid)}/data-sources/${e(sid)}/connection`),
+      client.get<ConnectionDetails>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/connection`,
+      ),
     /** `job`: a database Deployer created in AWS is being deleted there (docs/CLOUD.md). */
     remove: (pid: string, sid: string, drop: boolean) =>
-      client.del<DropResult>(`/projects/${e(pid)}/data-sources/${e(sid)}`, { query: { drop } }),
+      client.del<DropResult>(`/projects/${e(pid)}/data-sources/${e(sid)}`, {
+        query: { drop },
+      }),
     /** DEVICES.md: `POST .../data-sources/{sid}/move`. `device_id: null` = main server. */
     move: (pid: string, sid: string, deviceId: string | null) =>
-      client.post<JobResponse>(`/projects/${e(pid)}/data-sources/${e(sid)}/move`, { device_id: deviceId }),
-    placementOptions: (pid: string) => client.get<PlacementOption[]>(`/projects/${e(pid)}/placement-options`),
-    deleted: (pid: string) => client.get<DeletedSource[]>(`/projects/${e(pid)}/deleted-sources`),
+      client.post<JobResponse>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/move`,
+        { device_id: deviceId },
+      ),
+    placementOptions: (pid: string) =>
+      client.get<PlacementOption[]>(`/projects/${e(pid)}/placement-options`),
+    deleted: (pid: string) =>
+      client.get<DeletedSource[]>(`/projects/${e(pid)}/deleted-sources`),
     restoreDeleted: (pid: string, sid: string, name?: string) =>
-      client.post<JobResponse>(`/projects/${e(pid)}/deleted-sources/${e(sid)}/restore`, name ? { name } : {}),
+      client.post<JobResponse>(
+        `/projects/${e(pid)}/deleted-sources/${e(sid)}/restore`,
+        name ? { name } : {},
+      ),
   },
 
   // Primary-side device management. Paths follow DEVICES.md naming (`/devices`, `/devices/enrollments`).
   devices: {
     list: (scope: "mine" | "all" = "mine") =>
-      client.get<Device[]>("/devices", { query: { scope: scope === "all" ? "all" : undefined } }),
-    update: (id: string, body: DeviceUpdate) => client.patch<Device>(`/devices/${e(id)}`, body),
-    remove: (id: string, force = false) => client.del<Ok>(`/devices/${e(id)}`, { query: { force: force || undefined } }),
-    enrollmentByCode: (code: string) => client.get<DeviceEnrollment>("/devices/enrollments", { query: { code } }),
+      client.get<Device[]>("/devices", {
+        query: { scope: scope === "all" ? "all" : undefined },
+      }),
+    update: (id: string, body: DeviceUpdate) =>
+      client.patch<Device>(`/devices/${e(id)}`, body),
+    remove: (id: string, force = false) =>
+      client.del<Ok>(`/devices/${e(id)}`, {
+        query: { force: force || undefined },
+      }),
+    enrollmentByCode: (code: string) =>
+      client.get<DeviceEnrollment>("/devices/enrollments", { query: { code } }),
     approve: (enrollmentId: string, body: DeviceApproval) =>
-      client.post<Device>(`/devices/enrollments/${e(enrollmentId)}/approve`, body),
+      client.post<Device>(
+        `/devices/enrollments/${e(enrollmentId)}/approve`,
+        body,
+      ),
     deny: (enrollmentId: string, userCode: string) =>
-      client.post<Ok>(`/devices/enrollments/${e(enrollmentId)}/deny`, { user_code: userCode }),
+      client.post<Ok>(`/devices/enrollments/${e(enrollmentId)}/deny`, {
+        user_code: userCode,
+      }),
   },
 
   /** Device-local API of *this* installation (DEVICES.md → Device-local API). */
   deviceLocal: {
-    status: () => client.get<LocalDeviceStatus>("/device/status", { auth: false }),
+    status: () =>
+      client.get<LocalDeviceStatus>("/device/status", { auth: false }),
     enrollStart: (body: { primary_url: string; device_name: string }) =>
       client.post<EnrollStartResponse>("/device/enroll/start", body),
     enrollStatus: () => client.get<EnrollStatus>("/device/enroll/status"),
@@ -278,98 +391,192 @@ export const api = {
 
   backups: {
     policy: (pid: string, sid: string) =>
-      client.get<BackupPolicy>(`/projects/${e(pid)}/data-sources/${e(sid)}/backup-policy`),
+      client.get<BackupPolicy>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/backup-policy`,
+      ),
     updatePolicy: (pid: string, sid: string, body: BackupPolicyUpdate) =>
-      client.put<BackupPolicy>(`/projects/${e(pid)}/data-sources/${e(sid)}/backup-policy`, body),
+      client.put<BackupPolicy>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/backup-policy`,
+        body,
+      ),
     list: (pid: string, sid: string, limit = 100) =>
-      client.get<Backup[]>(`/projects/${e(pid)}/data-sources/${e(sid)}/backups`, { query: { limit } }),
+      client.get<Backup[]>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/backups`,
+        { query: { limit } },
+      ),
     create: (pid: string, sid: string, label?: string) =>
       client.post<{ job: Job; backup_id: string }>(
         `/projects/${e(pid)}/data-sources/${e(sid)}/backups`,
         label ? { label } : {},
       ),
-    update: (pid: string, sid: string, backupId: string, body: { label?: string | null; pinned?: boolean }) =>
-      client.patch<Backup>(`/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}`, body),
+    update: (
+      pid: string,
+      sid: string,
+      backupId: string,
+      body: { label?: string | null; pinned?: boolean },
+    ) =>
+      client.patch<Backup>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}`,
+        body,
+      ),
     remove: (pid: string, sid: string, backupId: string) =>
-      client.del<Ok>(`/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}`),
+      client.del<Ok>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}`,
+      ),
     schema: (pid: string, sid: string, backupId: string) =>
-      client.get<SourceSchema>(`/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}/schema`),
+      client.get<SourceSchema>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}/schema`,
+      ),
     diff: (pid: string, sid: string, from: string, to: string) =>
-      client.get<SchemaDiff>(`/projects/${e(pid)}/data-sources/${e(sid)}/backups/diff`, { query: { from, to } }),
+      client.get<SchemaDiff>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/backups/diff`,
+        { query: { from, to } },
+      ),
     download: (pid: string, sid: string, backupId: string) =>
-      client.download("GET", `/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}/download`, "backup.bin"),
+      client.download(
+        "GET",
+        `/projects/${e(pid)}/data-sources/${e(sid)}/backups/${e(backupId)}/download`,
+        "backup.bin",
+      ),
     recoveryWindow: (pid: string, sid: string) =>
-      client.get<RecoveryWindow>(`/projects/${e(pid)}/data-sources/${e(sid)}/recovery-window`),
+      client.get<RecoveryWindow>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/recovery-window`,
+      ),
     restore: (pid: string, sid: string, body: RestoreRequest) =>
-      client.post<JobResponse>(`/projects/${e(pid)}/data-sources/${e(sid)}/restore`, body),
+      client.post<JobResponse>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/restore`,
+        body,
+      ),
   },
 
   jobs: {
-    list: (pid: string, limit = 50) => client.get<Job[]>(`/projects/${e(pid)}/jobs`, { query: { limit } }),
-    get: (pid: string, jobId: string) => client.get<Job>(`/projects/${e(pid)}/jobs/${e(jobId)}`),
-    cancel: (pid: string, jobId: string) => client.post<Job>(`/projects/${e(pid)}/jobs/${e(jobId)}/cancel`),
+    list: (pid: string, limit = 50) =>
+      client.get<Job[]>(`/projects/${e(pid)}/jobs`, { query: { limit } }),
+    get: (pid: string, jobId: string) =>
+      client.get<Job>(`/projects/${e(pid)}/jobs/${e(jobId)}`),
+    cancel: (pid: string, jobId: string) =>
+      client.post<Job>(`/projects/${e(pid)}/jobs/${e(jobId)}/cancel`),
   },
 
   instanceBackups: {
     get: () => client.get<InstanceBackups>("/instance/backups"),
     platformNow: () => client.post<JobResponse>("/instance/backups/platform"),
     platformDownload: (backupId: string) =>
-      client.download("GET", `/instance/backups/platform/${e(backupId)}/download`, "deployer-platform.sql.gz"),
+      client.download(
+        "GET",
+        `/instance/backups/platform/${e(backupId)}/download`,
+        "deployer-platform.sql.gz",
+      ),
     deletedDownload: (backupId: string) =>
-      client.download("GET", `/instance/backups/deleted/${e(backupId)}/download`, "backup.gz"),
+      client.download(
+        "GET",
+        `/instance/backups/deleted/${e(backupId)}/download`,
+        "backup.gz",
+      ),
     restoreDeletedProject: (projectId: string) =>
-      client.post<{ project: Project; jobs: Job[] }>(`/instance/backups/deleted/projects/${e(projectId)}/restore`),
+      client.post<{ project: Project; jobs: Job[] }>(
+        `/instance/backups/deleted/projects/${e(projectId)}/restore`,
+      ),
   },
 
   monitoring: {
-    metrics: (window: MetricsWindow) => client.get<InstanceMetrics>(`/instance/metrics?window=${window}`),
+    metrics: (window: MetricsWindow) =>
+      client.get<InstanceMetrics>(`/instance/metrics?window=${window}`),
     summary: () => client.get<MetricsSummary>("/instance/metrics/summary"),
     alerts: () => client.get<InstanceAlert[]>("/instance/alerts"),
-    dismiss: (id: string) => client.post<InstanceAlert>(`/instance/alerts/${e(id)}/dismiss`),
-    snooze: (id: string, minutes: number) => client.post<InstanceAlert>(`/instance/alerts/${e(id)}/snooze`, { minutes }),
+    dismiss: (id: string) =>
+      client.post<InstanceAlert>(`/instance/alerts/${e(id)}/dismiss`),
+    snooze: (id: string, minutes: number) =>
+      client.post<InstanceAlert>(`/instance/alerts/${e(id)}/snooze`, {
+        minutes,
+      }),
     testWebhook: (url?: string) =>
-      client.post<{ ok: boolean; detail: string }>("/instance/alerts/webhook-test", url ? { url } : {}),
+      client.post<{ ok: boolean; detail: string }>(
+        "/instance/alerts/webhook-test",
+        url ? { url } : {},
+      ),
   },
 
   remoteAccess: {
     get: () => client.get<RemoteAccess>("/instance/remote-access"),
     verify: (apiToken: string) =>
-      client.post<CloudflareVerifyResult>("/instance/remote-access/cloudflare/verify", { api_token: apiToken }),
+      client.post<CloudflareVerifyResult>(
+        "/instance/remote-access/cloudflare/verify",
+        { api_token: apiToken },
+      ),
     link: (apiToken: string, accountId: string) =>
-      client.post<RemoteAccess>("/instance/remote-access/cloudflare/link", { api_token: apiToken, account_id: accountId }),
-    addHostname: (body: { zone_id: string; hostname: string; overwrite?: boolean }) =>
+      client.post<RemoteAccess>("/instance/remote-access/cloudflare/link", {
+        api_token: apiToken,
+        account_id: accountId,
+      }),
+    addHostname: (body: {
+      zone_id: string;
+      hostname: string;
+      overwrite?: boolean;
+    }) =>
       client.post<Domain>("/instance/remote-access/cloudflare/hostnames", body),
     removeHostname: (domainId: string) =>
-      client.del<Ok>(`/instance/remote-access/cloudflare/hostnames/${e(domainId)}`),
+      client.del<Ok>(
+        `/instance/remote-access/cloudflare/hostnames/${e(domainId)}`,
+      ),
     unlink: (body: { delete_dns: boolean; delete_tunnel: boolean }) =>
-      client.post<RemoteAccess>("/instance/remote-access/cloudflare/unlink", body),
-    quick: (enabled: boolean) => client.post<RemoteAccess>("/instance/remote-access/quick", { enabled }),
+      client.post<RemoteAccess>(
+        "/instance/remote-access/cloudflare/unlink",
+        body,
+      ),
+    quick: (enabled: boolean) =>
+      client.post<RemoteAccess>("/instance/remote-access/quick", { enabled }),
     usePublicUrl: (body: PublicUrlRequest) =>
-      client.post<PublicUrlResponse>("/instance/remote-access/public-url", body),
+      client.post<PublicUrlResponse>(
+        "/instance/remote-access/public-url",
+        body,
+      ),
   },
 
   schema: {
     get: (pid: string, params: { source_id?: string; sample?: number } = {}) =>
-      client.get<ProjectSchema>(`/projects/${e(pid)}/schema`, { query: params }),
+      client.get<ProjectSchema>(`/projects/${e(pid)}/schema`, {
+        query: params,
+      }),
     export: (pid: string, format: SchemaExportFormat, sourceId?: string) =>
       client.download(
         "GET",
         `/projects/${e(pid)}/schema/export`,
-        format === "sql" ? "schema.sql" : format === "mongo" ? "schema.mongo.js" : "schema.zip",
+        format === "sql"
+          ? "schema.sql"
+          : format === "mongo"
+            ? "schema.mongo.js"
+            : "schema.zip",
         { query: { format, source_id: sourceId } },
       ),
-    links: (pid: string) => client.get<SchemaLink[]>(`/projects/${e(pid)}/schema/links`),
+    links: (pid: string) =>
+      client.get<SchemaLink[]>(`/projects/${e(pid)}/schema/links`),
     createLink: (pid: string, body: SchemaLinkCreate) =>
       client.post<SchemaLink>(`/projects/${e(pid)}/schema/links`, body),
-    deleteLink: (pid: string, linkId: string) => client.del<Ok>(`/projects/${e(pid)}/schema/links/${e(linkId)}`),
+    deleteLink: (pid: string, linkId: string) =>
+      client.del<Ok>(`/projects/${e(pid)}/schema/links/${e(linkId)}`),
     createTable: (pid: string, sid: string, spec: TableSpec) =>
-      client.post<Entity>(`/projects/${e(pid)}/data-sources/${e(sid)}/tables`, spec),
+      client.post<Entity>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/tables`,
+        spec,
+      ),
     dropTable: (pid: string, sid: string, table: string) =>
-      client.del<DropResult>(`/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}`),
-    createCollection: (pid: string, sid: string, body: { name: string; validator?: JsonObject }) =>
-      client.post<Entity>(`/projects/${e(pid)}/data-sources/${e(sid)}/collections`, body),
+      client.del<DropResult>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}`,
+      ),
+    createCollection: (
+      pid: string,
+      sid: string,
+      body: { name: string; validator?: JsonObject },
+    ) =>
+      client.post<Entity>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/collections`,
+        body,
+      ),
     dropCollection: (pid: string, sid: string, name: string) =>
-      client.del<DropResult>(`/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(name)}`),
+      client.del<DropResult>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(name)}`,
+      ),
   },
 
   rows: {
@@ -377,24 +584,48 @@ export const api = {
       pid: string,
       sid: string,
       table: string,
-      params: { limit: number; offset: number; order_by?: string; order?: "asc" | "desc" },
+      params: {
+        limit: number;
+        offset: number;
+        order_by?: string;
+        order?: "asc" | "desc";
+      },
     ) =>
-      client.get<RowsResponse>(`/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}/rows`, {
-        query: params,
-      }),
+      client.get<RowsResponse>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}/rows`,
+        {
+          query: params,
+        },
+      ),
     insert: (pid: string, sid: string, table: string, values: JsonObject) =>
-      client.post<{ row: JsonObject }>(`/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}/rows`, {
-        values,
-      }),
-    update: (pid: string, sid: string, table: string, pk: JsonObject, values: JsonObject) =>
-      client.patch<{ row: JsonObject }>(`/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}/rows`, {
-        pk,
-        values,
-      }),
+      client.post<{ row: JsonObject }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}/rows`,
+        {
+          values,
+        },
+      ),
+    update: (
+      pid: string,
+      sid: string,
+      table: string,
+      pk: JsonObject,
+      values: JsonObject,
+    ) =>
+      client.patch<{ row: JsonObject }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}/rows`,
+        {
+          pk,
+          values,
+        },
+      ),
     remove: (pid: string, sid: string, table: string, pk: JsonObject) =>
-      client.request<Ok>("DELETE", `/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}/rows`, {
-        body: { pk },
-      }),
+      client.request<Ok>(
+        "DELETE",
+        `/projects/${e(pid)}/data-sources/${e(sid)}/tables/${e(table)}/rows`,
+        {
+          body: { pk },
+        },
+      ),
   },
 
   query: {
@@ -403,28 +634,47 @@ export const api = {
 
   // QUERY_EDITOR.md: snippets (POST needs developer+; PATCH/DELETE the snippet's owner or admin+).
   savedQueries: {
-    list: (pid: string) => client.get<SavedQuerySummary[]>(`/projects/${e(pid)}/saved-queries`),
-    get: (pid: string, id: string) => client.get<SavedQuery>(`/projects/${e(pid)}/saved-queries/${e(id)}`),
-    create: (pid: string, body: SavedQueryInput) => client.post<SavedQuery>(`/projects/${e(pid)}/saved-queries`, body),
+    list: (pid: string) =>
+      client.get<SavedQuerySummary[]>(`/projects/${e(pid)}/saved-queries`),
+    get: (pid: string, id: string) =>
+      client.get<SavedQuery>(`/projects/${e(pid)}/saved-queries/${e(id)}`),
+    create: (pid: string, body: SavedQueryInput) =>
+      client.post<SavedQuery>(`/projects/${e(pid)}/saved-queries`, body),
     update: (pid: string, id: string, body: SavedQueryUpdate) =>
-      client.patch<SavedQuery>(`/projects/${e(pid)}/saved-queries/${e(id)}`, body),
-    remove: (pid: string, id: string) => client.del<Ok>(`/projects/${e(pid)}/saved-queries/${e(id)}`),
+      client.patch<SavedQuery>(
+        `/projects/${e(pid)}/saved-queries/${e(id)}`,
+        body,
+      ),
+    remove: (pid: string, id: string) =>
+      client.del<Ok>(`/projects/${e(pid)}/saved-queries/${e(id)}`),
     versions: (pid: string, id: string) =>
-      client.get<{ versions: SavedQueryVersion[] }>(`/projects/${e(pid)}/saved-queries/${e(id)}/versions`),
+      client.get<{ versions: SavedQueryVersion[] }>(
+        `/projects/${e(pid)}/saved-queries/${e(id)}/versions`,
+      ),
     version: (pid: string, id: string, n: number) =>
-      client.get<SavedQueryVersion & { query_text: string }>(`/projects/${e(pid)}/saved-queries/${e(id)}/versions/${n}`),
+      client.get<SavedQueryVersion & { query_text: string }>(
+        `/projects/${e(pid)}/saved-queries/${e(id)}/versions/${n}`,
+      ),
     /** A new version holding an old version's text; 409 when `current_version` is stale. */
     restore: (pid: string, id: string, body: SavedQueryRestore) =>
-      client.post<SavedQuery>(`/projects/${e(pid)}/saved-queries/${e(id)}/restore`, body),
+      client.post<SavedQuery>(
+        `/projects/${e(pid)}/saved-queries/${e(id)}/restore`,
+        body,
+      ),
   },
 
   // QUERY_EDITOR.md: the server-side log of every run (`user=all` needs admin+; clear is owner-only).
   queryLog: {
     list: (pid: string, params: QueryLogParams) =>
-      client.get<QueryLogPage>(`/projects/${e(pid)}/query-log`, { query: params }),
-    get: (pid: string, runId: string) => client.get<QueryRun>(`/projects/${e(pid)}/query-log/${e(runId)}`),
+      client.get<QueryLogPage>(`/projects/${e(pid)}/query-log`, {
+        query: params,
+      }),
+    get: (pid: string, runId: string) =>
+      client.get<QueryRun>(`/projects/${e(pid)}/query-log/${e(runId)}`),
     clear: (pid: string, before: string) =>
-      client.del<{ deleted: number }>(`/projects/${e(pid)}/query-log`, { query: { before } }),
+      client.del<{ deleted: number }>(`/projects/${e(pid)}/query-log`, {
+        query: { before },
+      }),
   },
 
   documents: {
@@ -432,26 +682,50 @@ export const api = {
       pid: string,
       sid: string,
       collection: string,
-      params: { filter?: string; limit: number; skip?: number; cursor?: string },
+      params: {
+        filter?: string;
+        limit: number;
+        skip?: number;
+        cursor?: string;
+      },
     ) =>
       client.get<DocumentsResponse>(
         `/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(collection)}/documents`,
         { query: params },
       ),
-    insert: (pid: string, sid: string, collection: string, document: JsonObject) =>
+    insert: (
+      pid: string,
+      sid: string,
+      collection: string,
+      document: JsonObject,
+    ) =>
       client.post<{ document: JsonObject }>(
         `/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(collection)}/documents`,
         { document },
       ),
-    update: (pid: string, sid: string, collection: string, docId: string, set: JsonObject, unset?: string[]) =>
+    update: (
+      pid: string,
+      sid: string,
+      collection: string,
+      docId: string,
+      set: JsonObject,
+      unset?: string[],
+    ) =>
       client.patch<{ document: JsonObject }>(
         `/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(collection)}/documents/${e(docId)}`,
         { set, unset },
       ),
     remove: (pid: string, sid: string, collection: string, docId: string) =>
-      client.del<Ok>(`/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(collection)}/documents/${e(docId)}`),
+      client.del<Ok>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(collection)}/documents/${e(docId)}`,
+      ),
     /** Firestore: the collections under one document, as paths (`users/u1/orders`). */
-    subcollections: (pid: string, sid: string, collection: string, docId: string) =>
+    subcollections: (
+      pid: string,
+      sid: string,
+      collection: string,
+      docId: string,
+    ) =>
       client.get<{ collections: string[] }>(
         `/projects/${e(pid)}/data-sources/${e(sid)}/collections/${e(collection)}/documents/${e(docId)}/collections`,
       ),
@@ -459,74 +733,161 @@ export const api = {
 
   /** docs/CLOUD.md "C2-4": a Firebase Realtime Database, read and written by path ("" is the root). */
   rtdb: {
-    read: (pid: string, sid: string, path: string, query: Record<string, QueryValue> = {}) =>
-      client.get<RtdbRead>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`, { query: { path, ...query } }),
+    read: (
+      pid: string,
+      sid: string,
+      path: string,
+      query: Record<string, QueryValue> = {},
+    ) =>
+      client.get<RtdbRead>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`, {
+        query: { path, ...query },
+      }),
     set: (pid: string, sid: string, path: string, value: JsonValue) =>
-      client.put<{ path: string }>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`, { path, value }),
+      client.put<{ path: string }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`,
+        { path, value },
+      ),
     update: (pid: string, sid: string, path: string, value: JsonObject) =>
-      client.patch<{ path: string }>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`, { path, value }),
+      client.patch<{ path: string }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`,
+        { path, value },
+      ),
     push: (pid: string, sid: string, path: string, value: JsonValue) =>
-      client.post<{ path: string; key: string }>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`, { path, value }),
+      client.post<{ path: string; key: string }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`,
+        { path, value },
+      ),
     remove: (pid: string, sid: string, path: string) =>
-      client.del<{ path: string }>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`, { query: { path } }),
+      client.del<{ path: string }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/rtdb`,
+        { query: { path } },
+      ),
   },
 
   // DEPLOYMENTS.md: apps built from a Git repo and served next to the project's databases.
   apps: {
     list: (pid: string) => client.get<App[]>(`/projects/${e(pid)}/apps`),
-    create: (pid: string, body: AppInput) => client.post<AppCreated>(`/projects/${e(pid)}/apps`, body),
+    create: (pid: string, body: AppInput) =>
+      client.post<AppCreated>(`/projects/${e(pid)}/apps`, body),
     detect: (pid: string, repo_url: string, branch?: string) =>
-      client.post<AppDetectDraft>(`/projects/${e(pid)}/apps/detect`, branch ? { repo_url, branch } : { repo_url }),
-    get: (pid: string, id: string) => client.get<App>(`/projects/${e(pid)}/apps/${e(id)}`),
+      client.post<AppDetectDraft>(
+        `/projects/${e(pid)}/apps/detect`,
+        branch ? { repo_url, branch } : { repo_url },
+      ),
+    get: (pid: string, id: string) =>
+      client.get<App>(`/projects/${e(pid)}/apps/${e(id)}`),
     /** `teardown_job_id`: the target changed and the old cloud resources are being removed (docs/CLOUD.md).
      *  `warnings`: the repository changed and its GitHub webhook could not be moved. */
     update: (pid: string, id: string, body: AppPatch) =>
-      client.patch<App & { teardown_job_id?: string | null; build_job_id?: string | null; warnings?: string[] }>(`/projects/${e(pid)}/apps/${e(id)}`, body),
+      client.patch<
+        App & {
+          teardown_job_id?: string | null;
+          build_job_id?: string | null;
+          warnings?: string[];
+        }
+      >(`/projects/${e(pid)}/apps/${e(id)}`, body),
     /** `warnings`: hostnames whose Cloudflare DNS record could not be removed (remove by hand). */
     remove: (pid: string, id: string) =>
-      client.del<{ job_id: string; teardown_job_id: string | null; warnings?: string[] }>(`/projects/${e(pid)}/apps/${e(id)}`),
-    env: (pid: string, id: string) => client.get<{ env: Record<string, string> }>(`/projects/${e(pid)}/apps/${e(id)}/env`),
-    webhook: (pid: string, id: string) => client.get<AppWebhook>(`/projects/${e(pid)}/apps/${e(id)}/webhook`),
-    rotateWebhook: (pid: string, id: string) => client.post<AppWebhook>(`/projects/${e(pid)}/apps/${e(id)}/webhook/rotate`),
+      client.del<{
+        job_id: string;
+        teardown_job_id: string | null;
+        warnings?: string[];
+      }>(`/projects/${e(pid)}/apps/${e(id)}`),
+    env: (pid: string, id: string) =>
+      client.get<{ env: Record<string, string> }>(
+        `/projects/${e(pid)}/apps/${e(id)}/env`,
+      ),
+    webhook: (pid: string, id: string) =>
+      client.get<AppWebhook>(`/projects/${e(pid)}/apps/${e(id)}/webhook`),
+    rotateWebhook: (pid: string, id: string) =>
+      client.post<AppWebhook>(
+        `/projects/${e(pid)}/apps/${e(id)}/webhook/rotate`,
+      ),
     /** A `GitHubDispatch` instead of a deployment when the app builds on GitHub Actions (docs/CLOUD.md "C3"). */
     deploy: (pid: string, id: string, branch?: string) =>
-      client.post<Deployment | GitHubDispatch>(`/projects/${e(pid)}/apps/${e(id)}/deploy`, branch ? { branch } : {}),
+      client.post<Deployment | GitHubDispatch>(
+        `/projects/${e(pid)}/apps/${e(id)}/deploy`,
+        branch ? { branch } : {},
+      ),
     /** docs/CLOUD.md "C3": where a cloud app builds; `github` needs `confirm_billing` (GitHub build minutes). */
-    setBuild: (pid: string, id: string, location: "pc" | "github", confirm_billing = false) =>
-      client.put<App & { job_id: string | null }>(`/projects/${e(pid)}/apps/${e(id)}/build`, { location, confirm_billing }),
+    setBuild: (
+      pid: string,
+      id: string,
+      location: "pc" | "github",
+      confirm_billing = false,
+    ) =>
+      client.put<App & { job_id: string | null }>(
+        `/projects/${e(pid)}/apps/${e(id)}/build`,
+        { location, confirm_billing },
+      ),
     githubRuns: (pid: string, id: string) =>
-      client.get<{ runs: GitHubRun[]; runs_url: string | null }>(`/projects/${e(pid)}/apps/${e(id)}/github-runs`),
-    deployments: (pid: string, id: string, params: { limit?: number; before?: string } = {}) =>
-      client.get<DeploymentPage>(`/projects/${e(pid)}/apps/${e(id)}/deployments`, { query: params }),
+      client.get<{ runs: GitHubRun[]; runs_url: string | null }>(
+        `/projects/${e(pid)}/apps/${e(id)}/github-runs`,
+      ),
+    deployments: (
+      pid: string,
+      id: string,
+      params: { limit?: number; before?: string } = {},
+    ) =>
+      client.get<DeploymentPage>(
+        `/projects/${e(pid)}/apps/${e(id)}/deployments`,
+        { query: params },
+      ),
     deployment: (pid: string, id: string, dep: string, log = false) =>
-      client.get<Deployment>(`/projects/${e(pid)}/apps/${e(id)}/deployments/${e(dep)}`, { query: { log: log ? 1 : undefined } }),
+      client.get<Deployment>(
+        `/projects/${e(pid)}/apps/${e(id)}/deployments/${e(dep)}`,
+        { query: { log: log ? 1 : undefined } },
+      ),
     cancel: (pid: string, id: string, dep: string) =>
-      client.post<Deployment>(`/projects/${e(pid)}/apps/${e(id)}/deployments/${e(dep)}/cancel`),
+      client.post<Deployment>(
+        `/projects/${e(pid)}/apps/${e(id)}/deployments/${e(dep)}/cancel`,
+      ),
     rollback: (pid: string, id: string, dep: string) =>
-      client.post<Deployment>(`/projects/${e(pid)}/apps/${e(id)}/deployments/${e(dep)}/rollback`),
+      client.post<Deployment>(
+        `/projects/${e(pid)}/apps/${e(id)}/deployments/${e(dep)}/rollback`,
+      ),
     logs: (pid: string, id: string, tail = 200, deviceId?: string) =>
-      client.get<AppLogs>(`/projects/${e(pid)}/apps/${e(id)}/logs`, { query: { tail, device_id: deviceId } }),
+      client.get<AppLogs>(`/projects/${e(pid)}/apps/${e(id)}/logs`, {
+        query: { tail, device_id: deviceId },
+      }),
     addDomain: (pid: string, id: string, hostname: string) =>
-      client.post<Domain>(`/projects/${e(pid)}/apps/${e(id)}/domains`, { hostname }),
+      client.post<Domain>(`/projects/${e(pid)}/apps/${e(id)}/domains`, {
+        hostname,
+      }),
     removeDomain: (pid: string, id: string, domainId: string) =>
-      client.del<Ok & { warnings?: string[] }>(`/projects/${e(pid)}/apps/${e(id)}/domains/${e(domainId)}`),
+      client.del<Ok & { warnings?: string[] }>(
+        `/projects/${e(pid)}/apps/${e(id)}/domains/${e(domainId)}`,
+      ),
     checkDomain: (pid: string, id: string, domainId: string) =>
-      client.post<{ job_id: string }>(`/projects/${e(pid)}/apps/${e(id)}/domains/${e(domainId)}/check`),
+      client.post<{ job_id: string }>(
+        `/projects/${e(pid)}/apps/${e(id)}/domains/${e(domainId)}/check`,
+      ),
   },
 
   // docs/CLOUD.md: the owner's cloud accounts, and the targets / connections a project may use.
   cloud: {
-    list: () => client.get<{ connections: CloudConnection[] }>("/instance/cloud"),
-    requirements: () => client.get<CloudRequirements>("/instance/cloud/requirements"),
-    create: (body: CloudConnectionInput) => client.post<CloudConnection>("/instance/cloud", body),
-    check: (id: string) => client.post<CloudConnection>(`/instance/cloud/${e(id)}/check`),
+    list: () =>
+      client.get<{ connections: CloudConnection[] }>("/instance/cloud"),
+    requirements: () =>
+      client.get<CloudRequirements>("/instance/cloud/requirements"),
+    create: (body: CloudConnectionInput) =>
+      client.post<CloudConnection>("/instance/cloud", body),
+    check: (id: string) =>
+      client.post<CloudConnection>(`/instance/cloud/${e(id)}/check`),
     remove: (id: string) => client.del<Ok>(`/instance/cloud/${e(id)}`),
-    projectConnections: (pid: string) => client.get<CloudConnection[]>(`/projects/${e(pid)}/cloud/connections`),
-    targets: (pid: string) => client.get<CloudTarget[]>(`/projects/${e(pid)}/cloud/targets`),
+    projectConnections: (pid: string) =>
+      client.get<CloudConnection[]>(`/projects/${e(pid)}/cloud/connections`),
+    targets: (pid: string) =>
+      client.get<CloudTarget[]>(`/projects/${e(pid)}/cloud/targets`),
     // docs/CLOUD.md "C2": databases in the user's own AWS account.
-    databaseOptions: (pid: string) => client.get<CloudDatabaseOptions>(`/projects/${e(pid)}/cloud/databases/options`),
+    databaseOptions: (pid: string) =>
+      client.get<CloudDatabaseOptions>(
+        `/projects/${e(pid)}/cloud/databases/options`,
+      ),
     connectionDatabases: (pid: string, cid: string) =>
-      client.get<CloudDbListing>(`/projects/${e(pid)}/cloud/connections/${e(cid)}/databases`),
+      client.get<CloudDbListing>(
+        `/projects/${e(pid)}/cloud/connections/${e(cid)}/databases`,
+      ),
     /** Billable: `confirm_billing` must be true (the dialog asks with the cost note). */
     createDatabase: (
       pid: string,
@@ -542,69 +903,142 @@ export const api = {
         confirm_billing: boolean;
       },
       // `job` is null for a Realtime Database: Firebase answers with the ready database.
-    ) => client.post<{ data_source: DataSource; job: Job | null }>(`/projects/${e(pid)}/cloud/databases`, body),
+    ) =>
+      client.post<{ data_source: DataSource; job: Job | null }>(
+        `/projects/${e(pid)}/cloud/databases`,
+        body,
+      ),
     /** RDS: `resource_id` + login; DynamoDB: `tables`; Firestore (a Firebase connection): `database`. */
     connectDatabase: (
       pid: string,
       body:
-        | { connection_id: string; name: string; resource_id: string; username: string; password: string; database?: string }
+        | {
+            connection_id: string;
+            name: string;
+            resource_id: string;
+            username: string;
+            password: string;
+            database?: string;
+          }
         | { connection_id: string; name: string; tables: string[] }
         | { connection_id: string; name: string; database: string }
         | { connection_id: string; name: string; instance: string },
-    ) => client.post<DataSource>(`/projects/${e(pid)}/cloud/databases/connect`, body),
+    ) =>
+      client.post<DataSource>(
+        `/projects/${e(pid)}/cloud/databases/connect`,
+        body,
+      ),
     /** Realtime Database: the JSON at a path (default the whole database) as one object (docs/CLOUD.md "C2-4"). */
     rtdbExport: (pid: string, sid: string, path = "") =>
-      client.get<{ path: string; url: string; data: JsonValue }>(`/projects/${e(pid)}/data-sources/${e(sid)}/rtdb-export`, {
-        query: { path },
-      }),
+      client.get<{ path: string; url: string; data: JsonValue }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/rtdb-export`,
+        {
+          query: { path },
+        },
+      ),
     /** Firestore: every document of the top-level collections as one JSON object (docs/CLOUD.md "C2-3"). */
     firestoreExport: (pid: string, sid: string) =>
-      client.get<{ documents: number; truncated: boolean; collections: Record<string, JsonObject[]> }>(
-        `/projects/${e(pid)}/data-sources/${e(sid)}/firestore/export`,
-      ),
+      client.get<{
+        documents: number;
+        truncated: boolean;
+        collections: Record<string, JsonObject[]>;
+      }>(`/projects/${e(pid)}/data-sources/${e(sid)}/firestore/export`),
     // DynamoDB on-demand backups (billable: confirm_billing).
     backups: (pid: string, sid: string) =>
       client.get<{ backups: CloudBackup[]; cost: string; restore: string }>(
         `/projects/${e(pid)}/data-sources/${e(sid)}/cloud-backups`,
       ),
-    backup: (pid: string, sid: string, body: { table?: string; confirm_billing: boolean }) =>
-      client.post<{ backups: CloudBackup[] }>(`/projects/${e(pid)}/data-sources/${e(sid)}/cloud-backups`, body),
+    backup: (
+      pid: string,
+      sid: string,
+      body: { table?: string; confirm_billing: boolean },
+    ) =>
+      client.post<{ backups: CloudBackup[] }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/cloud-backups`,
+        body,
+      ),
   },
 
   // DEPLOYMENTS.md "Connect a Git repository": the signed-in user's GitHub connection.
   github: {
     status: () => client.get<GitHubStatus>("/integrations/github"),
     connect: () => client.post<{ url: string }>("/integrations/github/connect"),
-    disconnect: () => client.del<{ ok: true; apps_using_connection: number; message: string }>("/integrations/github"),
-    repos: (q = "") => client.get<GitHubRepo[]>("/integrations/github/repos", { query: { q: q || undefined } }),
+    disconnect: () =>
+      client.del<{ ok: true; apps_using_connection: number; message: string }>(
+        "/integrations/github",
+      ),
+    repos: (q = "") =>
+      client.get<GitHubRepo[]>("/integrations/github/repos", {
+        query: { q: q || undefined },
+      }),
   },
 
   // COHOSTING.md: live copies of managed databases on members' own PCs, sync conflicts, per-key history.
   cohosting: {
     setMemberCohost: (pid: string, userId: string, canCohost: boolean) =>
-      client.patch<Member>(`/projects/${e(pid)}/members/${e(userId)}`, { can_cohost: canCohost }),
-    eligibility: (pid: string) => client.get<CohostEligibility>(`/projects/${e(pid)}/cohosting/eligibility`),
+      client.patch<Member>(`/projects/${e(pid)}/members/${e(userId)}`, {
+        can_cohost: canCohost,
+      }),
+    eligibility: (pid: string) =>
+      client.get<CohostEligibility>(
+        `/projects/${e(pid)}/cohosting/eligibility`,
+      ),
     replicas: (pid: string, sid: string) =>
-      client.get<Replica[]>(`/projects/${e(pid)}/data-sources/${e(sid)}/replicas`),
+      client.get<Replica[]>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/replicas`,
+      ),
     createReplica: (pid: string, sid: string, deviceId: string) =>
-      client.post<Required<ReplicaResponse>>(`/projects/${e(pid)}/data-sources/${e(sid)}/replicas`, {
-        device_id: deviceId,
-      }),
-    replicaAction: (pid: string, sid: string, rid: string, action: "pause" | "resume" | "recopy") =>
-      client.post<ReplicaResponse>(`/projects/${e(pid)}/data-sources/${e(sid)}/replicas/${e(rid)}/${action}`),
+      client.post<Required<ReplicaResponse>>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/replicas`,
+        {
+          device_id: deviceId,
+        },
+      ),
+    replicaAction: (
+      pid: string,
+      sid: string,
+      rid: string,
+      action: "pause" | "resume" | "recopy",
+    ) =>
+      client.post<ReplicaResponse>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/replicas/${e(rid)}/${action}`,
+      ),
     removeReplica: (pid: string, sid: string, rid: string, drop: boolean) =>
-      client.del<Ok>(`/projects/${e(pid)}/data-sources/${e(sid)}/replicas/${e(rid)}`, { query: { drop } }),
+      client.del<Ok>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/replicas/${e(rid)}`,
+        { query: { drop } },
+      ),
     conflicts: (pid: string, sid: string, status: "open" | "resolved") =>
-      client.get<SyncConflict[]>(`/projects/${e(pid)}/data-sources/${e(sid)}/sync-conflicts`, { query: { status } }),
+      client.get<SyncConflict[]>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/sync-conflicts`,
+        { query: { status } },
+      ),
     conflict: (pid: string, sid: string, cid: string) =>
-      client.get<SyncConflict>(`/projects/${e(pid)}/data-sources/${e(sid)}/sync-conflicts/${e(cid)}`),
-    resolve: (pid: string, sid: string, cid: string, body: { choice: ConflictChoice; value?: JsonObject | null }) =>
-      client.post<SyncConflict>(`/projects/${e(pid)}/data-sources/${e(sid)}/sync-conflicts/${e(cid)}/resolve`, body),
+      client.get<SyncConflict>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/sync-conflicts/${e(cid)}`,
+      ),
+    resolve: (
+      pid: string,
+      sid: string,
+      cid: string,
+      body: { choice: ConflictChoice; value?: JsonObject | null },
+    ) =>
+      client.post<SyncConflict>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/sync-conflicts/${e(cid)}/resolve`,
+        body,
+      ),
     history: (pid: string, sid: string, table: string, key: JsonObject) =>
-      client.get<SyncHistoryItem[]>(`/projects/${e(pid)}/data-sources/${e(sid)}/sync-history`, {
-        query: { table, key: JSON.stringify(key) },
-      }),
-    restore: (pid: string, sid: string, body: { table: string; key: JsonObject; version_id: string }) =>
+      client.get<SyncHistoryItem[]>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/sync-history`,
+        {
+          query: { table, key: JSON.stringify(key) },
+        },
+      ),
+    restore: (
+      pid: string,
+      sid: string,
+      body: { table: string; key: JsonObject; version_id: string },
+    ) =>
       client.post<{ ok: true; resolved_conflict_id: string | null }>(
         `/projects/${e(pid)}/data-sources/${e(sid)}/sync-history/restore`,
         body,
@@ -626,7 +1060,8 @@ export const qk = {
   dataSources: (id: string) => ["projects", id, "data-sources"] as const,
   schema: (id: string) => ["projects", id, "schema"] as const,
   /** Schema of one source (`?source_id=`); a prefix of `schema` so both invalidate together. */
-  sourceSchema: (id: string, sid: string) => ["projects", id, "schema", "source", sid] as const,
+  sourceSchema: (id: string, sid: string) =>
+    ["projects", id, "schema", "source", sid] as const,
   rows: (id: string, sid: string, table: string, params: object) =>
     ["projects", id, "rows", sid, table, params] as const,
   documents: (id: string, sid: string, coll: string, params: object) =>
@@ -639,10 +1074,14 @@ export const qk = {
   enrollStatus: ["device-local", "enroll-status"] as const,
   placement: (id: string) => ["projects", id, "placement-options"] as const,
   deletedSources: (id: string) => ["projects", id, "deleted-sources"] as const,
-  backupsFor: (id: string, sid: string) => ["projects", id, "backups", sid] as const,
-  backups: (id: string, sid: string) => ["projects", id, "backups", sid, "list"] as const,
-  backupPolicy: (id: string, sid: string) => ["projects", id, "backups", sid, "policy"] as const,
-  recoveryWindow: (id: string, sid: string) => ["projects", id, "backups", sid, "window"] as const,
+  backupsFor: (id: string, sid: string) =>
+    ["projects", id, "backups", sid] as const,
+  backups: (id: string, sid: string) =>
+    ["projects", id, "backups", sid, "list"] as const,
+  backupPolicy: (id: string, sid: string) =>
+    ["projects", id, "backups", sid, "policy"] as const,
+  recoveryWindow: (id: string, sid: string) =>
+    ["projects", id, "backups", sid, "window"] as const,
   backupDiff: (id: string, sid: string, from: string, to: string) =>
     ["projects", id, "backups", sid, "diff", from, to] as const,
   backupSchema: (id: string, sid: string, backupId: string) =>
@@ -650,11 +1089,15 @@ export const qk = {
   jobs: (id: string) => ["projects", id, "jobs"] as const,
   transfers: ["transfers"] as const,
   savedQueries: (id: string) => ["projects", id, "saved-queries"] as const,
-  savedQueryVersions: (id: string, sqId: string) => ["projects", id, "saved-queries", sqId, "versions"] as const,
-  savedQueryVersion: (id: string, sqId: string, n: number) => ["projects", id, "saved-queries", sqId, "versions", n] as const,
+  savedQueryVersions: (id: string, sqId: string) =>
+    ["projects", id, "saved-queries", sqId, "versions"] as const,
+  savedQueryVersion: (id: string, sqId: string, n: number) =>
+    ["projects", id, "saved-queries", sqId, "versions", n] as const,
   /** Every log listing of one source (prefix of `queryLog`), invalidated after each run. */
-  queryLogFor: (id: string, sid: string) => ["projects", id, "query-log", sid] as const,
-  queryLog: (id: string, sid: string, user: "me" | "all") => ["projects", id, "query-log", sid, user] as const,
+  queryLogFor: (id: string, sid: string) =>
+    ["projects", id, "query-log", sid] as const,
+  queryLog: (id: string, sid: string, user: "me" | "all") =>
+    ["projects", id, "query-log", sid, user] as const,
   job: (id: string, jobId: string) => ["projects", id, "jobs", jobId] as const,
   instanceBackups: ["instance", "backups"] as const,
   remoteAccess: ["instance", "remote-access"] as const,
@@ -663,22 +1106,29 @@ export const qk = {
   alerts: ["instance", "alerts"] as const,
   apps: (id: string) => ["projects", id, "apps"] as const,
   app: (id: string, appId: string) => ["projects", id, "apps", appId] as const,
-  deployments: (id: string, appId: string) => ["projects", id, "apps", appId, "deployments"] as const,
-  deployment: (id: string, appId: string, dep: string) => ["projects", id, "apps", appId, "deployments", dep] as const,
-  appLogs: (id: string, appId: string) => ["projects", id, "apps", appId, "logs"] as const,
-  githubRuns: (id: string, appId: string) => ["projects", id, "apps", appId, "github-runs"] as const,
+  deployments: (id: string, appId: string) =>
+    ["projects", id, "apps", appId, "deployments"] as const,
+  deployment: (id: string, appId: string, dep: string) =>
+    ["projects", id, "apps", appId, "deployments", dep] as const,
+  appLogs: (id: string, appId: string) =>
+    ["projects", id, "apps", appId, "logs"] as const,
+  githubRuns: (id: string, appId: string) =>
+    ["projects", id, "apps", appId, "github-runs"] as const,
   github: ["integrations", "github"] as const,
   cloudConnections: ["instance", "cloud"] as const,
   cloudRequirements: ["instance", "cloud", "requirements"] as const,
-  projectCloudConnections: (id: string) => ["projects", id, "cloud", "connections"] as const,
+  projectCloudConnections: (id: string) =>
+    ["projects", id, "cloud", "connections"] as const,
   cloudTargets: (id: string) => ["projects", id, "cloud", "targets"] as const,
   githubRepos: (q: string) => ["integrations", "github", "repos", q] as const,
-  cohostEligibility: (id: string) => ["projects", id, "cohosting", "eligibility"] as const,
+  cohostEligibility: (id: string) =>
+    ["projects", id, "cohosting", "eligibility"] as const,
   /** Everything sync-related of one source (prefix of the keys below), invalidated after each resolve/restore. */
   syncFor: (id: string, sid: string) => ["projects", id, "sync", sid] as const,
   syncConflicts: (id: string, sid: string, status: "open" | "resolved") =>
     ["projects", id, "sync", sid, "conflicts", status] as const,
-  syncConflict: (id: string, sid: string, cid: string) => ["projects", id, "sync", sid, "conflict", cid] as const,
+  syncConflict: (id: string, sid: string, cid: string) =>
+    ["projects", id, "sync", sid, "conflict", cid] as const,
   syncHistory: (id: string, sid: string, table: string, key: string) =>
     ["projects", id, "sync", sid, "history", table, key] as const,
 };

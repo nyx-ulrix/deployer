@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from app.deps import DbSession, InstanceOwner
 from app.errors import ApiError, not_found
 from app.models import AuditLog, Project, ProjectMember, User
+from app.routers.api_keys import keys_to_rotate
 from app.serializers import iso, project_out, user_out
 from app.services import audit, deployments, remote_access, tokens
 from app.services.alerts import validate_webhook_url
@@ -141,7 +142,8 @@ class UserUpdate(BaseModel):
 @router.patch("/instance/users/{user_id}")
 def update_user(user_id: str, body: UserUpdate, request: Request, owner: InstanceOwner, db: DbSession) -> dict:
     """Disable or re-enable an account (A-023). Disabling signs it out everywhere; its access tokens
-    already stop at the next request (deps.get_current_user checks is_active)."""
+    already stop at the next request (deps.get_current_user checks is_active). Also returns
+    api_keys_to_rotate, grouped per project (empty when enabling)."""
     user = db.get(User, user_id)
     if user is None:
         raise not_found("User")
@@ -160,7 +162,15 @@ def update_user(user_id: str, body: UserUpdate, request: Request, owner: Instanc
             is_active=body.is_active,
         )
         db.commit()
-    return user_out(user)
+    # V-06: disabling doesn't stop keys they created or revealed in projects they don't own, so name
+    # them per project; each project's admins revoke them (the instance owner may not be a member).
+    # ponytail: two queries per project, fine for a home instance; one grouped query if that grows.
+    rotate = []
+    if not body.is_active:
+        for project in db.scalars(select(Project).order_by(Project.name)):
+            if keys := keys_to_rotate(db, project.id, user.id):
+                rotate.append({"project_id": project.id, "project_name": project.name, "keys": keys})
+    return {**user_out(user), "api_keys_to_rotate": rotate}
 
 
 @router.get("/instance/projects")

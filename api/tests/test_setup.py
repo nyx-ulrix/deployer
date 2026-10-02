@@ -360,3 +360,38 @@ def test_is_initialized_false_without_users(db):
     from app.services.instance_settings import is_initialized
 
     assert is_initialized(db) is False
+
+
+def test_disabling_lists_api_keys_to_rotate_per_project(
+    client, owner, owner_headers, make_user, make_project, auth_headers
+):
+    # V-06: keys the disabled person created or revealed keep working in projects they don't own.
+    admin = make_user("admin@example.com")
+    shop = make_project(owner, "Shop", members={admin: "admin"})
+    blog = make_project(owner, "Blog", members={admin: "admin"})
+    make_project(owner, "Quiet", members={admin: "admin"})
+
+    def make_key(project, user, name):
+        resp = client.post(
+            f"/v1/projects/{project.id}/api-keys", json={"name": name, "role": "service"}, headers=auth_headers(user)
+        )
+        return resp.json()["api_key"]["id"]
+
+    shop_key = make_key(shop, admin, "theirs")
+    make_key(shop, owner, "untouched")
+    blog_key = make_key(blog, owner, "revealed")
+    assert (
+        client.get(f"/v1/projects/{blog.id}/api-keys/{blog_key}/reveal", headers=auth_headers(admin)).status_code == 200
+    )
+
+    resp = client.patch(f"/v1/instance/users/{admin.id}", json={"is_active": False}, headers=owner_headers)
+    assert resp.status_code == 200 and resp.json()["is_active"] is False
+    groups = resp.json()["api_keys_to_rotate"]
+    assert [(g["project_name"], [k["id"] for k in g["keys"]]) for g in groups] == [
+        ("Blog", [blog_key]),
+        ("Shop", [shop_key]),
+    ]
+    assert groups[0]["project_id"] == blog.id
+
+    resp = client.patch(f"/v1/instance/users/{admin.id}", json={"is_active": True}, headers=owner_headers)
+    assert resp.json()["api_keys_to_rotate"] == []
