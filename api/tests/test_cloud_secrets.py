@@ -27,8 +27,9 @@ def aws(monkeypatch):
     fake = FakeCloud(
         ensure_repository=lambda name: f"123456789012.dkr.ecr.eu-west-1.amazonaws.com/{name}",
         registry_login=("123456789012.dkr.ecr.eu-west-1.amazonaws.com", "AWS", "ecr-" + pysecrets.token_hex(8)),
+        ensure_boundary={"arn": "arn:aws:iam::123456789012:policy/deployer-boundary", "current": True},
         ensure_access_role="arn:aws:iam::123456789012:role/deployer-apprunner-ecr-access",
-        ensure_instance_role=lambda name, policy: f"arn:aws:iam::123456789012:role/{name}",
+        ensure_instance_role=lambda name, policy, boundary: f"arn:aws:iam::123456789012:role/{name}",
         create_service={"arn": "arn:svc", "url": "https://abc.eu-west-1.awsapprunner.com", "operation_id": "op1"},
         update_service="op2",
         operation="SUCCEEDED",
@@ -140,7 +141,7 @@ def test_aws_app_keeps_its_secrets_in_secrets_manager(client, db, docker, team, 
     assert set(refs) == {"API_KEY", "NODE_ENV", "DEPLOYER_DB_SHOP_DB_PASSWORD", "DEPLOYER_DB_SHOP_DB_URL"}
     assert refs["API_KEY"] == ARN.format(f"{name}-API_KEY")
     assert not set(refs) & set(plain) and plain["DEPLOYER_DB_SHOP_DB_HOST"] == "shop.abc.eu-west-1.rds.amazonaws.com"
-    ((role, policy),) = aws.args("ensure_instance_role")
+    ((role, policy, _),) = aws.args("ensure_instance_role")
     assert role == cloud_deploy.instance_role_name(app)
     assert policy["Statement"] == [
         {"Effect": "Allow", "Action": "secretsmanager:GetSecretValue", "Resource": sorted(refs.values())}
@@ -188,7 +189,7 @@ def test_aws_app_keeps_its_secrets_in_secrets_manager(client, db, docker, team, 
     assert sorted(a[0] for a in aws.args("delete_secret")) == sorted(
         ARN.format(f"{name}-{k}") for k in ("API_KEY", "DEPLOYER_DB_SHOP_DB_PASSWORD", "DEPLOYER_DB_SHOP_DB_URL")
     )
-    assert aws.args("ensure_instance_role") == [(role, None)]  # the role stays, allowed nothing
+    assert [a[:2] for a in aws.args("ensure_instance_role")] == [(role, None)]  # the role stays, allowed nothing
     assert cloud_secrets.state_of(db.get(App, app.id)) == {"enabled": False, "stored": {}}
 
     # Deleting the app deletes what is still in the store.
@@ -231,7 +232,7 @@ def test_env_change_reaches_a_github_built_app_without_a_rollback(client, db, do
     resp = client.patch(url, json={"env": {"A": "2", "B": "3"}}, headers=team["dev"])
     assert resp.status_code == 200, resp.text
     dep = run_env_deployment(db, resp)
-    assert docker.steps() == [] and aws.names() == ["update_service", "operation"]
+    assert docker.steps() == [] and aws.names()[-2:] == ["update_service", "operation"]
     assert aws.args("update_service")[0][1] == f"{ecr}:gh-7-1" and aws.args("update_service")[0][3] == {
         "A": "2",
         "B": "3",

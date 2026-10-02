@@ -335,12 +335,13 @@ class Publish:
         self.log.write("Environment: " + (", ".join(sorted(env)) or "(none)") + " - nothing that points at this PC")
         env, secret_arns, stale = cloud_secrets.sync(self, aws, env, databases)
         connector = self.connect_databases(aws, databases)
-        instance_role = self.instance_role(aws, databases, list(secret_arns.values()))
+        boundary = self.boundary(aws)
+        instance_role = self.instance_role(aws, databases, list(secret_arns.values()), boundary)
         extra = {"instance_role_arn": instance_role} if instance_role else {}
         if secret_arns:
             extra["secret_arns"] = secret_arns
-        if not self.state.get("access_role_arn"):
-            self.save(access_role_arn=aws.ensure_access_role())
+        # Every deploy, not once: a role made before the boundary existed gets it here.
+        self.save(access_role_arn=aws.ensure_access_role(boundary))
         port = internal_port(self.app)
         self.ctx.progress(0.85, "Rolling out", force=True)
         role = self.state["access_role_arn"]
@@ -380,10 +381,23 @@ class Publish:
             self.log.write("Databases (in your cloud account): " + ", ".join(d["name"] for d in databases))
         return databases
 
-    def instance_role(self, aws, databases: list[dict], secret_arns: list[str]) -> str | None:
-        """docs/CLOUD.md "C2-2", "G1": the IAM role the app's code runs as, allowed to use exactly the project's
-        DynamoDB tables and to read exactly its own secrets (created on first use, emptied when the app has
-        neither). None: no role needed."""
+    def boundary(self, aws) -> str:
+        """docs/CLOUD.md "G3": the ARN of the account's `deployer-boundary` policy, which caps every role
+        below; an account whose copy is older than this Deployer version is told so in the build log."""
+        account = self.config.get("account_id") or aws.identity()["account"]
+        boundary = aws.ensure_boundary(account)
+        if not boundary["current"]:
+            self.log.write(
+                f"The IAM policy {cloud_aws.BOUNDARY_POLICY} in your AWS account is older than this version of "
+                "Deployer expects: paste the current one over it (Settings -> Cloud accounts), or apps and GitHub "
+                "Actions may be refused something they need"
+            )
+        return boundary["arn"]
+
+    def instance_role(self, aws, databases: list[dict], secret_arns: list[str], boundary_arn: str) -> str | None:
+        """docs/CLOUD.md "C2-2", "G1", "G3": the IAM role the app's code runs as (within the boundary), allowed
+        to use exactly the project's DynamoDB tables and to read exactly its own secrets (created on first use,
+        emptied when the app has neither). None: no role needed."""
         account, region = self.config.get("account_id") or "*", self.config.get("region")
         arns = [
             f"arn:aws:dynamodb:{region}:{account}:table/{t}"
@@ -415,7 +429,7 @@ class Publish:
             resources = arns + [f"{a}/index/*" for a in arns]
             statements.append({"Effect": "Allow", "Action": actions, "Resource": resources})
         policy = {"Version": "2012-10-17", "Statement": statements} if statements else None
-        arn = aws.ensure_instance_role(name, policy)
+        arn = aws.ensure_instance_role(name, policy, boundary_arn)
         self.save(instance_role=name, instance_role_arn=arn)
         return arn
 

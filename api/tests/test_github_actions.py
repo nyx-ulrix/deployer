@@ -61,7 +61,8 @@ def people(make_user, make_project, auth_headers):
 def aws(monkeypatch):
     fake = FakeCloud(
         ensure_github_oidc=lambda account: f"arn:aws:iam::{account}:oidc-provider/{cloud_aws.GITHUB_OIDC_HOST}",
-        ensure_github_role=lambda name, trust, policy: f"arn:aws:iam::1:role/{name}",
+        ensure_boundary={"arn": "arn:aws:iam::1:policy/deployer-boundary", "current": True},
+        ensure_github_role=lambda name, trust, policy, boundary: f"arn:aws:iam::1:role/{name}",
         update_service="op9",
         operation="SUCCEEDED",
         ensure_access_role=AWS_APP_STATE["access_role_arn"],
@@ -194,7 +195,8 @@ def test_aws_setup_role_trust_policy_and_workflow(client, db, people, gh, aws):
     assert "no public address" in build["message"] and build["reports"] is False
 
     assert aws.args("ensure_github_oidc") == [("1",)]
-    (name, trust, policy) = aws.args("ensure_github_role")[0]
+    (name, trust, policy, boundary) = aws.args("ensure_github_role")[0]
+    assert boundary == "arn:aws:iam::1:policy/deployer-boundary"  # G3: the role is capped by it
     assert name == github_actions.role_name(app) and name.startswith("deployer-gha-") and len(name) <= 64
     condition = trust["Statement"][0]["Condition"]["StringEquals"]
     assert condition == {

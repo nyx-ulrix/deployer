@@ -336,7 +336,10 @@ def _aws_identity(app: App, config: dict, repo: str, save) -> dict:
     }
     name = role_name(app)
     save(role=name)  # before creating it: an interrupted job still tears it down
-    arn = aws.ensure_github_role(name, trust, aws_policy(app.target, app.cloud_state, config["region"], account))
+    boundary = aws.ensure_boundary(account)["arn"]  # docs/CLOUD.md "G3": the role may never reach past it
+    arn = aws.ensure_github_role(
+        name, trust, aws_policy(app.target, app.cloud_state, config["region"], account), boundary
+    )
     save(role_arn=arn)
     return {"role_arn": arn, "region": config["region"]}
 

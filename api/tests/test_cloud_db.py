@@ -48,6 +48,7 @@ def aws(monkeypatch):
         ensure_vpc_connector={"arn": "arn:aws:apprunner:eu-west-1:1:vpcconnector/deployer-vpc", "group_id": "sg-conn"},
         ensure_repository=lambda name: f"123456789012.dkr.ecr.eu-west-1.amazonaws.com/{name}",
         registry_login=("123456789012.dkr.ecr.eu-west-1.amazonaws.com", "AWS", "ecr-pw"),
+        ensure_boundary={"arn": "arn:aws:iam::123456789012:policy/deployer-boundary", "current": True},
         ensure_access_role="arn:aws:iam::123456789012:role/deployer-apprunner-ecr-access",
         create_service={"arn": "arn:svc", "url": "https://abc.eu-west-1.awsapprunner.com", "operation_id": "op1"},
         operation="SUCCEEDED",

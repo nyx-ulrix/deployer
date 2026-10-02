@@ -1375,7 +1375,8 @@ export type CloudConnectionInput = {
 };
 
 export type CloudRequirements = {
-  aws: { policy: unknown };
+  /** `boundary`: the `deployer-boundary` permissions boundary Deployer puts on every role it creates (G3). */
+  aws: { policy: unknown; boundary: unknown; boundary_name: string };
   firebase: {
     /** `on: "service_account"`: granted on the deployer service account itself, not the project. */
     roles: {

@@ -138,6 +138,19 @@ Security fixes are made for the latest release. Update with `deployer update`.
   keys write; the root can't be replaced or deleted). The role it needs (Firebase Realtime Database Admin)
   also creates instances; Deployer only ever creates the project's default one, after the billing
   confirmation, and never deletes one.
+- **IAM roles Deployer creates** ([docs/CLOUD.md](docs/CLOUD.md) "G3"): the AWS key creates roles that run
+  outside this PC - the App Runner access role, one `deployer-app-*` instance role per app with DynamoDB
+  tables, one `deployer-gha-*` role per app built on GitHub Actions - and writes their policies itself, so a
+  bug or a stolen key could have given such a role anything. Every role Deployer creates carries the managed
+  policy `deployer-boundary` as its **permissions boundary** (the ceiling: `deployer-*` images, services, sites
+  and secrets, item access to the project's tables - nothing in IAM, nothing that creates or deletes
+  resources), and the key's policy allows `iam:CreateRole` / `PutRolePolicy` / `AttachRolePolicy` /
+  `PutRolePermissionsBoundary` only when `iam:PermissionsBoundary` is that policy's ARN. The key can create
+  the boundary policy once and read it, never version, replace or delete it or lift it from a role, so after
+  the first deploy nothing done with the key can widen what an app or workflow may do beyond the boundary;
+  owners who want the key never to write it create `deployer-boundary` themselves from the JSON in Settings ->
+  Cloud accounts first. Roles made before this existed get the boundary the next time Deployer touches them.
+  The key's own direct permissions are still bounded by its policy alone.
 - **Rate limits:** sign-in 10 attempts / 15 min per IP+email and 50 failed attempts / hour per email
   from any IP (so rotating or forging IPs doesn't buy more guesses; the flip side is that someone
   guessing can lock an account for up to an hour - `deployer reset-password` clears it), plus 30

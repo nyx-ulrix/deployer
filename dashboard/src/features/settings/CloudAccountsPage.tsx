@@ -60,7 +60,10 @@ export function CloudAccountsPage() {
           <div className="mt-4 space-y-3">
             {requirements.isError && <ErrorAlert error={requirements.error} />}
             {provider === "aws" ? (
-              <AwsGuide policy={requirements.data ? JSON.stringify(requirements.data.aws.policy, null, 2) : ""} />
+              <AwsGuide
+                policy={requirements.data ? JSON.stringify(requirements.data.aws.policy, null, 2) : ""}
+                boundary={requirements.data ? JSON.stringify(requirements.data.aws.boundary, null, 2) : ""}
+              />
             ) : (
               <FirebaseGuide roles={requirements.data?.firebase.roles ?? []} apis={requirements.data?.firebase.apis ?? []} />
             )}
@@ -194,7 +197,7 @@ function useCreate(onDone: () => void) {
 
 const AWS_TITLES = ["Create an IAM user for Deployer", "Give it exactly the permissions it needs", "Create an access key", "Paste and validate"];
 
-function AwsGuide({ policy }: { policy: string }) {
+function AwsGuide({ policy, boundary }: { policy: string; boundary: string }) {
   const { steps, ack } = useGuide(AWS_TITLES.length);
   const [form, setForm] = useState({ name: "AWS", access_key_id: "", secret_access_key: "", region: "us-east-1", role_arn: "", project_id: "" });
   const create = useCreate(() => setForm((f) => ({ ...f, access_key_id: "", secret_access_key: "" })));
@@ -244,6 +247,19 @@ function AwsGuide({ policy }: { policy: string }) {
             repository can use).
           </p>
           {policy && <CopyField label="Policy JSON" value={policy} />}
+          <p className="text-muted">
+            <strong>A ceiling for the roles Deployer makes.</strong> Deployer creates IAM roles for your apps and for GitHub Actions
+            (<code className="font-mono">deployer-app-*</code>, <code className="font-mono">deployer-gha-*</code>). The policy above only lets
+            it create them with the <em>permissions boundary</em> <code className="font-mono">deployer-boundary</code> attached, which is the
+            most any of those roles can ever do: pushing and pulling <code className="font-mono">deployer-*</code> images, updating{" "}
+            <code className="font-mono">deployer-*</code> services and sites, reading <code className="font-mono">deployer-*</code> secrets,
+            using the project&apos;s database tables. So even a mistake, or someone who got hold of the access key, cannot give an app or a
+            workflow more than that. Deployer creates <code className="font-mono">deployer-boundary</code> on the first deploy and can
+            never change or delete it. To create it yourself first (so the key never writes it), or when a build log says the account&apos;s
+            copy is older than this version of Deployer, create / edit the policy <code className="font-mono">deployer-boundary</code> with this
+            JSON:
+          </p>
+          {boundary && <CopyField label="deployer-boundary JSON" value={boundary} />}
           <DoneButton status={steps[1]} onClick={() => ack(1)} />
         </div>
       </StepCard>

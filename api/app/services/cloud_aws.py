@@ -30,6 +30,88 @@ GITHUB_OIDC_HOST = "token.actions.githubusercontent.com"
 GITHUB_ROLE_PREFIX = "deployer-gha-"
 GITHUB_ROLE_POLICY = "deployer-deploy"
 ECR_ACCESS_POLICY = "arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess"
+# docs/CLOUD.md "G3": the permissions boundary on every role Deployer creates (the access role, the
+# deployer-app-* instance roles, the deployer-gha-* GitHub Actions roles). A role may at most do what is
+# allowed both here and in its own policy, so even a wrong (or hostile) role policy written with the
+# Deployer key cannot reach past this. Created once per account; Deployer never changes it (the IAM user
+# may not: a key that could rewrite the boundary could lift it), so when this document changes the owner
+# pastes the new one over it (Settings -> Cloud accounts).
+BOUNDARY_POLICY = "deployer-boundary"
+BOUNDARY_DOCUMENT = {
+    "Version": "2012-10-17",
+    "Statement": [
+        {"Sid": "RegistryLogin", "Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*"},
+        {
+            "Sid": "Images",
+            "Effect": "Allow",
+            "Action": [
+                "ecr:BatchCheckLayerAvailability",
+                "ecr:InitiateLayerUpload",
+                "ecr:UploadLayerPart",
+                "ecr:CompleteLayerUpload",
+                "ecr:PutImage",
+                "ecr:BatchGetImage",
+                "ecr:GetDownloadUrlForLayer",
+                "ecr:DescribeImages",
+            ],
+            "Resource": "arn:aws:ecr:*:*:repository/deployer-*",
+        },
+        {
+            "Sid": "AppRunner",
+            "Effect": "Allow",
+            "Action": ["apprunner:DescribeService", "apprunner:UpdateService", "apprunner:ListOperations"],
+            "Resource": "arn:aws:apprunner:*:*:service/deployer-*",
+        },
+        {
+            "Sid": "PassAccessRole",
+            "Effect": "Allow",
+            "Action": "iam:PassRole",
+            "Resource": f"arn:aws:iam::*:role/{ACCESS_ROLE}",
+        },
+        {
+            "Sid": "StaticSites",
+            "Effect": "Allow",
+            "Action": ["s3:ListBucket", "s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload"],
+            "Resource": ["arn:aws:s3:::deployer-*", "arn:aws:s3:::deployer-*/*"],
+        },
+        {
+            # Distributions have ids, not names: a role's own policy names the one it may change.
+            "Sid": "CloudFront",
+            "Effect": "Allow",
+            "Action": [
+                "cloudfront:GetDistributionConfig",
+                "cloudfront:UpdateDistribution",
+                "cloudfront:CreateInvalidation",
+            ],
+            "Resource": "*",
+        },
+        {
+            "Sid": "Secrets",
+            "Effect": "Allow",
+            "Action": ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"],
+            "Resource": "arn:aws:secretsmanager:*:*:secret:deployer-*",
+        },
+        {
+            # Items only (never CreateTable / DeleteTable); any table, because connected tables keep their
+            # own names - a role's own policy names exactly its project's tables.
+            "Sid": "DynamoDBItems",
+            "Effect": "Allow",
+            "Action": [
+                "dynamodb:GetItem",
+                "dynamodb:BatchGetItem",
+                "dynamodb:Query",
+                "dynamodb:Scan",
+                "dynamodb:PutItem",
+                "dynamodb:UpdateItem",
+                "dynamodb:DeleteItem",
+                "dynamodb:BatchWriteItem",
+                "dynamodb:ConditionCheckItem",
+                "dynamodb:DescribeTable",
+            ],
+            "Resource": ["arn:aws:dynamodb:*:*:table/*", "arn:aws:dynamodb:*:*:table/*/index/*"],
+        },
+    ],
+}
 CACHING_OPTIMIZED = "658327ea-f89d-4fab-a63d-7e88639e58f6"  # AWS managed cache policy
 CERT_REGION = "us-east-1"  # CloudFront only uses ACM certificates from us-east-1
 CHECKIP_URL = "https://checkip.amazonaws.com"
@@ -403,13 +485,46 @@ class AwsClient:
             if _code(exc) != "RepositoryNotFoundException":
                 raise
 
-    # --- IAM: the role App Runner pulls images from ECR with --------------------------------------
+    # --- IAM: the permissions boundary, and the role App Runner pulls images from ECR with ------------
 
     @_wrap
-    def ensure_access_role(self) -> str:
+    def ensure_boundary(self, account_id: str) -> dict:
+        """`{arn, current}` of the account's `deployer-boundary` managed policy (BOUNDARY_DOCUMENT), created
+        once and never changed by Deployer. `current` is False when the account's copy differs from this
+        version's document: the owner pastes the new one over it."""
+        iam = self._c("iam")
+        arn = f"arn:aws:iam::{account_id}:policy/{BOUNDARY_POLICY}"
+        try:
+            iam.create_policy(
+                PolicyName=BOUNDARY_POLICY,
+                PolicyDocument=json.dumps(BOUNDARY_DOCUMENT),
+                Description="Deployer: the most any role Deployer creates (apps, GitHub Actions) may do",
+            )
+            return {"arn": arn, "current": True}
+        except Exception as exc:  # noqa: BLE001
+            if _code(exc) != "EntityAlreadyExists":
+                raise
+        version = iam.get_policy(PolicyArn=arn)["Policy"]["DefaultVersionId"]
+        document = iam.get_policy_version(PolicyArn=arn, VersionId=version)["PolicyVersion"]["Document"]
+        if isinstance(document, str):  # botocore normally decodes it already
+            from urllib.parse import unquote
+
+            document = json.loads(unquote(document))
+        return {"arn": arn, "current": document == BOUNDARY_DOCUMENT}
+
+    @staticmethod
+    def _bound(iam, role: dict, boundary_arn: str) -> None:
+        """Puts the boundary on an existing role that lacks it (made before the boundary existed)."""
+        if (role.get("PermissionsBoundary") or {}).get("PermissionsBoundaryArn") != boundary_arn:
+            iam.put_role_permissions_boundary(RoleName=role["RoleName"], PermissionsBoundary=boundary_arn)
+
+    @_wrap
+    def ensure_access_role(self, boundary_arn: str) -> str:
         iam = self._c("iam")
         try:
-            return iam.get_role(RoleName=ACCESS_ROLE)["Role"]["Arn"]
+            role = iam.get_role(RoleName=ACCESS_ROLE)["Role"]
+            self._bound(iam, role, boundary_arn)
+            return role["Arn"]
         except Exception as exc:  # noqa: BLE001
             if _code(exc) != "NoSuchEntity":
                 raise
@@ -427,6 +542,7 @@ class AwsClient:
             RoleName=ACCESS_ROLE,
             AssumeRolePolicyDocument=json.dumps(trust),
             Description="Lets App Runner pull images Deployer pushed to ECR",
+            PermissionsBoundary=boundary_arn,
         )["Role"]["Arn"]
         iam.attach_role_policy(RoleName=ACCESS_ROLE, PolicyArn=ECR_ACCESS_POLICY)
         return arn
@@ -778,12 +894,15 @@ class AwsClient:
         return out
 
     @_wrap
-    def ensure_instance_role(self, name: str, policy: dict | None) -> str:
-        """The App Runner instance role `name` (created once) the app's code runs as; its one inline policy
-        is `policy` (the DynamoDB tables it may use), removed when None. Returns the role ARN."""
+    def ensure_instance_role(self, name: str, policy: dict | None, boundary_arn: str) -> str:
+        """The App Runner instance role `name` (created once, within the boundary) the app's code runs as;
+        its one inline policy is `policy` (the DynamoDB tables it may use), removed when None. Returns the
+        role ARN."""
         iam = self._c("iam")
         try:
-            arn = iam.get_role(RoleName=name)["Role"]["Arn"]
+            role = iam.get_role(RoleName=name)["Role"]
+            self._bound(iam, role, boundary_arn)
+            arn = role["Arn"]
         except Exception as exc:  # noqa: BLE001
             if _code(exc) != "NoSuchEntity":
                 raise
@@ -801,6 +920,7 @@ class AwsClient:
                 RoleName=name,
                 AssumeRolePolicyDocument=json.dumps(trust),
                 Description="Deployer: what this App Runner app's code may use",
+                PermissionsBoundary=boundary_arn,
                 Tags=[TAG],
             )["Role"]["Arn"]
         if policy:
@@ -869,12 +989,14 @@ class AwsClient:
         return f"arn:aws:iam::{account_id}:oidc-provider/{GITHUB_OIDC_HOST}"
 
     @_wrap
-    def ensure_github_role(self, name: str, trust: dict, policy: dict) -> str:
-        """The role one app's workflow assumes: `trust` (its repository and branch) is (re)written, and
-        its one inline policy `policy` (that app's resources only). Returns the role ARN."""
+    def ensure_github_role(self, name: str, trust: dict, policy: dict, boundary_arn: str) -> str:
+        """The role one app's workflow assumes (within the boundary): `trust` (its repository and branch)
+        is (re)written, and its one inline policy `policy` (that app's resources only). Returns the role ARN."""
         iam = self._c("iam")
         try:
-            arn = iam.get_role(RoleName=name)["Role"]["Arn"]
+            role = iam.get_role(RoleName=name)["Role"]
+            self._bound(iam, role, boundary_arn)
+            arn = role["Arn"]
             iam.update_assume_role_policy(RoleName=name, PolicyDocument=json.dumps(trust))
         except Exception as exc:  # noqa: BLE001
             if _code(exc) != "NoSuchEntity":
@@ -884,6 +1006,7 @@ class AwsClient:
                 AssumeRolePolicyDocument=json.dumps(trust),
                 Description="Deployer: GitHub Actions deploys of one app",
                 MaxSessionDuration=3600,
+                PermissionsBoundary=boundary_arn,
                 Tags=[TAG],
             )["Role"]["Arn"]
         iam.put_role_policy(RoleName=name, PolicyName=GITHUB_ROLE_POLICY, PolicyDocument=json.dumps(policy))

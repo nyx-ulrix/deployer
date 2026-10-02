@@ -217,8 +217,9 @@ def aws(monkeypatch):
         db_resources=[],
         ensure_repository=lambda name: f"123456789012.dkr.ecr.eu-west-1.amazonaws.com/{name}",
         registry_login=("123456789012.dkr.ecr.eu-west-1.amazonaws.com", "AWS", "ecr-pw"),
+        ensure_boundary={"arn": "arn:aws:iam::123456789012:policy/deployer-boundary", "current": True},
         ensure_access_role="arn:aws:iam::123456789012:role/deployer-apprunner-ecr-access",
-        ensure_instance_role=lambda name, policy: f"arn:aws:iam::123456789012:role/{name}",
+        ensure_instance_role=lambda name, policy, boundary: f"arn:aws:iam::123456789012:role/{name}",
         create_service={"arn": "arn:svc", "url": "https://abc.eu-west-1.awsapprunner.com", "operation_id": "op1"},
         update_service="op2",
         operation="SUCCEEDED",
@@ -568,7 +569,8 @@ def test_app_runner_app_gets_its_tables_through_an_instance_role(client, db, doc
     app = db.get(App, resp.json()["id"])
     dep = deploy(db, app)
     assert dep.status == "live", dep.error
-    ((name, policy),) = aws.args("ensure_instance_role")
+    ((name, policy, boundary),) = aws.args("ensure_instance_role")
+    assert boundary == "arn:aws:iam::123456789012:policy/deployer-boundary"
     assert name == cloud_deploy.instance_role_name(app) and name.startswith("deployer-app-")
     statement = policy["Statement"][0]
     assert statement["Resource"] == [
@@ -592,11 +594,11 @@ def test_app_runner_app_gets_its_tables_through_an_instance_role(client, db, doc
     client.patch(f"{base(team)}/apps/{app.id}", json={"database_access": False}, headers=team["admin"])
     aws.calls.clear()
     jobs.run_queued()
-    assert aws.args("ensure_instance_role") == [(name, None)]
+    assert aws.args("ensure_instance_role") == [(name, None, boundary)]
     aws.calls.clear()
     db.expire_all()
     assert deploy(db, db.get(App, app.id)).status == "live"
-    assert aws.args("ensure_instance_role") == [(name, None)]
+    assert aws.args("ensure_instance_role") == [(name, None, boundary)]
     # Deleting the app removes the role too.
     db.expire_all()
     assert f"IAM role {name} (what the app may use)" in cloud_deploy.resources(

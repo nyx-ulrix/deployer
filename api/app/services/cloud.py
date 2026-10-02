@@ -183,8 +183,28 @@ AWS_POLICY = {
         {
             "Sid": "AppRunnerImageAccessRole",
             "Effect": "Allow",
-            "Action": ["iam:GetRole", "iam:CreateRole", "iam:AttachRolePolicy", "iam:PassRole"],
+            "Action": ["iam:GetRole", "iam:PassRole"],
             "Resource": f"arn:aws:iam::*:role/{cloud_aws.ACCESS_ROLE}",
+        },
+        # docs/CLOUD.md "G3": every role Deployer creates or gives permissions to must carry the
+        # deployer-boundary policy as its permissions boundary (IAM refuses these calls otherwise), and the
+        # boundary itself can be created and read but never changed or deleted with this key.
+        {
+            "Sid": "RolesWithinBoundary",
+            "Effect": "Allow",
+            "Action": ["iam:CreateRole", "iam:PutRolePolicy", "iam:AttachRolePolicy", "iam:PutRolePermissionsBoundary"],
+            "Resource": [
+                f"arn:aws:iam::*:role/{cloud_aws.ACCESS_ROLE}",
+                f"arn:aws:iam::*:role/{cloud_aws.INSTANCE_ROLE_PREFIX}*",
+                f"arn:aws:iam::*:role/{cloud_aws.GITHUB_ROLE_PREFIX}*",
+            ],
+            "Condition": {"ArnLike": {"iam:PermissionsBoundary": f"arn:aws:iam::*:policy/{cloud_aws.BOUNDARY_POLICY}"}},
+        },
+        {
+            "Sid": "BoundaryPolicy",
+            "Effect": "Allow",
+            "Action": ["iam:CreatePolicy", "iam:GetPolicy", "iam:GetPolicyVersion"],
+            "Resource": f"arn:aws:iam::*:policy/{cloud_aws.BOUNDARY_POLICY}",
         },
         {
             "Sid": "ServiceLinkedRoles",
@@ -305,15 +325,7 @@ AWS_POLICY = {
             # The IAM role an App Runner app's code runs as, allowed only its project's tables.
             "Sid": "AppRunnerInstanceRoles",
             "Effect": "Allow",
-            "Action": [
-                "iam:GetRole",
-                "iam:CreateRole",
-                "iam:TagRole",
-                "iam:PutRolePolicy",
-                "iam:DeleteRolePolicy",
-                "iam:DeleteRole",
-                "iam:PassRole",
-            ],
+            "Action": ["iam:GetRole", "iam:TagRole", "iam:DeleteRolePolicy", "iam:DeleteRole", "iam:PassRole"],
             "Resource": f"arn:aws:iam::*:role/{cloud_aws.INSTANCE_ROLE_PREFIX}*",
         },
         {
@@ -364,10 +376,8 @@ AWS_POLICY = {
             "Effect": "Allow",
             "Action": [
                 "iam:GetRole",
-                "iam:CreateRole",
                 "iam:TagRole",
                 "iam:UpdateAssumeRolePolicy",
-                "iam:PutRolePolicy",
                 "iam:DeleteRolePolicy",
                 "iam:DeleteRole",
             ],
@@ -459,7 +469,14 @@ GOOGLE_APIS = [
 
 
 def requirements() -> dict:
-    return {"aws": {"policy": AWS_POLICY}, "firebase": {"roles": GOOGLE_ROLES, "apis": GOOGLE_APIS}}
+    return {
+        "aws": {
+            "policy": AWS_POLICY,
+            "boundary": cloud_aws.BOUNDARY_DOCUMENT,
+            "boundary_name": cloud_aws.BOUNDARY_POLICY,
+        },
+        "firebase": {"roles": GOOGLE_ROLES, "apis": GOOGLE_APIS},
+    }
 
 
 # --- connections ---------------------------------------------------------------------------------

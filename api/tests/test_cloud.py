@@ -75,6 +75,7 @@ def aws(monkeypatch):
         create_distribution={"id": "E123", "domain": "d111.cloudfront.net", "arn": "arn:aws:cloudfront::1:dist/E123"},
         ensure_repository=lambda name: f"123456789012.dkr.ecr.eu-west-1.amazonaws.com/{name}",
         registry_login=("123456789012.dkr.ecr.eu-west-1.amazonaws.com", "AWS", "ecr-" + secrets.token_hex(16)),
+        ensure_boundary={"arn": "arn:aws:iam::123456789012:policy/deployer-boundary", "current": True},
         ensure_access_role="arn:aws:iam::123456789012:role/deployer-apprunner-ecr-access",
         create_service={"arn": "arn:svc", "url": "https://abc.eu-west-1.awsapprunner.com", "operation_id": "op1"},
         update_service="op2",
@@ -347,6 +348,7 @@ def test_aws_app_deploy_env_rollout_and_rollback(db, docker, aws, team):
     assert aws.names() == [
         "ensure_repository",
         "registry_login",
+        "ensure_boundary",
         "ensure_access_role",
         "create_service",
         "operation",
@@ -362,7 +364,7 @@ def test_aws_app_deploy_env_rollout_and_rollback(db, docker, aws, team):
     aws.calls.clear()
     second = deploy(db, app)
     assert second.status == "live"
-    assert aws.names() == ["registry_login", "update_service", "operation"]
+    assert aws.names() == ["registry_login", "ensure_boundary", "ensure_access_role", "update_service", "operation"]
 
     # A failed rollout keeps the previous version live.
     aws.returns["operation"] = "ROLLBACK_SUCCEEDED"
@@ -375,7 +377,7 @@ def test_aws_app_deploy_env_rollout_and_rollback(db, docker, aws, team):
     docker.calls.clear()
     back = rollback(db, app, db.get(Deployment, first.id))
     assert back.status == "live" and docker.steps() == []
-    assert aws.names() == ["update_service", "operation"] and aws.args("update_service")[0][1] == image
+    assert aws.names()[-2:] == ["update_service", "operation"] and aws.args("update_service")[0][1] == image
 
 
 def test_firebase_hosting_deploy(db, docker, gcp, team):
