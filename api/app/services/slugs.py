@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.models import Project
 
-SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{2,62}$")
 _SUFFIX_LEN = 6
 _MAX_BASE = 63 - 1 - _SUFFIX_LEN
 _ALPHABET = string.ascii_lowercase + string.digits

@@ -390,7 +390,7 @@ def _error_text(exc: BaseException) -> str:
 
 
 def run_queued(*, session_factory: SessionFactory | None = None, max_jobs: int = 100) -> list[tuple[str, str | None]]:
-    """Runs queued jobs in creation order in this thread (tests, CLI). Includes jobs they enqueue."""
+    """Test hook: runs queued jobs in creation order in this thread, including jobs they enqueue."""
     factory = session_factory or get_sessionmaker()
     done: list[tuple[str, str | None]] = []
     seen: set[str] = set()

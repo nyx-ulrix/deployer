@@ -1,7 +1,9 @@
 import re
 
 from app.models import AuditLog, DataSource, Project, ProjectMember
-from app.services.slugs import SLUG_RE, slugify, unique_slug
+from app.services.slugs import slugify, unique_slug
+
+SLUG_RE = re.compile(r"^[a-z][a-z0-9-]{2,62}$")
 
 
 def test_slugify():

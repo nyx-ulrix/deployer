@@ -251,22 +251,6 @@ class DecryptingReader:
         self.close()
 
 
-def encrypt_stream(src: IO[bytes], dest: IO[bytes], key: bytes | None = None) -> dict[str, Any]:
-    writer = EncryptingWriter(dest, key)
-    while chunk := src.read(CHUNK_SIZE):
-        writer.write(chunk)
-    writer.close()
-    return {"size_bytes": writer.size, "sha256": writer.sha256}
-
-
-def decrypt_stream(src: IO[bytes], dest: IO[bytes]) -> int:
-    total = 0
-    for chunk in iter_decrypt(src):
-        dest.write(chunk)
-        total += len(chunk)
-    return total
-
-
 def sha256_file(path: str | os.PathLike) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as fh:

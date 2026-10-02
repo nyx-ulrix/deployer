@@ -21,14 +21,14 @@ def _backup_dir(tmp_path, monkeypatch):
 
 def _encrypt(data: bytes, key: bytes | None = None) -> tuple[bytes, dict]:
     out = io.BytesIO()
-    info = bc.encrypt_stream(io.BytesIO(data), out, key)
-    return out.getvalue(), info
+    writer = bc.EncryptingWriter(out, key)
+    writer.write(data)
+    writer.close()
+    return out.getvalue(), {"size_bytes": writer.size, "sha256": writer.sha256}
 
 
 def _decrypt(blob: bytes) -> bytes:
-    out = io.BytesIO()
-    bc.decrypt_stream(io.BytesIO(blob), out)
-    return out.getvalue()
+    return b"".join(bc.iter_decrypt(io.BytesIO(blob)))
 
 
 @pytest.mark.parametrize("size", [0, 1, bc.CHUNK_SIZE - 1, bc.CHUNK_SIZE, bc.CHUNK_SIZE + 1, 3 * bc.CHUNK_SIZE + 17])

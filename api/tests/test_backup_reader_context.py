@@ -11,7 +11,9 @@ from app.services import backup_engine
 
 def _encrypted(payload: bytes) -> bytes:
     raw = io.BytesIO()
-    bc.encrypt_stream(io.BytesIO(payload), raw)
+    writer = bc.EncryptingWriter(raw)
+    writer.write(payload)
+    writer.close()
     return raw.getvalue()
 
 

@@ -195,7 +195,7 @@ def invalidate(data_source_id: str) -> None:
 
 
 def dispose_all() -> None:
-    """Test teardown seam: drop every cached engine/client (like the provisioning `cache_clear`s)."""
+    """Test hook: drop every cached engine/client (like the provisioning `cache_clear`s)."""
     for sid in list(_sql_cache) + list(_mongo_cache):
         invalidate(sid)
 
