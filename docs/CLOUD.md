@@ -1249,7 +1249,8 @@ No migration: `apps.cloud_state["secrets"] = {enabled, stored: {NAME: ARN | secr
 **What is a secret**: every variable of the app's own - Deployer stores them all encrypted, reveals them to
 admins only and redacts them from logs, and has no per-variable flag - plus the `DEPLOYER_DB_*` values that carry
 a database password (RDS `_PASSWORD` and `_URL`). Hosts, ports, user names, database and table names, project
-ids and Realtime Database URLs stay plain environment. Values are never logged, never returned by the API and
+ids, Realtime Database URLs and variables with an empty value (the stores refuse those) stay plain environment.
+Values are never logged, never returned by the API and
 never shown again by the dashboard (`cloud.secrets` lists only the **names** in the store).
 
 On every deploy, rollback and environment change (`Publish.aws_app` / `firebase_app`, after the environment is

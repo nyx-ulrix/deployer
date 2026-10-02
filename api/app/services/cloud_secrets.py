@@ -11,7 +11,8 @@ deleted after the new version is live; the app's teardown (delete, target switch
 
 What counts as a secret: every variable of the app's own (Deployer stores them all encrypted and keeps them
 out of logs - there is no per-variable flag) and the `DEPLOYER_DB_*` values that carry a database password.
-Names, hosts, ports, table names and project ids stay plain environment. Values are never logged or returned.
+Names, hosts, ports, table names, project ids and empty values stay plain environment. Values are never logged
+or returned.
 """
 
 from __future__ import annotations
@@ -81,7 +82,8 @@ def split(app: App, env: dict[str, str], databases: list[dict]) -> tuple[dict[st
 
     own = set(env_of(app))
     passwords = [p for d in databases for p in [d["config"].get("password")] if p]
-    secret = {k: v for k, v in env.items() if k in own or any(p in v for p in passwords)}
+    # An empty value is no secret, and the stores refuse it (Secrets Manager's SecretString needs 1+ characters).
+    secret = {k: v for k, v in env.items() if v and (k in own or any(p in v for p in passwords))}
     return {k: v for k, v in env.items() if k not in secret}, secret
 
 
@@ -99,7 +101,7 @@ def sync(publish, client, env: dict[str, str], databases: list[dict]) -> tuple[d
         publish.log.step(f"Storing {len(secret)} secret(s) in {STORE[publish.provider]}: " + ", ".join(sorted(secret)))
     for key in sorted(secret):
         stored[key] = client.put_secret(secret_name(publish.app, key), secret[key])
-        publish.save(**{STATE_KEY: {"enabled": True, "stored": {**before, **stored}}})
+        _save_stored(publish, {**before, **stored})
     return plain, stored, {k: v for k, v in before.items() if k not in stored}
 
 
@@ -110,9 +112,16 @@ def cleanup(publish, client, stale: dict[str, str]) -> None:
         publish.log.write(f"Removing the secret for {key} from {STORE[publish.provider]} (no longer used)")
         client.delete_secret(stale[key])
     if stale:
-        current = publish.state.get(STATE_KEY) or {}
-        kept = {k: v for k, v in _stored(publish.state).items() if k not in stale}
-        publish.save(**{STATE_KEY: {"enabled": bool(current.get("enabled")), "stored": kept}})
+        _save_stored(publish, {k: v for k, v in _stored(publish.state).items() if k not in stale})
+
+
+def _save_stored(publish, stored: dict[str, str]) -> None:
+    """Records what is in the store. `enabled` is re-read from the row first: an admin may have switched the
+    option while this deploy ran, and the job's copy must not write that choice back."""
+    with publish.ctx.session_factory() as db:
+        row = db.get(App, publish.app.id)
+        enabled = bool(((row.cloud_state or {}).get(STATE_KEY) or {}).get("enabled")) if row else False
+    publish.save(**{STATE_KEY: {"enabled": enabled, "stored": stored}})
 
 
 def teardown_steps(client, provider: str, state: dict) -> list[tuple[str, object]]:

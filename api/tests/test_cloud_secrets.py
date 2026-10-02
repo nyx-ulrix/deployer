@@ -418,3 +418,35 @@ def test_secret_manager_rest_shapes():
         {"name": "A", "value": "1"},
         {"name": "TOKEN", "valueSource": {"secretKeyRef": {"secret": name, "version": "latest"}}},
     ]
+
+
+def test_deploy_never_writes_back_an_option_switched_meanwhile(client, db, docker, team, aws):
+    """The job records the stored secrets; `enabled` is the row's current value, not the job's copy."""
+    conn = connection(db)
+    app = make_app(db, team["project"], "Api", env={"A": "1"}, target="aws_app", cloud_connection_id=conn.id)
+    cloud_secrets.set_enabled(app, True)
+    db.commit()
+
+    def switched_off_meanwhile(name, value):
+        with jobs.get_sessionmaker()() as session:
+            row = session.get(App, app.id)
+            cloud_secrets.set_enabled(row, False)
+            session.commit()
+        return ARN.format(name)
+
+    aws.returns["put_secret"] = switched_off_meanwhile
+    dep = deploy(db, db.get(App, app.id))
+    assert dep.status == "live", dep.error
+    assert cloud_secrets.state_of(db.get(App, app.id)) == {
+        "enabled": False,
+        "stored": {"A": ARN.format(f"{cloud_deploy.resource_name(app)}-A")},
+    }
+
+
+def test_split_keeps_empty_values_out_of_the_store():
+    """Secrets Manager refuses an empty SecretString (botocore: min 1), so an empty variable stays plain."""
+    app = App(env_encrypted=encrypt_json({"API_KEY": "sk-1", "FEATURE": ""}))
+    env = {"API_KEY": "sk-1", "FEATURE": "", "DEPLOYER_DB_X_HOST": "h", "DEPLOYER_DB_X_PASSWORD": "pw-9"}
+    plain, secret = cloud_secrets.split(app, env, [{"config": {"password": "pw-9"}}])
+    assert secret == {"API_KEY": "sk-1", "DEPLOYER_DB_X_PASSWORD": "pw-9"}
+    assert plain == {"FEATURE": "", "DEPLOYER_DB_X_HOST": "h"}
