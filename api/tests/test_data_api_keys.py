@@ -225,6 +225,7 @@ def test_cors_only_on_key_routes_and_without_credentials(client, setup):
         f"{docs}/users%2Fu1%2Forders/documents",
         f"{docs}/users/u1/orders/documents/o1",
         f"{docs}/users/documents/x/collections",
+        f"{setup['base']}/{setup['ds'].id}/rtdb",  # the Realtime Database route takes keys too
     ):
         resp = client.options(path, headers=preflight)
         assert resp.status_code == 200 and resp.headers["access-control-allow-origin"] == "*", path
