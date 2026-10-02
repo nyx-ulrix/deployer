@@ -53,7 +53,9 @@ through the same address whichever PC is up (phase 2, built; not yet exercised w
   data is sent); an admin can delete them. So does unsharing the device from the project, removing its
   `database_host` role or disabling it: every sync round re-checks these rules and pauses the copy with
   the reason, and a queued copy job fails; Resume is refused (`409 device_not_eligible`) until the rule
-  holds again. Paused copies get no schema changes either, and each copy keeps at most 50 warnings.
+  holds again. Such a copy gets no schema changes, conflict resolutions or history restores either
+  (`409 device_not_eligible`). A copy you pause yourself still gets schema changes (table/collection
+  create and drop made through Deployer), so it matches when resumed. Each copy keeps at most 50 warnings.
 
 ## Dashboard (for whoever builds it)
 
@@ -275,9 +277,9 @@ logs through `apps.logs` (503 while that PC is offline).
 | DELETE | `/data-sources/{sid}/replicas/{rid}?drop=false` | co-host owner or admin+ | stops sync; `drop=true` also drops the device copy (503 while offline) |
 | GET | `/data-sources/{sid}/sync-conflicts?status=open\|resolved` | developer+ | `SyncConflict[]` (newest first, max 500) |
 | GET | `/data-sources/{sid}/sync-conflicts/{cid}` | developer+ | `SyncConflict` |
-| POST | `/data-sources/{sid}/sync-conflicts/{cid}/resolve` | co-host owner or admin+ (developer+) | `{choice: "primary"\|"replica"\|"manual", value?: object\|null}` → `SyncConflict`; 409 `conflict_resolved` / `conflict_changed` / `write_rejected` / `sync_busy`; 503 `device_offline` |
+| POST | `/data-sources/{sid}/sync-conflicts/{cid}/resolve` | co-host owner or admin+ (developer+) | `{choice: "primary"\|"replica"\|"manual", value?: object\|null}` → `SyncConflict`; 409 `conflict_resolved` / `conflict_changed` / `write_rejected` / `sync_busy` / `device_not_eligible`; 503 `device_offline` |
 | GET | `/data-sources/{sid}/sync-history?table=&key=<JSON>` | developer+ | `HistoryItem[]` newest first (max 200) |
-| POST | `/data-sources/{sid}/sync-history/restore` | co-host owner or admin+ (developer+) | `{table, key, version_id}` → `{ok, resolved_conflict_id}` |
+| POST | `/data-sources/{sid}/sync-history/restore` | co-host owner or admin+ (developer+) | `{table, key, version_id}` → `{ok, resolved_conflict_id}`; 409 `device_not_eligible` (the device may no longer hold the data) |
 | PATCH | `/apps/{id}` | admin+ for these fields | `{cohost?, cohost_share_repo_access?}` → `App` (+ `cohost`, `cohost_share_repo_access`, `replicas[]`); moves the app's hostnames between the dashboard and apps tunnels (Cloudflare errors: nothing saved); developers get 403 `forbidden`; 409 `cohost_limit` while another app of the installation is co-hosted; audit `app.cohost` |
 | GET | `/apps/{id}/logs?device_id=&tail=` | viewer+ | a co-host copy's runtime logs `{lines, container, device_id}`; 404 when that PC runs no copy; 503 `device_offline` |
 

@@ -15,6 +15,7 @@ from app.errors import ApiError, not_found
 from app.models import (
     DataSource,
     Device,
+    Project,
     ProjectMember,
     SourceReplica,
     SyncConflict,
@@ -98,8 +99,6 @@ def cohost_problem(db: Session, device: Device | None, project) -> str | None:
 
 def pause_device_replicas(db: Session, device: Device) -> int:
     """After a device change (unshared, role removed, disabled): pauses its copies it may no longer hold."""
-    from app.models import Project
-
     rows = db.execute(
         select(SourceReplica, Project)
         .join(DataSource, DataSource.id == SourceReplica.data_source_id)
@@ -418,7 +417,13 @@ def write_both(
     First drains the changes neither side has read yet (one sync round under the lock), so nothing
     made before this write can arrive later and reopen the key with a stale version. With `expect`
     (a conflict being resolved) the write is refused (409 `conflict_changed`) when that drain brought
-    newer versions of the key: the user chose without seeing them."""
+    newer versions of the key: the user chose without seeing them.
+
+    Refused (409 `device_not_eligible`) while the device may not hold the project's data (L-05):
+    a copy paused for lost rights must get nothing more, not even a resolution or a restore."""
+    problem = cohost_problem(db, db.get(Device, rep.device_id), db.get(Project, ds.project_id))
+    if problem:
+        raise ApiError(409, "device_not_eligible", f"{problem}; nothing can be written to this copy")
     if not device_rpc.is_online(rep.device_id):
         raise device_rpc.offline_error("The co-host device is offline; try again when it is connected")
     change = {
@@ -662,8 +667,10 @@ def get_conflict(db: Session, data_source_id: str, conflict_id: str) -> SyncConf
 
 
 def fan_out_schema_change(ds: DataSource, op: str, args: dict) -> None:
-    """`table.create|drop` / `collection.create|drop` done on the main server: repeat on every copy.
-    A copy that can't take it gets a warning (its next sync reports the table difference)."""
+    """`table.create|drop` / `collection.create|drop` done on the main server: repeat on every copy,
+    manually paused ones included (L-05: else the change is missing when it resumes). Never on a copy
+    whose device may no longer hold the data. A copy that can't take it gets a warning (its next sync
+    reports the table difference)."""
     from app.db import get_sessionmaker
 
     session = get_sessionmaker()()
@@ -671,11 +678,14 @@ def fan_out_schema_change(ds: DataSource, op: str, args: dict) -> None:
         reps = list(
             session.scalars(
                 select(SourceReplica).where(
-                    SourceReplica.data_source_id == ds.id, SourceReplica.status.in_(("syncing", "error"))
+                    SourceReplica.data_source_id == ds.id, SourceReplica.status.in_(("syncing", "error", "paused"))
                 )
             )
         )
+        project = session.get(Project, ds.project_id)
         for rep in reps:
+            if cohost_problem(session, session.get(Device, rep.device_id), project):
+                continue
             try:
                 device_rpc.call(
                     rep.device_id,

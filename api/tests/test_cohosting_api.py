@@ -306,6 +306,16 @@ def test_unsharing_or_dropping_the_role_stops_sync(client, db, team, auth_header
     assert fd.calls == []
 
 
+def test_manually_paused_copy_still_gets_schema_changes(db, team, fake_device):
+    """L-05: a manual pause stops data, not DDL - else the table is missing when the copy resumes."""
+    from app.services import cohosting
+
+    _replica(db, team, status="paused")
+    fd = fake_device(team["device"].id, lambda method, params: {})
+    cohosting.fan_out_schema_change(team["ds"], "table.create", {"name": "x"})
+    assert [(m, p["op"]) for m, p in fd.calls] == [("datasource.call", "table.create")]
+
+
 def test_queued_copy_is_refused_once_the_device_is_unshared(client, db, team, auth_headers, fake_device):
     t, u = team, team["users"]
     fd = fake_device(t["device"].id, lambda method, params: {})
@@ -501,3 +511,21 @@ def test_failed_conflict_write_never_leaves_copies_silently_different(client, db
     db.expire_all()
     (conflict,) = db.scalars(select(SyncConflict).where(SyncConflict.status == "open"))
     assert conflict.primary_json == main and conflict.replica_json["name"] == "old"
+
+
+def test_no_resolution_or_restore_once_the_device_lost_its_rights(client, db, conflicted, auth_headers):
+    """L-05: a copy paused for lost rights gets nothing more, not even a conflict resolution or a restore."""
+    t, u = conflicted, conflicted["users"]
+    v1 = source_sync.add_version(
+        db, t["rep"].id, "users", t["key"], {"id": 1, "name": "one", "email": "a@x"}, "primary"
+    )
+    db.commit()
+    client.patch(f"/v1/devices/{t['device'].id}", json={"project_ids": []}, headers=auth_headers(u["cohost"]))
+    before = (dict(t["primary"].row("users", t["key"])), dict(t["replica"].row("users", t["key"])))
+    h = auth_headers(u["admin"])
+    resp = client.post(_url(t, f"/sync-conflicts/{t['conflict'].id}/resolve"), json={"choice": "primary"}, headers=h)
+    assert resp.status_code == 409 and resp.json()["error"]["code"] == "device_not_eligible"
+    restore = {"table": "users", "key": t["key"], "version_id": v1.id}
+    resp = client.post(_url(t, "/sync-history/restore"), json=restore, headers=h)
+    assert resp.status_code == 409 and resp.json()["error"]["code"] == "device_not_eligible"
+    assert (t["primary"].row("users", t["key"]), t["replica"].row("users", t["key"])) == before
