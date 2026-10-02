@@ -213,6 +213,9 @@ services:
       # Any small folder of the install dir: only its free space is read (DEVICE_DISK_PATH).
       - ./mongodb:/host-disk:ro
     depends_on:
+      # L-01: migrations finish before the API starts, so its healthcheck window covers only uvicorn.
+      migrate:
+        condition: service_completed_successfully
       mariadb:
         condition: service_healthy
       redis:
@@ -240,8 +243,26 @@ services:
     mem_limit: ${API_MEM_LIMIT:-768m}
     logging: *default-logging
 
+  # One-shot database migrations (L-01), run on every `up` before the API starts. A migration that
+  # rebuilds a big table (0012) can take minutes on an old PC: compose waits for this container to
+  # exit with no time limit, whereas a slow API start would be marked unhealthy and fail `up` (the
+  # worker waits on the API's health). The API entrypoint still migrates too, a no-op by then, for
+  # restarts Docker does on its own (PC reboot, `deployer restart api`).
+  migrate:
+    image: ${DEPLOYER_IMAGE_PREFIX:-ghcr.io/nyx-ulrix/deployer}-api:${DEPLOYER_VERSION:-latest}
+    restart: "no"
+    command: ["true"]
+    environment: *api-environment
+    depends_on:
+      mariadb:
+        condition: service_healthy
+    networks:
+      - backend
+    mem_limit: 384m
+    logging: *default-logging
+
   # Background jobs and the backup scheduler (docs/BACKUPS.md): snapshots, log archiving, restores,
-  # verification, pruning. Same image as the API; starts after the API has applied migrations.
+  # verification, pruning. Same image as the API; starts after `migrate` and a healthy API.
   # Push-to-deploy (docs/DEPLOYMENTS.md): the worker also builds app images and runs app containers,
   # so it gets the Docker socket and runs as root: the socket is owned by root on the engine host and
   # whoever holds it is root-equivalent anyway, so an unprivileged uid would only pretend otherwise.

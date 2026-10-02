@@ -33,9 +33,11 @@ Browser / phone / AI agent
    ├── mariadb:11   platform metadata DB `deployer` + managed SQL databases `p_<ref>` (binlog on)
    ├── mongo:8.0    managed NoSQL databases `p_<ref>` (single-node replica set for the oplog)
    ├── redis:7      OAuth state, rate limits, job queue, device RPC routing, app runtime logs, metrics
-   └── worker       jobs + scheduler: backups, log archiving, pruning, verification; app builds and
+   ├── worker       jobs + scheduler: backups, log archiving, pruning, verification; app builds and
                     containers (root + /var/run/docker.sock, writes the Caddy app files); on a host
                     device also the outbound connection to the main Deployer
+   └── migrate      one-shot `alembic upgrade head` on every `up`; the api starts only after it exits 0,
+                    so a slow migration never runs inside the api healthcheck window
 
   query-shell (query network with api, worker, mongodb) — runs query console mongosh code with no
               secrets, volumes or Docker socket (QUERY_CONSOLE.md, SECURITY.md "Query console")

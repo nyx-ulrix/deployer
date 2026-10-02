@@ -25,6 +25,11 @@ services:
       - ${DEPLOYER_SOURCE_DIR:-..}/api/app:/app/app:ro
       - ${DEPLOYER_SOURCE_DIR:-..}/api/migrations:/app/migrations:ro
 
+  migrate:
+    volumes:
+      - ${DEPLOYER_SOURCE_DIR:-..}/api/app:/app/app:ro
+      - ${DEPLOYER_SOURCE_DIR:-..}/api/migrations:/app/migrations:ro
+
   worker:
     volumes:
       - ${DEPLOYER_SOURCE_DIR:-..}/api/app:/app/app:ro

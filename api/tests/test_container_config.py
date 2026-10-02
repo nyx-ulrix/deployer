@@ -85,3 +85,16 @@ def test_caddy_lets_every_import_upload_through():
     assert {"/v1/setup/import", "/v1/projects/import", "/v1/projects/import/jobs"} <= set(imports)
     other = re.search(r"@api_other \{\s*path /v1/\*\s*not path (.+)", caddy).group(1).split()
     assert set(imports) <= set(other)
+
+
+def test_migrations_run_to_completion_before_the_api_starts():
+    """L-01: a long migration (0012 rebuilds every DATETIME table) must not run inside the API's
+    healthcheck window, or `up` fails on an unhealthy API while the worker waits for it."""
+    services = yaml.safe_load(read("deploy/docker-compose.yml"))["services"]
+    migrate, api = services["migrate"], services["api"]
+    assert api["depends_on"]["migrate"] == {"condition": "service_completed_successfully"}
+    # Same image and entrypoint (alembic upgrade head) as the API, then exits.
+    assert migrate["image"] == api["image"] and "entrypoint" not in migrate
+    assert migrate["environment"] == api["environment"] and migrate["restart"] == "no"
+    assert "healthcheck" not in migrate
+    assert "alembic upgrade head" in read("api/docker-entrypoint.sh")

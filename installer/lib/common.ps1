@@ -853,8 +853,8 @@ function Show-DeployerDiagnostics {
     $ps = Invoke-DeployerComposeCapture -InstallDir $InstallDir -Runtime $Runtime -Arguments @('ps', '--all') -TimeoutSeconds 120
     Write-Host $ps.Output
     # mongodb is behind a compose profile: naming it here fails on installs without AVX.
-    Write-DeployerWarn 'Last log lines (api, worker, caddy, mariadb, redis):'
-    $logs = Invoke-DeployerComposeCapture -InstallDir $InstallDir -Runtime $Runtime -Arguments @('logs', '--no-color', '--tail', '40', 'api', 'worker', 'caddy', 'mariadb', 'redis') -TimeoutSeconds 120
+    Write-DeployerWarn 'Last log lines (migrate, api, worker, caddy, mariadb, redis):'
+    $logs = Invoke-DeployerComposeCapture -InstallDir $InstallDir -Runtime $Runtime -Arguments @('logs', '--no-color', '--tail', '40', 'migrate', 'api', 'worker', 'caddy', 'mariadb', 'redis') -TimeoutSeconds 120
     Write-Host $logs.Output
     Write-DeployerLog 'DIAG' ($ps.Output + "`n" + $logs.Output)
 }
