@@ -164,10 +164,12 @@ def update_user(user_id: str, body: UserUpdate, request: Request, owner: Instanc
         db.commit()
     # V-06: disabling doesn't stop keys they created or revealed in projects they don't own, so name
     # them per project; each project's admins revoke them (the instance owner may not be a member).
+    # Projects they own are skipped: all of those keys already stop (deps: 401 account_disabled).
     # ponytail: two queries per project, fine for a home instance; one grouped query if that grows.
     rotate = []
     if not body.is_active:
-        for project in db.scalars(select(Project).order_by(Project.name)):
+        others = select(Project).where(Project.owner_id != user.id).order_by(Project.name)
+        for project in db.scalars(others):
             if keys := keys_to_rotate(db, project.id, user.id):
                 rotate.append({"project_id": project.id, "project_name": project.name, "keys": keys})
     return {**user_out(user), "api_keys_to_rotate": rotate}

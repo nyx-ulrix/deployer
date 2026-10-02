@@ -380,6 +380,8 @@ def test_disabling_lists_api_keys_to_rotate_per_project(
     shop_key = make_key(shop, admin, "theirs")
     make_key(shop, owner, "untouched")
     blog_key = make_key(blog, owner, "revealed")
+    own = make_project(admin, "Own")  # their own project's keys already stop while they're disabled
+    make_key(own, admin, "stopped")
     assert (
         client.get(f"/v1/projects/{blog.id}/api-keys/{blog_key}/reveal", headers=auth_headers(admin)).status_code == 200
     )
