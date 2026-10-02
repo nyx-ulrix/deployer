@@ -24,6 +24,7 @@ export const JOB_LABELS: Record<string, string> = {
   "app.github_actions": "Set up GitHub Actions builds",
   "app.cloud_prune": "Remove old cloud versions",
   "data_source.cloud_create": "Create database in AWS",
+  "data_source.cloud_restore": "Restore DynamoDB table",
   "data_source.cloud_delete": "Delete database in AWS",
   "transfer.export": "Export",
   "transfer.import": "Import projects",

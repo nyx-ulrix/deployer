@@ -281,6 +281,11 @@ AWS_POLICY = {
                 "dynamodb:DeleteItem",
                 "dynamodb:CreateBackup",
                 "dynamodb:DescribeBackup",
+                # Point-in-time recovery and restores; the restored copy is always a new deployer-* table.
+                "dynamodb:DescribeContinuousBackups",
+                "dynamodb:UpdateContinuousBackups",
+                "dynamodb:RestoreTableFromBackup",
+                "dynamodb:RestoreTableToPointInTime",
             ],
             "Resource": ["arn:aws:dynamodb:*:*:table/*", "arn:aws:dynamodb:*:*:table/*/backup/*"],
         },
@@ -292,6 +297,7 @@ AWS_POLICY = {
                 "dynamodb:UpdateTable",
                 "dynamodb:DeleteTable",
                 "dynamodb:TagResource",
+                "dynamodb:BatchWriteItem",  # a restore writes the copied items into the new table
             ],
             "Resource": "arn:aws:dynamodb:*:*:table/deployer-*",
         },

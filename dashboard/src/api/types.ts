@@ -127,8 +127,19 @@ export type DataSourceCloud = {
   allowed_ip: string | null;
   /** The job creating it. */
   job_id: string | null;
+  /** DynamoDB: what this table was restored from (a backup or a point in time of another source's table). */
+  restored_from?: CloudRestoredFrom | null;
   resources: string[];
   when_pc_off: string;
+};
+
+export type CloudRestoredFrom = {
+  kind: "backup" | "point_in_time";
+  table: string;
+  backup?: string | null;
+  time?: string;
+  latest?: boolean;
+  source_name?: string;
 };
 
 export type DatabaseLocation = {
@@ -215,6 +226,34 @@ export type CloudBackup = {
   type: string | null;
   size_bytes: number | null;
   created_at: string | null;
+};
+
+/** A DynamoDB table's point-in-time recovery (status null + problem when AWS refused to say). */
+export type CloudPitr = {
+  table: string;
+  status: "ENABLED" | "DISABLED" | null;
+  earliest: string | null;
+  latest: string | null;
+  days: number | null;
+  problem: string | null;
+};
+
+export type CloudBackupsInfo = {
+  backups: CloudBackup[];
+  pitr: CloudPitr[];
+  cost: string;
+  pitr_cost: string;
+  restore: string;
+  restore_cost: string;
+};
+
+export type CloudRestoreBody = {
+  name: string;
+  backup_arn?: string;
+  table?: string;
+  point_in_time?: string;
+  latest?: boolean;
+  confirm_billing: boolean;
 };
 
 export type CloudDbResource = {

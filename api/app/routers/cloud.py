@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -25,8 +26,19 @@ BACKUP_COST = (
     "DynamoDB -> Backups), billed at about US$0.10 per GB per month. Making one does not slow the table down."
 )
 BACKUP_RESTORE = (
-    "To restore, open the backup in the AWS console (DynamoDB -> Backups -> Restore): AWS creates a new table "
-    "from it, which you can then connect here with Add database -> In your AWS account."
+    "Restoring never changes the original table: AWS copies the backup (or the table as it was at the time you "
+    "pick) into a new table, which appears here as a new database. Your app keeps using the original until you "
+    "point it at the new one."
+)
+PITR_COST = (
+    "Point-in-time recovery keeps a continuous backup, so you can restore the table as it was at any second of "
+    "the last 35 days. While it is on, AWS bills about US$0.20 per GB of table size per month (US regions). "
+    "Turning it off deletes that history."
+)
+RESTORE_COST = (
+    "Restoring creates a new table in your AWS account: AWS charges about US$0.15 per GB restored, then the new "
+    "table is billed like any on-demand table (storage about US$0.25 per GB per month, plus reads and writes) "
+    "until you remove it here, which keeps a final backup."
 )
 
 
@@ -168,6 +180,23 @@ class CloudDatabaseConnect(BaseModel):
 
 class CloudBackupCreate(BaseModel):
     table: str | None = Field(default=None, max_length=255)  # None: every table of the database
+    confirm_billing: bool = False
+
+
+class PitrUpdate(BaseModel):
+    table: str = Field(min_length=1, max_length=255)
+    enabled: bool
+    confirm_billing: bool = False  # needed to switch it on (billed), not off
+
+
+class CloudRestore(BaseModel):
+    name: str = Field(min_length=1, max_length=63)  # the new data source
+    # Either an on-demand backup of one of the source's tables...
+    backup_arn: str | None = Field(default=None, max_length=1024)
+    # ...or a table with point-in-time recovery on, at a time in its window (or its latest restorable time).
+    table: str | None = Field(default=None, max_length=255)
+    point_in_time: datetime | None = None
+    latest: bool = False
     confirm_billing: bool = False
 
 
@@ -345,7 +374,14 @@ def _dynamo_source(db, access: ProjectAccess, source_id: str):
 def list_cloud_backups(source_id: str, access: Viewer, db: DbSession) -> dict:
     """The tables' on-demand backups in AWS, newest first (also ones made in the AWS console)."""
     ds = _dynamo_source(db, access, source_id)
-    return {"backups": dynamo.list_backups(ds), "cost": BACKUP_COST, "restore": BACKUP_RESTORE}
+    return {
+        "backups": dynamo.list_backups(ds),
+        "pitr": dynamo.pitr_status(ds),
+        "cost": BACKUP_COST,
+        "pitr_cost": PITR_COST,
+        "restore": BACKUP_RESTORE,
+        "restore_cost": RESTORE_COST,
+    }
 
 
 @router.post("/projects/{project_id}/data-sources/{source_id}/cloud-backups", status_code=201)
@@ -369,6 +405,58 @@ def create_cloud_backup(
     )
     db.commit()
     return {"backups": backups}
+
+
+@router.put("/projects/{project_id}/data-sources/{source_id}/cloud-backups/pitr")
+def set_point_in_time_recovery(
+    source_id: str, body: PitrUpdate, request: Request, access: Admin, db: DbSession
+) -> dict:
+    """Point-in-time recovery of one table on (billed: confirm_billing) or off (its restore window is lost)."""
+    if body.enabled and not body.confirm_billing:
+        raise ApiError(
+            422, "billing_not_confirmed", PITR_COST + " Send confirm_billing: true.", {"field": "confirm_billing"}
+        )
+    ds = _dynamo_source(db, access, source_id)
+    pitr = dynamo.set_pitr(ds, body.table, body.enabled)
+    audit.record(
+        db,
+        "data_source.cloud_pitr",
+        request=request,
+        user_id=access.user.id,
+        project_id=access.project.id,
+        data_source_id=ds.id,
+        table=body.table,
+        enabled=body.enabled,
+    )
+    db.commit()
+    return pitr
+
+
+@router.post("/projects/{project_id}/data-sources/{source_id}/cloud-backups/restore", status_code=201)
+def restore_cloud_backup(source_id: str, body: CloudRestore, request: Request, access: Admin, db: DbSession) -> dict:
+    """Restores an on-demand backup, or a table at a point in time, into a NEW table that becomes a new data
+    source (job `data_source.cloud_restore`); the original table is never touched."""
+    if not body.confirm_billing:
+        raise ApiError(
+            422, "billing_not_confirmed", RESTORE_COST + " Send confirm_billing: true.", {"field": "confirm_billing"}
+        )
+    if bool(body.backup_arn) == bool(body.table) or (body.table and (body.point_in_time is None) == (not body.latest)):
+        raise ApiError(
+            422,
+            "validation_error",
+            "Send backup_arn, or table with point_in_time or latest: true",
+            {"field": "backup_arn"},
+        )
+    ds = _dynamo_source(db, access, source_id)
+    name = _name(db, access.project.id, body.name)
+    spec = dynamo.restore_spec(
+        ds, backup_arn=body.backup_arn, table=body.table, point_in_time=body.point_in_time, latest=body.latest
+    )
+    new, job = cloud_db.restore_table(db, access.project.id, ds, name=name, spec=spec, user_id=access.user.id)
+    _audit(db, request, access, new, "restore")
+    db.commit()
+    jobs.dispatch(job.id)
+    return {"data_source": data_source_out(new), "job": jobs.job_out(job)}
 
 
 # --- Firestore export (docs/CLOUD.md "C2-3") -------------------------------------------------------

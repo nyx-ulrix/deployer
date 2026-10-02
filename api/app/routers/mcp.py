@@ -320,6 +320,16 @@ def t_create_cloud_backup(ctx: Ctx, args: dict) -> Any:
     return cloud_router.create_cloud_backup(args["source_id"], body, ctx.request, ctx.access, ctx.db)
 
 
+def t_set_point_in_time_recovery(ctx: Ctx, args: dict) -> Any:
+    body = cloud_router.PitrUpdate(**{k: v for k, v in args.items() if k != "source_id"})
+    return cloud_router.set_point_in_time_recovery(args["source_id"], body, ctx.request, ctx.access, ctx.db)
+
+
+def t_restore_cloud_backup(ctx: Ctx, args: dict) -> Any:
+    body = cloud_router.CloudRestore(**{k: v for k, v in args.items() if k != "source_id"})
+    return cloud_router.restore_cloud_backup(args["source_id"], body, ctx.request, ctx.access, ctx.db)
+
+
 def t_app_logs(ctx: Ctx, args: dict) -> Any:
     tail = max(1, min(int(args.get("tail", 100)), 500))
     return apps_router.runtime_logs(args["app_id"], ctx.access, ctx.db, tail=tail, device_id=None)
@@ -706,7 +716,8 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     ),
     "list_cloud_backups": (
         "viewer",
-        "On-demand backups in AWS of a DynamoDB data source's tables, newest first, with how to restore one.",
+        "On-demand backups in AWS of a DynamoDB data source's tables, newest first, and each table's point-in-time "
+        "recovery (pitr: status, earliest / latest restorable time), with the cost notes.",
         _schema(["source_id"], source_id=SOURCE),
         t_list_cloud_backups,
     ),
@@ -721,6 +732,40 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
             confirm_billing=_p("boolean", "Must be true: the user agreed to the AWS charges"),
         ),
         t_create_cloud_backup,
+    ),
+    "set_point_in_time_recovery": (
+        "admin",
+        "Turn point-in-time recovery of one table of a DynamoDB data source on or off (list_cloud_backups shows "
+        "it per table, with the restorable window). Turning it on is BILLABLE (about US$0.20 per GB of table per "
+        "month): only after the user agreed, with confirm_billing: true. Turning it off deletes the restore window.",
+        _schema(
+            ["source_id", "table", "enabled"],
+            source_id=SOURCE,
+            table=_p("string", "One of the data source's tables"),
+            enabled=_p("boolean", "true: on, false: off"),
+            confirm_billing=_p("boolean", "Must be true to turn it on: the user agreed to the AWS charges"),
+        ),
+        t_set_point_in_time_recovery,
+    ),
+    "restore_cloud_backup": (
+        "admin",
+        "BILLABLE (about US$0.15 per GB restored, then the new table's storage): restore a DynamoDB data source's "
+        "on-demand backup (backup_arn from list_cloud_backups), or one table as it was at point_in_time (or "
+        "latest: true; point-in-time recovery must be on), into a NEW table that becomes a new data source named "
+        "`name`. The original is never changed. Returns the new data source (status creating until AWS finishes, "
+        "minutes to hours; list_data_sources shows it) and its job. Only "
+        "after the user agreed, with confirm_billing: true.",
+        _schema(
+            ["source_id", "name", "confirm_billing"],
+            source_id=SOURCE,
+            name=_p("string", "Name of the new data source, unique in the project"),
+            backup_arn=_p("string", "The backup's arn (or send table instead)"),
+            table=_p("string", "Point in time: the table to restore"),
+            point_in_time=_p("string", "Point in time: ISO 8601 time inside the table's window (UTC if no zone)"),
+            latest=_p("boolean", "Point in time: restore the latest restorable time instead"),
+            confirm_billing=_p("boolean", "Must be true: the user agreed to the AWS charges"),
+        ),
+        t_restore_cloud_backup,
     ),
     "app_logs": (
         "developer",

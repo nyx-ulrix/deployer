@@ -15,6 +15,7 @@ import { PageSpinner } from "../../components/ui/Spinner";
 import { Alert, EmptyState, ErrorState } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 import { relativeTime } from "../../lib/format";
+import { restoredFrom } from "../backups/cloudRestore";
 import { RecentlyDeletedCard } from "../backups/RecentlyDeleted";
 import { JobProgressPanel } from "../jobs/JobProgress";
 import { SourceCopies } from "../cohosting/SourceCopies";
@@ -216,6 +217,7 @@ function SourceCard({
           {source.cloud.connection_name ? ` (${source.cloud.connection_name})` : ""}. {source.cloud.when_pc_off}
           {source.cloud.allowed_ip ? ` Its firewall lets in this PC's IP ${source.cloud.allowed_ip}.` : ""}
           {source.cloud.tables?.length ? ` Tables: ${source.cloud.tables.join(", ")}.` : ""}
+          {source.cloud.restored_from ? ` ${restoredFrom(source.cloud.restored_from)}.` : ""}
         </p>
       )}
       {source.status === "creating" && source.cloud?.job_id && (
@@ -223,7 +225,13 @@ function SourceCard({
           className="mt-3"
           projectId={project.id}
           jobId={source.cloud.job_id}
-          title={source.engine === "dynamodb" ? "Creating in AWS (under a minute)" : "Creating in AWS (5-15 minutes)"}
+          title={
+            source.cloud.restored_from
+              ? "Restoring in AWS (minutes to hours, depending on the table's size)"
+              : source.engine === "dynamodb"
+                ? "Creating in AWS (under a minute)"
+                : "Creating in AWS (5-15 minutes)"
+          }
           onFinished={() => invalidateProjectSources(queryClient, project.id)}
         />
       )}

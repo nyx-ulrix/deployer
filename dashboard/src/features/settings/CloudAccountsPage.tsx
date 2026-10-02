@@ -233,13 +233,13 @@ function AwsGuide({ policy }: { policy: string }) {
             user → <em>Add permissions → Attach policies directly</em> → tick <code className="font-mono">DeployerHosting</code>. It only
             reaches resources named <code className="font-mono">deployer-*</code> (and firewall rules Deployer created itself). The
             one exception is reading and writing items of DynamoDB tables: tables you connect keep their own names, so Deployer may use
-            the items and backups of any table, but it only creates, changes or deletes <code className="font-mono">deployer-*</code>{" "}
-            tables.
+            the items, backups and point-in-time recovery of any table, but it only creates, changes or deletes{" "}
+            <code className="font-mono">deployer-*</code> tables (a restore always makes a new one).
           </p>
           <p className="text-muted">
             Already attached an older version? Paste this one over it (<em>Edit → JSON</em>): it adds the permissions for databases in
             your AWS account (create / connect RDS and the firewall that lets this PC and your apps in; DynamoDB tables, their
-            backups, and the role an App Runner app uses to reach its tables) and for building apps on GitHub Actions (GitHub&apos;s
+            backups, point-in-time recovery and restores, and the role an App Runner app uses to reach its tables) and for building apps on GitHub Actions (GitHub&apos;s
             sign-in for your account and one <code className="font-mono">deployer-gha-*</code> role per app, which only that app&apos;s
             repository can use).
           </p>

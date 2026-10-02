@@ -14,7 +14,9 @@ read the account's other tables.
 - Query console: one JSON request `{"operation": "Query", "TableName": ..., <AWS parameters>}` with plain
   JSON values; read-only roles may only Query, Scan and GetItem (docs/QUERY_CONSOLE.md).
 - Schema: key schema, indexes and fields inferred from a sampled Scan (`introspection.analyze_documents`).
-- On-demand backups (CreateBackup / ListBackups) for the backups tab.
+- On-demand backups (CreateBackup / ListBackups) for the backups tab, point-in-time recovery per table
+  (Describe / UpdateContinuousBackups) and the checks before a restore into a new table (the restore itself is
+  the `data_source.cloud_restore` job in services/cloud_db.py).
 
 Creating and deleting tables Deployer owns are jobs in services/cloud_db.py.
 """
@@ -64,7 +66,7 @@ def aws_for(ds: DataSource):
 
 
 def _error(exc: CloudError) -> ApiError:
-    if exc.code == "ResourceNotFoundException":
+    if exc.code in ("ResourceNotFoundException", "BackupNotFoundException", "TableNotFoundException"):
         return ApiError(404, "not_found", exc.message)
     if exc.code == "ConditionalCheckFailedException":
         return ApiError(409, "condition_failed", exc.message)
@@ -612,3 +614,96 @@ def create_backups(ds: DataSource, table: str | None = None) -> list[dict]:
         details = call(aws, "CreateBackup", TableName=t, BackupName=backup_name(t))["BackupDetails"]
         out.append(_backup_out(t, details))
     return out
+
+
+# --- point-in-time recovery and restores (docs/CLOUD.md "C2-2", "Point-in-time recovery and restores") -----
+
+
+def _utc(value: Any) -> datetime | None:
+    if not isinstance(value, datetime):
+        return None
+    return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+
+
+def _iso_utc(value: Any) -> str | None:
+    when = _utc(value)
+    return iso(when.replace(tzinfo=None)) if when else None
+
+
+def _pitr_out(table: str, description: dict) -> dict:
+    d = description.get("PointInTimeRecoveryDescription") or {}
+    return {
+        "table": table,
+        "status": d.get("PointInTimeRecoveryStatus") or "DISABLED",  # ENABLED / DISABLED
+        "earliest": _iso_utc(d.get("EarliestRestorableDateTime")),
+        "latest": _iso_utc(d.get("LatestRestorableDateTime")),
+        "days": d.get("RecoveryPeriodInDays"),
+        "problem": None,
+    }
+
+
+def _pitr_raw(aws, table: str) -> dict:
+    return call(aws, "DescribeContinuousBackups", TableName=table)["ContinuousBackupsDescription"]
+
+
+def pitr_status(ds: DataSource) -> list[dict]:
+    """Point-in-time recovery of each table; `problem` instead when AWS refuses to say (e.g. an older policy)."""
+    aws = aws_for(ds)
+    out = []
+    for t in tables_of(ds):
+        try:
+            out.append(_pitr_out(t, _pitr_raw(aws, t)))
+        except ApiError as exc:
+            empty = dict.fromkeys(("status", "earliest", "latest", "days"))
+            out.append({"table": t, **empty, "problem": exc.message})
+    return out
+
+
+def set_pitr(ds: DataSource, table: str, enabled: bool) -> dict:
+    _table(ds, table)
+    out = call(
+        aws_for(ds),
+        "UpdateContinuousBackups",
+        TableName=table,
+        PointInTimeRecoverySpecification={"PointInTimeRecoveryEnabled": enabled},
+    )
+    return _pitr_out(table, out["ContinuousBackupsDescription"])
+
+
+def restore_spec(
+    ds: DataSource, *, backup_arn: str | None, table: str | None, point_in_time: datetime | None, latest: bool
+) -> dict:
+    """What a restore will copy, checked against this source's own tables (a source never reaches another
+    table's backups): an AVAILABLE backup of one of its tables, or a time inside a table's recovery window."""
+    aws = aws_for(ds)
+    if backup_arn:
+        desc = call(aws, "DescribeBackup", BackupArn=backup_arn)["BackupDescription"]
+        source_table = (desc.get("SourceTableDetails") or {}).get("TableName")
+        if source_table not in tables_of(ds):
+            raise ApiError(404, "not_found", "This backup is not of one of this database's tables")
+        details = desc.get("BackupDetails") or {}
+        if details.get("BackupStatus") != "AVAILABLE":
+            raise ApiError(409, "backup_not_ready", "AWS is still making this backup: restore it once it is available")
+        return {"kind": "backup", "table": source_table, "backup_arn": backup_arn, "backup": details.get("BackupName")}
+    if not table:
+        raise ApiError(422, "validation_error", "Pick a backup, or a table and a time", {"field": "backup_arn"})
+    _table(ds, table)
+    d = _pitr_raw(aws, table).get("PointInTimeRecoveryDescription") or {}
+    if d.get("PointInTimeRecoveryStatus") != "ENABLED":
+        raise ApiError(
+            409,
+            "pitr_not_enabled",
+            f"Point-in-time recovery is off for {table}: turn it on first (it only covers the time after that)",
+        )
+    if latest:
+        return {"kind": "point_in_time", "table": table, "latest": True}
+    when = _utc(point_in_time)
+    earliest, newest = _utc(d.get("EarliestRestorableDateTime")), _utc(d.get("LatestRestorableDateTime"))
+    if when is None or (earliest and when < earliest) or (newest and when > newest):
+        raise ApiError(
+            400,
+            "invalid_restore_time",
+            f"Pick a time between {_iso_utc(earliest)} and {_iso_utc(newest)} (UTC)",
+            {"field": "point_in_time"},
+        )
+    return {"kind": "point_in_time", "table": table, "time": when.isoformat()}  # exact: the job sends it as is

@@ -20,6 +20,9 @@ import type {
   CloudConnection,
   CloudConnectionInput,
   CloudBackup,
+  CloudBackupsInfo,
+  CloudPitr,
+  CloudRestoreBody,
   CloudDatabaseOptions,
   CloudDbListing,
   DynamoKeyType,
@@ -945,8 +948,15 @@ export const api = {
       }>(`/projects/${e(pid)}/data-sources/${e(sid)}/firestore/export`),
     // DynamoDB on-demand backups (billable: confirm_billing).
     backups: (pid: string, sid: string) =>
-      client.get<{ backups: CloudBackup[]; cost: string; restore: string }>(
-        `/projects/${e(pid)}/data-sources/${e(sid)}/cloud-backups`,
+      client.get<CloudBackupsInfo>(`/projects/${e(pid)}/data-sources/${e(sid)}/cloud-backups`),
+    // Point-in-time recovery of one table (switching it on is billable: confirm_billing).
+    setPitr: (pid: string, sid: string, body: { table: string; enabled: boolean; confirm_billing?: boolean }) =>
+      client.put<CloudPitr>(`/projects/${e(pid)}/data-sources/${e(sid)}/cloud-backups/pitr`, body),
+    // Restore a backup / point in time into a NEW table and data source (billable), followed by its job.
+    restore: (pid: string, sid: string, body: CloudRestoreBody) =>
+      client.post<{ data_source: DataSource; job: Job }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/cloud-backups/restore`,
+        body,
       ),
     backup: (
       pid: string,

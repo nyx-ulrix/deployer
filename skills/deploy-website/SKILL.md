@@ -106,7 +106,9 @@ The dashboard is at the instance's public URL (default `http://localhost:8080`; 
    account** (roughly US$15-20/month for the smallest RDS; a DynamoDB table is billed per read, write
    and GB, often cents): get an explicit yes before `create_cloud_database` /
    `POST /v1/projects/{id}/cloud/databases` with `confirm_billing: true` (docs/CLOUD.md "C2-1", "C2-2").
-   DynamoDB on-demand backups (`create_cloud_backup`) are billable too - same rule.
+   DynamoDB on-demand backups (`create_cloud_backup`), point-in-time recovery
+   (`set_point_in_time_recovery`) and restores (`restore_cloud_backup`, always into a new table and data
+   source - the original is never changed) are billable too - same rule.
 3. **Schema and data**: Schema tab (ER diagram, DDL export), Data tab (rows/documents), Query tab
    (notebook or terminal).
 4. **API key for the site**: API keys tab → *Create key*.
@@ -158,7 +160,8 @@ Tools: `list_data_sources`, `get_schema`, `list_rows`, `list_documents`, `list_s
 `insert_/update_/delete_document`, `rtdb_write`, `export_documents`, `list_apps`, `get_app`, `deploy_app`,
 `deployment_status`, `app_logs`, `list_github_runs`, `list_cloud_targets`, `cloud_database_options` (service
 key). The cloud account tools - `list_cloud_connections`, `list_cloud_databases`, `create_cloud_database`,
-`create_cloud_backup`, `set_build_location` and `set_app_target` (all four billable: only with the user's yes
+`create_cloud_backup`, `set_point_in_time_recovery`, `restore_cloud_backup`, `set_build_location` and
+`set_app_target` (all billable: only with the user's yes
 and `confirm_billing: true`; `set_app_target` also needs `confirm_teardown: true` to delete an app's resources
 on its old cloud target) and `connect_cloud_database` - need a project **admin** like their REST routes: a
 service key doesn't see them, so ask the user to add the database or pick the target in the dashboard (*Add database → In your AWS account / In your Firebase

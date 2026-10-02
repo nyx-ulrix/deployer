@@ -16,6 +16,7 @@ and the `deploy-website` skill.
 | **C2-5** | MCP roles, data tools on every cloud engine, transfer, project delete keep / delete ("C2-5 as built") | **Built** (no migration) |
 | **C3** | GitHub Actions builds with OIDC, so pushes deploy with the PC off ("C3 as built") | **Built** (no migration) |
 | **Delete over API / MCP** | Deleting a cloud database with an admin's session or a service key, MCP `delete_cloud_database` ("Deleting a cloud database over the API and MCP") | **Built** (no migration) |
+| **DynamoDB recovery** | Point-in-time recovery per table and restores of a backup / point in time into a new table and data source ("C2-2 as built": "Point-in-time recovery and restores") | **Built** (no migration) |
 | **Polish** | Billing confirmation for putting an app on a cloud target, MCP `set_app_target` ("C1 as built": Rules, MCP) | **Built** (no migration) |
 
 ## Principles
@@ -411,9 +412,33 @@ deletes it in the DynamoDB console). A project with created tables cannot be del
 DynamoDB databases get an **AWS backups** card instead of the "up to their provider" note: the tables'
 on-demand backups (`ListBackups`, newest first, including ones made in the AWS console) and **Back up now**
 (admin; billable, so a cost note and a ticked box; `CreateBackup` `<table>-<UTC yyyymmddHHMMSS>` of every
-table or one). Restoring is in the AWS console (DynamoDB -> Backups -> Restore creates a new table, which can
-then be connected here); the card says so. Point-in-time recovery is not switched on (it costs about 20%
-of the storage price; follow-up).
+table or one).
+
+### Point-in-time recovery and restores (Backups tab)
+
+- **Point-in-time recovery** per table, **off unless the admin turns it on**: the card lists each table with
+  on / off and, when on, the window it can be restored to (`DescribeContinuousBackups`:
+  `EarliestRestorableDateTime` - `LatestRestorableDateTime`, 35 days); a table AWS refuses to describe (an
+  owner who has not pasted the new policy yet) shows the reason instead. **Turn on** is billable (about US$0.20
+  per GB of table per month; the dialog shows the note and needs the tick; API `confirm_billing: true`, else
+  `422 billing_not_confirmed`); **Turn off** says the window is deleted and needs no tick
+  (`UpdateContinuousBackups` either way; audit `data_source.cloud_pitr`).
+- **Restore** (admin; billable: about US$0.15 per GB restored, then the new table's storage, so a cost note +
+  tick / `confirm_billing: true`): an AVAILABLE on-demand backup (**Restore** on its row) or a table with
+  point-in-time recovery on (**Restore to a time**: the latest restorable time, or a date and time in the
+  window, in the viewer's time zone) goes into a **new table**, never over the original. The request is checked
+  first: the backup must be of one of the source's own tables (`DescribeBackup`: `404` otherwise, `409
+  backup_not_ready` while AWS makes it), point-in-time recovery must be on (`409 pitr_not_enabled`) and the time
+  inside the window (`400 invalid_restore_time`). It then creates a **new data source** (the name the admin
+  typed; `created: true`, `cloud.restored_from: {kind, table, backup | time | latest, source_id,
+  source_name}`) with the table `deployer-<name>-<id8>` and queues **`data_source.cloud_restore`** (progress in
+  the dialog, on the database's card and in Activity): `RestoreTableFromBackup` / `RestoreTableToPointInTime`
+  with `BillingModeOverride: PAY_PER_REQUEST` -> waits for `ACTIVE` with no restore in progress (minutes to
+  hours, up to 12 h) -> `TagResource` `managed-by=deployer` and deletion protection on (restores take neither) ->
+  `ok`. A retried job never asks twice (`table_requested`; `TableAlreadyExistsException` is fine). From then on
+  it is a created DynamoDB table like any other: removing it deletes only the new table after a final backup,
+  and the project's delete asks about it. The restored table has point-in-time recovery off and no
+  auto scaling / stream / TTL settings of the original (AWS does not copy them).
 
 ### Apps on App Runner
 
@@ -444,14 +469,22 @@ table, because connected tables keep their own names (a source still only uses i
 while creating an endpoint) for the gateway endpoint. The policy stays under IAM's 6,144-character limit
 (test-enforced). Owners paste the new policy over the old one (the guide says so).
 
+Point-in-time recovery and restores add `DescribeContinuousBackups`, `UpdateContinuousBackups`,
+`RestoreTableFromBackup`, `RestoreTableToPointInTime` on `table/*` and `table/*/backup/*` (the source table and
+backup keep their own names) and `BatchWriteItem` only on `table/deployer-*` (AWS requires the item write
+permissions on the restore's target table; the other write actions are already allowed). The new table itself
+is always `deployer-*`.
+
 ### API
 
 | Method | Path | Role | Body / Query | Response |
 |---|---|---|---|---|
 | POST | `/projects/{pid}/cloud/databases` | admin+ | `{connection_id, name, engine: "dynamodb", partition_key?: {name, type: S\|N\|B}, sort_key?, confirm_billing: true}` | `{data_source, job}` (201) |
 | POST | `/projects/{pid}/cloud/databases/connect` | admin+ | `{connection_id, name, tables: [...]}` | `DataSource` (201); `400 connection_failed` names the table AWS refused |
-| GET | `/projects/{pid}/data-sources/{sid}/cloud-backups` | viewer+ | – | `{backups: [{table, arn, name, status, type, size_bytes, created_at}], cost, restore}` |
+| GET | `/projects/{pid}/data-sources/{sid}/cloud-backups` | viewer+ | – | `{backups: [{table, arn, name, status, type, size_bytes, created_at}], pitr: [{table, status ENABLED\|DISABLED\|null, earliest, latest, days, problem}], cost, pitr_cost, restore, restore_cost}` |
 | POST | `/projects/{pid}/data-sources/{sid}/cloud-backups` | admin+ | `{table?, confirm_billing: true}` | `{backups}` (201); audit `data_source.cloud_backup` |
+| PUT | `/projects/{pid}/data-sources/{sid}/cloud-backups/pitr` | admin+ | `{table, enabled, confirm_billing (true to switch on)}` | the table's `pitr` entry; audit `data_source.cloud_pitr` |
+| POST | `/projects/{pid}/data-sources/{sid}/cloud-backups/restore` | admin+ | `{name, backup_arn}` or `{name, table, point_in_time (ISO, UTC without a zone) \| latest: true}`, plus `confirm_billing: true` | `{data_source, job}` (201, the new source `creating`); `404` / `409 backup_not_ready` / `409 pitr_not_enabled` / `400 invalid_restore_time`; audit `data_source.create` with `cloud: restore` |
 | GET | `/projects/{pid}/data-sources/{sid}/collections/{table}/documents` | viewer+ / API keys | `filter?`, `limit`, `cursor?` | `{documents, total, key, next_cursor}` |
 
 `GET .../cloud/databases/options` adds `dynamodb: {what, keys, key_types, cost, network}`; the
@@ -462,8 +495,9 @@ listing adds `tables` and `tables_problem`; data sources' `cloud` adds `tables` 
 
 `create_cloud_database` takes `engine: "dynamodb"` with `partition_key` / `sort_key`,
 `connect_cloud_database` takes `tables`, `list_cloud_databases` returns `tables`, `list_documents` takes
-`cursor`, `run_query` takes the JSON request, plus `list_cloud_backups` (any key) and
-`create_cloud_backup` (project admin since C2-5; billable, `confirm_billing`). See MCP.md.
+`cursor`, `run_query` takes the JSON request, plus `list_cloud_backups` (any key; with `pitr`),
+`create_cloud_backup`, `set_point_in_time_recovery` and `restore_cloud_backup` (project admin since C2-5;
+billable, `confirm_billing` - switching point-in-time recovery off needs none). See MCP.md.
 
 ### Not verified against real clouds
 
@@ -473,6 +507,17 @@ and its read-only rule, schema, backups, the App Runner role and gateway endpoin
 yet run against a live account: the exact request shapes (botocore validates parameters, the fake does
 not), App Runner taking the instance role on an existing service, and the gateway endpoint on default
 VPCs.
+
+Point-in-time recovery and restores (`tests/test_dynamo_restore.py`): on / off with the billing rule, the
+window, an older policy's refusal; restoring a backup and a point in time / the latest time into a new source,
+the checks (another table's backup, recovery off, a time outside the window, both or neither of backup / table),
+the retried job, deleting the copy, MCP and the policy against the in-memory fake; and the whole flow (list, on,
+both restores with their jobs) through the **real `AwsClient.ddb` with botocore's `Stubber`**, so every request
+and canned response is checked against botocore's DynamoDB model; the dialogs in `CloudBackups.test.tsx`. Not yet
+run against a live account: which resource ARN AWS checks the restore actions and the item writes against (the
+policy grants the documented set; a refusal fails the job with AWS's message and the source stays in `error`
+for Remove), how long real restores take, and `TagResource` / `UpdateTable` straight after a restore reaches
+`ACTIVE`.
 
 ## C2-3 as built: Cloud Firestore
 
@@ -858,7 +903,7 @@ there.
 | Provider | Engine | Support |
 |---|---|---|
 | AWS | **RDS / Aurora** MySQL, MariaDB, PostgreSQL | **built in C2-1** (above) |
-| AWS | **DynamoDB** | **built in C2-2** (above) |
+| AWS | **DynamoDB** | **built in C2-2** (above), with point-in-time recovery and restores into a new table |
 | Firebase | **Cloud Firestore** | **built in C2-3** (above) |
 | Firebase | **Realtime Database** | **built in C2-4** (above) |
 | all | MCP, transfer, project delete | **built in C2-5** (above) |
@@ -873,7 +918,6 @@ Left (not built; each is also noted in its section above):
 
 - creating Firestore databases, their managed exports to Cloud Storage and scheduled backups / point-in-time
   recovery from Deployer (the Firebase console does them);
-- DynamoDB point-in-time recovery and restoring a backup from the dashboard (the AWS console does it);
 - Secrets Manager / Secret Manager references instead of plain runtime environment;
 - a NAT gateway for App Runner apps linked to an RDS database that also call the internet (the user adds one);
 - a permissions boundary for the `deployer-app-*` / `deployer-gha-*` roles.

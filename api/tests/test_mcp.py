@@ -40,6 +40,8 @@ ADMIN_TOOLS = {
     "create_cloud_database",
     "connect_cloud_database",
     "create_cloud_backup",
+    "set_point_in_time_recovery",
+    "restore_cloud_backup",
     "set_build_location",
     "set_app_target",
 }
@@ -174,6 +176,8 @@ TOOL_ROUTES = {
     "list_cloud_backups": [("GET", "/data-sources/{source_id}/cloud-backups")],
     "create_cloud_backup": [("POST", "/data-sources/{source_id}/cloud-backups")],
     "delete_cloud_database": [("DELETE", "/cloud/databases/{source_id}")],
+    "set_point_in_time_recovery": [("PUT", "/data-sources/{source_id}/cloud-backups/pitr")],
+    "restore_cloud_backup": [("POST", "/data-sources/{source_id}/cloud-backups/restore")],
 }
 
 

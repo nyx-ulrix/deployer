@@ -194,6 +194,13 @@ class FakeDynamo(KwFake):
     def _ListBackups(self, TableName):
         return {"BackupSummaries": [b for b in self.backups.values() if b["TableName"] == TableName]}
 
+    def _DescribeContinuousBackups(self, TableName):  # point-in-time recovery: tests/test_dynamo_restore.py
+        desc = {
+            "ContinuousBackupsStatus": "ENABLED",
+            "PointInTimeRecoveryDescription": {"PointInTimeRecoveryStatus": "DISABLED"},
+        }
+        return {"ContinuousBackupsDescription": desc}
+
 
 ORDERS = [
     {"customer": "c1", "n": 1, "total": 12.5, "tags": {"$set": ["new", "gift"]}},
@@ -543,7 +550,7 @@ def test_on_demand_backups(client, db, team, aws, viewer):
     client.post(url, json={"confirm_billing": True}, headers=team["admin"])
     listed = client.get(url, headers=viewer).json()
     assert sorted(b["table"] for b in listed["backups"]) == ["orders", "orders", "users"]
-    assert "Restore" in listed["restore"]
+    assert "new table" in listed["restore"]
     audit = db.query(AuditLog).filter(AuditLog.action == "data_source.cloud_backup").first()
     assert audit.details["tables"] == ["orders"]
 

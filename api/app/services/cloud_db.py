@@ -16,7 +16,8 @@ DynamoDB ("C2-2"): an `external` source with engine `dynamodb` holding one or mo
 (`cloud_state.tables`); data operations are in services/dynamo.py. **Created**: one on-demand table
 `deployer-<name>-<id8>` (job `data_source.cloud_create`: CreateTable, wait for ACTIVE), deletion protection
 on; deleting switches it off, takes a final on-demand backup and deletes the table. **Connected**: tables the
-user already has, only read and written, never deleted.
+user already has, only read and written, never deleted. **Restored**: a backup or point in time of a source's
+table copied into a new `deployer-*` table (job `data_source.cloud_restore`), then a created table like any other.
 
 Cloud Firestore ("C2-3"): an `external` source with engine `firestore` on a Firebase connection, one
 existing Firestore database of that project (`cloud_state.database`), only ever connected - Deployer never
@@ -54,6 +55,8 @@ log = logging.getLogger(__name__)
 
 POLL_S = 20.0  # tests set 0
 CREATE_TIMEOUT_S = 45 * 60
+RESTORE_TIMEOUT_S = 12 * 3600  # a DynamoDB restore takes minutes to hours, growing with the table's size
+RESTORE_JOB = "data_source.cloud_restore"
 DELETE_TIMEOUT_S = 45 * 60
 GROUP_RELEASE_S = 10 * 60
 IP_REFRESH_EVERY_S = 5 * 60
@@ -288,6 +291,7 @@ def cloud_out(ds: DataSource, db: Session | None = None) -> dict | None:
         "instance_class": s.get("instance_class"),
         "allowed_ip": s.get("allowed_ip"),
         "job_id": s.get("job_id"),
+        "restored_from": s.get("restore"),  # DynamoDB: {kind, table, backup? | time? | latest?, source_name}
         "resources": resources(s),
         "when_pc_off": "Stays up when this PC is off.",
     }
@@ -724,8 +728,108 @@ def create_table(
     return ds, job
 
 
+def restore_table(
+    db: Session, project_id: str, source: DataSource, *, name: str, spec: dict, user_id: str
+) -> tuple[DataSource, Job]:
+    """A `creating` DynamoDB source and the job that restores a backup / point in time of one of `source`'s
+    tables into a NEW table `deployer-<name>-<id8>` (never over the original). `spec` comes from
+    `dynamo.restore_spec`. The caller commits and dispatches."""
+    conn, config = _connection(db, project_id, source.cloud_connection_id or "")
+    ds = DataSource(
+        project_id=project_id,
+        name=name,
+        kind="nosql",
+        engine=dynamo.ENGINE,
+        mode="external",
+        database_name="",
+        config_encrypted=encrypt_json({}),
+        status="creating",
+        status_message="Restoring into a new table in your AWS account (minutes to hours, depending on its size)",
+        cloud_connection_id=conn.id,
+    )
+    db.add(ds)
+    db.flush()
+    table = instance_id(ds)
+    ds.database_name = table
+    job = jobs.enqueue(
+        db,
+        type=RESTORE_JOB,
+        params={"data_source_id": ds.id},
+        project_id=project_id,
+        data_source_id=ds.id,
+        created_by_id=user_id,
+    )
+    ds.cloud_state = {
+        "provider": "aws",
+        "service": "dynamodb",
+        "created": True,
+        "tables": [table],
+        "region": config["region"],
+        "restore": {**spec, "source_id": source.id, "source_name": source.name},
+        "job_id": job.id,
+    }
+    return ds, job
+
+
+def _restore_table_steps(ctx: jobs.JobContext, ds_id: str, config: dict, state: dict) -> dict:
+    """RestoreTableFromBackup / RestoreTableToPointInTime (on-demand billing) -> waits for ACTIVE -> tags the
+    table and switches deletion protection on, like a table Deployer creates (restores don't take either)."""
+    factory = ctx.session_factory
+    aws = cloud_aws.client(config)
+    table, spec = state["tables"][0], state["restore"]
+    if not state.get("table_requested"):
+        when = "its latest state" if spec.get("latest") else spec.get("time")
+        what = f"the backup {spec.get('backup')}" if spec["kind"] == "backup" else f"{spec['table']} as of {when}"
+        ctx.progress(0.1, f"Asking AWS to restore {what} into {table}", force=True)
+        params = {"TargetTableName": table, "BillingModeOverride": "PAY_PER_REQUEST"}
+        try:
+            if spec["kind"] == "backup":
+                aws.ddb("RestoreTableFromBackup", BackupArn=spec["backup_arn"], **params)
+            elif spec.get("latest"):
+                aws.ddb(
+                    "RestoreTableToPointInTime", SourceTableName=spec["table"], UseLatestRestorableTime=True, **params
+                )
+            else:
+                at = datetime.fromisoformat(spec["time"])
+                aws.ddb("RestoreTableToPointInTime", SourceTableName=spec["table"], RestoreDateTime=at, **params)
+        except CloudError as exc:
+            if exc.code not in ("TableAlreadyExistsException", "ResourceInUseException"):  # a retried job asked already
+                raise
+        state = _save(factory, ds_id, table_requested=True) or state
+    started = time.monotonic()
+    while True:
+        desc = aws.ddb("DescribeTable", TableName=table)["Table"]
+        if desc.get("TableStatus") == "ACTIVE" and not (desc.get("RestoreSummary") or {}).get("RestoreInProgress"):
+            break
+        if time.monotonic() - started > RESTORE_TIMEOUT_S:
+            raise jobs.JobError(
+                "AWS did not finish restoring the table in time; it may still appear in the AWS console"
+            )
+        if _save(factory, ds_id) is None:
+            return {"skipped": "data source removed"}
+        ctx.check_cancelled()
+        elapsed = int(time.monotonic() - started)
+        ctx.progress(
+            min(0.2 + elapsed / 3600 * 0.7, 0.9), f"AWS is copying the data into {table} ({elapsed // 60} min)"
+        )
+        time.sleep(POLL_S)
+    ctx.progress(0.95, "Protecting the new table from deletion", force=True)
+    aws.ddb("TagResource", ResourceArn=desc["TableArn"], Tags=[cloud_aws.TAG])
+    if not desc.get("DeletionProtectionEnabled"):
+        aws.ddb("UpdateTable", TableName=table, DeletionProtectionEnabled=True)
+    with factory() as db:
+        ds = db.get(DataSource, ds_id)
+        if ds is None:
+            return {"skipped": "data source removed"}
+        ds.status, ds.status_message, ds.last_checked_at = "ok", "Connected (1 table, restored)", utcnow()
+        db.commit()
+    return {"table": table, "restored_from": spec}
+
+
 def _create_table_steps(ctx: jobs.JobContext, ds_id: str, config: dict, state: dict) -> dict:
     factory = ctx.session_factory
+    if state.get("restore"):
+        return _restore_table_steps(ctx, ds_id, config, state)
     aws = cloud_aws.client(config)
     table, keys = state["tables"][0], state["keys"]
     if not state.get("table_requested"):
@@ -858,6 +962,7 @@ def _fail(factory: jobs.SessionFactory, ds_id: str, message: str) -> None:
             db.commit()
 
 
+@jobs.job_handler(RESTORE_JOB)  # a restored DynamoDB table: the same steps, branched on cloud_state.restore
 @jobs.job_handler("data_source.cloud_create")
 def _job_create(ctx: jobs.JobContext) -> dict:
     ds_id = str(ctx.params["data_source_id"])
@@ -986,7 +1091,9 @@ def enqueue_delete(db: Session, ds: DataSource, user_id: str | None) -> Job | No
     are only forgotten). The job carries everything it needs: the row is deleted right away."""
     if not is_created(ds):
         return None
-    if ds.status == "creating" and jobs.active_job(db, "data_source.cloud_create", data_source_id=ds.id):
+    if ds.status == "creating" and any(
+        jobs.active_job(db, t, data_source_id=ds.id) for t in ("data_source.cloud_create", RESTORE_JOB)
+    ):
         raise conflict("cloud_database_creating", "Wait until AWS has finished creating it, then remove it")
     return jobs.enqueue(
         db,
