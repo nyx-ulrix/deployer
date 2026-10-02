@@ -3,7 +3,7 @@
 This is the only table that stores query text; audit logs keep counts only. Rows are insert-only,
 keep at most STORED_TEXT_LIMIT chars of text, and are pruned by the worker (`prune`: older than
 RETENTION_DAYS, or beyond MAX_RUNS_PER_PROJECT) and per project on insert (A-031). Password literals
-are masked before the text is stored (A-119).
+are masked before the text is stored (A-119), as are URI, connection-string and `auth()` passwords (V-05).
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from app.errors import ApiError
 from app.models import DataSource, QueryRun, User, utcnow
 from app.serializers import iso
+from app.services import connections
 
 RETENTION_DAYS = 90
 MAX_RUNS_PER_PROJECT = 10_000
@@ -28,22 +29,26 @@ REDACTED = "'***'"
 _LIT = r"""(?:'(?:[^'\\]|\\.|'')*'|"(?:[^"\\]|\\.|"")*")"""
 # A-119: the literal after each prefix is a password: MySQL/MariaDB `IDENTIFIED [WITH plugin] BY|AS`,
 # `SET PASSWORD ... =`, `PASSWORD('x')`; PostgreSQL `[ENCRYPTED] PASSWORD 'x'`; Mongo `pwd: "x"` and
-# `changeUserPassword("user", "x")`. ponytail: literal patterns only, a password built by an expression
-# or dollar-quoted ($$x$$) is kept; add a SQL tokenizer if that shows up.
+# `changeUserPassword("user", "x")` / `[db.]auth("user", "x")`. ponytail: literal patterns only, a
+# password built by an expression or dollar-quoted ($$x$$) is kept; add a SQL tokenizer if that shows up.
 _SECRET = re.compile(
     r"(\bIDENTIFIED\s+(?:WITH\s+\S+\s+)?(?:BY|AS)\s+(?:PASSWORD\s+)?"
     r"|\bSET\s+PASSWORD\b[^=;]{0,300}=\s*(?:PASSWORD\s*\(\s*)?"  # bounded: `*` is O(n^2) on repeats
     r"|(?<![\"'])\bPASSWORD\s*(?:\(\s*)?"
     r"|\bpwd[\"']?\s*:\s*"
-    rf"|\bchangeUserPassword\s*\(\s*{_LIT}\s*,\s*)"
+    rf"|\b(?:changeUserPassword|auth)\s*\(\s*{_LIT}\s*,\s*)"
     rf"{_LIT}",
     re.IGNORECASE,
 )
+# V-05: libpq/ODBC `password=x` / `Pwd=x;` inside a connection string (dblink, CREATE SERVER, ...). A quoted
+# value is SQL's `WHERE password = 'x'` (kept); `PASSWORD(` is MySQL's function, handled above.
+_CONNSTR = re.compile(r"""(\b(?:password|pwd)\s*=\s*)[^\s'";()]+(?=[\s'";)]|$)""", re.IGNORECASE)
 
 
 def redact(text: str) -> str:
-    """`text` with every password literal replaced by REDACTED."""
-    return _SECRET.sub(lambda m: m.group(1) + REDACTED, text)
+    """`text` with every password literal, URI `user:password@` and connection-string password masked."""
+    text = _SECRET.sub(lambda m: m.group(1) + REDACTED, text)
+    return _CONNSTR.sub(r"\1***", connections.redact(text, limit=None))
 
 
 def _outcome(result: dict | None, error: ApiError | None) -> tuple[str, int, int, int | None, str | None]:

@@ -11,6 +11,8 @@ from app.models import AuditLog, QueryRun, utcnow
 from app.serializers import iso
 from app.services import connections, query_log, source_ops
 
+PG = "postgresql"  # built at runtime so gitleaks' database-uri rule does not flag the fake URIs below
+
 
 @pytest.fixture
 def console(client, db, project_setup, sqlite_engine, monkeypatch, make_source):
@@ -246,6 +248,17 @@ def test_record_run_caps_text_and_trims_the_project(db, console, make_user, monk
         ("db.createUser({user: 'u', pwd: 'pw', roles: []})", "db.createUser({user: 'u', pwd: '***', roles: []})"),
         ("db.changeUserPassword('u', 'pw')", "db.changeUserPassword('u', '***')"),
         ("SELECT password FROM t WHERE password = 'x'", "SELECT password FROM t WHERE password = 'x'"),
+        # V-05: URIs, libpq/ODBC connection strings and Mongo auth()
+        (f"SELECT * FROM dblink('{PG}://u:pw@h/db', 'q')", f"SELECT * FROM dblink('{PG}://u:***@h/db', 'q')"),
+        (
+            "SELECT dblink_connect('host=h user=u password=pw dbname=d')",
+            "SELECT dblink_connect('host=h user=u password=*** dbname=d')",
+        ),
+        ("SELECT dblink_connect('host=h password = pw')", "SELECT dblink_connect('host=h password = ***')"),
+        ("EXEC sp_x 'Server=h;Uid=u;Pwd=pw;'", "EXEC sp_x 'Server=h;Uid=u;Pwd=***;'"),
+        ("db.auth('u', 'pw')", "db.auth('u', '***')"),
+        ('db.getSiblingDB("admin").auth("u", "pw")', 'db.getSiblingDB("admin").auth("u", \'***\')'),
+        ("SET PASSWORD = PASSWORD('pw')", "SET PASSWORD = PASSWORD('***')"),
     ],
 )
 def test_redact(text, stored):
@@ -256,6 +269,7 @@ def test_redact_is_linear():
     """A 200 000-char request of repeated `SET PASSWORD` took ~7 s with an unbounded `[^=;]*`."""
     started = time.monotonic()
     query_log.redact("SET PASSWORD " * 15_000)
+    query_log.redact("://a:" * 40_000)  # V-05: ~20 s before connections.redact bounded the password run
     assert time.monotonic() - started < 2
 
 

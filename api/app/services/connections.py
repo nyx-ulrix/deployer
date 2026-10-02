@@ -89,8 +89,8 @@ def redact(message: str, secrets: list[str | None] | None = None, *, limit: int 
             quoted = quote(secret, safe="")
             if quoted != secret:
                 out = out.replace(quoted, "***")
-    # user:password@ in any URI
-    out = re.sub(r"(://[^:/@\s]+:)[^@\s]+@", r"\1***@", out)
+    # user:password@ in any URI; the bound keeps a 200 000-char "://a:" repeat linear (was ~20 s)
+    out = re.sub(r"(://[^:/@\s]+:)[^@\s]{1,512}@", r"\1***@", out)
     return out if limit is None else out[:limit]
 
 
