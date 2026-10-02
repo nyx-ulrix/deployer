@@ -21,10 +21,11 @@ export function EngineBadge({ engine }: { engine: string }) {
 
 export function ModeBadge({ mode, cloud }: { mode: DataSource["mode"]; cloud?: DataSource["cloud"] }) {
   if (cloud) {
-    // docs/CLOUD.md "C2": in the user's own AWS account.
+    // docs/CLOUD.md "C2": in the user's own AWS account or Firebase project.
     return (
       <Badge tone="info" title={cloud.when_pc_off}>
-        AWS{cloud.region ? ` · ${cloud.region}` : ""}
+        {cloud.provider === "firebase" ? "Firebase" : "AWS"}
+        {cloud.region ? ` · ${cloud.region}` : ""}
       </Badge>
     );
   }

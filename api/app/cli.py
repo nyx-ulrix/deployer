@@ -132,6 +132,9 @@ def _reset_password(email: str | None) -> int:
                 print("Enter the account's email." if owners else "Deployer has no owner account yet.")
                 return 2
             user = owners[0]
+        if not user.is_active:  # sign-in refuses it whatever the password, so a "success" would mislead
+            print(f"{user.email} is disabled. The owner enables it again in Instance settings -> Users first.")
+            return 2
         user.password_hash = hash_password(password)
         tokens.revoke_user_tokens(session, user.id)
         audit.record(session, "auth.password_change", user_id=user.id, kind="reset", source="cli")

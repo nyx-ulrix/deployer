@@ -186,6 +186,25 @@ def test_firewall_follows_the_pc_ip(client, db, team, aws):
     assert cloud_db.refresh_pc_ips(jobs.get_sessionmaker()) == 0  # throttled between scheduler ticks
 
 
+def test_created_database_ip_for_admins_and_fixed_host(client, db, team, aws):
+    source = create(client, team, connection(db)).json()["data_source"]
+    jobs.run_queued()
+    url = f"{base(team)}/data-sources"
+
+    def cloud_of(role):
+        return next(s for s in client.get(url, headers=team[role]).json() if s["id"] == source["id"])["cloud"]
+
+    # This PC's public IP (the firewall rule) is shown to admins only.
+    assert cloud_of("admin")["allowed_ip"] == PC_IP and cloud_of("dev")["allowed_ip"] is None
+    checked = client.post(f"{url}/{source['id']}/check", headers=team["dev"]).json()
+    assert checked["cloud"]["allowed_ip"] is None
+    # Its cloud metadata describes the RDS instance, so the Edit dialog cannot re-point it.
+    moved = client.patch(f"{url}/{source['id']}", json={"config": {"host": "db.example.com"}}, headers=team["admin"])
+    assert moved.status_code == 422 and "host and port" in moved.json()["error"]["message"]
+    db.expire_all()
+    assert decrypt_json(db.get(DataSource, source["id"]).config_encrypted)["host"] == HOST
+
+
 def test_delete_created_database_takes_a_final_snapshot(client, db, team, aws):
     source = create(client, team, connection(db)).json()["data_source"]
     jobs.run_queued()

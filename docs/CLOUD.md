@@ -293,7 +293,9 @@ C1 policy paste the new one over it (the guide says so).
 | POST | `/projects/{pid}/cloud/databases/connect` | admin+ | `{connection_id, name, resource_id, username, password?, database?}` | `DataSource` (201); `400 connection_failed` names this PC's IP to allow |
 
 Data sources gain `cloud: {provider, connection_id, connection_name, service, created, resource_id,
-resource_kind, region, instance_class, allowed_ip, job_id, resources, when_pc_off} | null`.
+resource_kind, region, instance_class, allowed_ip, job_id, resources, when_pc_off} | null`; `allowed_ip` (this
+PC's public IP) is null for members below admin. `PATCH .../data-sources/{id}` of a created one may rename it or
+change its user, password, database and TLS, but answers 422 to a new host or port.
 `DELETE .../data-sources/{id}` of a created one returns `{ok, job}` (`data_source.cloud_delete`), and
 `409 cloud_database_creating` while it is being created; the connection details and data routes answer
 `409 cloud_database_creating` until it is ready.

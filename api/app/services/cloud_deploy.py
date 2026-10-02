@@ -422,6 +422,8 @@ class Publish:
         connector = aws.ensure_vpc_connector(vpc)
         for d in databases:
             s = d["state"]
+            if d["engine"] == "dynamodb":
+                continue  # no VPC: reached through the gateway endpoint below
             if s.get("vpc_id") != vpc:
                 self.log.write(
                     f"Database '{d['name']}' is in another VPC ({s.get('vpc_id')}): not reachable from this app"

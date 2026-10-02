@@ -406,6 +406,12 @@ def test_reset_password_cli(client, owner, make_user, login, db, capsys, monkeyp
     login(member.email, "member-password-2")
     assert db.query(AuditLog).filter_by(action="auth.password_change").count() == 2
 
+    # A disabled account cannot sign in whatever its password: no "success".
+    member.is_active = False
+    db.commit()
+    code, out = run("--email", member.email, stdin=json.dumps({"password": "member-password-3"}))
+    assert code == 2 and "disabled" in out
+
     make_user("second-owner@example.com", owner=True)
     code, out = run(stdin=json.dumps({"password": "a-new-password-3"}))
     assert code == 2 and "email" in out

@@ -192,7 +192,15 @@ def _ensure_name_free(db: DbSession, project_id: str, name: str, *, except_id: s
 
 @router.get("/projects/{project_id}/data-sources")
 def list_data_sources(access: Viewer, db: DbSession) -> list[dict]:
-    return [data_source_out(ds) for ds in project_sources(db, access.project.id)]
+    return [_member_out(ds, access) for ds in project_sources(db, access.project.id)]
+
+
+def _member_out(ds, access: ProjectAccess) -> dict:
+    """data_source_out for any member: this PC's public IP (a cloud database's firewall rule) is for admins."""
+    out = data_source_out(ds)
+    if out["cloud"] and not access.at_least("admin"):
+        out["cloud"]["allowed_ip"] = None
+    return out
 
 
 @router.post("/projects/{project_id}/data-sources/test")
@@ -280,6 +288,11 @@ def update_data_source(source_id: str, body: DataSourceUpdate, access: Admin, db
         raise validation_error("Managed databases have no connection settings to edit")
     if body.config is not None and connections.cloud_engine(ds.engine) is not None:
         raise validation_error("This database uses its cloud account's key; connect another one as a new database")
+    if body.config is not None and cloud_db.is_created(ds):
+        old = decrypt_json(ds.config_encrypted)
+        if any(k in body.config and body.config[k] != old.get(k) for k in ("host", "port")):
+            # Its cloud metadata (instance, firewall, delete) would still describe the RDS instance.
+            raise validation_error("Deployer created this database in AWS, so its host and port cannot change")
     name = (body.name or ds.name).strip()
     if not name:
         raise validation_error("name is required")
@@ -329,7 +342,7 @@ def check_data_source(source_id: str, access: Viewer, db: DbSession) -> dict:
         pass
     source_ops.check_status(db, ds)
     db.commit()
-    return data_source_out(ds)
+    return _member_out(ds, access)
 
 
 @router.get("/projects/{project_id}/data-sources/{source_id}/connection")

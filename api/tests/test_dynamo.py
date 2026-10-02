@@ -623,6 +623,7 @@ def test_app_with_rds_and_dynamodb_gets_a_gateway_endpoint(client, db, docker, t
     dep = deploy(db, app)
     assert dep.status == "live", dep.error
     assert aws.args("ensure_dynamodb_endpoint") == [("vpc-1",)] and "gateway endpoint" in dep.log
+    assert "not reachable" not in dep.log  # the table has no VPC of its own
 
 
 # --- MCP, policy ---------------------------------------------------------------------------------------

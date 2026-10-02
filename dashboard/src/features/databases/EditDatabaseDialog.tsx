@@ -26,6 +26,8 @@ export function EditDatabaseDialog({
   // used): rename only.
   const external = source.mode === "external" && !["dynamodb", "firestore", "firebase_rtdb"].includes(source.engine);
   const sql = source.kind === "sql";
+  // A database Deployer created in AWS keeps its host and port: its cloud metadata describes that instance.
+  const fixedHost = Boolean(source.cloud?.created);
   const [name, setName] = useState(source.name);
   const [host, setHost] = useState(d.host ?? "");
   const [port, setPort] = useState(d.port ? String(d.port) : "");
@@ -40,8 +42,7 @@ export function EditDatabaseDialog({
     // Blank secrets keep the stored ones, so a rename or host change needs no password.
     const config: Record<string, unknown> = sql
       ? {
-          host: host.trim(),
-          port: port ? Number(port) : undefined,
+          ...(fixedHost ? {} : { host: host.trim(), port: port ? Number(port) : undefined }),
           username: username.trim(),
           database: database.trim(),
           tls,
@@ -135,7 +136,11 @@ export function EditDatabaseDialog({
             <Field
               label="Host"
               className="sm:col-span-4"
-              hint="On this PC? Use its network IP (ipconfig), not localhost."
+              hint={
+                fixedHost
+                  ? "Deployer created this database in your AWS account, so it stays there."
+                  : "On this PC? Use its network IP (ipconfig), not localhost."
+              }
             >
               {(id) => (
                 <Input
@@ -143,6 +148,7 @@ export function EditDatabaseDialog({
                   value={host}
                   onChange={(e) => setHost(e.target.value)}
                   spellCheck={false}
+                  disabled={fixedHost}
                   required
                 />
               )}
@@ -153,6 +159,7 @@ export function EditDatabaseDialog({
                   id={id}
                   inputMode="numeric"
                   value={port}
+                  disabled={fixedHost}
                   onChange={(e) =>
                     setPort(e.target.value.replace(/[^\d]/g, ""))
                   }
