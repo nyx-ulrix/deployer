@@ -40,9 +40,14 @@ _SECRET = re.compile(
     rf"{_LIT}",
     re.IGNORECASE,
 )
-# V-05: libpq/ODBC `password=x` / `Pwd=x;` inside a connection string (dblink, CREATE SERVER, ...). A quoted
-# value is SQL's `WHERE password = 'x'` (kept); `PASSWORD(` is MySQL's function, handled above.
-_CONNSTR = re.compile(r"""(\b(?:password|pwd)\s*=\s*)[^\s'";()]+(?=[\s'";)]|$)""", re.IGNORECASE)
+# V-05: libpq/ODBC `password=x` / `Pwd=x;` inside a connection string (dblink, CREATE SERVER, ...), also
+# libpq `password=''p w''` (quoted inside a SQL literal) and ODBC `Pwd={a;b}`. A quoted value is SQL's
+# `WHERE password = 'x'` (kept); `= PASSWORD('` / `= md5('` is a function call (MySQL's is handled above).
+# No trailing lookahead and bounded quotes: a backtracking end check was O(n^2) (~2 min on 200 000 chars).
+_CONNSTR = re.compile(
+    r"""(\b(?:password|pwd)\s*=\s*)(?:''[^']{0,512}''|\{[^}]{0,512}\}|(?!\w+\s*\(\s*['"])[^\s'";]+)""",
+    re.IGNORECASE,
+)
 
 
 def redact(text: str) -> str:

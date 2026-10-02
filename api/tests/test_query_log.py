@@ -259,6 +259,13 @@ def test_record_run_caps_text_and_trims_the_project(db, console, make_user, monk
         ("db.auth('u', 'pw')", "db.auth('u', '***')"),
         ('db.getSiblingDB("admin").auth("u", "pw")', 'db.getSiblingDB("admin").auth("u", \'***\')'),
         ("SET PASSWORD = PASSWORD('pw')", "SET PASSWORD = PASSWORD('***')"),
+        ("SELECT dblink_connect('host=h password=Pa(ss)w')", "SELECT dblink_connect('host=h password=***')"),
+        (
+            "SELECT dblink_connect('host=h password=''p w'' port=1')",
+            "SELECT dblink_connect('host=h password=*** port=1')",
+        ),
+        ("EXEC sp_x 'Server=h;Pwd={a;b};'", "EXEC sp_x 'Server=h;Pwd=***;'"),
+        ("UPDATE t SET password = md5('x')", "UPDATE t SET password = md5('x')"),
     ],
 )
 def test_redact(text, stored):
@@ -270,6 +277,8 @@ def test_redact_is_linear():
     started = time.monotonic()
     query_log.redact("SET PASSWORD " * 15_000)
     query_log.redact("://a:" * 40_000)  # V-05: ~20 s before connections.redact bounded the password run
+    query_log.redact("pwd=" * 50_000 + "(")  # V-05 follow-up: ~2 min with a backtracking end lookahead
+    query_log.redact("password=''" * 18_000)
     assert time.monotonic() - started < 2
 
 
