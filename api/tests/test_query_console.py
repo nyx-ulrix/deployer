@@ -101,6 +101,11 @@ def test_sql_read_only_accepts(statement):
         "SELECT * FROM public.dblink_get_result('c') AS r(a int)",
         "SELECT dblink_open('c', 'cur', 'SELECT setval(''s'', 1)')",
         'SELECT "dblink_connect_u"(1)',
+        # L-04 follow-up: a query string run by a function, or a Unicode-escaped name, hides dblink.
+        "SELECT query_to_xml('SELECT dblink_exec(''dbname=x'', ''DELETE FROM t'')', true, true, '')",
+        "SELECT * FROM ts_stat('SELECT to_tsvector(dblink_exec(''c'', ''DELETE FROM t''))')",
+        r'SELECT U&"\0064blink_exec"(1)',
+        r'SELECT public.u&"d\0062link"(1)',
     ],
 )
 def test_sql_read_only_refuses(statement):

@@ -139,8 +139,15 @@ WRITE_KEYWORDS = frozenset(
 # read-only transaction. Every `dblink*` name is refused too (L-04): dblink opens a second, writable
 # connection (`dblink_connect` + `dblink_send_query`/`dblink_open`/`dblink_exec`). postgres_fdw has no
 # writing functions; its writes need INSERT/UPDATE/DELETE or CREATE SERVER, already refused above.
+# PostgreSQL functions that run a query passed as a string (`query_to_xml('SELECT dblink_exec(...)')`)
+# are refused as well, since this name check never sees inside strings.
 WRITE_FUNCTIONS = frozenset(
     {
+        "query_to_xml",
+        "query_to_xmlschema",
+        "query_to_xml_and_xmlschema",
+        "ts_stat",
+        "ts_rewrite",
         "setval",
         "nextval",
         "set_config",
@@ -221,7 +228,12 @@ def sql_read_only_refusal(statements: Iterable[str]) -> str | None:
             return f"Viewers can only run read-only SQL ({SQL_READ_ONLY_STARTS_TEXT}); this statement {start}"
         if first == "SHOW":
             continue
+        before = last = ""  # the two previous token texts
         for tok in parsed[0].flatten():
+            # PostgreSQL `U&"d\0062link"` spells a name with escapes this check cannot match.
+            if tok.ttype is T.String.Symbol and last == "&" and before.lower() == "u":
+                return 'Unicode-escaped names (`U&"..."`) cannot be used in read-only SQL'
+            before, last = last, tok.value
             if tok.ttype in T.Keyword and tok.normalized.upper() in WRITE_KEYWORDS:
                 return (
                     f"`{tok.value}` looks like a write command, so viewers cannot run this statement. "

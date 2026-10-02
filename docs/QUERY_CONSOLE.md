@@ -39,7 +39,10 @@ real boundary (use an external source with a read-only user for strict enforceme
   `SELECT ... FOR UPDATE` and `SELECT ... INTO OUTFILE`. Side-effecting functions are refused by
   name too (`setval`, `nextval`, `set_config`, `pg_terminate_backend`, `pg_cancel_backend`,
   `pg_reload_conf`, `pg_rotate_logfile`, `pg_notify`, and every `dblink*` function, whose second
-  connection is not read-only), since a read-only transaction does not stop all of them. A column or table named like one of these keywords
+  connection is not read-only), since a read-only transaction does not stop all of them. So are
+  functions that run a query given as a string (`query_to_xml`, `query_to_xmlschema`,
+  `query_to_xml_and_xmlschema`, `ts_stat`, `ts_rewrite`) and Unicode-escaped names (`U&"..."`),
+  which would hide a refused name from the check. A column or table named like one of these keywords
   (`start`, `copy`, `release`...) must be quoted (`` `start` `` on MariaDB/MySQL, `"start"` on
   PostgreSQL); the `read_only_role` message names the word that tripped the check.
 - MongoDB: the code must not contain any of these names as a whole identifier, anywhere (strings and
