@@ -51,7 +51,7 @@ $script:fakeOut = "10.0.0.7 172.17.0.1 `n"
 Assert-That ((Get-DeployerWslIp) -eq '10.0.0.7') 'Get-DeployerWslIp falls back to hostname -I without ip'
 
 # 5. (L-08) A setup-exe update stops the sign-in task's keep-alive loop the way "deployer stop" does,
-#    before setup-engine.sh restarts Docker and `wsl --terminate` ends the keep-alive.
+#    before `wsl --update`, the Docker restart in setup-engine.sh or `wsl --terminate` ends the keep-alive.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\install.ps1'), [ref]$null, [ref]$null)
 $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Install-WslEngine' }, $true)
 . ([scriptblock]::Create($fn.Extent.Text))
@@ -59,7 +59,7 @@ function Write-DeployerStep { param($Message) }
 function Write-DeployerInfo { param($Message) }
 function Write-DeployerOk { param($Message) }
 function Write-DeployerWarn { param($Message) }
-function Initialize-WslPlatform { param($ResumeScript) }
+function Initialize-WslPlatform { param($ResumeScript) $script:calls += 'wsl --update' }
 function ConvertTo-DeployerWslPath { param($Path) '/mnt/x' }
 function Wait-DeployerDockerEngine { param($Runtime, $TimeoutSeconds) $true }
 function Get-UbuntuWslImage { 'none.tar.gz' }
@@ -83,17 +83,17 @@ New-Item -ItemType Directory -Path $InstallDir | Out-Null
 try {
     $script:registered = $true; $script:diskMissing = $false; $script:calls = @()
     Install-WslEngine -Facts $null -ResumeScript 'x.ps1'
-    Assert-That (($script:calls -join ',') -eq 'stop-keepalive,engine marker=True,wsl --terminate') 'an update marks the stop and ends the keep-alive before Docker restarts (L-08)'
+    Assert-That (($script:calls -join ',') -eq 'stop-keepalive,wsl --update,engine marker=True,wsl --terminate') 'an update marks the stop and ends the keep-alive before WSL updates or Docker restarts (L-08)'
 
     Remove-Item -LiteralPath (Join-Path $InstallDir $script:DeployerStopMarker)
     $script:registered = $false; $script:calls = @()
     Install-WslEngine -Facts $null -ResumeScript 'x.ps1'
-    Assert-That (($script:calls -join ',') -eq 'import,engine marker=False,wsl --terminate') 'a fresh install leaves no stop marker'
+    Assert-That (($script:calls -join ',') -eq 'wsl --update,import,engine marker=False,wsl --terminate') 'a fresh install leaves no stop marker'
 
     # 6. (L-08) A distro still registered on a folder deleted after `uninstall -KeepData` is created again.
     $script:registered = $true; $script:diskMissing = $true; $script:calls = @()
     Install-WslEngine -Facts $null -ResumeScript 'x.ps1'
-    Assert-That (($script:calls -join ',') -eq 'wsl --unregister,import,engine marker=False,wsl --terminate') 'a distro whose disk is gone is unregistered and imported again'
+    Assert-That (($script:calls -join ',') -eq 'stop-keepalive,wsl --update,wsl --unregister,import,engine marker=True,wsl --terminate') 'a distro whose disk is gone is unregistered and imported again'
 } finally {
     Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
 }
