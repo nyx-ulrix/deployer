@@ -95,6 +95,12 @@ def test_sql_read_only_accepts(statement):
         "SELECT pg_catalog.set_config('default_transaction_read_only', 'off', false)",
         'SELECT "set_config"(1)',
         "SELECT dblink_exec('dbname=x', 'DELETE FROM t')",
+        # L-04: dblink's second connection is not read-only, whatever function drives it.
+        "SELECT dblink_connect('c', 'dbname=x')",
+        "SELECT dblink_send_query('c', 'DELETE FROM t')",
+        "SELECT * FROM public.dblink_get_result('c') AS r(a int)",
+        "SELECT dblink_open('c', 'cur', 'SELECT setval(''s'', 1)')",
+        'SELECT "dblink_connect_u"(1)',
     ],
 )
 def test_sql_read_only_refuses(statement):

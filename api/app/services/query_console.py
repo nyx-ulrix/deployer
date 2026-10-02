@@ -135,8 +135,10 @@ WRITE_KEYWORDS = frozenset(
 )
 # Functions with side effects that a read-only statement may not call (matched as names outside
 # strings and comments, schema-qualified or quoted too). Sequence writes also fail in the read-only
-# session below; the others (killing the app's connections, `set_config`, dblink's second
-# connection) are not stopped by a read-only transaction.
+# session below; the others (killing the app's connections, `set_config`) are not stopped by a
+# read-only transaction. Every `dblink*` name is refused too (L-04): dblink opens a second, writable
+# connection (`dblink_connect` + `dblink_send_query`/`dblink_open`/`dblink_exec`). postgres_fdw has no
+# writing functions; its writes need INSERT/UPDATE/DELETE or CREATE SERVER, already refused above.
 WRITE_FUNCTIONS = frozenset(
     {
         "setval",
@@ -147,10 +149,9 @@ WRITE_FUNCTIONS = frozenset(
         "pg_reload_conf",
         "pg_rotate_logfile",
         "pg_notify",
-        "dblink",
-        "dblink_exec",
     }
 )
+WRITE_FUNCTION_PREFIXES = ("dblink",)
 # The database-level read-only mode for read-only runs, by SQLAlchemy dialect. PostgreSQL also runs
 # the whole script in one READ ONLY transaction: its session default alone could be switched back
 # mid-script (`set_config('default_transaction_read_only', ...)` from a function we do not know).
@@ -227,7 +228,10 @@ def sql_read_only_refusal(statements: Iterable[str]) -> str | None:
                     'If it is a column or table name, quote it (`name` on MariaDB/MySQL, "name" on PostgreSQL)'
                 )
             name = tok.value.strip('"`')
-            if tok.ttype in (T.Name, T.String.Symbol) and name.lower() in WRITE_FUNCTIONS:
+            lname = name.lower()
+            if tok.ttype in (T.Name, T.String.Symbol) and (
+                lname in WRITE_FUNCTIONS or lname.startswith(WRITE_FUNCTION_PREFIXES)
+            ):
                 return f"`{name}` changes data or the server, so viewers cannot call it"
     return None
 
