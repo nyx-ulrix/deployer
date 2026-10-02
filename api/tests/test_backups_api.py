@@ -836,6 +836,42 @@ def test_project_delete_keeps_backups_then_purges(client, env, db):
     assert db.query(Backup).count() == 0 and db.get(Backup, backup_id) is None
 
 
+def test_project_delete_retries_a_failed_final_snapshot_then_drops(client, env, db, owner_headers):
+    """L-03: the source row goes with the project, so a failed final snapshot left the database (and its
+    user) on the host for good, unlisted. It is now listed, retried, and dropped once it succeeds."""
+    project, ds_id = env["project"], env["ds"].id
+    env["fake"].fail_snapshot = True
+    client.delete(f"/v1/projects/{project.id}?confirm={project.slug}", headers=env["owner"])
+    jobs.run_queued()
+    assert env["dropped"] == []
+    [item] = client.get("/v1/instance/backups", headers=owner_headers).json()["unfinished_deletes"]
+    assert item["data_source_id"] == ds_id and item["project_slug"] == project.slug and "dump failed" in item["error"]
+
+    assert backups.prune_all(jobs.get_sessionmaker(), utcnow() + timedelta(hours=1))["deletes_retried"] == 0
+    env["fake"].fail_snapshot = False
+    assert backups.prune_all(jobs.get_sessionmaker(), utcnow() + timedelta(hours=7))["deletes_retried"] == 1
+    jobs.run_queued()
+    assert env["dropped"] == ["p_shop_abc123"]
+    assert db.query(Backup).filter_by(data_source_id=ds_id, trigger="final", status="succeeded").count() == 1
+    assert client.get("/v1/instance/backups", headers=owner_headers).json()["unfinished_deletes"] == []
+    assert backups.prune_all(jobs.get_sessionmaker(), utcnow() + timedelta(days=2))["deletes_retried"] == 0
+
+
+def test_project_delete_drops_without_snapshot_after_the_keep_period(client, env, db):
+    project = env["project"]
+    env["fake"].fail_snapshot = True
+    client.delete(f"/v1/projects/{project.id}?confirm={project.slug}", headers=env["owner"])
+    jobs.run_queued()
+    backups.prune_all(jobs.get_sessionmaker(), utcnow() + timedelta(days=1))
+    jobs.run_queued()  # fails again: still not dropped
+    assert env["dropped"] == []
+    assert backups.prune_all(jobs.get_sessionmaker(), utcnow() + timedelta(days=31))["deletes_retried"] == 1
+    jobs.run_queued()
+    db.expire_all()
+    assert env["dropped"] == ["p_shop_abc123"]
+    assert db.query(Job).filter_by(type="source.finalize_delete", status="succeeded").one().params["skip_snapshot"]
+
+
 def test_deleted_project_final_snapshot_is_listed_and_downloadable(client, env, db, owner_headers):
     """A-195: a deleted project's "Recently deleted" goes with it; the instance owner can still get the data."""
     manual = _snapshot(client, env)

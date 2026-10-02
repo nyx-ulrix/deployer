@@ -146,6 +146,23 @@ export function InstanceBackupsPage() {
             <code>.env</code> file. To survive a broken PC, download a full export regularly and keep it (and its
             passphrase) somewhere else. Last full export: <strong>{relativeTime(lastExport)}</strong>.
           </Alert>
+          {data.data.unfinished_deletes.length > 0 && (
+            <Alert tone="warning" title="Deleted databases not removed yet">
+              Their project was deleted, but the final snapshot or the removal failed, so the database and its login
+              still exist. Deployer retries every 6 hours (keep the PC that hosts them on); after 30 days it removes
+              them without a snapshot.
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {data.data.unfinished_deletes.map((d) => (
+                  <li key={d.data_source_id}>
+                    <strong>{d.name ?? "database"}</strong> ({d.project_slug ?? "deleted project"} ·{" "}
+                    {engineLabel(d.engine)}), deleted {relativeTime(d.deleted_at)}, removed without a snapshot from{" "}
+                    {formatDateTime(d.drop_without_snapshot_at)}
+                    {d.error && <span className="block text-xs text-muted">{d.error}</span>}
+                  </li>
+                ))}
+              </ul>
+            </Alert>
+          )}
           <div className="grid gap-3 sm:grid-cols-3">
             <SummaryTile
               icon={unhealthy ? <AlertTriangle className="size-4" /> : <CheckCircle2 className="size-4" />}

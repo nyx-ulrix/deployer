@@ -67,6 +67,7 @@ FAILED_JOB_KEEP = timedelta(days=30)
 VERIFY_EVERY = timedelta(days=7)
 VERIFY_RETRY = timedelta(days=1)  # after a failed verification
 PRUNE_EVERY = timedelta(hours=1)
+FINALIZE_RETRY_EVERY = timedelta(hours=6)  # a deleted project's database whose snapshot or drop failed (L-03)
 PLATFORM_EVERY = timedelta(days=1)
 LOG_INTERVALS = {"mariadb": timedelta(minutes=5), "mongodb": timedelta(minutes=1)}
 SUPPORTED_ENGINES = ("mariadb", "mongodb")
@@ -1489,12 +1490,74 @@ def _drop_before_purge(db: Session, ds: DataSource) -> None:
     Raises while the host is unreachable (or the delete job still runs), so the next prune retries."""
     if _was_dropped(db, ds):
         return
+    _drop_unless_gone(db, ds)
+
+
+def _drop_unless_gone(db: Session, ds: DataSource) -> None:
     try:
         _provisioning().drop_managed_source(db, ds)
     except ApiError as exc:
         # Already gone from its device (e.g. a drop that timed out but finished): retrying would never end.
         if exc.code != "not_hosted":
             raise
+
+
+def _unfinished_detached_deletes(db: Session) -> list[tuple[Job, datetime]]:
+    """L-03: a deleted project's database whose final snapshot or drop failed. Its row went with the project,
+    so the purge never sees it: (latest failed finalize job, when it was first tried) per database whose
+    every attempt failed. One on a removed PC is left alone (A-047: its data is on that PC)."""
+    groups: dict[str, list[Job]] = {}
+    stmt = select(Job).where(Job.type == "source.finalize_delete", Job.data_source_id.is_(None))
+    for job in db.scalars(stmt):
+        if (job.params or {}).get("detached"):
+            groups.setdefault(job.params.get("data_source_id"), []).append(job)
+    out = []
+    for ds_id, group in groups.items():
+        if any(j.status != "failed" for j in group) or db.get(DataSource, ds_id) is not None:
+            continue
+        last = max(group, key=lambda j: j.created_at)
+        device_id = last.params["detached"].get("device_id")
+        if device_id and db.get(Device, device_id) is None:
+            continue
+        since = min(parse_time(j.params.get("since")) or j.created_at for j in group)
+        out.append((last, since))
+    return out
+
+
+def _retry_detached_deletes(db: Session, now: datetime) -> list[str]:
+    """L-03: retries each unfinished delete every FINALIZE_RETRY_EVERY; once DELETED_KEEP has passed (when its
+    final snapshot would have expired anyway) the database is dropped without one. Caller commits + dispatches."""
+    queued = []
+    for last, since in _unfinished_detached_deletes(db):
+        if now - last.created_at < FINALIZE_RETRY_EVERY:
+            continue
+        params = {**last.params, "since": iso(since), "skip_snapshot": now - since >= DELETED_KEEP}
+        job = jobs.enqueue(
+            db, type="source.finalize_delete", params=params, device_id=last.device_id, created_by_id=last.created_by_id
+        )
+        queued.append(job.id)
+    return queued
+
+
+def unfinished_detached_deletes(db: Session) -> list[dict]:
+    """Settings -> Backups: deleted projects' databases still on the host (L-03)."""
+    out = []
+    for last, since in _unfinished_detached_deletes(db):
+        info = last.params["detached"]
+        out.append(
+            {
+                "data_source_id": last.params["data_source_id"],
+                "project_id": info.get("project_id"),
+                "project_slug": _deleted_project(db, info.get("project_id")).get("slug"),
+                "name": info.get("name"),
+                "engine": info.get("engine"),
+                "error": last.error,
+                "deleted_at": iso(since),
+                "last_attempt_at": iso(last.created_at),
+                "drop_without_snapshot_at": iso(since + DELETED_KEEP),
+            }
+        )
+    return out
 
 
 def prune_all(factory: jobs.SessionFactory, now: datetime | None = None) -> dict:
@@ -1546,7 +1609,11 @@ def prune_all(factory: jobs.SessionFactory, now: datetime | None = None) -> dict
         for b in platform:
             if b.status == "failed" and now - b.started_at > FAILED_KEEP:
                 delete_backup(session, b)
+        retried = _retry_detached_deletes(session, now)
         session.commit()
+        for job_id in retried:
+            jobs.dispatch(job_id)
+        summary["deletes_retried"] = len(retried)
         summary["jobs_deleted"] = prune_jobs(session, now)
         return summary
     finally:
@@ -1556,11 +1623,12 @@ def prune_all(factory: jobs.SessionFactory, now: datetime | None = None) -> dict
 def prune_jobs(session: Session, now: datetime) -> int:
     """Deletes finished job rows older than JOB_KEEP (failed: FAILED_JOB_KEEP). Log archiving alone adds
     one per database every 1-5 minutes. A deleted source's finalize job stays until the source is purged:
-    undelete reads it to know whether the database was dropped."""
+    undelete reads it to know whether the database was dropped. A deleted project's one is kept as long as a
+    failed one (L-03: the newest attempt must outlive the failed ones, or they would be retried again)."""
     old = and_(
         Job.status.in_(jobs.FINAL_STATUSES),
         or_(
-            and_(Job.status != "failed", Job.created_at < now - JOB_KEEP),
+            and_(Job.status != "failed", Job.type != "source.finalize_delete", Job.created_at < now - JOB_KEEP),
             Job.created_at < now - FAILED_JOB_KEEP,
         ),
         not_(and_(Job.type == "source.finalize_delete", Job.data_source_id.is_not(None))),
@@ -2021,9 +2089,25 @@ def _job_finalize_delete(ctx: jobs.JobContext) -> dict:
     detached = params.get("detached")
     ctx.progress(0.05, "Taking the final snapshot", force=True)
     if detached:
-        backup_id = _final_snapshot_detached(
-            ctx.session_factory, detached, ds_id, ctx.created_by_id, ctx.progress, ctx.job_id
-        )
+        # L-03: a retry keeps the final snapshot an earlier attempt took; past DELETED_KEEP it drops without one.
+        backup_id, since = None, parse_time(params.get("since"))
+        if since is not None:
+            session = ctx.db()
+            try:
+                backup_id = session.scalar(
+                    select(Backup.id).where(
+                        Backup.data_source_id == ds_id,
+                        Backup.trigger == "final",
+                        Backup.status == "succeeded",
+                        Backup.started_at >= since,
+                    )
+                )
+            finally:
+                session.close()
+        if backup_id is None and not params.get("skip_snapshot"):
+            backup_id = _final_snapshot_detached(
+                ctx.session_factory, detached, ds_id, ctx.created_by_id, ctx.progress, ctx.job_id
+            )
         transient = DataSource(
             id=ds_id,
             project_id=detached["project_id"],
@@ -2037,7 +2121,7 @@ def _job_finalize_delete(ctx: jobs.JobContext) -> dict:
         )
         session = ctx.db()
         try:
-            provisioning.drop_managed_source(session, transient)
+            _drop_unless_gone(session, transient)
             session.commit()
         finally:
             session.close()
@@ -2356,6 +2440,7 @@ def instance_health(db: Session) -> dict:
             db.scalar(select(func.max(AuditLog.created_at)).where(AuditLog.action == "instance.export"))
         ),
         "deleted_projects": deleted_project_backups(db),
+        "unfinished_deletes": unfinished_detached_deletes(db),
     }
 
 

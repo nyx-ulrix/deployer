@@ -913,6 +913,21 @@ export type InstanceBackups = {
   last_export_at: string | null;
   /** A-195: final snapshots of deleted projects' databases, downloadable until `expires_at`. */
   deleted_projects: DeletedProjectBackup[];
+  /** L-03: deleted projects' databases still on the host because their final snapshot or drop failed. */
+  unfinished_deletes: UnfinishedDelete[];
+};
+
+export type UnfinishedDelete = {
+  data_source_id: string;
+  project_id: string | null;
+  project_slug: string | null;
+  name: string | null;
+  engine: string;
+  error: string | null;
+  deleted_at: string;
+  last_attempt_at: string;
+  /** Retried every 6 hours; from this time the database is dropped without a final snapshot. */
+  drop_without_snapshot_at: string;
 };
 
 export type DeletedProjectBackup = {
