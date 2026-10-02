@@ -41,6 +41,7 @@ HOSTING = "https://firebasehosting.googleapis.com/v1beta1"
 RUN = "https://run.googleapis.com/v2"
 REGISTRY = "https://artifactregistry.googleapis.com/v1"
 FIRESTORE = "https://firestore.googleapis.com/v1"
+STORAGE = "https://storage.googleapis.com/storage/v1"
 RTDB_MANAGEMENT = "https://firebasedatabase.googleapis.com/v1beta"
 IAM = "https://iam.googleapis.com/v1"
 SECRETS = "https://secretmanager.googleapis.com/v1"
@@ -61,8 +62,13 @@ _SECRET_ID = re.compile(r"^[A-Za-z0-9_-]{1,255}$")  # Secret Manager ids: deploy
 _OPERATION = re.compile(r"^projects/[\w.-]+/locations/[\w-]+/operations/[\w.-]+$")
 _VERSION = re.compile(r"^(projects/[\w-]+/)?sites/[a-z0-9-]+/versions/[\w-]+$")
 # A Firestore path under projects/<project>/ (segments already percent-encoded by services/firestore.py):
-# the database list, a database, or something under its documents / collection groups, plus a `:method`.
-_FIRESTORE_PATH = re.compile(r"^databases(/[\w()%.~-]+(/(documents|collectionGroups)(/[\w%.~-]+)*)?)?(:[A-Za-z]+)?$")
+# the database list, a database, or something under its documents / collection groups / backup schedules /
+# operations, plus a `:method` (`databases:restore`, `databases/<id>:exportDocuments`); or the project's backups.
+_FIRESTORE_PATH = re.compile(
+    r"^(databases(/[\w()%.~-]+(/(documents|collectionGroups|backupSchedules|operations)(/[\w%.~-]+)*)?)?"
+    r"(:[A-Za-z]+)?|locations/[\w-]+/backups(/[\w-]+)?)$"
+)
+BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{1,61}[a-z0-9]$")
 # A Realtime Database: https://<id>.firebaseio.com (us-central1) or https://<id>.<region>.firebasedatabase.app.
 _RTDB_URL = re.compile(
     r"^https://[a-z0-9][a-z0-9-]{0,62}(\.firebaseio\.com|\.[a-z]+-[a-z]+\d{1,2}\.firebasedatabase\.app)$"
@@ -192,6 +198,35 @@ class GcpClient:
         if body is None:
             return self._send(method, url, params=params)
         return self._json(method, url, body, params=params)
+
+    # --- Cloud Storage: the bucket Firestore exports go to (docs/CLOUD.md "Firestore backups") ------
+
+    def bucket(self, name: str) -> dict:
+        """A bucket the service account can see (`{name, location}`), else CloudError."""
+        if not BUCKET_RE.match(name):
+            raise CloudError(f"Invalid Cloud Storage bucket name {name[:70]!r}")
+        return self._send("GET", f"{STORAGE}/b/{name}")
+
+    def create_bucket(self, name: str, location: str) -> None:
+        """A private bucket (uniform access, public access prevented) in the project. One that exists already is
+        fine when the service account can see it; else the name belongs to someone else (names are global)."""
+        if not BUCKET_RE.match(name):
+            raise CloudError(f"Invalid Cloud Storage bucket name {name[:70]!r}")
+        body = {
+            "name": name,
+            "location": location,
+            "iamConfiguration": {"uniformBucketLevelAccess": {"enabled": True}, "publicAccessPrevention": "enforced"},
+            "labels": {"managed-by": "deployer"},
+        }
+        try:
+            self._json("POST", f"{STORAGE}/b", body, params={"project": self.project})
+        except CloudError as exc:
+            if exc.status != 409:
+                raise
+            try:
+                self.bucket(name)
+            except CloudError:
+                raise CloudError(f"The bucket name {name} is taken by another Google project") from None
 
     # --- Firebase Realtime Database (docs/CLOUD.md "C2-4") ----------------------------------------
 

@@ -1,19 +1,20 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Plug } from "lucide-react";
+import { Database, Plug } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api, qk } from "../../api/endpoints";
 import { invalidateProjectSources } from "../../api/hooks";
 import type { CloudDatabaseOptions } from "../../api/types";
 import { Button } from "../../components/ui/Button";
-import { Field, Input, Select } from "../../components/ui/Input";
+import { Checkbox, Field, Input, Select } from "../../components/ui/Input";
 import { PageSpinner } from "../../components/ui/Spinner";
 import { Alert, ErrorState } from "../../components/ui/States";
 import { useToast } from "../../components/ui/toast-context";
 
-/** docs/CLOUD.md "C2-3": connect the Cloud Firestore database of a Firebase project the project may use. Connecting
- * creates nothing (so there is no billing box); Google bills reads and writes, which the cost note says. */
+/** docs/CLOUD.md "C2-3": connect the Cloud Firestore database of a Firebase project the project may use (free, so no
+ * billing box; Google bills reads and writes, which the cost note says), or create a new one ("Firestore backups":
+ * billable, so the cost box). */
 export function FirestoreSection({
   projectId,
   name,
@@ -40,13 +41,30 @@ export function FirestoreSection({
     queryFn: () => api.cloud.connectionDatabases(projectId, connectionId),
     enabled: Boolean(connectionId),
   });
+  const done = (message: string) => {
+    invalidateProjectSources(queryClient, projectId);
+    toast.success(message);
+    onDone();
+  };
   const connect = useMutation({
     mutationFn: () => api.cloud.connectDatabase(projectId, { connection_id: connectionId, name, database: database.trim() }),
-    onSuccess: (source) => {
-      invalidateProjectSources(queryClient, projectId);
-      toast.success(`${source.name} connected.`);
-      onDone();
-    },
+    onSuccess: (source) => done(`${source.name} connected.`),
+  });
+  // docs/CLOUD.md "Firestore backups": a new database in the project (billable once used, so the cost box).
+  const [location, setLocation] = useState(options.locations[0]?.id ?? "nam5");
+  const [newId, setNewId] = useState("");
+  const [agreed, setAgreed] = useState(false);
+  const create = useMutation({
+    mutationFn: () =>
+      api.cloud.createDatabase(projectId, {
+        connection_id: connectionId,
+        name,
+        engine: "firestore",
+        location,
+        database: newId.trim() || undefined,
+        confirm_billing: agreed,
+      }),
+    onSuccess: (out) => done(`${out.data_source.name} is being created in your Firebase project (about a minute).`),
   });
 
   if (connections.isPending) return <PageSpinner />;
@@ -122,13 +140,7 @@ export function FirestoreSection({
       )}
       {picked?.problem && <Alert tone="danger">{picked.problem}</Alert>}
       {listing.isSuccess && !listing.data.firestore_problem && found.length === 0 && (
-        <Alert tone="info">
-          This Firebase project has no Firestore database yet. Create one in the{" "}
-          <a href="https://console.firebase.google.com/" target="_blank" rel="noreferrer" className="underline">
-            Firebase console
-          </a>{" "}
-          (Build → Firestore Database → Create database), then connect it here.
-        </Alert>
+        <Alert tone="info">This Firebase project has no Firestore database yet: create one below.</Alert>
       )}
       <Alert tone="info" title="How apps and this PC reach it">
         {options.network}
@@ -147,6 +159,45 @@ export function FirestoreSection({
         >
           Connect database
         </Button>
+      </div>
+      <div className="space-y-3 rounded-xl border border-border p-3">
+        <p className="text-sm font-medium">Or create a new Firestore database</p>
+        <Field label="Location" hint="Pick the one nearest your users; it can't be changed later.">
+          {(id) => (
+            <Select id={id} value={location} onChange={(e) => setLocation(e.target.value)}>
+              {options.locations.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.label} ({l.id})
+                </option>
+              ))}
+            </Select>
+          )}
+        </Field>
+        <Field label="Database id" optional hint="Lowercase letters, digits and hyphens. Empty: Deployer picks one (deployer-…).">
+          {(id) => <Input id={id} value={newId} onChange={(e) => setNewId(e.target.value)} spellCheck={false} autoCapitalize="off" />}
+        </Field>
+        <Alert tone="warning" title="Google bills what it stores and reads">
+          {options.create_cost}
+          <Checkbox
+            className="mt-2"
+            checked={agreed}
+            onChange={(e) => setAgreed(e.target.checked)}
+            label="I understand Google may charge my Firebase project for this database"
+          />
+        </Alert>
+        {create.error && <Alert tone="danger">{errorMessage(create.error)}</Alert>}
+        <div className="flex justify-end">
+          <Button
+            variant="primary"
+            icon={<Database className="size-4" />}
+            loading={create.isPending}
+            disabled={!agreed || !connectionId}
+            title={agreed ? undefined : "Tick the cost box first"}
+            onClick={() => create.mutate()}
+          >
+            Create in Firebase
+          </Button>
+        </div>
       </div>
     </div>
   );

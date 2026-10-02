@@ -23,6 +23,9 @@ import type {
   CloudBackupsInfo,
   CloudPitr,
   CloudRestoreBody,
+  FirestoreBackups,
+  FirestoreOperation,
+  FirestoreSchedule,
   CloudDatabaseOptions,
   CloudDbListing,
   DynamoKeyType,
@@ -903,8 +906,11 @@ export const api = {
         instance_class?: string;
         partition_key?: { name: string; type: DynamoKeyType };
         sort_key?: { name: string; type: DynamoKeyType };
-        /** Realtime Database (`engine: "firebase_rtdb"`): where the project's default database is created. */
+        /** Realtime Database (`engine: "firebase_rtdb"`): where the project's default database is created; Firestore
+         * (`engine: "firestore"`): where the new database goes. */
         location?: string;
+        /** Firestore: the new database's id (default deployer-<name>-<id8>). */
+        database?: string;
         confirm_billing: boolean;
       },
       // `job` is null for a Realtime Database: Firebase answers with the ready database.
@@ -967,6 +973,51 @@ export const api = {
     ) =>
       client.post<{ backups: CloudBackup[] }>(
         `/projects/${e(pid)}/data-sources/${e(sid)}/cloud-backups`,
+        body,
+      ),
+    // docs/CLOUD.md "Firestore backups": managed exports, schedules, restores (billable: confirm_billing).
+    firestoreBackups: (pid: string, sid: string) =>
+      client.get<FirestoreBackups>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/firestore/backups`,
+      ),
+    firestoreManagedExport: (
+      pid: string,
+      sid: string,
+      body: { bucket?: string; create_bucket?: boolean; collections?: string[]; confirm_billing: boolean },
+    ) =>
+      client.post<{ operation: FirestoreOperation; bucket: string; output_uri: string }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/firestore/exports`,
+        body,
+      ),
+    firestoreImport: (
+      pid: string,
+      sid: string,
+      body: { input_uri: string; name: string; database?: string; confirm_billing: boolean },
+    ) =>
+      client.post<{ data_source: DataSource; job: Job }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/firestore/import`,
+        body,
+      ),
+    firestoreSchedule: (
+      pid: string,
+      sid: string,
+      body: { recurrence: "daily" | "weekly"; day?: string; retention_days: number; confirm_billing: boolean },
+    ) =>
+      client.post<FirestoreSchedule>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/firestore/backup-schedules`,
+        body,
+      ),
+    firestoreDeleteSchedule: (pid: string, sid: string, scheduleId: string) =>
+      client.del<{ ok: true }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/firestore/backup-schedules/${e(scheduleId)}`,
+      ),
+    firestoreRestore: (
+      pid: string,
+      sid: string,
+      body: { backup: string; name: string; database?: string; confirm_billing: boolean },
+    ) =>
+      client.post<{ data_source: DataSource; job: Job }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/firestore/restore`,
         body,
       ),
   },

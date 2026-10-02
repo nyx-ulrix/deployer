@@ -20,8 +20,9 @@ user already has, only read and written, never deleted. **Restored**: a backup o
 table copied into a new `deployer-*` table (job `data_source.cloud_restore`), then a created table like any other.
 
 Cloud Firestore ("C2-3"): an `external` source with engine `firestore` on a Firebase connection, one
-existing Firestore database of that project (`cloud_state.database`), only ever connected - Deployer never
-creates or deletes one. Data operations are in services/firestore.py.
+Firestore database of that project (`cloud_state.database`), connected - or made by job `data_source.cloud_create`:
+a new empty one, a backup restored or a managed export imported into a new one ("Firestore backups"). Deployer
+never deletes one. Data operations are in services/firestore.py, exports and backups in services/firestore_admin.py.
 
 Firebase Realtime Database ("C2-4"): an `external` source with engine `firebase_rtdb` on a Firebase connection,
 one database instance of that project (`cloud_state.instance` / `.url`). Connected, or - when the project has
@@ -42,6 +43,7 @@ import re
 import secrets
 import time
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
@@ -59,6 +61,7 @@ RESTORE_TIMEOUT_S = 12 * 3600  # a DynamoDB restore takes minutes to hours, grow
 RESTORE_JOB = "data_source.cloud_restore"
 DELETE_TIMEOUT_S = 45 * 60
 GROUP_RELEASE_S = 10 * 60
+FIRESTORE_TIMEOUT_S = 6 * 3600  # restoring or importing a big database takes Google hours
 IP_REFRESH_EVERY_S = 5 * 60
 MASTER_USER = "deployer"
 
@@ -156,8 +159,8 @@ FIRESTORE_WHAT = (
 )
 FIRESTORE_CONNECT = (
     "Pick the database: every Firebase project can have one called (default), made in the Firebase console under "
-    "Build -> Firestore Database -> Create database (choose production mode and a location near your users). "
-    "Deployer only connects: it never creates or deletes a Firestore database, and removing it here keeps the data."
+    "Build -> Firestore Database -> Create database (choose production mode and a location near your users), or "
+    "create a new one below. Deployer never deletes a Firestore database: removing it here keeps the data."
 )
 FIRESTORE_COST_NOTE = (
     "Connecting is free. Google bills reads, writes and storage to your Firebase project, including what you do in "
@@ -207,6 +210,28 @@ DYNAMODB_NETWORK = (
     "No firewall or password: Deployer reaches it with your AWS connection's key, and App Runner apps with "
     "Database access through an IAM role that may use exactly these tables."
 )
+# docs/CLOUD.md "Firestore backups": a new Firestore database (native mode) in the Firebase project.
+FIRESTORE_LOCATIONS = {
+    "nam5": "United States (multi-region)",
+    "eur3": "Europe (multi-region)",
+    "us-central1": "Iowa",
+    "us-east1": "South Carolina",
+    "us-west1": "Oregon",
+    "europe-west1": "Belgium",
+    "europe-west2": "London",
+    "europe-west3": "Frankfurt",
+    "asia-northeast1": "Tokyo",
+    "asia-southeast1": "Singapore",
+    "australia-southeast1": "Sydney",
+    "southamerica-east1": "Sao Paulo",
+}
+FIRESTORE_CREATE_COST = (
+    "A new Firestore database costs nothing until it is used; then Google bills its reads, writes and storage to "
+    "your Firebase project (about US$0.06 per 100,000 reads, US$0.18 per 100,000 writes and US$0.18 per GB stored "
+    "a month - prices vary by location). The free daily quota covers only one database per project. Deployer never "
+    "deletes it: removing it here keeps it and its data (delete it in the Firebase console)."
+)
+_LOCATION = re.compile(r"^[a-z0-9-]{2,30}$")
 
 
 # --- names, output -------------------------------------------------------------------------------
@@ -315,6 +340,8 @@ def options() -> dict:
             "connect": FIRESTORE_CONNECT,
             "cost": FIRESTORE_COST_NOTE,
             "network": FIRESTORE_NETWORK,
+            "create_cost": FIRESTORE_CREATE_COST,
+            "locations": [{"id": k, "label": v} for k, v in FIRESTORE_LOCATIONS.items()],
         },
         "rtdb": {
             "short": RTDB_SHORT,
@@ -673,6 +700,159 @@ def create_rtdb(db: Session, project_id: str, *, connection_id: str, name: str, 
     return ds
 
 
+def create_firestore(
+    db: Session,
+    project_id: str,
+    *,
+    connection_id: str,
+    name: str,
+    database: str | None,
+    location: str,
+    user_id: str,
+    restore_from: str | None = None,
+    import_from: str | None = None,
+    collections: list[str] | None = None,
+) -> tuple[DataSource, Job]:
+    """A `creating` Firestore source and the job that makes its database in the Firebase project (docs/CLOUD.md
+    "Firestore backups"): a new empty one, a backup restored into it (`restore_from`, a backup name) or a managed
+    export imported into it (`import_from`, a gs:// prefix). Default id `deployer-<name>-<id8>`. The caller checks
+    the name, commits and dispatches. `created` stays false: Deployer never deletes a Firestore database."""
+    plain = not restore_from and not import_from
+    if not _LOCATION.match(location or "") or (plain and location not in FIRESTORE_LOCATIONS):
+        raise ApiError(422, "validation_error", "Pick one of the offered locations", {"field": "location"})
+    database = (database or "").strip() or None
+    if database and not firestore.DATABASE_ID.match(database):
+        raise ApiError(
+            422,
+            "validation_error",
+            "A Firestore database id is (default), or 4-63 lowercase letters, digits and hyphens (a letter first)",
+            {"field": "database"},
+        )
+    conn, config = _connection(db, project_id, connection_id, provider="firebase")
+    if database:  # a typed id must be free: never import or restore over an existing database
+        try:
+            firestore.describe(cloud_gcp.client(config), database)
+        except ApiError as exc:
+            if exc.code != "not_found":
+                raise
+        else:
+            raise conflict(
+                "database_exists",
+                f"The Firebase project already has a Firestore database {database}: connect it, or pick another id",
+            )
+    what = (
+        "Restoring the backup into a new Firestore database"
+        if restore_from
+        else "Importing the export into a new Firestore database"
+        if import_from
+        else "Creating the Firestore database in your Firebase project"
+    )
+    ds = DataSource(
+        project_id=project_id,
+        name=name,
+        kind="nosql",
+        engine=firestore.ENGINE,
+        mode="external",
+        database_name="",
+        config_encrypted=encrypt_json({}),  # no secret of its own: the Firebase connection's key is used
+        status="creating",
+        status_message=f"{what} (a minute for a new one; restores and imports take longer for more data)",
+        cloud_connection_id=conn.id,
+    )
+    db.add(ds)
+    db.flush()
+    ds.database_name = database or instance_id(ds)
+    job = jobs.enqueue(
+        db,
+        type="data_source.cloud_create",
+        params={"data_source_id": ds.id},
+        project_id=project_id,
+        data_source_id=ds.id,
+        created_by_id=user_id,
+    )
+    ds.cloud_state = {
+        "provider": "firebase",
+        "service": "firestore",
+        "created": False,  # Deployer never deletes a Firestore database, even one it made
+        "database": ds.database_name,
+        "project_id": config.get("project_id"),
+        "location": location,
+        "job_id": job.id,
+        **({"restore_from": restore_from} if restore_from else {}),
+        **({"import_from": import_from, "collections": collections or []} if import_from else {}),
+    }
+    return ds, job
+
+
+def _firestore_wait(ctx: jobs.JobContext, gcp, ds_id: str, op: str | None, database: str, what: str) -> bool:
+    """Waits for a Firestore long-running operation - or, when Google named none we can read, until the database
+    answers. False once the source was removed."""
+    m = re.fullmatch(r"projects/[^/]+/databases/([^/]+)/operations/([^/]+)", op or "")
+    path = f"databases/{quote(m[1], safe='()')}/operations/{quote(m[2], safe='')}" if m else ""
+    started = time.monotonic()
+    while True:
+        if path:
+            out = gcp.firestore("GET", path) or {}
+            if out.get("done"):
+                if out.get("error"):
+                    message = (out["error"] or {}).get("message") or "no reason given"
+                    raise jobs.JobError(f"Google could not {what}: {message}")
+                return True
+        else:
+            try:
+                gcp.firestore("GET", f"databases/{quote(database, safe='()')}")
+                return True
+            except CloudError as exc:
+                if exc.status != 404:
+                    raise
+        elapsed = int(time.monotonic() - started)
+        if elapsed > FIRESTORE_TIMEOUT_S:
+            raise jobs.JobError(f"Google did not finish ({what}) in time: check the Firebase console")
+        if _save(ctx.session_factory, ds_id) is None:
+            return False
+        ctx.check_cancelled()
+        ctx.progress(None, f"Google is working: {what} ({elapsed // 60} min)")
+        time.sleep(POLL_S)
+
+
+def _create_firestore_steps(ctx: jobs.JobContext, ds_id: str, config: dict, state: dict) -> dict:
+    factory = ctx.session_factory
+    gcp = cloud_gcp.client(config)
+    database = state["database"]
+    db_path = f"databases/{quote(database, safe='()')}"
+    if not state.get("create_requested"):
+        if state.get("restore_from"):
+            ctx.progress(0.1, "Asking Google to restore the backup into a new database", force=True)
+            op = gcp.firestore("POST", "databases:restore", {"databaseId": database, "backup": state["restore_from"]})
+        else:
+            ctx.progress(0.1, f"Asking Google for the Firestore database {database}", force=True)
+            body = {"locationId": state["location"], "type": "FIRESTORE_NATIVE"}
+            op = gcp.firestore("POST", "databases", body, {"databaseId": database})
+        state = _save(factory, ds_id, create_requested=True, create_op=(op or {}).get("name")) or state
+    what = "restore the backup" if state.get("restore_from") else "create the database"
+    if not _firestore_wait(ctx, gcp, ds_id, state.get("create_op"), database, what):
+        return {"skipped": "data source removed"}
+    if state.get("import_from"):
+        if not state.get("import_requested"):
+            ctx.progress(0.5, "Importing the export into the new database", force=True)
+            body = {"inputUriPrefix": state["import_from"]}
+            if state.get("collections"):
+                body["collectionIds"] = state["collections"]
+            op = gcp.firestore("POST", f"{db_path}:importDocuments", body)
+            state = _save(factory, ds_id, import_requested=True, import_op=(op or {}).get("name")) or state
+        if not _firestore_wait(ctx, gcp, ds_id, state.get("import_op"), database, "import the export"):
+            return {"skipped": "data source removed"}
+    location = (gcp.firestore("GET", db_path) or {}).get("locationId") or state.get("location")
+    with factory() as db:
+        ds = db.get(DataSource, ds_id)
+        if ds is None:
+            return {"skipped": "data source removed"}
+        ds.status, ds.status_message, ds.last_checked_at = "ok", f"Connected ({location})", utcnow()
+        ds.cloud_state = {**(ds.cloud_state or {}), "location": location}
+        db.commit()
+    return {"database": database}
+
+
 def create_table(
     db: Session,
     project_id: str,
@@ -988,12 +1168,14 @@ def _create_steps(ctx: jobs.JobContext, ds_id: str) -> dict:
             return {"skipped": "data source removed"}
         conn = db.get(CloudConnection, ds.cloud_connection_id) if ds.cloud_connection_id else None
         if conn is None:
-            raise jobs.JobError("The AWS connection was removed")
+            raise jobs.JobError("The cloud connection was removed")
         config, state = cloud.config_of(conn), dict(ds.cloud_state or {})
         source_config = decrypt_json(ds.config_encrypted)
         engine = ds.engine
     if state.get("service") == "dynamodb":
         return _create_table_steps(ctx, ds_id, config, state)
+    if state.get("service") == "firestore":
+        return _create_firestore_steps(ctx, ds_id, config, state)
     aws = cloud_aws.client(config)
     port = int(state["port"])
     if not state.get("vpc_id"):

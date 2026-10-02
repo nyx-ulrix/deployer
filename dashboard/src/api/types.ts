@@ -179,6 +179,9 @@ export type CloudDatabaseOptions = {
     connect: string;
     cost: string;
     network: string;
+    /** Creating a new Firestore database (docs/CLOUD.md "Firestore backups"). */
+    create_cost: string;
+    locations: { id: string; label: string }[];
   };
   rtdb: {
     short: string;
@@ -213,6 +216,57 @@ export type FirestoreDatabase = {
   location: string | null;
   type: string | null;
   problem: string | null;
+};
+
+/** docs/CLOUD.md "Firestore backups": a Firestore database's schedules, backups and managed exports / imports. */
+export type FirestoreSchedule = {
+  id: string;
+  recurrence: "daily" | "weekly";
+  day: string | null;
+  retention_days: number | null;
+  created_at: string | null;
+};
+
+export type FirestoreBackup = {
+  /** The full name restore takes. */
+  name: string;
+  id: string;
+  location: string | null;
+  state: string | null;
+  snapshot_time: string | null;
+  expire_time: string | null;
+  size_bytes: number | null;
+  documents: number | null;
+};
+
+export type FirestoreOperation = {
+  id: string;
+  kind: "export" | "import";
+  done: boolean;
+  state: string;
+  /** The export's gs:// folder (what an import takes). */
+  uri: string | null;
+  collections: string[];
+  documents: number | null;
+  started_at: string | null;
+  ended_at: string | null;
+  error: string | null;
+};
+
+export type FirestoreBackups = {
+  database: string;
+  location: string | null;
+  bucket: string | null;
+  default_bucket: string;
+  days: string[];
+  max_retention_days: { daily: number; weekly: number };
+  costs: { export: string; import: string; schedule: string; restore: string };
+  notes: { export: string; restore: string };
+  /** Why a list is empty when the service account may not read it. */
+  problems: Partial<Record<"schedules" | "backups" | "operations", string>>;
+  schedules: FirestoreSchedule[];
+  backups: FirestoreBackup[];
+  operations: FirestoreOperation[];
 };
 
 /** DynamoDB key attribute types: text, number, binary. */

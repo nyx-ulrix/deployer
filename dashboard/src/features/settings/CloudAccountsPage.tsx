@@ -305,6 +305,7 @@ const ONLY_FOR: Record<string, string> = {
   firebase_app: "only needed for full apps",
   firestore: "only needed for Firestore databases",
   firebase_rtdb: "only needed for Realtime Databases",
+  firestore_backups: "only needed to create Firestore databases, back them up, export or restore them",
   github_actions: "only needed to build apps on GitHub Actions",
   cloud_secrets: "only needed when an app keeps its variables in Secret Manager",
 };
@@ -344,9 +345,9 @@ function FirebaseGuide({
             (pay-as-you-go) plan; it scales to zero when nobody visits.
           </li>
           <li>
-            <span className="text-fg">Cloud Firestore database</span>: connect the project&apos;s Firestore database under Databases → Add
-            database → In your Firebase project, browse and edit it here, and give it to full apps. Free daily quota, then billed per read
-            and write.
+            <span className="text-fg">Cloud Firestore database</span>: connect the project&apos;s Firestore database (or create a new one)
+            under Databases → Add database → In your Firebase project, browse and edit it here, and give it to full apps. Scheduled backups,
+            restores and exports to Cloud Storage are on the Backups tab. Free daily quota, then billed per read and write.
           </li>
           <li>
             <span className="text-fg">Realtime Database</span>: Firebase&apos;s JSON-tree database that pushes changes to apps instantly.
@@ -393,6 +394,8 @@ function FirebaseGuide({
                   {" "}
                   — {r.why}
                   {r.only_for && ` (${ONLY_FOR[r.only_for] ?? r.only_for})`}
+                  {r.on === "bucket" &&
+                    ". On a bucket you made: Cloud Storage → the bucket → Permissions → Grant access → the deployer account's email → this role"}
                   {r.on === "service_account" &&
                     ". Grant this one on the deployer service account itself, not the whole project: Service accounts → deployer → Permissions → Grant access → the deployer account's email → this role"}
                 </span>

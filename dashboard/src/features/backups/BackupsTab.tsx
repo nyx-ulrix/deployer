@@ -21,6 +21,7 @@ import { useProjectContext } from "../projects/project-context";
 import { RecoveryTimelineBar } from "./BackupBits";
 import { CloudBackups } from "./CloudBackups";
 import { CompareDialog } from "./CompareDialog";
+import { FirestoreBackups } from "./FirestoreBackups";
 import { pitrBounds, timelineBar } from "./pitr";
 import { PolicyDialog } from "./PolicyDialog";
 import { RestoreDialog } from "./RestoreDialog";
@@ -68,6 +69,8 @@ export function BackupsTab() {
       </div>
       {source.engine === "dynamodb" ? (
         <CloudBackups key={source.id} source={source} />
+      ) : source.engine === "firestore" && source.status !== "creating" ? (
+        <FirestoreBackups key={source.id} source={source} />
       ) : source.mode === "external" ? (
         <EmptyState
           icon={<Cloud className="size-5" />}

@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field, field_validator
 from app.deps import DbSession, InstanceOwner, ProjectAccess, require_role
 from app.errors import ApiError
 from app.models import CloudConnection, Project
-from app.services import audit, cloud, cloud_db, dynamo, firestore, jobs, rtdb
+from app.services import audit, cloud, cloud_db, dynamo, firestore, firestore_admin, jobs, rtdb
 from app.services.sources import data_source_out, get_source
 
 router = APIRouter(tags=["cloud"])
@@ -151,10 +151,13 @@ class TableKey(BaseModel):
 class CloudDatabaseCreate(BaseModel):
     connection_id: str = Field(max_length=36)
     name: str = Field(min_length=1, max_length=63)
-    engine: Literal["mysql", "mariadb", "postgresql", "dynamodb", "firebase_rtdb"]
+    engine: Literal["mysql", "mariadb", "postgresql", "dynamodb", "firebase_rtdb", "firestore"]
     instance_class: str = Field(default=cloud_db.DEFAULT_CLASS, max_length=40)
-    # Realtime Database only (a Firebase connection, docs/CLOUD.md "C2-4"): where the default database goes.
-    location: str = Field(default="us-central1", max_length=40)
+    # A Firebase connection: where the Realtime Database (default us-central1, docs/CLOUD.md "C2-4") or the new
+    # Firestore database (default nam5, "Firestore backups") goes.
+    location: str | None = Field(default=None, max_length=40)
+    # Firestore only: the new database's id (default deployer-<name>-<id8>).
+    database: str | None = Field(default=None, max_length=63)
     # DynamoDB only (docs/CLOUD.md "C2-2"): the table's key; default a text `id`.
     partition_key: TableKey | None = None
     sort_key: TableKey | None = None
@@ -247,6 +250,8 @@ def create_database(body: CloudDatabaseCreate, request: Request, access: Admin, 
         intro, cost = (
             ("This creates a Realtime Database in your Firebase project.", cloud_db.RTDB_COST_NOTE)
             if body.engine == rtdb.ENGINE
+            else ("This creates a Firestore database in your Firebase project.", cloud_db.FIRESTORE_CREATE_COST)
+            if body.engine == firestore.ENGINE
             else ("This creates a database AWS bills to your account.", cloud_db.DYNAMODB_COST_NOTE)
             if dynamodb
             else ("This creates a database AWS bills to your account.", cloud_db.COST_NOTE)
@@ -260,12 +265,22 @@ def create_database(body: CloudDatabaseCreate, request: Request, access: Admin, 
     name = _name(db, access.project.id, body.name)
     if body.engine == rtdb.ENGINE:  # synchronous: Firebase answers with the ready database
         ds = cloud_db.create_rtdb(
-            db, access.project.id, connection_id=body.connection_id, name=name, location=body.location
+            db, access.project.id, connection_id=body.connection_id, name=name, location=body.location or "us-central1"
         )
         _audit(db, request, access, ds, "create")
         db.commit()
         return {"data_source": data_source_out(ds), "job": None}
-    if dynamodb:
+    if body.engine == firestore.ENGINE:
+        ds, job = cloud_db.create_firestore(
+            db,
+            access.project.id,
+            connection_id=body.connection_id,
+            name=name,
+            database=body.database,
+            location=body.location or "nam5",
+            user_id=access.user.id,
+        )
+    elif dynamodb:
         ds, job = cloud_db.create_table(
             db,
             access.project.id,
@@ -486,6 +501,152 @@ def export_firestore(
     )
     db.commit()
     return firestore.export_documents(ds, collection, limit)
+
+
+# --- Firestore managed exports, scheduled backups, restores (docs/CLOUD.md "Firestore backups") --------------
+
+
+class FirestoreExport(BaseModel):
+    bucket: str | None = Field(default=None, max_length=222)  # a bucket the user made, or:
+    create_bucket: bool = False  # deployer-<project>-firestore, made on request
+    collections: list[str] | None = Field(default=None, max_length=100)  # collection ids; none = all
+    confirm_billing: bool = False
+
+
+class FirestoreImport(BaseModel):
+    input_uri: str = Field(max_length=1100)  # gs://<bucket>/<export folder>
+    name: str = Field(min_length=1, max_length=63)  # the new data source
+    database: str | None = Field(default=None, max_length=63)  # the new database's id
+    location: str | None = Field(default=None, max_length=40)  # default: this database's location
+    collections: list[str] | None = Field(default=None, max_length=100)
+    confirm_billing: bool = False
+
+
+class FirestoreSchedule(BaseModel):
+    recurrence: Literal["daily", "weekly"]
+    day: str | None = Field(default=None, max_length=10)  # weekly: MONDAY .. SUNDAY
+    retention_days: int = Field(ge=1, le=firestore_admin.MAX_RETENTION_DAYS["weekly"])
+    confirm_billing: bool = False
+
+
+class FirestoreRestore(BaseModel):
+    backup: str = Field(max_length=300)  # a backup's `name` from the list
+    name: str = Field(min_length=1, max_length=63)  # the new data source
+    database: str | None = Field(default=None, max_length=63)  # the new database's id
+    confirm_billing: bool = False
+
+
+def _firestore_source(db, access: ProjectAccess, source_id: str):
+    ds = get_source(db, access.project.id, source_id)
+    if ds.engine != firestore.ENGINE:
+        raise ApiError(400, "wrong_source_kind", "This is for Firestore databases")
+    return ds
+
+
+def _billing(confirmed: bool, cost: str) -> None:
+    if not confirmed:
+        raise ApiError(
+            422, "billing_not_confirmed", cost + " Send confirm_billing: true.", {"field": "confirm_billing"}
+        )
+
+
+def _record(db, request: Request, access: ProjectAccess, ds, action: str, **details) -> None:
+    audit.record(
+        db,
+        action,
+        request=request,
+        user_id=access.user.id,
+        project_id=access.project.id,
+        data_source_id=ds.id,
+        **details,
+    )
+
+
+@router.get("/projects/{project_id}/data-sources/{source_id}/firestore/backups")
+def firestore_backups(source_id: str, access: Viewer, db: DbSession) -> dict:
+    """Backup schedules, backups and recent managed exports / imports of a Firestore database."""
+    ds = _firestore_source(db, access, source_id)
+    db.commit()
+    return firestore_admin.overview(ds)
+
+
+@router.post("/projects/{project_id}/data-sources/{source_id}/firestore/exports", status_code=201)
+def firestore_managed_export(
+    source_id: str, body: FirestoreExport, request: Request, access: Admin, db: DbSession
+) -> dict:
+    _billing(body.confirm_billing, firestore_admin.EXPORT_COST)
+    ds = _firestore_source(db, access, source_id)
+    out = firestore_admin.export(ds, bucket=body.bucket, create_bucket=body.create_bucket, collections=body.collections)
+    ds.cloud_state = {**(ds.cloud_state or {}), "export_bucket": out["bucket"]}
+    _record(db, request, access, ds, "data_source.cloud_export", output_uri=out["output_uri"])
+    db.commit()
+    return out
+
+
+@router.post("/projects/{project_id}/data-sources/{source_id}/firestore/import", status_code=201)
+def firestore_import(source_id: str, body: FirestoreImport, request: Request, access: Admin, db: DbSession) -> dict:
+    """Loads a managed export into a NEW Firestore database, added as a new data source (never over existing data)."""
+    _billing(body.confirm_billing, firestore_admin.IMPORT_COST)
+    src = _firestore_source(db, access, source_id)
+    uri = firestore_admin.check_input_uri(body.input_uri)
+    ds, job = cloud_db.create_firestore(
+        db,
+        access.project.id,
+        connection_id=src.cloud_connection_id or "",
+        name=_name(db, access.project.id, body.name),
+        database=body.database,
+        location=body.location or (src.cloud_state or {}).get("location") or "",
+        user_id=access.user.id,
+        import_from=uri,
+        collections=firestore_admin.collection_ids(body.collections),
+    )
+    _audit(db, request, access, ds, "import")
+    db.commit()
+    jobs.dispatch(job.id)
+    return {"data_source": data_source_out(ds), "job": jobs.job_out(job)}
+
+
+@router.post("/projects/{project_id}/data-sources/{source_id}/firestore/backup-schedules", status_code=201)
+def firestore_create_schedule(
+    source_id: str, body: FirestoreSchedule, request: Request, access: Admin, db: DbSession
+) -> dict:
+    _billing(body.confirm_billing, firestore_admin.SCHEDULE_COST)
+    ds = _firestore_source(db, access, source_id)
+    schedule = firestore_admin.create_schedule(ds, body.recurrence, body.day, body.retention_days)
+    _record(db, request, access, ds, "data_source.cloud_backup_schedule", schedule=schedule)
+    db.commit()
+    return schedule
+
+
+@router.delete("/projects/{project_id}/data-sources/{source_id}/firestore/backup-schedules/{schedule_id}")
+def firestore_delete_schedule(source_id: str, schedule_id: str, request: Request, access: Admin, db: DbSession) -> dict:
+    """Stops future backups; the ones already taken stay until they expire."""
+    ds = _firestore_source(db, access, source_id)
+    firestore_admin.delete_schedule(ds, schedule_id)
+    _record(db, request, access, ds, "data_source.cloud_backup_schedule_delete", schedule_id=schedule_id)
+    db.commit()
+    return {"ok": True}
+
+
+@router.post("/projects/{project_id}/data-sources/{source_id}/firestore/restore", status_code=201)
+def firestore_restore(source_id: str, body: FirestoreRestore, request: Request, access: Admin, db: DbSession) -> dict:
+    """Restores one of the database's backups into a NEW Firestore database, added as a new data source."""
+    _billing(body.confirm_billing, firestore_admin.RESTORE_COST)
+    src = _firestore_source(db, access, source_id)
+    ds, job = cloud_db.create_firestore(
+        db,
+        access.project.id,
+        connection_id=src.cloud_connection_id or "",
+        name=_name(db, access.project.id, body.name),
+        database=body.database,
+        location=firestore_admin.restore_location(src, body.backup),
+        user_id=access.user.id,
+        restore_from=body.backup,
+    )
+    _audit(db, request, access, ds, "restore")
+    db.commit()
+    jobs.dispatch(job.id)
+    return {"data_source": data_source_out(ds), "job": jobs.job_out(job)}
 
 
 # --- Realtime Database export (docs/CLOUD.md "C2-4") -----------------------------------------------

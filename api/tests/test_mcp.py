@@ -18,6 +18,7 @@ READ_TOOLS = {
     "list_rows",
     "list_documents",
     "list_cloud_backups",
+    "list_firestore_backups",
     "list_subcollections",
     "rtdb_read",
 }
@@ -42,6 +43,11 @@ ADMIN_TOOLS = {
     "create_cloud_backup",
     "set_point_in_time_recovery",
     "restore_cloud_backup",
+    "firestore_export",
+    "firestore_import",
+    "set_firestore_backup_schedule",
+    "delete_firestore_backup_schedule",
+    "restore_firestore_backup",
     "set_build_location",
     "set_app_target",
     "set_app_secrets_store",
@@ -180,6 +186,14 @@ TOOL_ROUTES = {
     "delete_cloud_database": [("DELETE", "/cloud/databases/{source_id}")],
     "set_point_in_time_recovery": [("PUT", "/data-sources/{source_id}/cloud-backups/pitr")],
     "restore_cloud_backup": [("POST", "/data-sources/{source_id}/cloud-backups/restore")],
+    "list_firestore_backups": [("GET", "/data-sources/{source_id}/firestore/backups")],
+    "firestore_export": [("POST", "/data-sources/{source_id}/firestore/exports")],
+    "firestore_import": [("POST", "/data-sources/{source_id}/firestore/import")],
+    "set_firestore_backup_schedule": [("POST", "/data-sources/{source_id}/firestore/backup-schedules")],
+    "delete_firestore_backup_schedule": [
+        ("DELETE", "/data-sources/{source_id}/firestore/backup-schedules/{schedule_id}")
+    ],
+    "restore_firestore_backup": [("POST", "/data-sources/{source_id}/firestore/restore")],
 }
 
 

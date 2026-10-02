@@ -109,6 +109,12 @@ The dashboard is at the instance's public URL (default `http://localhost:8080`; 
    DynamoDB on-demand backups (`create_cloud_backup`), point-in-time recovery
    (`set_point_in_time_recovery`) and restores (`restore_cloud_backup`, always into a new table and data
    source - the original is never changed) are billable too - same rule.
+   So are creating a new Firestore database (`create_cloud_database` with `engine: "firestore"`,
+   `location`), Firestore managed exports to Cloud Storage (`firestore_export`), scheduled backups
+   (`set_firestore_backup_schedule`) and restoring a backup or importing an export
+   (`restore_firestore_backup`, `firestore_import` - these always make a NEW database, added as a new data
+   source). Explain the cost note, get a yes, then send `confirm_billing: true` (docs/CLOUD.md "Firestore
+   backups").
 3. **Schema and data**: Schema tab (ER diagram, DDL export), Data tab (rows/documents), Query tab
    (notebook or terminal).
 4. **API key for the site**: API keys tab → *Create key*.
@@ -156,12 +162,14 @@ claude mcp add --transport http deployer <url>/v1/projects/<project_id>/mcp --he
 ```
 
 Tools: `list_data_sources`, `get_schema`, `list_rows`, `list_documents`, `list_subcollections`,
-`rtdb_read`, `list_cloud_backups` (any key) plus `run_query`, `insert_/update_/delete_row`,
+`rtdb_read`, `list_cloud_backups`, `list_firestore_backups` (any key) plus `run_query`, `insert_/update_/delete_row`,
 `insert_/update_/delete_document`, `rtdb_write`, `export_documents`, `list_apps`, `get_app`, `deploy_app`,
 `deployment_status`, `app_logs`, `list_github_runs`, `list_cloud_targets`, `cloud_database_options` (service
 key). The cloud account tools - `list_cloud_connections`, `list_cloud_databases`, `create_cloud_database`,
-`create_cloud_backup`, `set_point_in_time_recovery`, `restore_cloud_backup`, `set_build_location`,
-`set_app_secrets_store` and `set_app_target` (all billable: only with the user's yes
+`create_cloud_backup`, `set_point_in_time_recovery`, `restore_cloud_backup`, the Firestore backup tools
+(`firestore_export`, `firestore_import`, `set_firestore_backup_schedule`, `delete_firestore_backup_schedule`,
+`restore_firestore_backup`), `set_build_location`, `set_app_secrets_store` and `set_app_target` (all billable
+except the schedule delete: only with the user's yes
 and `confirm_billing: true`; `set_app_target` also needs `confirm_teardown: true` to delete an app's resources
 on its old cloud target) and `connect_cloud_database` - need a project **admin** like their REST routes: a
 service key doesn't see them, so ask the user to add the database or pick the target in the dashboard (*Add database → In your AWS account / In your Firebase

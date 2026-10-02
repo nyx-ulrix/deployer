@@ -13,6 +13,7 @@ and the `deploy-website` skill.
 | **C2-2** | DynamoDB engine ("C2-2 as built") | **Built** (no migration) |
 | **C2-3** | Cloud Firestore engine ("C2-3 as built") | **Built** (no migration) |
 | **C2-4** | Firebase Realtime Database engine ("C2-4 as built") | **Built** (no migration) |
+| **Firestore backups** | New Firestore databases, managed exports to Cloud Storage and imports, scheduled backups and restores ("Firestore backups as built") | **Built** (no migration) |
 | **C2-5** | MCP roles, data tools on every cloud engine, transfer, project delete keep / delete ("C2-5 as built") | **Built** (no migration) |
 | **C3** | GitHub Actions builds with OIDC, so pushes deploy with the PC off ("C3 as built") | **Built** (no migration) |
 | **Delete over API / MCP** | Deleting a cloud database with an admin's session or a service key, MCP `delete_cloud_database` ("Deleting a cloud database over the API and MCP") | **Built** (no migration) |
@@ -538,9 +539,9 @@ the adapter, reached through `connections.cloud_engine(engine)` - the same funct
 `services/dynamo.py`, so `source_ops`, `introspection`, `query_console`, `ddl_export` and `connections`
 branch once for both engines.
 
-Deployer **never creates or deletes** a Firestore database (create it in the Firebase console: Build ->
-Firestore Database -> Create database). Removing the source only forgets it; nothing in Google changes, so
-there is no cleanup job and project deletion is not blocked by it.
+Deployer **never deletes** a Firestore database; since "Firestore backups" it can create one (below).
+Removing the source only forgets it; nothing in Google changes, so there is no cleanup job and project deletion
+is not blocked by it.
 
 - **Documents are plain JSON both ways**, with the document id as **`_id`** (a stored field literally
   named `_id` is not shown): whole numbers are `integerValue`, other numbers `doubleValue`, and
@@ -599,11 +600,11 @@ exist, or that Datastore mode is not supported). No billing confirmation: nothin
   `data_source.export`) returns `{project_id, database, exported_at, documents, truncated, collections:
   {path: [documents]}}` - every document of the top-level collections, or of the given collection paths
   (subcollections are exported by naming their path), up to 10,000 documents per call (`truncated` says
-  when more were left). Plain JSON in the same `$` forms, so documents can be inserted again. A managed
-  export to a Cloud Storage bucket is not built (follow-up).
+  when more were left). Plain JSON in the same `$` forms, so documents can be inserted again. Managed exports
+  to a Cloud Storage bucket: "Firestore backups as built".
 - **Connection details** show the project id, database id, endpoint and location - no URI, user or password.
-- **Backups**: the Backups tab shows the "up to their provider" note; Firestore's own scheduled backups and
-  point-in-time recovery are set up in the Google Cloud console (not managed by Deployer yet).
+- **Backups**: scheduled backups, restores and managed exports are on the Backups tab ("Firestore backups as
+  built"); point-in-time recovery is still set up in the Google Cloud console.
 
 ### Apps on Cloud Run
 
@@ -657,6 +658,115 @@ MCP) and the real client's URL building, error parsing and token cache against `
 run against a live project: the exact REST shapes (cursors with `startAt`, the count aggregation, the
 update mask's quoting), whether `roles/datastore.user` includes `datastore.databases.list` (the dialog
 works either way), and Cloud Run reaching Firestore as the default compute service account.
+
+## Firestore backups as built: new databases, managed exports, scheduled backups, restores
+
+Everything goes through the **Firestore Admin REST API v1** (`https://firestore.googleapis.com/v1/projects/<p>/...`)
+behind the same `GcpClient.firestore` seam - its path guard now also accepts `databases:restore`,
+`databases/<id>/{operations,backupSchedules}/...` and `locations/<l>/backups` - and, for the export bucket, the
+**Cloud Storage JSON API** (`GcpClient.bucket` / `create_bucket`, `https://storage.googleapis.com/storage/v1/b`),
+with the Firebase connection's service-account token (no Google SDK). `services/firestore_admin.py` holds the
+exports, schedules, backups and restore checks; `cloud_db.create_firestore` and its job make databases. No
+migration: `cloud_state` gains `job_id`, `create_requested` / `create_op`, `import_from` / `import_requested` /
+`import_op`, `restore_from` and `export_bucket`. Everything that costs money is **off until confirmed**: the
+dialogs show the cost note and need a tick; the API and MCP need `confirm_billing: true` (`422
+billing_not_confirmed` with the note otherwise). **Deployer never deletes** a Firestore database, an export or a
+backup (`created` stays false, so removing a source only forgets it).
+
+### New databases
+
+**Add database -> In your Firebase project -> Cloud Firestore** now ends with *Or create a new Firestore
+database*: a **location** (`cloud_db.FIRESTORE_LOCATIONS`: `nam5` US multi-region - the default -, `eur3`, and
+ten regions; it cannot move later), an optional **database id** (default `deployer-<name>-<id8>`) and the cost
+tick (the free quota covers only one database per project). `POST .../cloud/databases {engine: "firestore",
+connection_id, name, location?, database?, confirm_billing: true}` checks a typed id is free (`409
+database_exists`: connect it instead), adds a `creating` source and queues `data_source.cloud_create`:
+`POST databases?databaseId=<id> {locationId, type: FIRESTORE_NATIVE}` -> follows the long-running operation
+(`GET databases/<id>/operations/<op>`; when Google names none it can read, until `GET databases/<id>` answers)
+-> `ok` with the location Google reports. A failed operation leaves the source in `error` with Google's reason.
+
+### Managed exports and imports (Backups tab -> Exports to Cloud Storage)
+
+- **Export now** (admin, cost tick): `POST databases/<id>:exportDocuments {outputUriPrefix, collectionIds?}` to
+  `gs://<bucket>/deployer-exports/<database>/<UTC yyyymmdd-HHMMSS>`. The bucket is one the user made (it must answer
+  `GET b/<bucket>`, else `400 bucket_unavailable` saying how to create it and grant the role), or - the default
+  in the dialog - **`deployer-<project>-firestore`**, made on request (`POST b?project=<p>`: uniform access, public
+  access prevented, label `managed-by=deployer`, location `US` / `EU` for `nam5` / `eur3`, else the database's
+  region; an existing bucket the account can see is reused, one it cannot is "taken by another Google
+  project"). The bucket used is remembered (`export_bucket`) as the next default. Collections are collection ids
+  (every collection with that name at any depth); none = all. The export runs on in Google.
+- The list shows the database's recent exports and imports (`GET databases/<id>/operations`, Google keeps them
+  a few days): kind, state, the `gs://` folder, documents done, start time, error; it polls while one runs.
+- **Import into a new database** on a finished export (admin, cost tick; `POST .../firestore/import {input_uri,
+  name, database?, location?}`): Google only imports into an existing database and an import **overwrites**
+  documents with the same ids, so Deployer always makes a **new** database (same job as above, in the source
+  database's location unless given; a typed id that exists is refused), then `POST databases/<new>:importDocuments
+  {inputUriPrefix, collectionIds?}` and follows that operation. The new database is a new data source.
+
+### Scheduled backups and restores (Backups tab)
+
+- **Scheduled backups**: `GET/POST databases/<id>/backupSchedules`, `DELETE .../backupSchedules/<sid>`. *Add
+  schedule* (admin, cost tick): every day (kept 1-7 days) or every week on a chosen day (kept 1-98 days);
+  `{retention: "<days*86400>s", dailyRecurrence: {}}` or `{weeklyRecurrence: {day}}`. Google allows one daily and
+  one weekly schedule per database (`409 schedule_exists` before asking it). Google takes the backups itself, also
+  while this PC is off. *Remove* stops new backups; the taken ones stay until they expire.
+- **Backups**: `GET locations/-/backups` filtered to this database (`database == projects/<p>/databases/<id>`),
+  newest first: time, state, size, documents, expiry. **Restore...** on a ready one (admin, cost tick; `POST
+  .../firestore/restore {backup, name, database?}`): the backup must be this project's
+  (`projects/<p>/locations/<l>/backups/<id>`); the job sends `POST databases:restore {databaseId, backup}` and
+  follows the operation. Google can only restore into a **new** database (in the backup's location), which
+  becomes a new data source; the original is not touched.
+- Each of the three lists is read on its own, so a missing role empties only that list, with the reason
+  (`problems`).
+
+### Permissions added (Settings -> Cloud accounts guide)
+
+`cloud.GOOGLE_ROLES`, marked "only needed to create Firestore databases, back them up, export or restore them":
+**Cloud Datastore Import Export Admin** (`roles/datastore.importExportAdmin`: exports and imports), **Cloud
+Datastore Owner** (`roles/datastore.owner`: create databases, backup schedules, list backups, restore - Google has
+no narrower predefined role that creates a database; it includes the import / export rights) and **Storage
+Admin** (`roles/storage.admin`) granted **on the export bucket** (its Permissions tab), or on the project only to
+let Deployer make the `deployer-*-firestore` bucket (Cloud Storage IAM cannot limit bucket creation by name).
+`GOOGLE_APIS` + **Cloud Storage API** (`storage.googleapis.com`). Firestore writes the export files as its own
+service agent (`service-<number>@gcp-sa-firestore.iam.gserviceaccount.com`), which has access to buckets of the
+same project by default.
+
+### API
+
+| Method | Path | Role | Body / Query | Response |
+|---|---|---|---|---|
+| POST | `/projects/{pid}/cloud/databases` | admin+ | `{connection_id (Firebase), name, engine: "firestore", location?, database?, confirm_billing: true}` | `{data_source, job}` (201); `409 database_exists` |
+| GET | `/projects/{pid}/data-sources/{sid}/firestore/backups` | viewer+ | – | `{database, location, bucket, default_bucket, days, max_retention_days, costs, notes, problems, schedules: [{id, recurrence, day, retention_days, created_at}], backups: [{name, id, location, state, snapshot_time, expire_time, size_bytes, documents}], operations: [{id, kind, done, state, uri, collections, documents, started_at, ended_at, error}]}` |
+| POST | `/projects/{pid}/data-sources/{sid}/firestore/exports` | admin+ | `{bucket? \| create_bucket: true, collections?, confirm_billing: true}` | `{operation, bucket, output_uri}` (201); audit `data_source.cloud_export` |
+| POST | `/projects/{pid}/data-sources/{sid}/firestore/import` | admin+ | `{input_uri: "gs://...", name, database?, location?, collections?, confirm_billing: true}` | `{data_source, job}` (201); audit `data_source.create` with `cloud: import` |
+| POST | `/projects/{pid}/data-sources/{sid}/firestore/backup-schedules` | admin+ | `{recurrence: daily \| weekly, day?, retention_days, confirm_billing: true}` | the schedule (201); `409 schedule_exists`; audit `data_source.cloud_backup_schedule` |
+| DELETE | `/projects/{pid}/data-sources/{sid}/firestore/backup-schedules/{schedule_id}` | admin+ | – | `{ok}`; `404 schedule_not_found`; audit `data_source.cloud_backup_schedule_delete` |
+| POST | `/projects/{pid}/data-sources/{sid}/firestore/restore` | admin+ | `{backup, name, database?, confirm_billing: true}` | `{data_source, job}` (201); audit `data_source.create` with `cloud: restore` |
+
+`GET .../cloud/databases/options` adds `firestore.create_cost` and `firestore.locations`. The other routes answer
+`400 wrong_source_kind` for a non-Firestore source and `409 cloud_database_creating` while it is being made.
+
+### MCP
+
+`create_cloud_database` takes `engine: "firestore"` with `location` / `database`; plus `list_firestore_backups`
+(any key) and the project-admin tools `firestore_export`, `firestore_import`, `set_firestore_backup_schedule`,
+`delete_firestore_backup_schedule` and `restore_firestore_backup` (all but the delete billable: `confirm_billing`
+after the user agreed). See MCP.md.
+
+### Not verified against real clouds
+
+Tested against an in-memory Firestore Admin behind the `firestore` seam that accepts only the documented REST
+paths and the real client's path guard (`tests/test_firestore_admin.py`: create with location / id / billing /
+taken id, operation polling and a failed operation, exports to a named and a made bucket, a missing bucket,
+the operations list, import into a new database, schedule create / limits / one-per-kind / delete, backups
+filtered to the database, restore and its project check, a missing role emptying one list, roles, MCP), the
+real client's Firestore Admin and Cloud Storage URLs against `httpx.MockTransport`, and the dashboard's Backups
+card (`FirestoreBackups.test.tsx`). Not yet run against a live project: the exact operation names Google returns
+for creating and restoring a database (the fallback polls the database itself), whether a restored database
+answers `GET` before the restore has finished, the bucket location Google accepts for `nam5` / `eur3` exports
+(`US` / `EU` assumed), whether `roles/datastore.owner` alone lists backups across locations (`locations/-`), the
+retention limits (7 days daily, 14 weeks weekly, as documented), and the prices in the cost notes (approximate,
+they vary by location).
 
 ## C2-4 as built: Firebase Realtime Database
 
@@ -907,6 +1017,7 @@ there.
 | AWS | **DynamoDB** | **built in C2-2** (above), with point-in-time recovery and restores into a new table |
 | Firebase | **Cloud Firestore** | **built in C2-3** (above) |
 | Firebase | **Realtime Database** | **built in C2-4** (above) |
+| Firebase | Firestore: new databases, managed exports / imports, scheduled backups, restores | **built** ("Firestore backups", above) |
 | all | MCP, transfer, project delete | **built in C2-5** (above) |
 | all | deleting one over the API / MCP (admin session or service key) | **built** ("Deleting a cloud database over the API and MCP", above) |
 
@@ -917,8 +1028,8 @@ and the `confirm_billing` rule are in place; a NoSQL engine without its own driv
 functions of `services/dynamo.py` / `services/firestore.py` / `services/rtdb.py`, returned by `connections.cloud_engine`.
 Left (not built; each is also noted in its section above):
 
-- creating Firestore databases, their managed exports to Cloud Storage and scheduled backups / point-in-time
-  recovery from Deployer (the Firebase console does them);
+- Firestore point-in-time recovery and deleting Firestore databases, exports or backups from Deployer (the
+  Firebase / Google Cloud console does them);
 - a NAT gateway for App Runner apps linked to an RDS database that also call the internet (the user adds one);
 - a permissions boundary for the `deployer-app-*` / `deployer-gha-*` roles.
 

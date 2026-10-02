@@ -30,6 +30,7 @@ from app.services import (
     cloud,
     cloud_db,
     deployments,
+    firestore_admin,
     github_actions,
     introspection,
     rate_limit,
@@ -316,23 +317,57 @@ def t_delete_cloud_database(ctx: Ctx, args: dict) -> Any:
     )
 
 
+def _without_source(args: dict) -> dict:
+    return {k: v for k, v in args.items() if k != "source_id"}
+
+
 def t_list_cloud_backups(ctx: Ctx, args: dict) -> Any:
     return cloud_router.list_cloud_backups(args["source_id"], ctx.access, ctx.db)
 
 
 def t_create_cloud_backup(ctx: Ctx, args: dict) -> Any:
-    body = cloud_router.CloudBackupCreate(**{k: v for k, v in args.items() if k != "source_id"})
+    body = cloud_router.CloudBackupCreate(**_without_source(args))
     return cloud_router.create_cloud_backup(args["source_id"], body, ctx.request, ctx.access, ctx.db)
 
 
 def t_set_point_in_time_recovery(ctx: Ctx, args: dict) -> Any:
-    body = cloud_router.PitrUpdate(**{k: v for k, v in args.items() if k != "source_id"})
+    body = cloud_router.PitrUpdate(**_without_source(args))
     return cloud_router.set_point_in_time_recovery(args["source_id"], body, ctx.request, ctx.access, ctx.db)
 
 
 def t_restore_cloud_backup(ctx: Ctx, args: dict) -> Any:
-    body = cloud_router.CloudRestore(**{k: v for k, v in args.items() if k != "source_id"})
+    body = cloud_router.CloudRestore(**_without_source(args))
     return cloud_router.restore_cloud_backup(args["source_id"], body, ctx.request, ctx.access, ctx.db)
+
+
+def t_list_firestore_backups(ctx: Ctx, args: dict) -> Any:
+    return cloud_router.firestore_backups(args["source_id"], ctx.access, ctx.db)
+
+
+def t_firestore_export(ctx: Ctx, args: dict) -> Any:
+    body = cloud_router.FirestoreExport(**_without_source(args))
+    return cloud_router.firestore_managed_export(args["source_id"], body, ctx.request, ctx.access, ctx.db)
+
+
+def t_firestore_import(ctx: Ctx, args: dict) -> Any:
+    body = cloud_router.FirestoreImport(**_without_source(args))
+    return cloud_router.firestore_import(args["source_id"], body, ctx.request, ctx.access, ctx.db)
+
+
+def t_set_firestore_backup_schedule(ctx: Ctx, args: dict) -> Any:
+    body = cloud_router.FirestoreSchedule(**_without_source(args))
+    return cloud_router.firestore_create_schedule(args["source_id"], body, ctx.request, ctx.access, ctx.db)
+
+
+def t_delete_firestore_backup_schedule(ctx: Ctx, args: dict) -> Any:
+    return cloud_router.firestore_delete_schedule(
+        args["source_id"], args["schedule_id"], ctx.request, ctx.access, ctx.db
+    )
+
+
+def t_restore_firestore_backup(ctx: Ctx, args: dict) -> Any:
+    body = cloud_router.FirestoreRestore(**_without_source(args))
+    return cloud_router.firestore_restore(args["source_id"], body, ctx.request, ctx.access, ctx.db)
 
 
 def t_app_logs(ctx: Ctx, args: dict) -> Any:
@@ -670,7 +705,9 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
         "deletion protection; under a minute) in the user's AWS account. It stays up when the PC is off and AWS "
         "bills the user (see cloud_database_options for the cost). With a Firebase connection, engine "
         "firebase_rtdb creates the project's default Realtime Database in `location` (or connects it when it "
-        "exists; free quota, then Google bills storage and downloads; ready at once, job is null). Only call "
+        "exists; free quota, then Google bills storage and downloads; ready at once, job is null); engine "
+        "firestore creates a new Firestore database (native mode) in `location` with id `database` (default "
+        "deployer-<name>-<id8>; status creating, about a minute). Only call "
         "after the user agreed to the cost, with confirm_billing: true. Returns the data source (status creating "
         "for AWS) and a job. Apps on aws_app / firebase_app with database_access then get DEPLOYER_DB_<NAME>_*.",
         _schema(
@@ -679,15 +716,16 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
             name=_p("string", "Data source name, unique in the project"),
             engine=_p(
                 "string",
-                "mysql, mariadb, postgresql or dynamodb (AWS), firebase_rtdb (Firebase)",
-                enum=["mysql", "mariadb", "postgresql", "dynamodb", "firebase_rtdb"],
+                "mysql, mariadb, postgresql or dynamodb (AWS), firebase_rtdb or firestore (Firebase)",
+                enum=["mysql", "mariadb", "postgresql", "dynamodb", "firebase_rtdb", "firestore"],
             ),
             instance_class=_p("string", "RDS: db.t4g.micro (default), db.t4g.small or db.t4g.medium"),
             location=_p(
                 "string",
-                "Realtime Database: us-central1 (default), europe-west1 or asia-southeast1 - cannot change later",
-                enum=list(rtdb.LOCATIONS),
+                f"Realtime Database: {', '.join(rtdb.LOCATIONS)} (default us-central1); Firestore: "
+                f"{', '.join(cloud_db.FIRESTORE_LOCATIONS)} (default nam5) - cannot change later",
             ),
+            database=_p("string", "Firestore: the new database's id (lowercase letters, digits, hyphens)"),
             partition_key={**TABLE_KEY, "description": "DynamoDB: the partition key (default a text id)"},
             sort_key={**TABLE_KEY, "description": "DynamoDB: an optional sort key"},
             confirm_billing=_p("boolean", "Must be true: the user agreed to the cloud charges"),
@@ -787,6 +825,85 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
             confirm_billing=_p("boolean", "Must be true: the user agreed to the AWS charges"),
         ),
         t_restore_cloud_backup,
+    ),
+    "list_firestore_backups": (
+        "viewer",
+        "A Firestore data source's scheduled backups (`schedules`), its backups (`backups`, each `name` restorable "
+        "with restore_firestore_backup) and recent managed exports / imports (`operations`, with their gs:// "
+        "folder), plus the cost notes; `problems` says which list the service account may not read.",
+        _schema(["source_id"], source_id=SOURCE),
+        t_list_firestore_backups,
+    ),
+    "firestore_export": (
+        "admin",
+        "BILLABLE (one read per document, plus Cloud Storage for the files until deleted): start a managed export of "
+        "a Firestore data source to a Cloud Storage bucket - `bucket` the user made, or create_bucket: true for "
+        "deployer-<project>-firestore. Runs on in Google; follow it with list_firestore_backups. Only call after the "
+        "user agreed, with confirm_billing: true.",
+        _schema(
+            ["source_id", "confirm_billing"],
+            source_id=SOURCE,
+            bucket=_p("string", "An existing bucket the service account may write to"),
+            create_bucket=_p("boolean", "Make (or reuse) deployer-<project>-firestore instead of naming a bucket"),
+            collections=_p("array", "Collection ids to export (default: all)", items={"type": "string"}),
+            confirm_billing=_p("boolean", "Must be true: the user agreed to the Google charges"),
+        ),
+        t_firestore_export,
+    ),
+    "firestore_import": (
+        "admin",
+        "BILLABLE (one write per document plus the new database): load a managed export (input_uri: its gs:// "
+        "folder from list_firestore_backups) into a NEW Firestore database, added as a new data source `name` "
+        "(status creating; never imports over existing data). Only call after the user agreed, with "
+        "confirm_billing: true.",
+        _schema(
+            ["source_id", "input_uri", "name", "confirm_billing"],
+            source_id=SOURCE,
+            input_uri=_p("string", "gs://<bucket>/<export folder>"),
+            name=_p("string", "The new data source's name, unique in the project"),
+            database=_p("string", "The new database's id (default deployer-<name>-<id8>)"),
+            location=_p("string", "Default: the source database's location"),
+            collections=_p("array", "Collection ids to import (default: all)", items={"type": "string"}),
+            confirm_billing=_p("boolean", "Must be true: the user agreed to the Google charges"),
+        ),
+        t_firestore_import,
+    ),
+    "set_firestore_backup_schedule": (
+        "admin",
+        "BILLABLE (backup storage until each expires): add a daily or weekly scheduled backup to a Firestore data "
+        "source (one of each at most; Google takes them, also while the PC is off). Daily backups are kept up to 7 "
+        "days, weekly up to 98. Only call after the user agreed, with confirm_billing: true.",
+        _schema(
+            ["source_id", "recurrence", "retention_days", "confirm_billing"],
+            source_id=SOURCE,
+            recurrence=_p("string", "daily or weekly", enum=["daily", "weekly"]),
+            day=_p("string", "Weekly: the day", enum=list(firestore_admin.DAYS)),
+            retention_days=_p("integer", "How long Google keeps each backup", minimum=1, maximum=98),
+            confirm_billing=_p("boolean", "Must be true: the user agreed to the Google charges"),
+        ),
+        t_set_firestore_backup_schedule,
+    ),
+    "delete_firestore_backup_schedule": (
+        "admin",
+        "Remove a Firestore backup schedule (id from list_firestore_backups): no more backups are taken; the ones "
+        "already taken stay until they expire. Confirm with the user first.",
+        _schema(["source_id", "schedule_id"], source_id=SOURCE, schedule_id=_p("string", "The schedule's id")),
+        t_delete_firestore_backup_schedule,
+    ),
+    "restore_firestore_backup": (
+        "admin",
+        "BILLABLE (per GB restored plus the new database): restore a Firestore backup (`backup`: a backup's name "
+        "from list_firestore_backups) into a NEW database, added as a new data source `name` (status creating; the "
+        "original is not touched). Only call after the user agreed, with confirm_billing: true.",
+        _schema(
+            ["source_id", "backup", "name", "confirm_billing"],
+            source_id=SOURCE,
+            backup=_p("string", "projects/<p>/locations/<l>/backups/<id> from list_firestore_backups"),
+            name=_p("string", "The new data source's name, unique in the project"),
+            database=_p("string", "The new database's id (default deployer-<name>-<id8>)"),
+            confirm_billing=_p("boolean", "Must be true: the user agreed to the Google charges"),
+        ),
+        t_restore_firestore_backup,
     ),
     "app_logs": (
         "developer",

@@ -388,6 +388,27 @@ GOOGLE_ROLES = [
         "only_for": "firestore",
     },
     {
+        "role": "roles/datastore.importExportAdmin",
+        "title": "Cloud Datastore Import Export Admin",
+        "why": "managed Firestore exports to Cloud Storage and imports into a new database",
+        "only_for": "firestore_backups",
+    },
+    {
+        "role": "roles/datastore.owner",
+        "title": "Cloud Datastore Owner",
+        "why": "create Firestore databases, scheduled backups, restore a backup into a new database (Google has no "
+        "narrower role that creates a database)",
+        "only_for": "firestore_backups",
+    },
+    {
+        "role": "roles/storage.admin",
+        "title": "Storage Admin",
+        "why": "let Firestore exports go to a bucket: grant it on the bucket you made, or on the project so Deployer "
+        "can make a deployer-*-firestore bucket",
+        "only_for": "firestore_backups",
+        "on": "bucket",
+    },
+    {
         "role": "roles/firebasedatabase.admin",
         "title": "Firebase Realtime Database Admin",
         "why": "list and create the project's Realtime Database and read and write its data",
@@ -420,6 +441,7 @@ GOOGLE_APIS = [
     {"api": "run.googleapis.com", "title": "Cloud Run Admin API", "only_for": "firebase_app"},
     {"api": "artifactregistry.googleapis.com", "title": "Artifact Registry API", "only_for": "firebase_app"},
     {"api": "firestore.googleapis.com", "title": "Cloud Firestore API", "only_for": "firestore"},
+    {"api": "storage.googleapis.com", "title": "Cloud Storage API", "only_for": "firestore_backups"},
     {
         "api": "firebasedatabase.googleapis.com",
         "title": "Firebase Realtime Database Management API",
