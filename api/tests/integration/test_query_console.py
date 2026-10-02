@@ -273,8 +273,9 @@ def test_mongosh_runs_isolated_in_the_sidecar(mongo, monkeypatch):
     assert result["home"].startswith("/tmp/deployer-query-") and result["cwd"] == result["home"]
     assert result["uid"] in shell_runner.SLOT_UIDS and result["runner"] == "EACCES"
     assert result["docker"] is False
-    # After the run the left-behind process is killed and the private HOME (the shell's own config
-    # and logs) deleted, as seen from the next run (possibly another slot uid: EPERM if still alive).
+    # After the run the left-behind process is killed (a /proc scan and kill from the runner, V-01)
+    # and the private HOME (the shell's own config and logs) deleted, as seen from the next run
+    # (possibly another slot uid: EPERM if still alive).
     probe = sh(
         mongo,
         f"const fs = require('fs'); let alive;\n"

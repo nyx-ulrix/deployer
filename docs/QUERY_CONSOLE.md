@@ -136,9 +136,11 @@ output that comes back. The sidecar:
   internet and `host.docker.internal`);
 - runs each shell as one of four slot users (uid 20001-20004, created in `api/Dockerfile`), so
   concurrent shells cannot read each other's environment or memory, and the runner itself (root)
-  is out of their reach; after every run all processes of that uid are killed (an init, `init: true`,
-  reaps them) and its files in `/tmp` and `/dev/shm` removed, so a script cannot leave anything
-  behind for the next one.
+  is out of their reach; after every run all processes of that uid are killed (found in `/proc` and
+  killed by the runner itself, so a script that used up the process cap cannot block it; an init,
+  `init: true`, reaps them) and its files in `/tmp` and `/dev/shm` removed, so a script cannot leave
+  anything behind for the next one. A slot with a process that survives is retired (logged by the
+  sidecar) instead of reused; restarting the `query-shell` container brings it back.
 
 `501 mongosh_unavailable` when the binary is missing in the image (e.g. on other architectures) or
 `QUERY_SHELL_URL` is not set; `503 mongosh_unavailable` when the sidecar cannot be reached.

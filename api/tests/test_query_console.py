@@ -543,6 +543,86 @@ def test_mongosh_read_only_and_concurrency(fake_mongosh):
     assert run_fake("db.items.find()")["error"] is None
 
 
+def _fake_proc(root, processes):
+    for pid, (state, uid) in processes.items():
+        (root / str(pid)).mkdir()
+        (root / str(pid) / "status").write_text(
+            f"Name:\tsleep\nState:\t{state}\nUid:\t{uid}\t{uid}\t{uid}\t{uid}\n", encoding="utf-8"
+        )
+
+
+def test_slot_pids_reads_proc_without_forking(tmp_path, monkeypatch):
+    """V-01: the slot's processes are found in /proc (no shell is started to kill them)."""
+    _fake_proc(tmp_path, {11: ("S (sleeping)", 20001), 12: ("Z (zombie)", 20001), 13: ("R (running)", 20002)})
+    (tmp_path / "self").mkdir()
+    monkeypatch.setattr(shell_runner, "PROC", str(tmp_path))
+    assert shell_runner._slot_pids(20001) == [11]
+    assert shell_runner._slot_pids(20003) == []
+
+
+def test_slot_with_a_process_left_is_retired_not_reused(monkeypatch):
+    """V-01: a slot goes back to the pool only once no process of its uid is left; one that survives
+    every kill (e.g. a script used up pids_limit) is retired, so it never sees the next run's URI."""
+    survivors = {20001: [4242]}  # SIGKILL has no effect on this one
+    killed: list[int] = []
+    monkeypatch.setattr(shell_runner, "_slot_pids", lambda uid: list(survivors.get(uid, [])))
+    monkeypatch.setattr(shell_runner.os, "kill", lambda pid, sig: killed.append(pid))
+    monkeypatch.setattr(shell_runner.os, "chown", lambda *a: None, raising=False)
+    monkeypatch.setattr(shell_runner, "KILL_WAIT_SECONDS", 0)
+    monkeypatch.setattr(shell_runner, "mongosh_command", lambda: ["mongosh"])
+    ran_as: list[int | None] = []
+
+    def run_process(args, env, timeout_seconds, cwd, uid):
+        ran_as.append(uid)
+        return {"returncode": 0}
+
+    monkeypatch.setattr(shell_runner, "_run_process", run_process)
+    runner = shell_runner.Runner(isolate=True)
+    body = {"uri": "mongodb://h", "database": "d", "code": "1", "marker": "m", "batch": 1, "timeout_seconds": 5}
+    for _ in range(len(shell_runner.SLOT_UIDS) + 2):
+        try:
+            runner.run(body)
+        except shell_runner.RunError as exc:
+            assert exc.status == 429
+    assert ran_as[0] == 20001 and ran_as.count(20001) == 1  # never handed out again
+    assert killed == [4242] * shell_runner.KILL_ROUNDS
+    free = []
+    while not runner.slots.empty():
+        free.append(runner.slots.get_nowait())
+    assert sorted(free) == [20002, 20003, 20004]
+
+    # A process that dies on the kill frees the slot; so does a run that fails before the shell starts.
+    survivors[20002] = [77]
+    monkeypatch.setattr(shell_runner.os, "kill", lambda pid, sig: survivors[20002].remove(pid))
+    runner = shell_runner.Runner(isolate=True)
+    runner.slots = shell_runner.queue.SimpleQueue()
+    runner.slots.put(20002)
+    runner.run(body)
+    assert runner.slots.get_nowait() == 20002 and survivors[20002] == []
+
+    def no_tmp(prefix):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(shell_runner.tempfile, "mkdtemp", no_tmp)
+    runner.slots.put(20002)
+    with pytest.raises(OSError):
+        runner.run(body)
+    assert runner.slots.get_nowait() == 20002
+
+
+@pytest.mark.skipif(not hasattr(os, "geteuid") or os.geteuid() != 0, reason="needs root and slot uids (CI image)")
+def test_clean_up_slot_kills_a_real_process():
+    """V-01, in the API image as root (the CI unit suite): a process of a slot uid is found and killed."""
+    proc = subprocess.Popen(["sleep", "300"], user=20004, group=20004, extra_groups=[])  # noqa: S607
+    try:
+        assert proc.pid in shell_runner._slot_pids(20004)
+        assert shell_runner._clean_up_slot(20004) is True
+        assert proc.wait(timeout=5) == -9
+    finally:
+        proc.kill()
+        proc.wait()
+
+
 def test_connect_uri_adds_timeouts_once():
     assert query_console._connect_uri("mongodb://h:27017").endswith(
         "/?serverSelectionTimeoutMS=5000&connectTimeoutMS=5000"

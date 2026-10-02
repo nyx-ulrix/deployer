@@ -12,7 +12,8 @@ server runs as root with every capability dropped except the ones needed to star
 its own slot uid (`SLOT_UIDS`, created in api/Dockerfile) and clean up after it, so one run cannot
 read another run's connection string (/proc/<pid>/environ, memory) or leave a process behind to watch
 the next one: after every run all processes of the slot uid are killed and its files in /tmp and
-/dev/shm removed. Elsewhere (unit tests, development) every shell runs as the current user.
+/dev/shm removed; a slot whose processes cannot all be killed is retired, never reused. Elsewhere
+(unit tests, development) every shell runs as the current user.
 
 - Execution: `mongosh --nodb --quiet --norc --eval WRAPPER_JS` with a private temporary directory as
   HOME and cwd; URI, code file and marker reach the shell only through its environment (never argv),
@@ -42,6 +43,9 @@ MAX_SHELL_STDERR = 1024 * 1024
 MAX_TIMEOUT_SECONDS = 120
 MAX_REQUEST_BYTES = 4 * 1024 * 1024
 SWEPT_DIRS = ("/tmp", "/dev/shm")  # the writable places of the read-only container
+PROC = "/proc"
+KILL_ROUNDS = 50  # x KILL_WAIT_SECONDS: how long a slot's processes get to die before it is retired
+KILL_WAIT_SECONDS = 0.1
 
 # The wrapper passed with `--eval` (docs/QUERY_CONSOLE.md). Everything variable comes from the
 # environment; it is deleted before the user's code runs. The user's code is evaluated through the
@@ -212,13 +216,41 @@ def _child_env(home: str, values: dict[str, str]) -> dict[str, str]:
     return env
 
 
-def _clean_up_slot(uid: int) -> None:
+def _slot_pids(uid: int) -> list[int]:
+    """The live (non-zombie) processes whose real, effective, saved or fs uid is the slot uid, read
+    from /proc: no process is started, so this works with the pid budget used up (V-01)."""
+    pids = []
+    for name in [name for name in os.listdir(PROC) if name.isdigit()]:  # OSError: caller fails closed
+        try:
+            with open(os.path.join(PROC, name, "status"), encoding="utf-8", errors="replace") as fh:
+                fields = dict(line.split(":", 1) for line in fh if ":" in line)
+            if not fields.get("State", "").strip().startswith("Z") and str(uid) in fields.get("Uid", "").split():
+                pids.append(int(name))
+        except (OSError, ValueError):
+            pass  # exited meanwhile
+    return pids
+
+
+def _clean_up_slot(uid: int) -> bool:
     """Kills every process of the slot uid (a script may have left one running to watch the next run)
-    and removes its files. `kill -9 -1` as that uid: one atomic kill(-1) that spares only the caller."""
-    try:
-        subprocess.run(["/bin/sh", "-c", "kill -9 -1"], env={}, check=False, timeout=10, **_as_uid(uid))  # noqa: S603
-    except (OSError, subprocess.SubprocessError):
-        pass
+    and removes its files. True only when no process of the uid is left. The kill is a /proc scan and
+    os.kill from this process, never a new process: a script that used up pids_limit would make that
+    fork fail and leave its watcher alive (V-01). Repeated, since a process may fork while we kill."""
+    clean = False
+    for _ in range(KILL_ROUNDS):
+        try:
+            pids = _slot_pids(uid)
+        except OSError:
+            break  # /proc unreadable: not verifiably clean
+        if not pids:
+            clean = True
+            break
+        for pid in pids:
+            try:
+                os.kill(pid, 9)  # SIGKILL (the name is missing on Windows, where the unit tests run)
+            except OSError:
+                pass
+        time.sleep(KILL_WAIT_SECONDS)
     for base in SWEPT_DIRS:
         try:
             entries = list(os.scandir(base))
@@ -234,6 +266,7 @@ def _clean_up_slot(uid: int) -> None:
                     os.unlink(entry.path)
             except OSError:
                 pass
+    return clean
 
 
 def _field(body: dict, key: str, kind: type) -> Any:
@@ -266,8 +299,9 @@ class Runner:
         except queue.Empty as exc:
             message = "Too many MongoDB shell queries are running; try again in a moment"
             raise RunError(429, "too_many_queries", message) from exc
-        home = tempfile.mkdtemp(prefix="deployer-query-")
+        home = None
         try:
+            home = tempfile.mkdtemp(prefix="deployer-query-")
             code_path = os.path.join(home, "query.js")
             fd = os.open(code_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
@@ -288,10 +322,16 @@ class Runner:
             args = [*command, "--nodb", "--quiet", "--norc", "--eval", WRAPPER_JS]
             return _run_process(args, env, timeout_seconds, home, uid)
         finally:
-            if uid is not None:
-                _clean_up_slot(uid)  # removes `home` too: it belongs to the slot uid
-            shutil.rmtree(home, ignore_errors=True)
-            self.slots.put(uid)
+            # The slot's processes are killed (and `home`, which belongs to the slot uid, removed)
+            # before the slot is reused; one with a process left would let it read the next run's
+            # connection string from /proc/<pid>/environ, so it is retired instead (V-01).
+            reusable = uid is None or _clean_up_slot(uid)
+            if home:
+                shutil.rmtree(home, ignore_errors=True)
+            if reusable:
+                self.slots.put(uid)
+            else:
+                print(f"query shell: slot uid {uid} retired, its processes could not be killed", file=sys.stderr)
 
 
 def make_server(host: str, port: int, runner: Runner) -> ThreadingHTTPServer:
