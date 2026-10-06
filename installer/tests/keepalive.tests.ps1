@@ -82,10 +82,14 @@ Assert-That ($startStack.Extent.Text -match 'Start-DeployerKeepAlive[\s\S]*Invok
 Import-Module ScheduledTasks
 function Register-ScheduledTask { param($TaskName, $Action, $Trigger, $Principal, $Settings, $Description, [switch]$Force) $script:tasks[$TaskName] = @{ Trigger = @($Trigger)[0]; Settings = $Settings } }
 $script:tasks = @{}
-Register-DeployerTask -InstallDir (Join-Path $env:TEMP 'deployer-no-such-dir')
+Register-DeployerTask -InstallDir (Join-Path $env:TEMP 'deployer-no-such-dir') -Watchdog
 $task = $script:tasks[$script:DeployerTaskName]
 Assert-That ($task.Trigger.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' -and $task.Trigger.Repetition.Interval -eq 'PT5M' -and -not $task.Trigger.Repetition.Duration) 'the sign-in trigger repeats every 5 minutes for the whole sign-in'
 Assert-That ($task.Settings.MultipleInstances -eq 'IgnoreNew') 'a repeat is ignored while the loop still runs'
+Register-DeployerTask -InstallDir (Join-Path $env:TEMP 'deployer-no-such-dir')
+Assert-That (-not $script:tasks[$script:DeployerTaskName].Trigger.Repetition.Interval) 'without the WSL keep-alive loop (Docker Desktop) the task does not repeat'
+$signedIn = Get-DeployerSignInTime
+Assert-That ($signedIn -is [datetime] -and $signedIn -le (Get-Date)) "this process's sign-in time is read from its own logon session"
 
 # 3c. (K) A watchdog repeat after "deployer stop" leaves Deployer stopped; a sign-in starts it.
 $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-Start' }, $true)

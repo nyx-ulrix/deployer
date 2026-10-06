@@ -451,7 +451,7 @@ function Invoke-Autostart {
     $on = Get-OnOffArgument
     [void](Assert-Admin -Why 'change the sign-in task')
     if ($on) {
-        Register-DeployerTask -InstallDir $InstallDir
+        Register-DeployerTask -InstallDir $InstallDir -Watchdog:($ctx.Runtime -eq 'wsl-engine')
         Write-DeployerOk "Deployer starts when $([Security.Principal.WindowsIdentity]::GetCurrent().Name) signs in"
     } else {
         $wasRunning = ($ctx.Runtime -eq 'wsl-engine') -and [bool](Get-DeployerKeepAliveProcess)

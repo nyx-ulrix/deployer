@@ -505,16 +505,18 @@ function Invoke-DeployerKeepAliveLoop {
 }
 
 function Get-DeployerSignInTime {
-    # When the current interactive sign-in began: the oldest interactive logon session still open (a
-    # signed-out user's sessions are gone; an elevated token is a second session from the same sign-in).
-    # $null when Windows will not say.
+    # When the current sign-in began: the start of this process's own logon session (the sign-in task
+    # runs with the user's token; its elevated half is the second session Windows creates at sign-in).
+    # Not "the oldest interactive session": an elevated caller also sees Windows' own Font Driver Host
+    # and Window Manager sessions (interactive, from boot) and other users' sign-ins. $null when unknown.
     try {
-        $sessions = @(Get-CimInstance Win32_LogonSession -ErrorAction Stop | Where-Object { $_.LogonType -in @(2, 10, 11) -and $_.StartTime })
-        if ($sessions.Count -eq 0) { return $null }
-        return ($sessions | Sort-Object StartTime | Select-Object -First 1).StartTime
+        $self = Get-CimInstance Win32_Process -Filter "ProcessId = $PID" -ErrorAction Stop
+        $session = @(Get-CimAssociatedInstance -InputObject $self -Association Win32_SessionProcess -ErrorAction Stop)[0]
+        if ($session -and $session.StartTime) { return $session.StartTime }
     } catch {
-        return $null
+        Write-Verbose "No logon session time: $($_.Exception.Message)"
     }
+    return $null
 }
 
 function Stop-DeployerKeepAlive {
@@ -1519,9 +1521,10 @@ function Restore-DeployerKeepAwake {
 # ------------------------------------------------------------------------------------------------
 
 function Register-DeployerTask {
-    param([string]$InstallDir)
+    # -Watchdog (WSL runtime): the task's keep-alive loop is what keeps Deployer up, so the task repeats.
+    param([string]$InstallDir, [switch]$Watchdog)
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $ps =Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $script = Join-Path $InstallDir 'installer\deployer.ps1'
     $psArgs = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" start -Background' -f $script
     # `-WindowStyle Hidden` alone still flashes a console at sign-in, and when Windows Terminal is the
@@ -1535,10 +1538,13 @@ function Register-DeployerTask {
     }
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
     $trigger.Delay = 'PT20S'
-    # Watchdog: the task runs again every 5 minutes for the rest of the sign-in, so a loop process that
-    # died comes back without a new sign-in. While it runs, the repeats are ignored (IgnoreNew below).
-    $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)).Repetition
-    $trigger.Repetition.StopAtDurationEnd = $false
+    if ($Watchdog) {
+        # The task runs again every 5 minutes for the rest of the sign-in, so a loop process that died
+        # comes back without a new sign-in. While it runs, the repeats are ignored (IgnoreNew below).
+        # Not for Docker Desktop (no loop): a repeat would reopen it every 5 minutes after the user quit it.
+        $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)).Repetition
+        $trigger.Repetition.StopAtDurationEnd = $false
+    }
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable

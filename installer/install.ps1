@@ -1014,7 +1014,7 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
                 Unregister-DeployerTask
                 Write-DeployerInfo 'Not starting automatically at sign-in (you chose this). Start it from Deployer Control or with "deployer start".'
             } else {
-                Register-DeployerTask -InstallDir $InstallDir
+                Register-DeployerTask -InstallDir $InstallDir -Watchdog:($chosen -eq 'wsl-engine')
                 Write-DeployerOk "Scheduled task '$($script:DeployerTaskName)' runs at logon of $identityName"
                 if ($chosen -eq 'wsl-engine') {
                     Write-DeployerInfo 'Note: WSL distros belong to one Windows account, so Deployer runs while this account is signed in.'

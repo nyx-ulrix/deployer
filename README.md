@@ -381,7 +381,7 @@ While it runs, the task brings Deployer back after sleep or a WSL restart (and, 
 points the port forwarding at the WSL address, which changes on every restart). When WSL is busy
 updating itself (the Store app does this on its own; `wsl.exe` cannot run for a while and running
 distros stop), the task keeps trying - after 15 s, then 30 s, up to every 5 minutes - until it works
-again, and it also runs every 5 minutes as a watchdog, so a sign-in task that was ended comes back
+again, and with the WSL runtime it also runs every 5 minutes as a watchdog, so a sign-in task that was ended comes back
 without a new sign-in. `deployer stop` (or *Deployer Control → Stop*) keeps it stopped until you
 start it again or sign in next time. An install from before this watchdog gets it the next time setup
 runs (an update with `DeployerSetup.exe`, or *Deployer Control → Settings → Run setup again*).
