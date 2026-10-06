@@ -513,7 +513,7 @@ function Install-WslEngine {
     if (Test-DeployerWslDistro) {
         # An update: the sign-in task's keep-alive loop would run `compose up` once `wsl --update`, the
         # Docker restart or `wsl --terminate` below end its keep-alive, racing this install (L-08). Stop it
-        # the way `deployer stop` does; the task's `deployer start` clears the marker when step 10 starts it.
+        # the way `deployer stop` does; step 10 clears the marker before it starts the task again.
         Set-Content -LiteralPath (Join-Path $InstallDir $script:DeployerStopMarker) -Value (Get-Date -Format 'o') -Encoding ASCII
         Stop-DeployerKeepAlive
     }
@@ -1049,6 +1049,9 @@ if (-not $DryRun -and -not (Test-BootstrapAdmin)) {
             Write-InstallStep 10 'Finishing up'
             Add-DeployerUserPath -Directory $InstallDir
             Write-DeployerOk "The 'deployer' command is on your PATH (open a new terminal)"
+            # The stop marker an update wrote (Install-WslEngine) would make the task's `deployer start`
+            # leave Deployer stopped, as it does for a watchdog run after `deployer stop`.
+            Remove-Item -LiteralPath (Join-Path $InstallDir $script:DeployerStopMarker) -Force -ErrorAction SilentlyContinue
             if ($NoAutostart) {
                 if ($chosen -eq 'wsl-engine') { Start-DeployerKeepAlive }
             } else {

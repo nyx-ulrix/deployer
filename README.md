@@ -378,8 +378,13 @@ After a restart - including an overnight Windows Update - it stays down until th
 again. For a PC that acts as a server, turn on automatic sign-in for that account or check Deployer
 after Windows updates (setup and *Deployer Control* say this too).
 While it runs, the task brings Deployer back after sleep or a WSL restart (and, with LAN access on,
-points the port forwarding at the WSL address, which changes on every restart). `deployer stop` (or
-*Deployer Control → Stop*) keeps it stopped until you start it again or sign in next time.
+points the port forwarding at the WSL address, which changes on every restart). When WSL is busy
+updating itself (the Store app does this on its own; `wsl.exe` cannot run for a while and running
+distros stop), the task keeps trying - after 15 s, then 30 s, up to every 5 minutes - until it works
+again, and it also runs every 5 minutes as a watchdog, so a sign-in task that was ended comes back
+without a new sign-in. `deployer stop` (or *Deployer Control → Stop*) keeps it stopped until you
+start it again or sign in next time. An install from before this watchdog gets it the next time setup
+runs (an update with `DeployerSetup.exe`, or *Deployer Control → Settings → Run setup again*).
 
 Files live in `%ProgramData%\Deployer`: `docker-compose.yml`, `Caddyfile`, `mongodb\` and `tunnel\`
 (sidecar files), `.env` (secrets, readable only by Administrators, SYSTEM and you), `runtime.json`,
@@ -404,6 +409,7 @@ stored in the database and the encrypted backup versions. To restore the daily p
 | Images can't be downloaded | Check your internet connection or proxy. On forks, make the GHCR packages public (see Development). |
 | A deploy fails with *exit code 137* / *Out of memory* | The build or app ran out of memory. WSL2 gives Deployer about half the PC's RAM; stop other apps or projects, or add RAM (8 GB is recommended). |
 | The dashboard says *Deployer is starting...* | Normal for a minute or two after the PC starts; the page reconnects on its own. If it stays, see the next row. |
+| Deployer went down on its own and only came back after you signed in again | WSL updated itself: `logs\deployer.log` shows *The WSL keep-alive ended* and then *Access to %1 has been restricted by your Administrator by policy rule %2* (`wsl.exe` cannot run while the WSL Store app is being updated). Versions before this fix gave up there; now the sign-in task keeps trying and also runs every 5 minutes as a watchdog. Update Deployer, then run setup again (*Deployer Control → Settings → Run setup again*) so the sign-in task gets the watchdog. |
 | Deployer isn't responding | *Deployer Control → Restart*. If it still isn't responding, click *Copy diagnostics* and paste the result when you ask for help (for yourself: *View logs* or `deployer logs api`; `deployer status` shows every container). |
 | Deployer Control says *Couldn't check Deployer's services* | The status check itself failed (usually WSL or Docker is broken). Click *Start* or *Restart*; if that fails, *Show details* has the error to share. |
 | Docker Desktop was closed, crashed or the PC woke from sleep, and Deployer is down | `deployer start` (or *Deployer Control → Start*) starts Docker Desktop if needed, repairs it when it crashes on its leftover socket files, and brings Deployer back. With *Start Deployer when I sign in* on (`deployer autostart on`) this happens on its own at sign-in. |

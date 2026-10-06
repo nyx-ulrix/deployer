@@ -17,30 +17,104 @@ $watch = [Diagnostics.Stopwatch]::StartNew()
 Start-DeployerKeepAlive -Wait
 Assert-That ($other.HasExited -and $watch.Elapsed.TotalSeconds -ge 1) 'Start-DeployerKeepAlive -Wait waits for an existing keep-alive'
 
-# 2. The loop restarts the stack when the VM stopped by itself, and stops looping after "deployer stop".
+# 2. The loop starts the stack, starts it again when the VM stopped by itself, and stops looping after
+#    "deployer stop". No real waiting: Start-Sleep only records the delay the loop asked for.
 $dir = Join-Path $env:TEMP ('deployer-keepalive-test-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Path $dir | Out-Null
+$marker = Join-Path $dir $script:DeployerStopMarker
+function Start-Sleep { param([int]$Seconds) $script:sleeps += $Seconds }
+function Write-DeployerLog { param($Level, $Message) $script:logs += "$Level $Message" }
+function Reset-Loop { $script:sleeps = @(); $script:logs = @(); $script:starts = 0; $script:keepAlives = 0; Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue }
 try {
-    function Start-DeployerKeepAlive { param([switch]$Wait) }
-    $script:restarts = 0
-    Invoke-DeployerKeepAliveLoop -InstallDir $dir -DelaySeconds 0 -Restart {
-        $script:restarts++
+    function Start-DeployerKeepAlive { param([switch]$Wait) $script:keepAlives++ }
+    Reset-Loop
+    Invoke-DeployerKeepAliveLoop -InstallDir $dir -HeldSeconds 0 -Start {
+        $script:starts++
         # The user runs "deployer stop" while the restarted stack is up.
-        Set-Content -LiteralPath (Join-Path $dir $script:DeployerStopMarker) -Value 'test'
+        if ($script:starts -eq 2) { Set-Content -LiteralPath $marker -Value 'test' }
     }
-    Assert-That ($script:restarts -eq 1) 'the loop restarts once, then exits on the stop marker'
+    Assert-That ($script:starts -eq 2 -and $script:keepAlives -eq 2) 'the loop starts the stack, starts it again after the keep-alive ended, then exits on the stop marker'
+    Assert-That (($script:sleeps -join ',') -eq '15,15') 'a keep-alive that held resets the delay to 15 s'
 
-    $script:restarts = 0
-    Invoke-DeployerKeepAliveLoop -InstallDir $dir -DelaySeconds 0 -Restart { $script:restarts++ }
-    Assert-That ($script:restarts -eq 0) 'the loop never restarts after an intentional stop'
+    Reset-Loop
+    Set-Content -LiteralPath $marker -Value 'test'
+    Invoke-DeployerKeepAliveLoop -InstallDir $dir -Start { $script:starts++ }
+    Assert-That ($script:starts -eq 1 -and $script:keepAlives -eq 1) 'the loop never starts again after an intentional stop'
+
+    # (K) wsl.exe cannot launch while the WSL Store package updates itself (Win32 error 1260): the loop
+    # logs one line, backs off (15 s doubling) and keeps trying instead of ending the task.
+    function Start-DeployerKeepAlive {
+        param([switch]$Wait)
+        $script:keepAlives++
+        if ($script:keepAlives -eq 4) { Set-Content -LiteralPath $marker -Value 'test' }
+        throw "Program 'wsl.exe' failed to run: Access to %1 has been restricted by your Administrator by policy rule %2"
+    }
+    Reset-Loop
+    Invoke-DeployerKeepAliveLoop -InstallDir $dir -MaxDelaySeconds 60 -Start { $script:starts++ }
+    Assert-That ($script:keepAlives -eq 4 -and $script:starts -eq 4) 'a keep-alive launch failure is retried until the stop marker, never ending the loop'
+    Assert-That (($script:sleeps -join ',') -eq '15,30,60,60') 'launch failures back off 15 s doubling up to the maximum'
+    Assert-That (@($script:logs | Where-Object { $_ -match 'could not start \(Program' }).Count -eq 4) 'each launch failure is logged in one plain line'
+
+    # A start that fails (compose up cannot run either) is retried with the same backoff, without a keep-alive.
+    function Start-DeployerKeepAlive { param([switch]$Wait) $script:keepAlives++ }
+    Reset-Loop
+    Invoke-DeployerKeepAliveLoop -InstallDir $dir -MaxDelaySeconds 60 -Start {
+        $script:starts++
+        if ($script:starts -eq 3) { Set-Content -LiteralPath $marker -Value 'test' }
+        throw 'docker compose up failed (exit code -1).'
+    }
+    Assert-That ($script:starts -eq 3 -and $script:keepAlives -eq 0 -and ($script:sleeps -join ',') -eq '15,30,60') 'a failed start is tried again with backoff and no keep-alive'
+    Assert-That (@($script:logs | Where-Object { $_ -match 'did not start \(docker compose up failed' }).Count -eq 3) 'each failed start is logged in one plain line'
 } finally {
     Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
 }
+. (Join-Path $PSScriptRoot '..\lib\common.ps1')
 
-# 3. (A-063) The loop's restart refreshes LAN port forwarding: the WSL IP changes after sleep/hibernate.
+# 3. (A-063) The start the loop runs refreshes LAN port forwarding: the WSL IP changes after sleep/hibernate.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot '..\deployer.ps1'), [ref]$null, [ref]$null)
 $loopCall = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Invoke-DeployerKeepAliveLoop' }, $true) | Select-Object -First 1
-Assert-That ($null -ne $loopCall -and $loopCall.Extent.Text -match 'Update-LanForwarding') 'the keep-alive restart refreshes LAN forwarding'
+$startStack = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Start-Stack' }, $true)
+Assert-That ($null -ne $loopCall -and $loopCall.Extent.Text -match 'Start-Stack' -and $startStack.Extent.Text -match 'Update-LanForwarding') 'the keep-alive start refreshes LAN forwarding'
+Assert-That ($startStack.Extent.Text -match 'Start-DeployerKeepAlive[\s\S]*Invoke-DeployerCompose') 'the keep-alive is started before compose up, so WSL cannot stop the distro during the health wait'
+
+# 3b. (K) The sign-in task also runs every 5 minutes as a watchdog (IgnoreNew while the loop runs).
+#     The module is loaded first: autoloading it later would put its own Register-ScheduledTask over the fake.
+Import-Module ScheduledTasks
+function Register-ScheduledTask { param($TaskName, $Action, $Trigger, $Principal, $Settings, $Description, [switch]$Force) $script:tasks[$TaskName] = @{ Trigger = @($Trigger)[0]; Settings = $Settings } }
+$script:tasks = @{}
+Register-DeployerTask -InstallDir (Join-Path $env:TEMP 'deployer-no-such-dir')
+$task = $script:tasks[$script:DeployerTaskName]
+Assert-That ($task.Trigger.CimClass.CimClassName -eq 'MSFT_TaskLogonTrigger' -and $task.Trigger.Repetition.Interval -eq 'PT5M' -and -not $task.Trigger.Repetition.Duration) 'the sign-in trigger repeats every 5 minutes for the whole sign-in'
+Assert-That ($task.Settings.MultipleInstances -eq 'IgnoreNew') 'a repeat is ignored while the loop still runs'
+
+# 3c. (K) A watchdog repeat after "deployer stop" leaves Deployer stopped; a sign-in starts it.
+$fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-Start' }, $true)
+. ([scriptblock]::Create($fn.Extent.Text))
+$InstallDir = Join-Path $env:TEMP ('deployer-k-test-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $InstallDir | Out-Null
+$Background = $true
+function Get-Context { [pscustomobject]@{ Runtime = 'wsl-engine'; Port = 8080; State = $null; Env = @{}; Lan = $null } }
+function Test-DeployerIsAdmin { $false }
+function Write-DeployerStep { param($Message) }
+function Invoke-DeployerKeepAliveLoop { param($InstallDir, $Start) $script:loops++ }
+function Get-DeployerSignInTime { $script:signIn }
+try {
+    $marker = Join-Path $InstallDir $script:DeployerStopMarker
+    Set-Content -LiteralPath $marker -Value 'test'
+    $script:loops = 0; $script:signIn = (Get-Date).AddHours(-1)
+    Invoke-Start
+    Assert-That ($script:loops -eq 0 -and (Test-Path -LiteralPath $marker)) 'a stop from this sign-in is kept when the watchdog runs the task again'
+    $script:signIn = (Get-Date).AddHours(1)
+    Invoke-Start
+    Assert-That ($script:loops -eq 1 -and -not (Test-Path -LiteralPath $marker)) 'a stop from an earlier sign-in does not stop the sign-in start'
+    Set-Content -LiteralPath $marker -Value 'test'
+    $script:signIn = $null
+    Invoke-Start
+    Assert-That ($script:loops -eq 2 -and -not (Test-Path -LiteralPath $marker)) 'without a sign-in time the task starts Deployer as before'
+} finally {
+    Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction SilentlyContinue
+}
+. (Join-Path $PSScriptRoot '..\lib\common.ps1')
 
 # 4. (A-063) The WSL IP is eth0's, not whatever `hostname -I` lists first (docker0 can come first).
 function Get-DeployerWslExe { 'wsl.exe' }

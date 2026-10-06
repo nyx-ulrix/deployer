@@ -468,20 +468,52 @@ function Start-DeployerKeepAlive {
 }
 
 function Invoke-DeployerKeepAliveLoop {
-    # The sign-in task: keep the WSL VM (and the site) up for as long as the user is signed in. The
-    # keep-alive ends whenever the VM stops (sleep/hibernate, `wsl --shutdown`, a WSL update), so bring
-    # the stack back with $Restart - unless `deployer stop` ended it on purpose (the stop marker).
-    param([string]$InstallDir, [scriptblock]$Restart, [int]$DelaySeconds = 15)
+    # The sign-in task: start the stack with $Start (it throws when it could not), then keep the WSL VM
+    # (and the site) up for as long as the user is signed in. The keep-alive ends whenever the VM stops
+    # (sleep/hibernate, `wsl --shutdown`, the WSL Store package updating itself), so run $Start again -
+    # unless `deployer stop` ended it on purpose (the stop marker), the only way out of this loop.
+    # While the WSL package is being serviced wsl.exe cannot even launch (Win32 error 1260, "restricted
+    # by your Administrator by policy rule"), which used to end the task until the next sign-in: every
+    # failure is logged in one line and tried again after $DelaySeconds, doubling up to $MaxDelaySeconds
+    # until a keep-alive held for $HeldSeconds (WSL works again).
+    param([string]$InstallDir, [scriptblock]$Start, [int]$DelaySeconds = 15, [int]$MaxDelaySeconds = 300, [int]$HeldSeconds = 60)
     $marker = Join-Path $InstallDir $script:DeployerStopMarker
+    $delay = $DelaySeconds
+    $started = $false
     while ($true) {
-        Start-DeployerKeepAlive -Wait
-        Start-Sleep -Seconds $DelaySeconds
+        if (-not $started) {
+            try { & $Start; $started = $true }
+            catch { Write-DeployerLog 'WARN' "Deployer did not start ($($_.Exception.Message)); trying again in $delay s." }
+        }
+        if ($started) {
+            $since = Get-Date
+            try { Start-DeployerKeepAlive -Wait }
+            catch { Write-DeployerLog 'WARN' "The WSL keep-alive could not start ($($_.Exception.Message)); trying again in $delay s." }
+            if (((Get-Date) - $since).TotalSeconds -ge $HeldSeconds) { $delay = $DelaySeconds }
+        }
+        Start-Sleep -Seconds $delay
         if (Test-Path -LiteralPath $marker) {
             Write-DeployerLog 'INFO' 'The WSL keep-alive ended after "deployer stop"; not starting again until the next start or sign-in.'
             return
         }
-        Write-DeployerLog 'WARN' 'The WSL keep-alive ended; starting Deployer again.'
-        & $Restart
+        if ($started) {
+            Write-DeployerLog 'WARN' 'The WSL keep-alive ended; starting Deployer again.'
+            $started = $false
+        }
+        $delay = [Math]::Min($delay * 2, $MaxDelaySeconds)
+    }
+}
+
+function Get-DeployerSignInTime {
+    # When the current interactive sign-in began: the oldest interactive logon session still open (a
+    # signed-out user's sessions are gone; an elevated token is a second session from the same sign-in).
+    # $null when Windows will not say.
+    try {
+        $sessions = @(Get-CimInstance Win32_LogonSession -ErrorAction Stop | Where-Object { $_.LogonType -in @(2, 10, 11) -and $_.StartTime })
+        if ($sessions.Count -eq 0) { return $null }
+        return ($sessions | Sort-Object StartTime | Select-Object -First 1).StartTime
+    } catch {
+        return $null
     }
 }
 
@@ -1503,6 +1535,10 @@ function Register-DeployerTask {
     }
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
     $trigger.Delay = 'PT20S'
+    # Watchdog: the task runs again every 5 minutes for the rest of the sign-in, so a loop process that
+    # died comes back without a new sign-in. While it runs, the repeats are ignored (IgnoreNew below).
+    $trigger.Repetition = (New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 5)).Repetition
+    $trigger.Repetition.StopAtDurationEnd = $false
     $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
     $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
         -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable

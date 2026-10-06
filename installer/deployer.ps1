@@ -184,6 +184,31 @@ function Update-LanForwarding {
     }
 }
 
+function Start-Stack {
+    # compose up, LAN forwarding and the health wait; returns the health. Throws when the stack did not
+    # come up, so the sign-in task's loop tries again.
+    param($Ctx)
+    # The keep-alive first: with nothing holding the distro, WSL stops it seconds after `compose up`
+    # returns when the site takes a while to answer (seen right after sign-in).
+    if ($Ctx.Runtime -eq 'wsl-engine') { Start-DeployerKeepAlive }
+    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Ctx.Runtime -Arguments @('up', '-d', '--remove-orphans')
+    if ($code -ne 0) { throw "docker compose up failed (exit code $code)." }
+    # The WSL IP changes when the VM restarts (sleep/hibernate); LAN rules must follow it.
+    try { Update-LanForwarding -Ctx $Ctx } catch { Write-DeployerWarn "LAN forwarding not refreshed: $($_.Exception.Message)" }
+    $health = Wait-DeployerHealth -Port $Ctx.Port -TimeoutSeconds $(if ($Background) { 240 } else { 180 })
+    if (-not $health) {
+        # A container the engine restored after a restart (WSL VM stop/start, daemon restart) can come
+        # back without its published port; recreating the web server container fixes it.
+        Write-DeployerWarn 'The site is not answering; recreating the web server container...'
+        [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $Ctx.Runtime -Arguments @('up', '-d', '--force-recreate', 'caddy'))
+        $health = Wait-DeployerHealth -Port $Ctx.Port -TimeoutSeconds 120
+    }
+    if ($Ctx.Runtime -eq 'wsl-engine' -and -not (Get-DeployerKeepAliveProcess)) {
+        throw 'the WSL distro stopped while Deployer was starting (WSL updating itself?).'
+    }
+    return $health
+}
+
 function Invoke-Start {
     $ctx = Get-Context
     if ($Background) {
@@ -201,35 +226,31 @@ function Invoke-Start {
         }
     }
     Write-DeployerStep 'Starting Deployer'
-    Remove-Item -LiteralPath (Join-Path $InstallDir $script:DeployerStopMarker) -Force -ErrorAction SilentlyContinue
-    $timeout = if ($Background) { 900 } else { 300 }
-    Initialize-Engine -Ctx $ctx -TimeoutSeconds $timeout
-    if ($ctx.Runtime -eq 'wsl-engine' -and -not $Background) { Start-DeployerKeepAlive }
-    $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--remove-orphans')
-    if ($code -ne 0) { throw "docker compose up failed (exit code $code)." }
-    Update-LanForwarding -Ctx $ctx
-    $health = Wait-DeployerHealth -Port $ctx.Port -TimeoutSeconds $(if ($Background) { 240 } else { 180 })
-    if (-not $health) {
-        # A container the engine restored after a restart (WSL VM stop/start, daemon restart) can come
-        # back without its published port; recreating the web server container fixes it.
-        Write-DeployerWarn 'The site is not answering; recreating the web server container...'
-        [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--force-recreate', 'caddy'))
-        $health = Wait-DeployerHealth -Port $ctx.Port -TimeoutSeconds 120
+    $marker = Join-Path $InstallDir $script:DeployerStopMarker
+    if ($Background -and (Test-Path -LiteralPath $marker)) {
+        # The task also runs every 5 minutes as a watchdog (Register-DeployerTask). A stop from this
+        # sign-in stays a stop; a marker older than the sign-in is from an earlier one, and a sign-in starts.
+        $signIn = Get-DeployerSignInTime
+        if ($signIn -and (Get-Item -LiteralPath $marker).LastWriteTime -gt $signIn) {
+            Write-DeployerLog 'INFO' 'Deployer was stopped on purpose ("deployer stop"); not starting it until "deployer start" or the next sign-in.'
+            return
+        }
     }
+    Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    if ($Background -and $ctx.Runtime -eq 'wsl-engine') {
+        # Blocks while the user is signed in: starts the stack, tries again when that fails (WSL
+        # updating itself at sign-in) and brings the stack back when the WSL VM stopped under it.
+        Invoke-DeployerKeepAliveLoop -InstallDir $InstallDir -Start {
+            Initialize-Engine -Ctx $ctx -TimeoutSeconds 300
+            $health = Start-Stack -Ctx $ctx
+            Write-DeployerLog 'INFO' $(if ($health) { 'Stack started.' } else { 'Stack started but the site is not answering.' })
+        }
+        return
+    }
+    Initialize-Engine -Ctx $ctx -TimeoutSeconds $(if ($Background) { 900 } else { 300 })
+    $health = Start-Stack -Ctx $ctx
     if ($Background) {
         Write-DeployerLog 'INFO' $(if ($health) { 'Stack started.' } else { 'Stack started but the site is not answering.' })
-        if ($ctx.Runtime -eq 'wsl-engine') {
-            # Blocks while the user is signed in; brings the stack back when the WSL VM stopped under it.
-            Invoke-DeployerKeepAliveLoop -InstallDir $InstallDir -Restart {
-                $code = Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--remove-orphans')
-                # The WSL IP changes when the VM restarts (sleep/hibernate); LAN rules must follow it.
-                try { Update-LanForwarding -Ctx $ctx } catch { Write-DeployerLog 'WARN' "LAN forwarding not refreshed: $($_.Exception.Message)" }
-                if (-not (Wait-DeployerHealth -Port $ctx.Port -TimeoutSeconds 180)) {
-                    [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('up', '-d', '--force-recreate', 'caddy'))
-                }
-                Write-DeployerLog 'INFO' "Stack restarted after the keep-alive ended (compose exit code $code)."
-            }
-        }
         return
     }
     if ($health) {
