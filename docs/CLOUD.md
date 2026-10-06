@@ -22,6 +22,7 @@ and the `deploy-website` skill.
 | **G1** | App secrets in AWS Secrets Manager / Google Secret Manager (opt-in), environment changes reaching App Runner / Cloud Run apps at once ("G1 as built") | **Built** (no migration) |
 | **G3** | Permissions boundary `deployer-boundary` on every IAM role Deployer creates ("G3 as built") | **Built** (no migration) |
 | **Firestore recovery** | Firestore point-in-time recovery, restoring to a time into a new database, deleting Firestore databases, backups and exports ("Firestore point-in-time recovery and deletes") | **Built** (no migration) |
+| **AWS policy split** | The Deployer AWS permissions as three managed policies by purpose, each under IAM's size limit ("AWS policy split as built") | **Built** (no migration) |
 
 ## Principles
 
@@ -1571,9 +1572,9 @@ policies attached, so the permissions are now three policies, one per purpose:
 |---|---|---|
 | `DeployerHosting` | static sites, container images, App Runner services, app secrets | `WhoAmI`, `StaticSiteBuckets`, `CloudFront`, `Certificates`, `RegistryLogin`, `ContainerRepositories`, `AppRunner`, `AppSecrets` |
 | `DeployerDatabases` | RDS / Aurora and their firewall, DynamoDB tables, backups, restores, the gateway endpoint | `DatabasesRead`, `Databases`, `DatabaseFirewall*`, `DynamoDB*` |
-| `DeployerRoles` | every IAM permission: the roles Deployer creates, always within `deployer-boundary` (G3), GitHub Actions sign-in, service-linked roles | `AppRunnerImageAccessRole`, `RolesWithinBoundary`, `BoundaryPolicy`, `ServiceLinkedRoles`, `AppRunnerInstanceRoles`, `GitHubActionsSignIn`, `GitHubActionsRoles` |
+| `DeployerRoles` | every IAM permission: the roles Deployer creates, always within `deployer-boundary` (G3), GitHub Actions sign-in, service-linked roles | `AppRunnerImageAccessRole`, `RolesWithinBoundary`, `BoundaryPolicy`, `ServiceLinkedRoles`, `AppRunnerInstanceRoles`, `GitHubActionsSignIn`, `GitHubActionsRoles`, `GitHubActionsRoleList` (added after the split by the orphan sweep, "C3 as built") |
 
-The statements are exactly the previous ones, moved verbatim: nothing added, removed or changed. Every `iam:*`
+The statements are exactly the previous ones, moved verbatim: nothing added, removed or changed by the split. Every `iam:*`
 action is in `DeployerRoles`, so the G3 boundary condition on `RolesWithinBoundary` is reviewed in one place.
 
 ### Code, API, dashboard
