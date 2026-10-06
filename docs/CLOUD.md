@@ -21,6 +21,7 @@ and the `deploy-website` skill.
 | **Polish** | Billing confirmation for putting an app on a cloud target, MCP `set_app_target` ("C1 as built": Rules, MCP) | **Built** (no migration) |
 | **G1** | App secrets in AWS Secrets Manager / Google Secret Manager (opt-in), environment changes reaching App Runner / Cloud Run apps at once ("G1 as built") | **Built** (no migration) |
 | **G3** | Permissions boundary `deployer-boundary` on every IAM role Deployer creates ("G3 as built") | **Built** (no migration) |
+| **Firestore recovery** | Firestore point-in-time recovery, restoring to a time into a new database, deleting Firestore databases, backups and exports ("Firestore point-in-time recovery and deletes") | **Built** (no migration) |
 
 ## Principles
 
@@ -540,8 +541,8 @@ the adapter, reached through `connections.cloud_engine(engine)` - the same funct
 `services/dynamo.py`, so `source_ops`, `introspection`, `query_console`, `ddl_export` and `connections`
 branch once for both engines.
 
-Deployer **never deletes** a Firestore database; since "Firestore backups" it can create one (below).
-Removing the source only forgets it; nothing in Google changes, so there is no cleanup job and project deletion
+Since "Firestore backups" Deployer can create a Firestore database, and since "Firestore point-in-time recovery and
+deletes" delete one - only from its Backups tab, with the name typed. Removing the source only forgets it; nothing in Google changes, so there is no cleanup job and project deletion
 is not blocked by it.
 
 - **Documents are plain JSON both ways**, with the document id as **`_id`** (a stored field literally
@@ -671,9 +672,10 @@ exports, schedules, backups and restore checks; `cloud_db.create_firestore` and 
 migration: `cloud_state` gains `job_id`, `create_requested` / `create_op`, `import_from` / `import_requested` /
 `import_op`, `restore_from` and `export_bucket`. Everything that costs money is **off until confirmed**: the
 dialogs show the cost note and need a tick; the API and MCP need `confirm_billing: true` (`422
-billing_not_confirmed` with the note otherwise). **Deployer never deletes** a Firestore database, an export or a
-backup (`created` stays false, so removing a source only forgets it); `GcpClient.firestore` refuses any `DELETE`
-that is not a document or a backup schedule, whatever the caller.
+billing_not_confirmed` with the note otherwise). Removing a source only forgets it (`created` stays false);
+`GcpClient.firestore` refuses any `DELETE` that is not a document or a backup schedule, whatever the caller.
+Deleting a database, a backup or an export in Google is the separate, name-confirmed step of "Firestore
+point-in-time recovery and deletes", through its own method `GcpClient.delete_firestore`.
 
 ### New databases
 
@@ -769,6 +771,98 @@ answers `GET` before the restore has finished, the bucket location Google accept
 (`US` / `EU` assumed), whether `roles/datastore.owner` alone lists backups across locations (`locations/-`), the
 retention limits (7 days daily, 14 weeks weekly, as documented), and the prices in the cost notes (approximate,
 they vary by location).
+
+## Firestore point-in-time recovery and deletes (as built)
+
+The two Firestore leftovers of "C2 - cloud databases (what is left)", on the same **Firestore Admin REST API v1**
+seam (`GcpClient.firestore`; its path guard already accepted `databases:clone`, `PATCH` / `DELETE databases/<id>`
+and `locations/<l>/backups/<id>`) and, for export files, the **Cloud Storage JSON API** (`GcpClient.list_objects` /
+`delete_object`: `GET b/<bucket>/o?prefix=&delimiter=&pageToken=`, `DELETE b/<bucket>/o/<percent-encoded name>`).
+Code: `services/firestore_admin.py` (status, PITR, clone checks, deletes), `cloud_db.create_firestore(clone_from=)`
+and its job. No migration, no new Google role: **Cloud Datastore Owner** (already asked for) covers updating,
+cloning and deleting databases and deleting backups; **Storage Admin** on the bucket covers deleting export files.
+
+### Point-in-time recovery (Backups tab -> Point-in-time recovery)
+
+- The card reads the database (`GET databases/<id>`): **on / off** (`pointInTimeRecoveryEnablement`), *restorable
+  from* (`earliestVersionTime`) and Google's **delete protection** (`deleteProtectionState`). The Backups tab's
+  answer carries them as `status` (`problems.status` when the account may not read the database).
+- **Turn on...** (admin; billable: Google keeps 7 days of versions instead of 1 hour and bills their storage at the
+  database's storage price - the dialog shows the note and needs the tick; API `confirm_billing: true`, else `422
+  billing_not_confirmed`) / **Turn off...** (no tick; says the older versions go): `PATCH databases/<id>
+  ?updateMask=pointInTimeRecoveryEnablement {pointInTimeRecoveryEnablement: POINT_IN_TIME_RECOVERY_ENABLED |
+  _DISABLED}`. Google applies it as a long-running operation; the card shows the new state on its next read.
+  Audit `data_source.cloud_pitr`.
+- **Restore to a time...** (admin; billable like a restore, cost tick / `confirm_billing: true`): a `datetime-local`
+  minute in the viewer's time zone, any time from *restorable from* until a minute ago (the last hour even with
+  point-in-time recovery off). The API takes `point_in_time` (ISO 8601; UTC when it has no zone), rounds it
+  **down to the whole minute** (Google's rule), refuses one in the future or before `earliestVersionTime` (`400
+  invalid_restore_time`), then - like a backup restore - makes a **new** data source (`creating`, typed name, id
+  `deployer-<name>-<id8>` unless given; a taken id is `409 database_exists`) and queues `data_source.cloud_create`,
+  which sends `POST databases:clone {databaseId, pitrSnapshot: {database: projects/<p>/databases/<id>,
+  snapshotTime}}` and follows the operation. The copy is in the source database's location; the original is
+  never touched. Audit `data_source.create` with `cloud: clone`.
+
+### Deletes (Backups tab; typed name)
+
+Every delete names the database's **exact name** (the data source's, as in "Deleting a cloud database over the
+API and MCP") and `confirm_delete: true`; without them the answer is the dry run, `422 delete_not_confirmed` with
+`details: {name, removes, keeps}`. The dashboard's dialogs ask for the name typed. **Project admins only** -
+service keys get `401` / `403`: G4 lets keys delete a cloud database because a final snapshot / backup is kept,
+and nothing is kept here.
+
+- **Delete database...** (card *Delete this database*): `GET databases/<id>` first; while Google's **delete
+  protection** is on the button is off and the API answers `409 delete_protected` (turn it off in the Google Cloud
+  console - Deployer never changes it). Otherwise `DELETE databases/<id>?etag=<etag>`, then the data source is
+  removed like the dashboard's remove (audits `data_source.cloud_database_delete` and `data_source.delete`).
+  Google deletes the documents and the backup schedules; backups already taken stay until they expire (restoring
+  them needs the Google Cloud console, since their source is gone here) and exports stay in Cloud Storage. Removing
+  a Firestore source on the Databases tab (or `delete_cloud_database`) still only forgets it.
+- **Delete...** on a backup: the name must be one of this project's backups (`422` otherwise) and `GET
+  locations/<l>/backups/<id>` must name this database (`404 backup_not_found` otherwise); then `DELETE` it. Audit
+  `data_source.cloud_backup_delete`.
+- **Stored exports** (Exports card): the export folders Deployer made of this database in its remembered bucket
+  when that is a `deployer-*` one (`GET b/<bucket>/o?prefix=deployer-exports/<database>/&delimiter=/`), newest
+  first, each with **Import...** and **Delete...** (the answer's `exports: [{uri, created_at}]`). Deleting takes
+  only `gs://deployer-.../deployer-exports/<this database>/<yyyymmdd-HHMMSS>` (`422` for any other bucket or
+  folder - exports in a bucket the user made are deleted in the Google Cloud console), lists every object under
+  the folder and deletes them one by one while the request waits (`404 export_not_found` when none are left).
+  Audit `data_source.cloud_export_delete` with the file count.
+
+### API
+
+| Method | Path | Role | Body / Query | Response |
+|---|---|---|---|---|
+| PUT | `/projects/{pid}/data-sources/{sid}/firestore/pitr` | admin+ | `{enabled, confirm_billing (to turn on)}` | `{pitr}` |
+| POST | `/projects/{pid}/data-sources/{sid}/firestore/clone` | admin+ | `{point_in_time, name, database?, confirm_billing: true}` | `{data_source, job}` (201); `400 invalid_restore_time` |
+| DELETE | `/projects/{pid}/data-sources/{sid}/firestore/database` | admin+ | `?confirm_name=&confirm_delete=true` | `{ok, name, removes, keeps}`; `409 delete_protected` |
+| DELETE | `/projects/{pid}/data-sources/{sid}/firestore/backups` | admin+ | `?backup=<name>&confirm_name=&confirm_delete=true` | `{ok, name, removes, keeps}`; `404 backup_not_found` |
+| DELETE | `/projects/{pid}/data-sources/{sid}/firestore/exports` | admin+ | `?uri=gs://deployer-...&confirm_name=&confirm_delete=true` | `{ok, files, name, removes, keeps}`; `404 export_not_found` |
+
+`GET .../firestore/backups` adds `status: {pitr, earliest_version_time, delete_protection}`, `exports`,
+`costs.pitr`, `costs.clone` and `notes.pitr`.
+
+### MCP
+
+`set_firestore_point_in_time_recovery` and `restore_firestore_to_time` (billable: `confirm_billing` after the
+user agreed), and `delete_firestore_database`, `delete_firestore_backup`, `delete_firestore_export` (call with
+`confirm_delete: false` first, show the user `removes` / `keeps`, and only after their yes send the name and
+`confirm_delete: true`); all project-admin, not in `SERVICE_KEY_TOOLS`. `list_firestore_backups` now also returns
+`status` and `exports`. See MCP.md.
+
+### Not verified against real clouds
+
+Tested against the in-memory Firestore Admin fake (`tests/test_firestore_admin.py`: the status read, PITR on with
+the billing rule and off, restore to a time - rounding, a time before the window or in the future, the clone call
+and its job -, the database delete's dry run, wrong name, developer and service-key refusal, delete protection,
+the etag and the removed source, backup deletes of this / another database / another project, the stored exports
+list, export deletes with the bucket / folder checks, the MCP tools), the real client's Cloud Storage object URLs
+(paging, percent-encoded names) against `httpx.MockTransport`, and the dashboard (`FirestoreBackups.test.tsx`).
+Not yet run against a live project: the clone call's exact shape and operation name (`databases:clone` with
+`pitrSnapshot`, as documented), whether `roles/datastore.owner` alone may clone, whether backups really outlive a
+deleted database, how soon `earliestVersionTime` moves back to 7 days after turning recovery on, whether the
+database delete needs the `etag` (sent when Google returns one), and the point-in-time recovery price (the storage
+price of the location, approximate).
 
 ## C2-4 as built: Firebase Realtime Database
 
@@ -1020,6 +1114,7 @@ there.
 | Firebase | **Cloud Firestore** | **built in C2-3** (above) |
 | Firebase | **Realtime Database** | **built in C2-4** (above) |
 | Firebase | Firestore: new databases, managed exports / imports, scheduled backups, restores | **built** ("Firestore backups", above) |
+| Firebase | Firestore: point-in-time recovery, restore to a time, deleting databases / backups / exports | **built** ("Firestore point-in-time recovery and deletes", above) |
 | all | MCP, transfer, project delete | **built in C2-5** (above) |
 | all | deleting one over the API / MCP (admin session or service key) | **built** ("Deleting a cloud database over the API and MCP", above) |
 
@@ -1030,8 +1125,6 @@ and the `confirm_billing` rule are in place; a NoSQL engine without its own driv
 functions of `services/dynamo.py` / `services/firestore.py` / `services/rtdb.py`, returned by `connections.cloud_engine`.
 Left (not built; each is also noted in its section above):
 
-- Firestore point-in-time recovery and deleting Firestore databases, exports or backups from Deployer (the
-  Firebase / Google Cloud console does them);
 - a NAT gateway for App Runner apps linked to an RDS database that also call the internet (the user adds one).
 
 ## C3 as built: GitHub Actions builds (pushes deploy with the PC off)

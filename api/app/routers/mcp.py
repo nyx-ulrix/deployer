@@ -370,6 +370,38 @@ def t_restore_firestore_backup(ctx: Ctx, args: dict) -> Any:
     return cloud_router.firestore_restore(args["source_id"], body, ctx.request, ctx.access, ctx.db)
 
 
+def t_set_firestore_pitr(ctx: Ctx, args: dict) -> Any:
+    body = cloud_router.FirestorePitr(**_without_source(args))
+    return cloud_router.firestore_set_pitr(args["source_id"], body, ctx.request, ctx.access, ctx.db)
+
+
+def t_restore_firestore_to_time(ctx: Ctx, args: dict) -> Any:
+    body = cloud_router.FirestoreClone(**_without_source(args))
+    return cloud_router.firestore_clone(args["source_id"], body, ctx.request, ctx.access, ctx.db)
+
+
+def _confirmed(args: dict) -> dict:
+    return {"confirm_name": args.get("confirm_name", ""), "confirm_delete": bool(args.get("confirm_delete"))}
+
+
+def t_delete_firestore_database(ctx: Ctx, args: dict) -> Any:
+    return cloud_router.firestore_delete_database(
+        args["source_id"], ctx.request, ctx.access, ctx.db, **_confirmed(args)
+    )
+
+
+def t_delete_firestore_backup(ctx: Ctx, args: dict) -> Any:
+    return cloud_router.firestore_delete_backup(
+        args["source_id"], ctx.request, ctx.access, ctx.db, backup=args["backup"], **_confirmed(args)
+    )
+
+
+def t_delete_firestore_export(ctx: Ctx, args: dict) -> Any:
+    return cloud_router.firestore_delete_export(
+        args["source_id"], ctx.request, ctx.access, ctx.db, uri=args["uri"], **_confirmed(args)
+    )
+
+
 def t_app_logs(ctx: Ctx, args: dict) -> Any:
     tail = max(1, min(int(args.get("tail", 100)), 500))
     return apps_router.runtime_logs(args["app_id"], ctx.access, ctx.db, tail=tail, device_id=None)
@@ -829,8 +861,10 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
     "list_firestore_backups": (
         "viewer",
         "A Firestore data source's scheduled backups (`schedules`), its backups (`backups`, each `name` restorable "
-        "with restore_firestore_backup) and recent managed exports / imports (`operations`, with their gs:// "
-        "folder), plus the cost notes; `problems` says which list the service account may not read.",
+        "with restore_firestore_backup), recent managed exports / imports (`operations`, with their gs:// folder), "
+        "the exports stored in its deployer-* bucket (`exports`) and `status` (point-in-time recovery, "
+        "earliest_version_time, delete_protection), plus the cost notes; `problems` says which part the service "
+        "account may not read.",
         _schema(["source_id"], source_id=SOURCE),
         t_list_firestore_backups,
     ),
@@ -904,6 +938,78 @@ TOOLS: dict[str, tuple[str, str, dict, Any]] = {
             confirm_billing=_p("boolean", "Must be true: the user agreed to the Google charges"),
         ),
         t_restore_firestore_backup,
+    ),
+    "set_firestore_point_in_time_recovery": (
+        "admin",
+        "Turn point-in-time recovery of a Firestore data source on or off (list_firestore_backups shows it in "
+        "`status`: pitr, earliest_version_time). On, Google keeps 7 days of versions instead of 1 hour; that is "
+        "BILLABLE (the versions' storage, at the database's storage price): only after the user agreed, with "
+        "confirm_billing: true. Off drops the versions older than an hour.",
+        _schema(
+            ["source_id", "enabled"],
+            source_id=SOURCE,
+            enabled=_p("boolean", "true: on, false: off"),
+            confirm_billing=_p("boolean", "Must be true to turn it on: the user agreed to the Google charges"),
+        ),
+        t_set_firestore_pitr,
+    ),
+    "restore_firestore_to_time": (
+        "admin",
+        "BILLABLE (like a restore, per GB, plus the new database): copy a Firestore data source as it was at "
+        "point_in_time (a minute since `status.earliest_version_time` from list_firestore_backups: the last hour, or 7 "
+        "days with point-in-time recovery on) into a NEW database, added as a new data source `name` (status "
+        "creating; the original is not touched). Only after the user agreed, with confirm_billing: true.",
+        _schema(
+            ["source_id", "point_in_time", "name", "confirm_billing"],
+            source_id=SOURCE,
+            point_in_time=_p("string", "ISO 8601 time (UTC if no zone), rounded down to the minute"),
+            name=_p("string", "The new data source's name, unique in the project"),
+            database=_p("string", "The new database's id (default deployer-<name>-<id8>)"),
+            confirm_billing=_p("boolean", "Must be true: the user agreed to the Google charges"),
+        ),
+        t_restore_firestore_to_time,
+    ),
+    "delete_firestore_database": (
+        "admin",
+        "DESTRUCTIVE, NO UNDO: delete a Firestore data source's database in the user's Firebase project (every "
+        "document; refused with delete_protected while Google's delete protection is on), then the data source. "
+        "Backups already taken stay until they expire. First call with confirm_delete: false: the answer "
+        "(delete_not_confirmed) lists what would be removed and kept. Tell the user, and only after they say yes call "
+        "again with confirm_name (the data source's exact name) and confirm_delete: true.",
+        _schema(
+            ["source_id", "confirm_name", "confirm_delete"],
+            source_id=SOURCE,
+            confirm_name=_p("string", "The data source's exact name (from list_data_sources)"),
+            confirm_delete=_p("boolean", "Must be true: the user agreed to delete it"),
+        ),
+        t_delete_firestore_database,
+    ),
+    "delete_firestore_backup": (
+        "admin",
+        "DESTRUCTIVE: delete one backup of a Firestore data source (`backup`: a name from list_firestore_backups). "
+        "Same confirmation as delete_firestore_database: confirm_delete: false first, then with the user's yes "
+        "confirm_name (the data source's exact name) and confirm_delete: true.",
+        _schema(
+            ["source_id", "backup", "confirm_name", "confirm_delete"],
+            source_id=SOURCE,
+            backup=_p("string", "projects/<p>/locations/<l>/backups/<id> from list_firestore_backups"),
+            confirm_name=_p("string", "The data source's exact name"),
+            confirm_delete=_p("boolean", "Must be true: the user agreed to delete it"),
+        ),
+        t_delete_firestore_backup,
+    ),
+    "delete_firestore_export": (
+        "admin",
+        "DESTRUCTIVE: delete the files of one export Deployer made of a Firestore data source in a deployer-* bucket "
+        "(`uri`: from list_firestore_backups' `exports`). Same confirmation as delete_firestore_database.",
+        _schema(
+            ["source_id", "uri", "confirm_name", "confirm_delete"],
+            source_id=SOURCE,
+            uri=_p("string", "gs://deployer-.../deployer-exports/<database>/<time> from list_firestore_backups"),
+            confirm_name=_p("string", "The data source's exact name"),
+            confirm_delete=_p("boolean", "Must be true: the user agreed to delete it"),
+        ),
+        t_delete_firestore_export,
     ),
     "app_logs": (
         "developer",

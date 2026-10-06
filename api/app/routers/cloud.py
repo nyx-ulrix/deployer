@@ -363,6 +363,12 @@ def delete_database(
             400, "not_a_cloud_database", "This database is not in a cloud account; remove it in the dashboard"
         )
     summary = cloud_db.delete_summary(ds)
+    _confirm_delete(ds, confirm_name, confirm_delete, summary)
+    return {**delete_data_source(source_id, access, db, request), **summary}
+
+
+def _confirm_delete(ds, confirm_name: str, confirm_delete: bool, summary: dict) -> None:
+    """Without the database's exact name and confirm_delete the answer is the dry run (`details`)."""
     if confirm_name != ds.name or not confirm_delete:
         raise ApiError(
             422,
@@ -371,7 +377,6 @@ def delete_database(
             "confirm_name (the database's exact name) and confirm_delete: true.",
             summary,
         )
-    return {**delete_data_source(source_id, access, db, request), **summary}
 
 
 # --- DynamoDB on-demand backups (docs/CLOUD.md "C2-2") --------------------------------------------
@@ -529,6 +534,18 @@ class FirestoreSchedule(BaseModel):
     confirm_billing: bool = False
 
 
+class FirestorePitr(BaseModel):
+    enabled: bool
+    confirm_billing: bool = False  # needed to switch it on (billed), not off
+
+
+class FirestoreClone(BaseModel):
+    point_in_time: datetime  # rounded down to the minute; UTC when no zone is given
+    name: str = Field(min_length=1, max_length=63)  # the new data source
+    database: str | None = Field(default=None, max_length=63)  # the new database's id
+    confirm_billing: bool = False
+
+
 class FirestoreRestore(BaseModel):
     backup: str = Field(max_length=300)  # a backup's `name` from the list
     name: str = Field(min_length=1, max_length=63)  # the new data source
@@ -647,6 +664,106 @@ def firestore_restore(source_id: str, body: FirestoreRestore, request: Request, 
     db.commit()
     jobs.dispatch(job.id)
     return {"data_source": data_source_out(ds), "job": jobs.job_out(job)}
+
+
+# --- Firestore point-in-time recovery and deletes (docs/CLOUD.md "Firestore point-in-time recovery and deletes") --
+
+ConfirmName = Annotated[str, Query(max_length=63)]
+
+
+@router.put("/projects/{project_id}/data-sources/{source_id}/firestore/pitr")
+def firestore_set_pitr(source_id: str, body: FirestorePitr, request: Request, access: Admin, db: DbSession) -> dict:
+    """Point-in-time recovery on (billed: confirm_billing) or off (the versions older than an hour go)."""
+    if body.enabled:
+        _billing(body.confirm_billing, firestore_admin.PITR_COST)
+    ds = _firestore_source(db, access, source_id)
+    out = firestore_admin.set_pitr(ds, body.enabled)
+    _record(db, request, access, ds, "data_source.cloud_pitr", enabled=body.enabled)
+    db.commit()
+    return out
+
+
+@router.post("/projects/{project_id}/data-sources/{source_id}/firestore/clone", status_code=201)
+def firestore_clone(source_id: str, body: FirestoreClone, request: Request, access: Admin, db: DbSession) -> dict:
+    """Copies the database as it was at a minute of its version window into a NEW database and data source."""
+    _billing(body.confirm_billing, firestore_admin.CLONE_COST)
+    src = _firestore_source(db, access, source_id)
+    name = _name(db, access.project.id, body.name)
+    spec, location = firestore_admin.clone_spec(src, body.point_in_time)
+    ds, job = cloud_db.create_firestore(
+        db,
+        access.project.id,
+        connection_id=src.cloud_connection_id or "",
+        name=name,
+        database=body.database,
+        location=location,
+        user_id=access.user.id,
+        clone_from=spec,
+    )
+    _audit(db, request, access, ds, "clone")
+    db.commit()
+    jobs.dispatch(job.id)
+    return {"data_source": data_source_out(ds), "job": jobs.job_out(job)}
+
+
+@router.delete("/projects/{project_id}/data-sources/{source_id}/firestore/database")
+def firestore_delete_database(
+    source_id: str,
+    request: Request,
+    access: Admin,
+    db: DbSession,
+    confirm_name: ConfirmName = "",
+    confirm_delete: bool = False,
+) -> dict:
+    """Deletes the Firestore database in Google (not while its delete protection is on) and then the data source.
+    Admins only: unlike delete_cloud_database nothing is kept, so service keys don't get it."""
+    from app.routers.data_sources import delete_data_source
+
+    ds = _firestore_source(db, access, source_id)
+    summary = firestore_admin.database_delete_summary(ds)
+    _confirm_delete(ds, confirm_name, confirm_delete, summary)
+    firestore_admin.delete_database(ds)
+    _record(db, request, access, ds, "data_source.cloud_database_delete", database=firestore.database_of(ds))
+    return {**delete_data_source(source_id, access, db, request), **summary}
+
+
+@router.delete("/projects/{project_id}/data-sources/{source_id}/firestore/backups")
+def firestore_delete_backup(
+    source_id: str,
+    request: Request,
+    access: Admin,
+    db: DbSession,
+    backup: Annotated[str, Query(max_length=300)],
+    confirm_name: ConfirmName = "",
+    confirm_delete: bool = False,
+) -> dict:
+    ds = _firestore_source(db, access, source_id)
+    summary = firestore_admin.backup_delete_summary(ds, backup)
+    _confirm_delete(ds, confirm_name, confirm_delete, summary)
+    firestore_admin.delete_backup(ds, backup)
+    _record(db, request, access, ds, "data_source.cloud_backup_delete", backup=backup)
+    db.commit()
+    return {"ok": True, **summary}
+
+
+@router.delete("/projects/{project_id}/data-sources/{source_id}/firestore/exports")
+def firestore_delete_export(
+    source_id: str,
+    request: Request,
+    access: Admin,
+    db: DbSession,
+    uri: Annotated[str, Query(max_length=1100)],
+    confirm_name: ConfirmName = "",
+    confirm_delete: bool = False,
+) -> dict:
+    """Deletes the files of one export Deployer made of this database in a deployer-* bucket."""
+    ds = _firestore_source(db, access, source_id)
+    summary = firestore_admin.export_delete_summary(ds, uri)
+    _confirm_delete(ds, confirm_name, confirm_delete, summary)
+    files = firestore_admin.delete_export(ds, uri)
+    _record(db, request, access, ds, "data_source.cloud_export_delete", uri=uri, files=files)
+    db.commit()
+    return {"ok": True, "files": files, **summary}
 
 
 # --- Realtime Database export (docs/CLOUD.md "C2-4") -----------------------------------------------

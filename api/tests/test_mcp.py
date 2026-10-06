@@ -48,6 +48,11 @@ ADMIN_TOOLS = {
     "set_firestore_backup_schedule",
     "delete_firestore_backup_schedule",
     "restore_firestore_backup",
+    "set_firestore_point_in_time_recovery",
+    "restore_firestore_to_time",
+    "delete_firestore_database",
+    "delete_firestore_backup",
+    "delete_firestore_export",
     "set_build_location",
     "set_app_target",
     "set_app_secrets_store",
@@ -194,6 +199,11 @@ TOOL_ROUTES = {
         ("DELETE", "/data-sources/{source_id}/firestore/backup-schedules/{schedule_id}")
     ],
     "restore_firestore_backup": [("POST", "/data-sources/{source_id}/firestore/restore")],
+    "set_firestore_point_in_time_recovery": [("PUT", "/data-sources/{source_id}/firestore/pitr")],
+    "restore_firestore_to_time": [("POST", "/data-sources/{source_id}/firestore/clone")],
+    "delete_firestore_database": [("DELETE", "/data-sources/{source_id}/firestore/database")],
+    "delete_firestore_backup": [("DELETE", "/data-sources/{source_id}/firestore/backups")],
+    "delete_firestore_export": [("DELETE", "/data-sources/{source_id}/firestore/exports")],
 }
 
 

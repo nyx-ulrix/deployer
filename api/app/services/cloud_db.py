@@ -21,8 +21,10 @@ table copied into a new `deployer-*` table (job `data_source.cloud_restore`), th
 
 Cloud Firestore ("C2-3"): an `external` source with engine `firestore` on a Firebase connection, one
 Firestore database of that project (`cloud_state.database`), connected - or made by job `data_source.cloud_create`:
-a new empty one, a backup restored or a managed export imported into a new one ("Firestore backups"). Deployer
-never deletes one. Data operations are in services/firestore.py, exports and backups in services/firestore_admin.py.
+a new empty one, a backup restored, a point in time copied or a managed export imported into a new one ("Firestore
+backups"). Removing the source only forgets it; the database itself is deleted only from its Backups tab
+(firestore_admin.delete_database, typed name). Data operations are in services/firestore.py, exports and
+backups in services/firestore_admin.py.
 
 Firebase Realtime Database ("C2-4"): an `external` source with engine `firebase_rtdb` on a Firebase connection,
 one database instance of that project (`cloud_state.instance` / `.url`). Connected, or - when the project has
@@ -712,12 +714,14 @@ def create_firestore(
     restore_from: str | None = None,
     import_from: str | None = None,
     collections: list[str] | None = None,
+    clone_from: dict | None = None,
 ) -> tuple[DataSource, Job]:
     """A `creating` Firestore source and the job that makes its database in the Firebase project (docs/CLOUD.md
     "Firestore backups"): a new empty one, a backup restored into it (`restore_from`, a backup name) or a managed
-    export imported into it (`import_from`, a gs:// prefix). Default id `deployer-<name>-<id8>`. The caller checks
+    export imported into it (`import_from`, a gs:// prefix) or a database copied as it was at a minute (`clone_from`,
+    `{database, snapshotTime}`). Default id `deployer-<name>-<id8>`. The caller checks
     the name, commits and dispatches. `created` stays false: Deployer never deletes a Firestore database."""
-    plain = not restore_from and not import_from
+    plain = not restore_from and not import_from and not clone_from
     if not _LOCATION.match(location or "") or (plain and location not in FIRESTORE_LOCATIONS):
         raise ApiError(422, "validation_error", "Pick one of the offered locations", {"field": "location"})
     database = (database or "").strip() or None
@@ -743,6 +747,8 @@ def create_firestore(
     what = (
         "Restoring the backup into a new Firestore database"
         if restore_from
+        else "Copying the database as it was at that time into a new Firestore database"
+        if clone_from
         else "Importing the export into a new Firestore database"
         if import_from
         else "Creating the Firestore database in your Firebase project"
@@ -773,12 +779,13 @@ def create_firestore(
     ds.cloud_state = {
         "provider": "firebase",
         "service": "firestore",
-        "created": False,  # Deployer never deletes a Firestore database, even one it made
+        "created": False,  # removing the source only forgets it (deleting is the Backups tab's, typed)
         "database": ds.database_name,
         "project_id": config.get("project_id"),
         "location": location,
         "job_id": job.id,
         **({"restore_from": restore_from} if restore_from else {}),
+        **({"clone_from": clone_from} if clone_from else {}),
         **({"import_from": import_from, "collections": collections or []} if import_from else {}),
     }
     return ds, job
@@ -824,12 +831,21 @@ def _create_firestore_steps(ctx: jobs.JobContext, ds_id: str, config: dict, stat
         if state.get("restore_from"):
             ctx.progress(0.1, "Asking Google to restore the backup into a new database", force=True)
             op = gcp.firestore("POST", "databases:restore", {"databaseId": database, "backup": state["restore_from"]})
+        elif state.get("clone_from"):
+            ctx.progress(0.1, "Asking Google to copy the database as it was at that time", force=True)
+            op = gcp.firestore("POST", "databases:clone", {"databaseId": database, "pitrSnapshot": state["clone_from"]})
         else:
             ctx.progress(0.1, f"Asking Google for the Firestore database {database}", force=True)
             body = {"locationId": state["location"], "type": "FIRESTORE_NATIVE"}
             op = gcp.firestore("POST", "databases", body, {"databaseId": database})
         state = _save(factory, ds_id, create_requested=True, create_op=(op or {}).get("name")) or state
-    what = "restore the backup" if state.get("restore_from") else "create the database"
+    what = (
+        "restore the backup"
+        if state.get("restore_from")
+        else "copy the database"
+        if state.get("clone_from")
+        else "create the database"
+    )
     if not _firestore_wait(ctx, gcp, ds_id, state.get("create_op"), database, what):
         return {"skipped": "data source removed"}
     if state.get("import_from"):

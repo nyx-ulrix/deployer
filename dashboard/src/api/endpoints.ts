@@ -1020,6 +1020,30 @@ export const api = {
         `/projects/${e(pid)}/data-sources/${e(sid)}/firestore/restore`,
         body,
       ),
+    // docs/CLOUD.md "Firestore point-in-time recovery and deletes" (deletes: the database's exact name + confirm_delete).
+    firestoreSetPitr: (pid: string, sid: string, body: { enabled: boolean; confirm_billing?: boolean }) =>
+      client.put<{ pitr: boolean }>(`/projects/${e(pid)}/data-sources/${e(sid)}/firestore/pitr`, body),
+    firestoreClone: (
+      pid: string,
+      sid: string,
+      body: { point_in_time: string; name: string; database?: string; confirm_billing: boolean },
+    ) =>
+      client.post<{ data_source: DataSource; job: Job }>(
+        `/projects/${e(pid)}/data-sources/${e(sid)}/firestore/clone`,
+        body,
+      ),
+    firestoreDeleteDatabase: (pid: string, sid: string, confirmName: string) =>
+      client.del<{ ok: true }>(`/projects/${e(pid)}/data-sources/${e(sid)}/firestore/database`, {
+        query: { confirm_name: confirmName, confirm_delete: true },
+      }),
+    firestoreDeleteBackup: (pid: string, sid: string, backup: string, confirmName: string) =>
+      client.del<{ ok: true }>(`/projects/${e(pid)}/data-sources/${e(sid)}/firestore/backups`, {
+        query: { backup, confirm_name: confirmName, confirm_delete: true },
+      }),
+    firestoreDeleteExport: (pid: string, sid: string, uri: string, confirmName: string) =>
+      client.del<{ ok: true; files: number }>(`/projects/${e(pid)}/data-sources/${e(sid)}/firestore/exports`, {
+        query: { uri, confirm_name: confirmName, confirm_delete: true },
+      }),
   },
 
   // DEPLOYMENTS.md "Connect a Git repository": the signed-in user's GitHub connection.

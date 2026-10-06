@@ -260,10 +260,14 @@ export type FirestoreBackups = {
   default_bucket: string;
   days: string[];
   max_retention_days: { daily: number; weekly: number };
-  costs: { export: string; import: string; schedule: string; restore: string };
-  notes: { export: string; restore: string };
-  /** Why a list is empty when the service account may not read it. */
-  problems: Partial<Record<"schedules" | "backups" | "operations", string>>;
+  costs: { export: string; import: string; schedule: string; restore: string; pitr: string; clone: string };
+  notes: { export: string; restore: string; pitr: string };
+  /** Why a part is empty when the service account may not read it. */
+  problems: Partial<Record<"status" | "schedules" | "backups" | "operations" | "exports", string>>;
+  /** Point-in-time recovery and Google's delete protection (null when the database could not be read). */
+  status: { pitr: boolean; earliest_version_time: string | null; delete_protection: boolean } | null;
+  /** Exports Deployer made of this database in its deployer-* bucket, newest first (deletable here). */
+  exports: { uri: string; created_at: string | null }[];
   schedules: FirestoreSchedule[];
   backups: FirestoreBackup[];
   operations: FirestoreOperation[];

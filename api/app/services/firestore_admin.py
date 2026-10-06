@@ -11,14 +11,20 @@ Storage JSON API (`GcpClient.bucket` / `create_bucket`), with the Firebase conne
 - backups: `locations/-/backups` filtered to this database; a restore makes a new database
   (`cloud_db.create_firestore` with `restore_from`, `databases:restore`).
 
-Exports, imports, schedules and restores cost money, so their routes need `confirm_billing: true`. Nothing here
-deletes data: exports stay in the bucket, backups expire on their own, removed schedules keep their backups.
+Exports, imports, schedules and restores cost money, so their routes need `confirm_billing: true`.
+
+Point-in-time recovery ("Firestore point-in-time recovery and deletes"): `PATCH databases/<id>`
+(`pointInTimeRecoveryEnablement`, billed) and copies of the database as it was at a minute in its version window
+into a NEW database (`databases:clone`, through `cloud_db.create_firestore` with `clone_from`). Deleting - the
+database (`DELETE databases/<id>`, refused while Google's delete protection is on), one backup
+(`DELETE locations/<l>/backups/<id>`) or one Deployer-made export's files in a `deployer-*` bucket - only ever
+happens on an admin's explicit, name-confirmed request (the routes check `confirm_name` + `confirm_delete`).
 """
 
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import quote
 
@@ -32,13 +38,13 @@ DAYS = ("MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY", "SUN
 MAX_RETENTION_DAYS = {"daily": 7, "weekly": 14 * 7}  # Google's limits
 EXPORT_COST = (
     "A managed export reads every document it copies: Google bills one read per document (about US$0.06 per "
-    "100,000) plus Cloud Storage for the files (about US$0.02 per GB a month) until you delete them in the Google "
-    "Cloud console (Cloud Storage). Deployer never deletes exports."
+    "100,000) plus Cloud Storage for the files (about US$0.02 per GB a month) until you delete them (Stored exports "
+    "below, or the Google Cloud console for a bucket you made)."
 )
 IMPORT_COST = (
     "Importing makes a new Firestore database and writes every exported document into it: Google bills one write "
-    "per document (about US$0.18 per 100,000) and the new database's storage and use until you delete it in the "
-    "Firebase console."
+    "per document (about US$0.18 per 100,000) and the new database's storage and use until you delete it (its Backups "
+    "tab, or the Firebase console)."
 )
 SCHEDULE_COST = (
     "Google takes the backups on its own (also while this PC is off) and keeps each one until its retention ends, "
@@ -47,8 +53,8 @@ SCHEDULE_COST = (
 )
 RESTORE_COST = (
     "Restoring makes a new Firestore database from the backup (the original is not touched): Google bills the "
-    "restore (about US$0.20 per GB) and the new database's storage and use until you delete it in the Firebase "
-    "console."
+    "restore (about US$0.20 per GB) and the new database's storage and use until you delete it (its Backups tab, "
+    "or the Firebase console)."
 )
 EXPORT_NOTE = (
     "An export copies the documents (all collections, or the ones you name) into files in a Cloud Storage bucket, in "
@@ -59,6 +65,21 @@ RESTORE_NOTE = (
     "A restore always makes a new database next to this one (Google cannot restore over an existing database). It "
     "is added here as a new database; point your app at it when you are happy with it."
 )
+PITR_COST = (
+    "Point-in-time recovery keeps every version of your documents for 7 days (without it Google keeps only the "
+    "last hour), so you can copy the database as it was at any minute of that week into a new database. While it is "
+    "on, Google bills the storage those versions take, at the database's storage price (about US$0.18 per GB a "
+    "month in nam5; prices vary by location). Turning it off drops the older versions."
+)
+CLONE_COST = (
+    "Restoring to a point in time makes a new Firestore database from the versions Google kept (the original is not "
+    "touched): Google bills it like a restore (about US$0.20 per GB) and the new database's storage and use until "
+    "you delete it."
+)
+PITR_NOTE = (
+    "Google always keeps the last hour of changes; with point-in-time recovery on, the last 7 days. Restore to a "
+    "time copies the database as it was at that minute into a new database next to this one."
+)
 _SCHEDULE_ID = re.compile(r"^[\w-]{1,100}$")
 _GS_URI = re.compile(r"^gs://[a-z0-9][a-z0-9_.-]{1,61}[a-z0-9](/[^\s]{0,1000})?$")
 
@@ -67,9 +88,10 @@ def _db_path(ds: DataSource, tail: str = "") -> str:
     return f"databases/{quote(firestore.database_of(ds), safe='()')}{tail}"
 
 
-def _call(gcp, role: str, method: str, path: str, body: Any = None) -> Any:
+def _call(gcp, role: str, method: str, path: str, body: Any = None, params: Any = None, destroy: bool = False) -> Any:
+    """`destroy`: a database or backup delete, through the seam's own `delete_firestore` (`firestore()` refuses it)."""
     try:
-        return gcp.firestore(method, path, body, None)
+        return gcp.delete_firestore(path, params) if destroy else gcp.firestore(method, path, body, params)
     except CloudError as exc:
         if exc.code == "PERMISSION_DENIED" or exc.status == 403:
             raise ApiError(
@@ -293,12 +315,200 @@ def restore_location(ds: DataSource, backup: str) -> str:
     return m[1]
 
 
+# --- point-in-time recovery ------------------------------------------------------------------------------
+
+
+def _full_name(ds: DataSource) -> str:
+    return f"projects/{(ds.cloud_state or {}).get('project_id')}/databases/{firestore.database_of(ds)}"
+
+
+def database_out(info: dict) -> dict:
+    """Point-in-time recovery and delete protection of the database (`GET databases/<id>`)."""
+    return {
+        "pitr": info.get("pointInTimeRecoveryEnablement") == "POINT_IN_TIME_RECOVERY_ENABLED",
+        "earliest_version_time": info.get("earliestVersionTime"),
+        "delete_protection": info.get("deleteProtectionState") == "DELETE_PROTECTION_ENABLED",
+    }
+
+
+def describe(gcp, ds: DataSource) -> dict:
+    return _call(gcp, OWNER_ROLE, "GET", _db_path(ds)) or {}
+
+
+def set_pitr(ds: DataSource, enabled: bool) -> dict:
+    """Google applies it in the background (a long-running operation); the Backups tab shows the new state."""
+    state = "POINT_IN_TIME_RECOVERY_ENABLED" if enabled else "POINT_IN_TIME_RECOVERY_DISABLED"
+    params = {"updateMask": "pointInTimeRecoveryEnablement"}
+    _call(firestore.gcp_for(ds), OWNER_ROLE, "PATCH", _db_path(ds), {"pointInTimeRecoveryEnablement": state}, params)
+    return {"pitr": enabled}
+
+
+def clone_spec(ds: DataSource, point_in_time: datetime) -> tuple[dict, str]:
+    """`({database, snapshotTime}, location)` to copy the database as it was at `point_in_time` (rounded down to
+    the minute, as Google requires) into a new one; `400 invalid_restore_time` outside the version window."""
+    at = (point_in_time if point_in_time.tzinfo else point_in_time.replace(tzinfo=UTC)).astimezone(UTC)
+    at = at.replace(second=0, microsecond=0)
+    info = describe(firestore.gcp_for(ds), ds)
+    try:
+        start = datetime.fromisoformat(str(info["earliestVersionTime"]).replace("Z", "+00:00"))
+    except (KeyError, ValueError):
+        start = None
+    if at > datetime.now(UTC) - timedelta(minutes=1) or (start and at < start):
+        since = f" from {start:%Y-%m-%d %H:%M} UTC" if start else ""
+        raise ApiError(
+            400,
+            "invalid_restore_time",
+            f"Pick a minute in the past{since} (Google keeps the last hour, or 7 days with point-in-time recovery on)",
+            {"field": "point_in_time"},
+        )
+    spec = {"database": _full_name(ds), "snapshotTime": f"{at:%Y-%m-%dT%H:%M:%SZ}"}
+    return spec, info.get("locationId") or (ds.cloud_state or {}).get("location") or ""
+
+
+# --- deletes (the routes check the typed name and confirm_delete first) ---------------------------------
+
+
+def database_delete_summary(ds: DataSource) -> dict:
+    project = (ds.cloud_state or {}).get("project_id")
+    return {
+        "name": ds.name,
+        "removes": [
+            f"Firestore database {firestore.database_of(ds)} in the Google project {project}: every document in it "
+            "and its backup schedules (Google has no undo)",
+            f"{ds.name} in Deployer",
+        ],
+        "keeps": "Backups already taken stay in Google until they expire (restore them in the Google Cloud console), "
+        "and exports stay in Cloud Storage.",
+    }
+
+
+def delete_database(ds: DataSource) -> None:
+    """Deletes the database in Google, unless its delete protection is on (`409 delete_protected`)."""
+    gcp = firestore.gcp_for(ds)
+    info = describe(gcp, ds)
+    if info.get("deleteProtectionState") == "DELETE_PROTECTION_ENABLED":
+        raise ApiError(
+            409,
+            "delete_protected",
+            "Google's delete protection is on for this database: turn it off in the Google Cloud console "
+            "(Firestore -> the database -> Delete protection), then delete it here.",
+        )
+    etag = {"etag": info["etag"]} if info.get("etag") else None
+    _call(gcp, OWNER_ROLE, "DELETE", _db_path(ds), None, etag, destroy=True)
+
+
+def backup_delete_summary(ds: DataSource, backup: str) -> dict:
+    restore_location(ds, backup)  # one of this project's backups, else 422
+    return {
+        "name": ds.name,
+        "removes": [f"The backup {backup.rsplit('/', 1)[-1]} of {firestore.database_of(ds)} (Google has no undo)"],
+        "keeps": "The database and its other backups are not touched.",
+    }
+
+
+def delete_backup(ds: DataSource, backup: str) -> None:
+    restore_location(ds, backup)
+    gcp = firestore.gcp_for(ds)
+    path = backup.split("/", 2)[2]  # locations/<l>/backups/<id>
+    try:
+        found = _call(gcp, OWNER_ROLE, "GET", path) or {}
+    except ApiError as exc:
+        if exc.code != "not_found":
+            raise
+        found = {}
+    if found.get("database") != _full_name(ds):
+        raise ApiError(404, "backup_not_found", "No such backup of this database")
+    _call(gcp, OWNER_ROLE, "DELETE", path, destroy=True)
+
+
+def _export_dir(ds: DataSource) -> str:
+    return f"deployer-exports/{firestore.database_of(ds).strip('()')}/"
+
+
+def export_folder(ds: DataSource, uri: str) -> tuple[str, str]:
+    """(bucket, folder) of an export Deployer made of this database in a `deployer-*` bucket, else 422."""
+    pattern = rf"gs://(deployer-[a-z0-9_.-]{{0,52}}[a-z0-9])/({re.escape(_export_dir(ds))}\d{{8}}-\d{{6}})/?"
+    m = re.fullmatch(pattern, (uri or "").strip())
+    if not m:
+        raise ApiError(
+            422,
+            "validation_error",
+            "Deployer only deletes its own exports of this database in a deployer-* bucket "
+            "(gs://deployer-.../deployer-exports/<database>/<time>, from the list); delete others in the Google Cloud "
+            "console",
+            {"field": "uri"},
+        )
+    return m[1], m[2]
+
+
+def export_delete_summary(ds: DataSource, uri: str) -> dict:
+    bucket, folder = export_folder(ds, uri)
+    return {
+        "name": ds.name,
+        "removes": [f"Every file of the export gs://{bucket}/{folder} (Google has no undo)"],
+        "keeps": "The database is not touched, nor databases already imported from this export.",
+    }
+
+
+def _storage(fn, *args):
+    try:
+        return fn(*args)
+    except CloudError as exc:
+        if exc.status == 404:
+            raise ApiError(404, "export_not_found", "That export's bucket is gone") from None
+        raise ApiError(
+            502,
+            "cloud_error",
+            f"{exc.message} - the Firebase service account needs the Storage Admin role on the bucket "
+            "(Settings -> Cloud accounts shows how).",
+        ) from None
+
+
+def delete_export(ds: DataSource, uri: str) -> int:
+    """Deletes the export's files; returns how many."""
+    bucket, folder = export_folder(ds, uri)
+    gcp = firestore.gcp_for(ds)
+    names, _ = _storage(gcp.list_objects, bucket, f"{folder}/")
+    if not names:
+        raise ApiError(404, "export_not_found", "No files left in that export")
+    # ponytail: one request per file while the admin waits; a job if exports grow to thousands of files.
+    for name in names:
+        _storage(gcp.delete_object, bucket, name)
+    return len(names)
+
+
+def list_exports(gcp, ds: DataSource) -> list[dict]:
+    """The exports Deployer made of this database in its remembered `deployer-*` bucket, newest first (exports in
+    the user's own buckets are listed and deleted in the Google Cloud console)."""
+    bucket = (ds.cloud_state or {}).get("export_bucket") or ""
+    if not bucket.startswith("deployer-"):
+        return []
+    try:
+        _, folders = gcp.list_objects(bucket, _export_dir(ds), "/")
+    except CloudError as exc:
+        if exc.status == 404:
+            return []
+        raise ApiError(
+            502,
+            "cloud_error",
+            f"{exc.message} - the Firebase service account needs the Storage Admin role on the bucket",
+        ) from None
+    out = []
+    for folder in sorted(folders, reverse=True):
+        m = re.search(r"/(\d{4})(\d\d)(\d\d)-(\d\d)(\d\d)(\d\d)/?$", folder)
+        if m:
+            uri = f"gs://{bucket}/{folder.rstrip('/')}"
+            out.append({"uri": uri, "created_at": f"{m[1]}-{m[2]}-{m[3]}T{m[4]}:{m[5]}:{m[6]}Z"})
+    return out
+
+
 # --- the Backups tab ------------------------------------------------------------------------------------
 
 
 def overview(ds: DataSource) -> dict:
-    """Schedules, backups and recent exports / imports; each list on its own, so a missing role only empties
-    that one (`problems` says why)."""
+    """The database's point-in-time recovery and delete protection (`status`), its schedules, backups, recent
+    exports / imports and stored exports; each read on its own, so a missing role only empties that one
+    (`problems` says why)."""
     gcp = firestore.gcp_for(ds)
     state = ds.cloud_state or {}
     out: dict[str, Any] = {
@@ -308,11 +518,29 @@ def overview(ds: DataSource) -> dict:
         "default_bucket": default_bucket(ds),
         "days": list(DAYS),
         "max_retention_days": MAX_RETENTION_DAYS,
-        "costs": {"export": EXPORT_COST, "import": IMPORT_COST, "schedule": SCHEDULE_COST, "restore": RESTORE_COST},
-        "notes": {"export": EXPORT_NOTE, "restore": RESTORE_NOTE},
+        "costs": {
+            "export": EXPORT_COST,
+            "import": IMPORT_COST,
+            "schedule": SCHEDULE_COST,
+            "restore": RESTORE_COST,
+            "pitr": PITR_COST,
+            "clone": CLONE_COST,
+        },
+        "notes": {"export": EXPORT_NOTE, "restore": RESTORE_NOTE, "pitr": PITR_NOTE},
         "problems": {},
+        "status": None,
     }
-    for key, fn in (("schedules", list_schedules), ("backups", list_backups), ("operations", list_operations)):
+    try:
+        out["status"] = database_out(describe(gcp, ds))
+    except ApiError as exc:
+        out["problems"]["status"] = exc.message
+    lists = (
+        ("schedules", list_schedules),
+        ("backups", list_backups),
+        ("operations", list_operations),
+        ("exports", list_exports),
+    )
+    for key, fn in lists:
         try:
             out[key] = fn(gcp, ds)
         except ApiError as exc:

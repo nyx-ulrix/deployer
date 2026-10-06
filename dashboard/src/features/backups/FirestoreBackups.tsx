@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarClock, CloudUpload, DatabaseBackup, RotateCcw, Trash2 } from "lucide-react";
+import { CalendarClock, CloudUpload, DatabaseBackup, History, RotateCcw, Trash2 } from "lucide-react";
 import { errorMessage } from "../../api/client";
 import { api } from "../../api/endpoints";
 import { invalidateProjectSources } from "../../api/hooks";
@@ -8,25 +8,33 @@ import type { DataSource, FirestoreBackup, FirestoreBackups as Overview } from "
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { Dialog } from "../../components/ui/Dialog";
+import { ConfirmDialog } from "../../components/ui/ConfirmDialog";
 import { Checkbox, Field, Input, Select } from "../../components/ui/Input";
 import { Alert, Card, EmptyState, ErrorState } from "../../components/ui/States";
 import { PageSpinner } from "../../components/ui/Spinner";
 import { useToast } from "../../components/ui/toast-context";
 import { formatBytes, formatDateTime, formatNumber, relativeTime } from "../../lib/format";
 import { useProjectContext } from "../projects/project-context";
+import { toDateInput, toTimeInput } from "./pitr";
 
 type Open =
   | { kind: "export" }
   | { kind: "schedule" }
   | { kind: "unschedule"; id: string; label: string }
   | { kind: "restore"; backup: FirestoreBackup }
-  | { kind: "import"; uri: string };
+  | { kind: "import"; uri: string }
+  | { kind: "pitr"; enable: boolean }
+  | { kind: "clone" }
+  | { kind: "delete"; what: Deletable; target: string; label: string };
+
+type Deletable = "database" | "backup" | "export";
 
 const title = (s: string) => s.charAt(0) + s.slice(1).toLowerCase();
 
-/** docs/CLOUD.md "Firestore backups": a Firestore database's scheduled backups, its backups (restored into a new
- * database), and managed exports to Cloud Storage (imported into a new database). Everything that costs money asks
- * for the ticked cost box. */
+/** docs/CLOUD.md "Firestore backups": a Firestore database's point-in-time recovery (copied to a time into a new
+ * database), scheduled backups, its backups (restored into a new database), managed exports to Cloud Storage
+ * (imported into a new database) and deleting the database, a backup or an export ("Firestore point-in-time
+ * recovery and deletes"). Everything that costs money asks for the ticked cost box; deletes for the typed name. */
 export function FirestoreBackups({ source }: { source: DataSource }) {
   const { project, can } = useProjectContext();
   const key = ["projects", project.id, "firestore-backups", source.id];
@@ -49,8 +57,44 @@ export function FirestoreBackups({ source }: { source: DataSource }) {
       </Alert>
     );
 
+  const del = (what: Deletable, target: string, label: string) => setOpen({ kind: "delete", what, target, label });
+  const pitr = o.status?.pitr ?? false;
+
   return (
     <div className="space-y-4">
+      <Card
+        title={
+          <span className="flex items-center gap-2">
+            <History className="size-4 text-nosql" /> Point-in-time recovery
+          </span>
+        }
+        description={o.notes.pitr}
+        actions={
+          admin &&
+          o.status && (
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" onClick={() => setOpen({ kind: "pitr", enable: !pitr })}>
+                {pitr ? "Turn off…" : "Turn on…"}
+              </Button>
+              <Button size="sm" variant="primary" icon={<RotateCcw className="size-3.5" />} onClick={() => setOpen({ kind: "clone" })}>
+                Restore to a time…
+              </Button>
+            </div>
+          )
+        }
+      >
+        {problem("status")}
+        {o.status && (
+          <p className="flex flex-wrap items-center gap-2 text-sm">
+            <Badge tone={pitr ? "success" : "neutral"}>{pitr ? "on" : "off"}</Badge>
+            <span className="text-muted">
+              {pitr ? "Google keeps 7 days of versions." : "Google keeps the last hour only."}
+              {o.status.earliest_version_time && ` Restorable from ${formatDateTime(o.status.earliest_version_time)}.`}
+            </span>
+          </p>
+        )}
+      </Card>
+
       <Card
         title={
           <span className="flex items-center gap-2">
@@ -121,6 +165,16 @@ export function FirestoreBackups({ source }: { source: DataSource }) {
                       Restore…
                     </Button>
                   )}
+                  {admin && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      icon={<Trash2 className="size-3.5" />}
+                      onClick={() => del("backup", b.name, `the backup from ${formatDateTime(b.snapshot_time)}`)}
+                    >
+                      Delete…
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>
@@ -171,8 +225,64 @@ export function FirestoreBackups({ source }: { source: DataSource }) {
               ))}
             </ul>
           )}
+          {problem("exports")}
+          {o.exports.length > 0 && (
+            <>
+              <p className="text-sm font-medium">Stored exports in {o.bucket}</p>
+              <ul className="divide-y divide-border rounded-xl border border-border">
+                {o.exports.map((x) => (
+                  <li key={x.uri} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs" title={x.uri}>
+                      {x.uri}
+                    </span>
+                    <span className="text-xs text-muted" title={formatDateTime(x.created_at)}>
+                      {relativeTime(x.created_at)}
+                    </span>
+                    {admin && (
+                      <>
+                        <Button size="sm" onClick={() => setOpen({ kind: "import", uri: x.uri })}>
+                          Import…
+                        </Button>
+                        <Button size="sm" variant="ghost" icon={<Trash2 className="size-3.5" />} onClick={() => del("export", x.uri, `the export in ${x.uri}`)}>
+                          Delete…
+                        </Button>
+                      </>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       </Card>
+
+      {admin && (
+        <Card
+          title={
+            <span className="flex items-center gap-2">
+              <Trash2 className="size-4 text-danger" /> Delete this database
+            </span>
+          }
+          description={`Deletes the Firestore database ${o.database} in your Firebase project with every document in it, then removes ${source.name} here. Google has no undo; backups already taken stay until they expire. (Removing it on the Databases tab only forgets it.)`}
+          actions={
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={!o.status || o.status.delete_protection}
+              onClick={() => del("database", o.database, `the Firestore database ${o.database}`)}
+            >
+              Delete database…
+            </Button>
+          }
+        >
+          {o.status?.delete_protection && (
+            <Alert tone="info">
+              Google's delete protection is on for this database. Turn it off in the Google Cloud console (Firestore → the database →
+              Delete protection) to delete it here.
+            </Alert>
+          )}
+        </Card>
+      )}
 
       {open?.kind === "export" && <ExportDialog source={source} overview={o} onClose={() => setOpen(null)} />}
       {open?.kind === "schedule" && <ScheduleDialog source={source} overview={o} onClose={() => setOpen(null)} />}
@@ -181,6 +291,11 @@ export function FirestoreBackups({ source }: { source: DataSource }) {
         <NewDatabaseDialog source={source} overview={o} restore={open.backup} onClose={() => setOpen(null)} />
       )}
       {open?.kind === "import" && <NewDatabaseDialog source={source} overview={o} importUri={open.uri} onClose={() => setOpen(null)} />}
+      {open?.kind === "pitr" && <PitrDialog source={source} overview={o} enable={open.enable} onClose={() => setOpen(null)} />}
+      {open?.kind === "clone" && <NewDatabaseDialog source={source} overview={o} toTime onClose={() => setOpen(null)} />}
+      {open?.kind === "delete" && (
+        <DeleteDialog source={source} what={open.what} target={open.target} label={open.label} onClose={() => setOpen(null)} />
+      )}
     </div>
   );
 }
@@ -405,22 +520,29 @@ function NewDatabaseDialog({
   overview,
   restore,
   importUri,
+  toTime,
   onClose,
 }: {
   source: DataSource;
   overview: Overview;
   restore?: FirestoreBackup;
   importUri?: string;
+  /** Point-in-time recovery: the database as it was at a minute of its version window. */
+  toTime?: boolean;
   onClose: () => void;
 }) {
   const { project } = useProjectContext();
   const toast = useToast();
   const refresh = useRefresh();
-  const [name, setName] = useState(`${source.name} ${restore ? "restored" : "copy"}`.slice(0, 63));
+  const [name, setName] = useState(`${source.name} ${restore || toTime ? "restored" : "copy"}`.slice(0, 63));
   const [database, setDatabase] = useState("");
+  const [when, setWhen] = useState(() => localMinute(new Date(Date.now() - 10 * 60_000)));
+  const at = new Date(when);
+  const earliest = overview.status?.earliest_version_time;
   const run = useMutation({
     mutationFn: () => {
       const body = { name: name.trim(), database: database.trim() || undefined, confirm_billing: true };
+      if (toTime) return api.cloud.firestoreClone(project.id, source.id, { ...body, point_in_time: at.toISOString() });
       return restore
         ? api.cloud.firestoreRestore(project.id, source.id, { ...body, backup: restore.name })
         : api.cloud.firestoreImport(project.id, source.id, { ...body, input_uri: importUri ?? "" });
@@ -433,24 +555,138 @@ function NewDatabaseDialog({
   });
   return (
     <CostDialog
-      heading={restore ? "Restore into a new database" : "Import into a new database"}
+      heading={toTime ? "Restore to a time" : restore ? "Restore into a new database" : "Import into a new database"}
       description={
-        restore
-          ? `The backup from ${formatDateTime(restore.snapshot_time)} becomes a new Firestore database; ${source.name} is not touched.`
-          : `The export in ${importUri} is loaded into a new Firestore database; ${source.name} is not touched.`
+        toTime
+          ? `${source.name} as it was at the minute you pick becomes a new Firestore database; ${source.name} is not touched.`
+          : restore
+            ? `The backup from ${formatDateTime(restore.snapshot_time)} becomes a new Firestore database; ${source.name} is not touched.`
+            : `The export in ${importUri} is loaded into a new Firestore database; ${source.name} is not touched.`
       }
-      cost={restore ? overview.costs.restore : overview.costs.import}
-      confirm={restore ? "Restore" : "Import"}
-      ready={Boolean(name.trim())}
+      cost={toTime ? overview.costs.clone : restore ? overview.costs.restore : overview.costs.import}
+      confirm={restore || toTime ? "Restore" : "Import"}
+      ready={Boolean(name.trim()) && (!toTime || !Number.isNaN(at.getTime()))}
       pending={run.isPending}
       error={run.error}
       onConfirm={() => run.mutate()}
       onClose={onClose}
     >
+      {toTime && (
+        <Field label="As it was at" hint={earliest ? `Any minute from ${formatDateTime(earliest)} until a minute ago (your time zone).` : undefined}>
+          {(id) => (
+            <Input
+              id={id}
+              type="datetime-local"
+              step={60}
+              min={earliest ? localMinute(new Date(earliest)) : undefined}
+              max={localMinute(new Date())}
+              value={when}
+              onChange={(e) => setWhen(e.target.value)}
+            />
+          )}
+        </Field>
+      )}
       <Field label="Name in Deployer">{(id) => <Input id={id} value={name} maxLength={63} onChange={(e) => setName(e.target.value)} />}</Field>
       <Field label="Database id" optional hint="Lowercase letters, digits and hyphens. Empty: Deployer picks one (deployer-…).">
         {(id) => <Input id={id} value={database} onChange={(e) => setDatabase(e.target.value)} spellCheck={false} autoCapitalize="off" />}
       </Field>
     </CostDialog>
+  );
+}
+
+/** Local "YYYY-MM-DDTHH:MM" for a datetime-local input (Google restores whole minutes). */
+function localMinute(d: Date): string {
+  return `${toDateInput(d)}T${toTimeInput(d).slice(0, 5)}`;
+}
+
+function PitrDialog({ source, overview, enable, onClose }: { source: DataSource; overview: Overview; enable: boolean; onClose: () => void }) {
+  const { project } = useProjectContext();
+  const toast = useToast();
+  const refresh = useRefresh();
+  const run = useMutation({
+    mutationFn: () => api.cloud.firestoreSetPitr(project.id, source.id, { enabled: enable, confirm_billing: enable }),
+    onSuccess: () => {
+      refresh();
+      toast.success(`Google is turning point-in-time recovery ${enable ? "on" : "off"} for ${source.name}.`);
+      onClose();
+    },
+  });
+  if (enable)
+    return (
+      <CostDialog
+        heading="Turn on point-in-time recovery"
+        description={overview.notes.pitr}
+        cost={overview.costs.pitr}
+        confirm="Turn on"
+        pending={run.isPending}
+        error={run.error}
+        onConfirm={() => run.mutate()}
+        onClose={onClose}
+      />
+    );
+  return (
+    <ConfirmDialog
+      open
+      onClose={onClose}
+      onConfirm={() => run.mutate()}
+      loading={run.isPending}
+      title="Turn off point-in-time recovery?"
+      description={`Google drops the versions of ${source.name} older than an hour: you can no longer restore it to a time before that.`}
+      confirmLabel="Turn off"
+    >
+      {Boolean(run.error) && <Alert tone="danger">{errorMessage(run.error)}</Alert>}
+    </ConfirmDialog>
+  );
+}
+
+/** Deletes in Google need the database's name typed, like deleting a database (the API's confirm_name). */
+function DeleteDialog({
+  source,
+  what,
+  target,
+  label,
+  onClose,
+}: {
+  source: DataSource;
+  what: Deletable;
+  target: string;
+  label: string;
+  onClose: () => void;
+}) {
+  const { project } = useProjectContext();
+  const toast = useToast();
+  const refresh = useRefresh();
+  const run = useMutation({
+    mutationFn: () =>
+      what === "database"
+        ? api.cloud.firestoreDeleteDatabase(project.id, source.id, source.name)
+        : what === "backup"
+          ? api.cloud.firestoreDeleteBackup(project.id, source.id, target, source.name)
+          : api.cloud.firestoreDeleteExport(project.id, source.id, target, source.name),
+    onSuccess: () => {
+      refresh();
+      toast.success(what === "database" ? `${source.name} was deleted in your Firebase project.` : `Deleted ${label}.`);
+      onClose();
+    },
+  });
+  const keeps =
+    what === "database"
+      ? `Every document goes, and ${source.name} is removed here. Backups already taken stay until they expire; exports stay in Cloud Storage.`
+      : what === "backup"
+        ? "The database and its other backups are not touched."
+        : "The database is not touched, nor databases already imported from this export.";
+  return (
+    <ConfirmDialog
+      open
+      onClose={onClose}
+      onConfirm={() => run.mutate()}
+      loading={run.isPending}
+      title={`Delete ${label}?`}
+      description={`Google deletes it for good: there is no undo. ${keeps}`}
+      confirmLabel="Delete"
+      confirmText={source.name}
+    >
+      {Boolean(run.error) && <Alert tone="danger">{errorMessage(run.error)}</Alert>}
+    </ConfirmDialog>
   );
 }

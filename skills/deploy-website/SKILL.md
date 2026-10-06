@@ -113,8 +113,10 @@ The dashboard is at the instance's public URL (default `http://localhost:8080`; 
    `location`), Firestore managed exports to Cloud Storage (`firestore_export`), scheduled backups
    (`set_firestore_backup_schedule`) and restoring a backup or importing an export
    (`restore_firestore_backup`, `firestore_import` - these always make a NEW database, added as a new data
-   source). Explain the cost note, get a yes, then send `confirm_billing: true` (docs/CLOUD.md "Firestore
-   backups").
+   source), Firestore point-in-time recovery (`set_firestore_point_in_time_recovery`) and restoring a
+   Firestore database to a time (`restore_firestore_to_time`, also a NEW database). Explain the cost note, get
+   a yes, then send `confirm_billing: true` (docs/CLOUD.md "Firestore backups", "Firestore point-in-time
+   recovery and deletes").
 3. **Schema and data**: Schema tab (ER diagram, DDL export), Data tab (rows/documents), Query tab
    (notebook or terminal).
 4. **API key for the site**: API keys tab → *Create key*.
@@ -168,8 +170,9 @@ Tools: `list_data_sources`, `get_schema`, `list_rows`, `list_documents`, `list_s
 key). The cloud account tools - `list_cloud_connections`, `list_cloud_databases`, `create_cloud_database`,
 `create_cloud_backup`, `set_point_in_time_recovery`, `restore_cloud_backup`, the Firestore backup tools
 (`firestore_export`, `firestore_import`, `set_firestore_backup_schedule`, `delete_firestore_backup_schedule`,
-`restore_firestore_backup`), `set_build_location`, `set_app_secrets_store` and `set_app_target` (all billable
-except the schedule delete: only with the user's yes
+`restore_firestore_backup`, `set_firestore_point_in_time_recovery`, `restore_firestore_to_time`),
+`set_build_location`, `set_app_secrets_store` and `set_app_target` (all billable except the schedule delete and
+turning recovery off: only with the user's yes
 and `confirm_billing: true`; `set_app_target` also needs `confirm_teardown: true` to delete an app's resources
 on its old cloud target) and `connect_cloud_database` - need a project **admin** like their REST routes: a
 service key doesn't see them, so ask the user to add the database or pick the target in the dashboard (*Add database → In your AWS account / In your Firebase
@@ -177,7 +180,9 @@ project*), then work on its data with the service key. `delete_cloud_database` (
 cloud database: **always ask the user first** - call it with `confirm_delete: false`, show them what
 `details.removes` / `keeps` say (a database Deployer created goes from AWS after a final snapshot / backup that
 stays, billed for storage; a connected one is only forgotten), and only after a clear yes call it again with
-`confirm_name` (the exact name) and `confirm_delete: true`. App tools report each app's `target` and cloud URL;
+`confirm_name` (the exact name) and `confirm_delete: true`. `delete_firestore_database` (deletes the Firestore
+database itself in Google - no undo, unlike `delete_cloud_database` which only forgets it), `delete_firestore_backup`
+and `delete_firestore_export` work the same way but need a project **admin** (no service keys). App tools report each app's `target` and cloud URL;
 the data tools work on cloud databases exactly like on the PC's (RDS / Aurora are SQL sources).
 DynamoDB tables use the document tools (`collection` = table, page with `cursor`) and `run_query` takes
 one JSON request (`{"operation": "Query", "TableName": ..., ...}`; docs/QUERY_CONSOLE.md). Firestore

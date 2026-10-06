@@ -68,6 +68,8 @@ _FIRESTORE_PATH = re.compile(
     r"^(databases(/[\w()%.~-]+(/(documents|collectionGroups|backupSchedules|operations)(/[\w%.~-]+)*)?)?"
     r"(:[A-Za-z]+)?|locations/[\w-]+/backups(/[\w-]+)?)$"
 )
+# What delete_firestore may delete: one database, or one backup.
+_FIRESTORE_DELETE = re.compile(r"^(databases/[\w()%.~-]+|locations/[\w-]+/backups/[\w-]+)$")
 BUCKET_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{1,61}[a-z0-9]$")
 # A Realtime Database: https://<id>.firebaseio.com (us-central1) or https://<id>.<region>.firebasedatabase.app.
 _RTDB_URL = re.compile(
@@ -194,13 +196,20 @@ class GcpClient:
         services/firestore.py builds every path and body; this is the seam its tests fake."""
         if not _FIRESTORE_PATH.match(path) or "/../" in f"/{path}/" or "/./" in f"/{path}/":
             raise CloudError("Refusing an unexpected Firestore path")
-        # Deployer never deletes a database, a backup or an export: only documents and backup schedules.
+        # Only documents and backup schedules: a database or a backup goes through delete_firestore alone.
         if method == "DELETE" and not re.search(r"/(documents|backupSchedules)/", f"/{path}"):
             raise CloudError("Refusing to delete anything but documents and backup schedules")
         url = f"{FIRESTORE}/projects/{self.project}/{path}"
         if body is None:
             return self._send(method, url, params=params)
         return self._json(method, url, body, params=params)
+
+    def delete_firestore(self, path: str, params: Any = None) -> Any:
+        """Deletes a Firestore database or backup: called only by firestore_admin's name-confirmed deletes
+        (docs/CLOUD.md "Firestore point-in-time recovery and deletes"), so no other caller of `firestore()` can."""
+        if not _FIRESTORE_DELETE.match(path) or ".." in path:
+            raise CloudError("Refusing an unexpected Firestore delete")
+        return self._send("DELETE", f"{FIRESTORE}/projects/{self.project}/{path}", params=params)
 
     # --- Cloud Storage: the bucket Firestore exports go to (docs/CLOUD.md "Firestore backups") ------
 
@@ -230,6 +239,26 @@ class GcpClient:
                 self.bucket(name)
             except CloudError:
                 raise CloudError(f"The bucket name {name} is taken by another Google project") from None
+
+    def list_objects(self, bucket: str, prefix: str, delimiter: str = "") -> tuple[list[str], list[str]]:
+        """(object names, "folders" when a delimiter is given) under `prefix`, every page."""
+        if not BUCKET_RE.match(bucket):
+            raise CloudError(f"Invalid Cloud Storage bucket name {bucket[:70]!r}")
+        names: list[str] = []
+        folders: list[str] = []
+        params = {"prefix": prefix, **({"delimiter": delimiter} if delimiter else {})}
+        while True:
+            out = self._send("GET", f"{STORAGE}/b/{bucket}/o", params=params) or {}
+            names += [str(i.get("name")) for i in out.get("items") or []]
+            folders += [str(p) for p in out.get("prefixes") or []]
+            if not out.get("nextPageToken"):
+                return names, folders
+            params["pageToken"] = out["nextPageToken"]
+
+    def delete_object(self, bucket: str, name: str) -> None:
+        if not BUCKET_RE.match(bucket):
+            raise CloudError(f"Invalid Cloud Storage bucket name {bucket[:70]!r}")
+        self._send("DELETE", f"{STORAGE}/b/{bucket}/o/{quote(name, safe='')}", ok=(200, 204))
 
     # --- Firebase Realtime Database (docs/CLOUD.md "C2-4") ----------------------------------------
 
