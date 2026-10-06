@@ -13,7 +13,7 @@ from app.models import App
 from app.services import cloud, cloud_aws, cloud_deploy
 from app.services.cloud_aws import BOUNDARY_DOCUMENT, BOUNDARY_POLICY, TAG, AwsClient
 from tests.apps_support import make_app
-from tests.test_cloud import FakeCloud, connection, deploy
+from tests.test_cloud import FakeCloud, aws_key_id, aws_secret, connection, deploy
 
 ACCOUNT = "123456789012"
 
@@ -261,3 +261,19 @@ def test_boundary_cannot_be_created_fails_the_deploy_plainly(client, db, docker,
     dep = deploy(db, app)
     assert dep.status == "failed" and "iam:CreatePolicy" in dep.error
     assert aws.args("ensure_access_role") == [] and aws.args("create_service") == []
+
+
+def test_saving_the_aws_connection_creates_the_boundary_at_once(client, db, team, aws):  # noqa: F811
+    """A copy of the key could otherwise create a wider `deployer-boundary` first and build unbounded roles
+    with it, for as long as no app was deployed (a databases-only account never deploys one)."""
+    aws.returns["identity"] = {"account": ACCOUNT, "arn": f"arn:aws:iam::{ACCOUNT}:user/deployer"}
+    key = {"access_key_id": aws_key_id(), "secret_access_key": aws_secret(), "region": "eu-west-1"}
+    body = {"provider": "aws", "name": "AWS", "aws": key}
+    resp = client.post("/v1/instance/cloud", json=body, headers=team["owner"])
+    assert resp.status_code == 201, resp.text
+    assert aws.args("ensure_boundary") == [(ACCOUNT,)]
+    # A key whose policy predates G3 still saves and checks: the first deploy reports the missing permission.
+    aws.fail["ensure_boundary"] = "AWS AccessDenied: iam:CreatePolicy"
+    check = client.post(f"/v1/instance/cloud/{resp.json()['id']}/check", headers=team["owner"])
+    assert check.status_code == 200 and check.json()["status"] == "ok"
+    assert aws.names().count("ensure_boundary") == 2

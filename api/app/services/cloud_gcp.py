@@ -194,6 +194,9 @@ class GcpClient:
         services/firestore.py builds every path and body; this is the seam its tests fake."""
         if not _FIRESTORE_PATH.match(path) or "/../" in f"/{path}/" or "/./" in f"/{path}/":
             raise CloudError("Refusing an unexpected Firestore path")
+        # Deployer never deletes a database, a backup or an export: only documents and backup schedules.
+        if method == "DELETE" and not re.search(r"/(documents|backupSchedules)/", f"/{path}"):
+            raise CloudError("Refusing to delete anything but documents and backup schedules")
         url = f"{FIRESTORE}/projects/{self.project}/{path}"
         if body is None:
             return self._send(method, url, params=params)

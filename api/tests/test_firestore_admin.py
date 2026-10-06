@@ -437,6 +437,11 @@ def test_real_client_admin_and_storage_urls():
         for bad in ("locations/-/backups/../../x", "databases/(default)/operations/../../../other", "projects/x"):
             with pytest.raises(CloudError, match="unexpected Firestore path"):
                 gcp.firestore("GET", bad)
+        # Deployer never deletes a database, a backup or an export; the seam refuses to, whatever the caller.
+        for never in ("databases/(default)", "databases/other", "locations/nam5/backups/b1"):
+            with pytest.raises(CloudError, match="Refusing to delete"):
+                gcp.firestore("DELETE", never)
+        assert len(seen) == len(paths) + 1  # nothing left for Google
         with pytest.raises(CloudError, match="taken by another Google project"):
             gcp.create_bucket("deployer-x-firestore", "US")
         insert = next(r for r in seen if r.method == "POST" and r.url.path == "/storage/v1/b")

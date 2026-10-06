@@ -606,7 +606,15 @@ def validate(provider: str, config: dict) -> dict:
     """Checks the credentials against the provider; returns the config with what it learned. 422 on failure."""
     try:
         if provider == "aws":
-            identity = cloud_aws.client(config).identity()
+            client = cloud_aws.client(config)
+            identity = client.identity()
+            # docs/CLOUD.md "G3": the boundary exists from the moment the key is given to Deployer (not only
+            # from the first deploy), so a copy of the key can never make a wider one first. A key that may not
+            # create it is fine here; the first deploy says so.
+            try:
+                client.ensure_boundary(identity["account"])
+            except CloudError:
+                pass
             return {**config, "account_id": identity["account"], "arn": identity["arn"]}
         gcp = cloud_gcp.client(config)
         gcp.access_token()

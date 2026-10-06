@@ -157,7 +157,7 @@ def test_aws_connection_is_validated_and_secrets_never_returned(client, db, team
     assert resp.status_code == 201, resp.text
     out = resp.json()
     assert out["account"]["account_id"] == "123456789012" and out["status"] == "ok" and secret not in resp.text
-    assert aws.names() == ["identity"]
+    assert aws.names() == ["identity", "ensure_boundary"]  # docs/CLOUD.md "G3": the boundary from the first save
     listed = client.get(CLOUD, headers=team["owner"])
     assert secret not in listed.text and body["aws"]["access_key_id"] not in listed.text
     assert "aws_static" in listed.json()["targets"]

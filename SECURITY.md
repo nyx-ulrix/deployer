@@ -146,8 +146,9 @@ Security fixes are made for the latest release. Update with `deployer update`.
   and secrets, item access to the project's tables - nothing in IAM, nothing that creates or deletes
   resources), and the key's policy allows `iam:CreateRole` / `PutRolePolicy` / `AttachRolePolicy` /
   `PutRolePermissionsBoundary` only when `iam:PermissionsBoundary` is that policy's ARN. The key can create
-  the boundary policy once and read it, never version, replace or delete it or lift it from a role, so after
-  the first deploy nothing done with the key can widen what an app or workflow may do beyond the boundary;
+  the boundary policy once (Deployer does it the moment the connection is saved) and read it, never version,
+  replace or delete it or lift it from a role, so nothing done with the key can widen what an app or workflow
+  may do beyond the boundary;
   owners who want the key never to write it create `deployer-boundary` themselves from the JSON in Settings ->
   Cloud accounts first. Roles made before this existed get the boundary the next time Deployer touches them.
   The key's own direct permissions are still bounded by its policy alone.

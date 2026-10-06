@@ -672,7 +672,8 @@ migration: `cloud_state` gains `job_id`, `create_requested` / `create_op`, `impo
 `import_op`, `restore_from` and `export_bucket`. Everything that costs money is **off until confirmed**: the
 dialogs show the cost note and need a tick; the API and MCP need `confirm_billing: true` (`422
 billing_not_confirmed` with the note otherwise). **Deployer never deletes** a Firestore database, an export or a
-backup (`created` stays false, so removing a source only forgets it).
+backup (`created` stays false, so removing a source only forgets it); `GcpClient.firestore` refuses any `DELETE`
+that is not a document or a backup schedule, whatever the caller.
 
 ### New databases
 
@@ -1365,7 +1366,12 @@ only what both its own policies *and* the boundary allow, and the boundary canno
   authentication, and App Runner writes the app's logs itself, so neither is in the ceiling.
 - `AwsClient.ensure_boundary(account)` creates the managed policy **`deployer-boundary`** once per account
   (`CreatePolicy`; `EntityAlreadyExists` is fine) and returns its ARN plus whether the account's copy still
-  matches this version's document (`GetPolicy` + `GetPolicyVersion` of the default version). **Deployer never
+  matches this version's document (`GetPolicy` + `GetPolicyVersion` of the default version). It runs **when the
+  AWS connection is saved or checked** (`cloud.validate`, failure ignored: a key whose policy predates G3 still
+  saves, and the first deploy reports the missing permission) as well as before every deploy and GitHub Actions
+  setup: the key may create the boundary only while none exists, so if that window stayed open until the first
+  app deploy, a copy of the key could create a wider `deployer-boundary` first and build unbounded roles with it -
+  for ever, in an account that only holds databases. **Deployer never
   changes it**: a key that could rewrite the boundary could lift it, so the IAM user has no `CreatePolicyVersion`,
   `SetDefaultPolicyVersion`, `DeletePolicy` or `DeletePolicyVersion`. When a later Deployer version needs more in
   the boundary (G1's secrets, say), the build log says *the IAM policy deployer-boundary in your AWS account is
