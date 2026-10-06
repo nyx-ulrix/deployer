@@ -472,7 +472,7 @@ function Invoke-DeployerKeepAliveLoop {
     # (and the site) up for as long as the user is signed in. The keep-alive ends whenever the VM stops
     # (sleep/hibernate, `wsl --shutdown`, the WSL Store package updating itself), so run $Start again -
     # unless `deployer stop` ended it on purpose (the stop marker), the only way out of this loop.
-    # While the WSL package is being serviced wsl.exe cannot even launch (Win32 error 1260, "restricted
+    # While the WSL package is being serviced wsl.exe cannot even launch (Win32 error 786, "restricted
     # by your Administrator by policy rule"), which used to end the task until the next sign-in: every
     # failure is logged in one line and tried again after $DelaySeconds, doubling up to $MaxDelaySeconds
     # until a keep-alive held for $HeldSeconds (WSL works again).

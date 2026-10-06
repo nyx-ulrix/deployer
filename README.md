@@ -90,6 +90,7 @@ The full index of the specs in `docs/` (ARCHITECTURE and CONTRIBUTING link here 
 | [MONITORING.md](docs/MONITORING.md) | Metrics and alerts |
 | [SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md) | Security review findings |
 | [AUDIT_REPORT.md](docs/AUDIT_REPORT.md) | Full audit checklist |
+| [HANDOVER.md](docs/HANDOVER.md) | Current state, how the owner's install runs, how to ship changes, what is open |
 
 ## Requirements
 

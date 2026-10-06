@@ -41,7 +41,7 @@ try {
     Invoke-DeployerKeepAliveLoop -InstallDir $dir -Start { $script:starts++ }
     Assert-That ($script:starts -eq 1 -and $script:keepAlives -eq 0) 'the loop never starts again after an intentional stop'
 
-    # (K) wsl.exe cannot launch while the WSL Store package updates itself (Win32 error 1260): the loop
+    # (K) wsl.exe cannot launch while the WSL Store package updates itself (Win32 error 786): the loop
     # logs one line, backs off (15 s doubling) and keeps trying instead of ending the task.
     function Start-DeployerKeepAlive {
         param([switch]$Wait)
