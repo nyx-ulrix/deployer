@@ -508,7 +508,7 @@ class Publish:
         it, queue its removal (the NAT gateway is billed by the hour)."""
         self.save(nat_vpc=None)
         with self.ctx.session_factory() as db:
-            if nat_users(db, self.app.cloud_connection_id, vpc, self.app.id):
+            if nat_users(db, vpc):
                 self.log.write(f"The NAT gateway in {vpc} stays: other apps of this account still use it")
                 return
             job = jobs.enqueue(
@@ -519,7 +519,7 @@ class Publish:
                     "name": self.app.name,
                     "target": "aws_app",
                     "connection_id": self.app.cloud_connection_id,
-                    "state": {"nat_vpc": vpc, "nat_last": True},
+                    "state": {"nat_vpc": vpc},
                     "domains": [],
                 },
                 project_id=self.app.project_id,
@@ -745,12 +745,12 @@ def _job_prune(ctx: jobs.JobContext) -> dict:
 # --- teardown ------------------------------------------------------------------------------------
 
 
-def nat_users(db: Session, connection_id: str | None, vpc: str, except_app_id: str) -> int:
-    """How many other App Runner apps of the connection go through the NAT gateway of `vpc` (their
-    `cloud_state.nat_vpc`): the NAT gateway is shared and removed with its last user."""
-    rows = db.scalars(
-        select(App).where(App.cloud_connection_id == connection_id, App.target == "aws_app", App.id != except_app_id)
-    )
+def nat_users(db: Session, vpc: str) -> int:
+    """How many App Runner apps go through the NAT gateway of `vpc` (their `cloud_state.nat_vpc`; VPC ids are
+    unique, so any connection to that account counts): the NAT gateway is shared and removed with its last
+    user. Counted when the teardown runs, after the leaving app cleared its `nat_vpc` or its row is gone - so
+    apps deleted together (a project delete) still remove it, and an app that started using it since keeps it."""
+    rows = db.scalars(select(App).where(App.target == "aws_app"))
     return sum(1 for a in rows if (a.cloud_state or {}).get("nat_vpc") == vpc)
 
 
@@ -765,8 +765,6 @@ def enqueue_teardown(db: Session, app: App, user_id: str | None) -> str | None:
     state.pop("internet_access", None)  # a switch, not a resource
     if app.target == "local" or (not state and not domains):
         return None
-    if state.get("nat_vpc") and not nat_users(db, app.cloud_connection_id, state["nat_vpc"], app.id):
-        state["nat_last"] = True  # docs/CLOUD.md "C2-6": the shared NAT gateway goes with its last user
     job = jobs.enqueue(
         db,
         type="app.cloud_teardown",
@@ -851,15 +849,6 @@ def teardown_steps(
                 )
             if s.get("instance_role"):
                 steps.append((f"IAM role {s['instance_role']}", lambda: aws.delete_instance_role(s["instance_role"])))
-            if s.get("nat_vpc") and s.get("nat_last"):  # after the service: it holds the connector until gone
-                vpc = s["nat_vpc"]
-                name = cloud_aws.nat_name(vpc)
-                steps += [
-                    (f"VPC connector {name}", lambda: aws.delete_vpc_connector(name)),
-                    (f"NAT gateway and its IP address in {vpc}", lambda: aws.delete_nat_gateway(vpc)),
-                    (f"Private route table in {vpc}", lambda: aws.delete_nat_routes(vpc)),
-                    (f"Private subnets in {vpc}", lambda: aws.delete_nat_subnets(vpc)),
-                ]
     else:
         gcp = client = cloud_gcp.client(config)
         if s.get("run_service"):
@@ -877,6 +866,16 @@ def teardown_steps(
     if s.get("github"):  # present from the moment the switch was asked for, so an interrupted setup has it too
         steps += github_actions.teardown_steps(client, target, s["github"], github_token, keep_member, slug, app_id)
     return steps
+
+
+def nat_teardown_steps(aws, vpc: str) -> list[tuple[str, object]]:
+    name = cloud_aws.nat_name(vpc)
+    return [
+        (f"VPC connector {name}", lambda: aws.delete_vpc_connector(name)),
+        (f"NAT gateway and its IP address in {vpc}", lambda: aws.delete_nat_gateway(vpc)),
+        (f"Private route table in {vpc}", lambda: aws.delete_nat_routes(vpc)),
+        (f"Private subnets in {vpc}", lambda: aws.delete_nat_subnets(vpc)),
+    ]
 
 
 @jobs.job_handler("app.cloud_teardown")
@@ -902,6 +901,12 @@ def _job_teardown(ctx: jobs.JobContext) -> dict:
         steps = teardown_steps(p["target"], config, state, token, keep_member, p.get("slug"), p["app_id"])
     except CloudError as exc:
         raise jobs.JobError(f"Could not connect to the cloud account: {exc.message}") from None
+    # docs/CLOUD.md "C2-6": the shared NAT gateway last (the deleted service holds its connector for a while),
+    # and only when no app uses it any more - counted when the teardown runs, not when it was queued.
+    if p["target"] == "aws_app" and state.get("nat_vpc"):
+        with ctx.session_factory() as db:
+            if not nat_users(db, state["nat_vpc"]):
+                steps += nat_teardown_steps(cloud_aws.client(config), state["nat_vpc"])
     for i, (label, call) in enumerate(steps):
         ctx.progress(i / max(len(steps), 1), f"Removing {label}", force=True)
         try:

@@ -529,7 +529,7 @@ def test_internet_access_adds_a_shared_nat_gateway_removed_with_its_last_user(cl
         cloud_state={"internet_access": True},
     )
     assert deploy(db, second).status == "live"
-    assert cloud_deploy.nat_users(db, conn.id, vpc, first.id) == 1
+    assert cloud_deploy.nat_users(db, vpc) == 2
     # Deleting it keeps the NAT gateway: the first app still goes through it.
     aws.calls.clear()
     resp = client.delete(f"{apps}/{second.id}", headers=team["admin"])
@@ -555,7 +555,7 @@ def test_internet_access_adds_a_shared_nat_gateway_removed_with_its_last_user(cl
     db.expire_all()
     assert not db.get(App, app["id"]).cloud_state.get("nat_vpc")
     teardown = db.scalars(select(Job).where(Job.type == "app.cloud_teardown").order_by(Job.created_at.desc())).first()
-    assert teardown.status == "succeeded" and teardown.params["state"] == {"nat_vpc": vpc, "nat_last": True}
+    assert teardown.status == "succeeded" and teardown.params["state"] == {"nat_vpc": vpc}
 
     # Deleting the last user removes it too (after the service, which holds the connector until it is gone).
     on = client.patch(url, json={"internet_access": True, "confirm_billing": True}, headers=team["admin"]).json()
@@ -577,6 +577,37 @@ def test_internet_access_adds_a_shared_nat_gateway_removed_with_its_last_user(cl
         "delete_nat_subnets",
         "github_roles",
     ]
+
+
+def test_nat_gateway_users_are_counted_when_the_teardown_runs(db, team, aws):
+    """Apps deleted together (a project delete queues every teardown before the rows go) still remove the NAT
+    gateway, and an app that started using it after a teardown was queued keeps it."""
+    conn = connection(db)
+    state = {"internet_access": True, "nat_vpc": "vpc-1", "service_arn": "arn:svc"}
+
+    def user(name):
+        return make_app(
+            db, team["project"], name, target="aws_app", cloud_connection_id=conn.id, cloud_state=dict(state)
+        )
+
+    a, b = user("A"), user("B")
+    db.commit()
+    queued = [cloud_deploy.enqueue_teardown(db, x, None) for x in (a, b)]
+    db.delete(a)
+    db.delete(b)
+    db.commit()
+    jobs.run_queued()
+    assert all(db.get(Job, j).status == "succeeded" for j in queued) and "delete_nat_gateway" in aws.names()
+
+    aws.calls.clear()
+    c = user("C")
+    db.commit()
+    queued = cloud_deploy.enqueue_teardown(db, c, None)
+    db.delete(c)
+    make_app(db, team["project"], "Late", target="aws_app", cloud_state={"nat_vpc": "vpc-1"})  # deployed meanwhile
+    db.commit()
+    jobs.run_queued()
+    assert db.get(Job, queued).status == "succeeded" and "delete_nat_gateway" not in aws.names()
 
 
 def test_internet_access_without_a_vpc_database_or_off_the_target_is_dropped(client, db, docker, team, aws):
@@ -753,12 +784,15 @@ def test_ensure_vpc_connector_runs_against_the_real_botocore_models():
         ar.add_response("list_vpc_connectors", {"VpcConnectors": [connector("other")], "NextToken": "t1"}, {})
         ar.add_response("list_vpc_connectors", {"VpcConnectors": [connector("deployer-vpc-1")]}, {"NextToken": "t1"})
         # Missing (only an inactive one): created in the VPC's own subnets, not the private ones Deployer
-        # added for the NAT gateway (tagged).
+        # added for the NAT gateway (tagged) nor an IPv6-only one (App Runner takes IPv4 / dual stack only).
         ar.add_response("list_vpc_connectors", {"VpcConnectors": [connector("deployer-vpc-1", "INACTIVE")]}, {})
-        ec2.add_response(
-            "describe_subnets",
-            {"Subnets": [{"SubnetId": "subnet-a"}, {"SubnetId": "subnet-b"}, {"SubnetId": "subnet-p", "Tags": [TAG]}]},
-        )
+        subnets = [
+            {"SubnetId": "subnet-a", "CidrBlock": "172.31.0.0/20"},
+            {"SubnetId": "subnet-b", "CidrBlock": "172.31.16.0/20"},
+            {"SubnetId": "subnet-p", "CidrBlock": "172.31.32.0/24", "Tags": [TAG]},
+            {"SubnetId": "subnet-v6", "Ipv6Native": True},
+        ]
+        ec2.add_response("describe_subnets", {"Subnets": subnets})
         ar.add_response(
             "create_vpc_connector",
             {"VpcConnector": connector("deployer-vpc-1")},
@@ -823,7 +857,8 @@ def test_nat_network_runs_against_the_real_botocore_models(monkeypatch):
     with Stubber(clients["ec2"]) as ec2, Stubber(clients["apprunner"]) as ar:
         # First time: two private subnets (one per AZ the VPC has a subnet in, in free /24 blocks), an Elastic
         # IP, the NAT gateway in a public subnet, a route table 0.0.0.0/0 -> NAT associated with both.
-        ec2.add_response("describe_subnets", {"Subnets": theirs}, {"Filters": [in_vpc]})
+        v6 = {"SubnetId": "subnet-v6", "AvailabilityZone": "eu-west-1c", "Ipv6Native": True}  # left out
+        ec2.add_response("describe_subnets", {"Subnets": [*theirs, v6]}, {"Filters": [in_vpc]})
         ec2.add_response("describe_route_tables", {"RouteTables": [main]}, {"Filters": [in_vpc]})
         ec2.add_response("describe_nat_gateways", {"NatGateways": []}, {"Filter": [in_vpc, by_name]})
         ec2.add_response("describe_vpcs", {"Vpcs": [{"VpcId": vpc, "CidrBlock": "172.31.0.0/16"}]}, {"VpcIds": [vpc]})
@@ -849,11 +884,10 @@ def test_nat_network_runs_against_the_real_botocore_models(monkeypatch):
             {"RouteTable": {"RouteTableId": "rtb-p", "Tags": tags}},
             {"VpcId": vpc, "TagSpecifications": tag_spec("route-table")},
         )
-        ec2.add_response(
-            "create_route",
-            {"Return": True},
-            {"RouteTableId": "rtb-p", "DestinationCidrBlock": "0.0.0.0/0", "NatGatewayId": "nat-1"},
-        )
+        route = {"RouteTableId": "rtb-p", "DestinationCidrBlock": "0.0.0.0/0", "NatGatewayId": "nat-1"}
+        # A gateway made a moment ago is not known to the route API yet: retried.
+        ec2.add_client_error("create_route", "InvalidNatGatewayID.NotFound", "not found", expected_params=route)
+        ec2.add_response("create_route", {"Return": True}, route)
         for i, s in enumerate(ours):
             ec2.add_response(
                 "associate_route_table",
@@ -868,6 +902,14 @@ def test_nat_network_runs_against_the_real_botocore_models(monkeypatch):
         ec2.add_response("describe_nat_gateways", {"NatGateways": [nat]})
         ec2.add_response("describe_addresses", {"Addresses": [address]})
         assert aws.ensure_nat_network(vpc)["nat_id"] == "nat-1"
+        # The gateway failed last time (a new one, nat-2, is made): the route moves to it, not left to the old one.
+        ec2.add_response("describe_subnets", {"Subnets": theirs + ours})
+        ec2.add_response("describe_route_tables", {"RouteTables": [main, private]})
+        ec2.add_response("describe_nat_gateways", {"NatGateways": [{**nat, "State": "failed"}]})
+        ec2.add_response("describe_addresses", {"Addresses": [address]})
+        ec2.add_response("create_nat_gateway", {"NatGateway": {**nat, "NatGatewayId": "nat-2", "State": "pending"}})
+        ec2.add_response("replace_route", {}, {**route, "NatGatewayId": "nat-2"})
+        assert aws.ensure_nat_network(vpc)["nat_id"] == "nat-2"
         # No public subnet (no internet gateway route): a plain error before anything is made (a VPC with
         # nothing of Deployer's in it yet: no subnet or address gets created).
         ec2.add_response("describe_subnets", {"Subnets": theirs})
@@ -913,6 +955,13 @@ def test_nat_network_runs_against_the_real_botocore_models(monkeypatch):
             )
         ec2.add_response("describe_addresses", {"Addresses": [address]}, {"Filters": [by_name]})
         ec2.add_response("release_address", {}, {"AllocationId": "eipalloc-1"})
+        aws.delete_nat_gateway(vpc)
+        # Run again by a second teardown of the VPC (a project delete): a failed gateway is left to AWS, an
+        # address released meanwhile is fine.
+        ec2.add_response("describe_nat_gateways", {"NatGateways": [{**nat, "State": "failed"}]})
+        ec2.add_response("describe_nat_gateways", {"NatGateways": [{**nat, "State": "failed"}]})
+        ec2.add_response("describe_addresses", {"Addresses": [address]})
+        ec2.add_client_error("release_address", "InvalidAllocationID.NotFound", "gone")
         aws.delete_nat_gateway(vpc)
         ec2.add_response("describe_route_tables", {"RouteTables": [private]}, {"Filters": [in_vpc, by_name]})
         for i in (1, 2):

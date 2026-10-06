@@ -1157,13 +1157,16 @@ is created, so a retried or interrupted deploy never makes a second one and AWS 
 
 1. **Private subnets**: one per availability zone the VPC already has a subnet in (the same zones the plain
    connector uses), each a free **/24** block of the VPC's CIDR that overlaps no existing subnet
-   (`cloud_aws.free_blocks`, `ipaddress`); no room is a plain error naming the VPC's CIDR.
+   (`cloud_aws.free_blocks`, `ipaddress`); no room is a plain error naming the VPC's CIDR. IPv6-only subnets
+   (no IPv4 CIDR) are ignored everywhere: App Runner takes IPv4 / dual-stack subnets only, and a public NAT
+   gateway needs IPv4 (the plain connector leaves them out too).
 2. An **Elastic IP** (`AllocateAddress`) and the **NAT gateway** (`CreateNatGateway`, public connectivity) in a
    **public subnet**: one of the VPC's own subnets whose route table (its own, else the main one) sends
    `0.0.0.0/0` to an internet gateway; none is a plain error, raised before anything is created (the lookups
    all come first, so a VPC that cannot take the gateway is left as it was).
-3. A **private route table** with `0.0.0.0/0 -> NAT` (`RouteAlreadyExists` is fine), associated with every
-   private subnet.
+3. A **private route table** with `0.0.0.0/0 -> NAT` (`RouteAlreadyExists` is fine; a route left pointing at a
+   gateway that failed is replaced with `ReplaceRoute`; `InvalidNatGatewayID.NotFound` right after the gateway
+   was made is retried, bounded), associated with every private subnet.
 4. The deploy waits for the gateway to be `available` (polled, bounded by the rollout timeout; `failed` fails the
    deploy with AWS's reason) and logs the public IP the app's traffic leaves from.
 5. A **second VPC connector `deployer-nat-<vpc-id>`** on the private subnets with the same security group
@@ -1176,25 +1179,34 @@ gateway and the app's teardown removes it when it is the last one.
 
 ### Shared, reference-counted, removed with the last user
 
-One NAT gateway per VPC per AWS connection, shared by every app of the account that turns the switch on there.
-The users are the apps on that connection whose `cloud_state.nat_vpc` is the VPC (`cloud_deploy.nat_users`, no
-table). It is removed when the last user goes:
+One NAT gateway per VPC, shared by every app of the account that turns the switch on there. The users are the
+App Runner apps whose `cloud_state.nat_vpc` is the VPC, on any connection (VPC ids are unique;
+`cloud_deploy.nat_users`, no table), **counted when the teardown job runs** - by then the leaving app has
+cleared its `nat_vpc` or its row is gone - so apps deleted together (a project delete queues every teardown
+before the rows go) still remove it, and an app whose deploy started using it after the teardown was queued
+keeps it. It is removed when the last user goes:
 
 - **opt-out**: a deployed app is republished at once (G1's `env_deployment_id`; otherwise the next deploy): the
   deploy points the service back at the plain connector (so the service never loses its connector), clears
   `nat_vpc` and, when no other app uses it, queues `app.cloud_teardown` with just the NAT part (the build log
   says so, with the job id); otherwise the log says it stays. The dashboard confirms the opt-out first (the
   gateway's removal, when the app is the last user, is a few minutes of work and cannot be undone);
-- **delete / move**: `enqueue_teardown` marks the state `nat_last` when no other app uses it, and the teardown
-  job removes it **after** the service (which holds the connector until it is gone), reporting failures like
+- **delete / move**: the teardown state carries `nat_vpc`, and the teardown job removes the gateway **after**
+  the service (which holds the connector until it is gone), reporting failures like
   every other step; the confirm dialogs list it ("shared ...: removed when the last one stops using it").
 
 Removal order (`cloud_aws.delete_vpc_connector`, `delete_nat_gateway`, `delete_nat_routes`, `delete_nat_subnets`,
 each bounded by 10 minutes of retries): the private-subnet connector (retried while the deleted service still
-holds it) -> the NAT gateway, waited for until `deleted` (or `failed`: AWS removes those itself within an hour) ->
-its Elastic IP released -> the route table
-(associations first) -> the subnets (retried while the connector's network interfaces still hold them). The plain
-connector and the security group stay, as before.
+holds it) -> the NAT gateway, waited for until `deleted` (a `failed` one is not deleted: AWS removes those itself
+within an hour) -> its Elastic IP released -> the route table (associations first) -> the subnets (retried while
+the connector's network interfaces still hold them). Something already gone (`*NotFound`, e.g. two teardowns of
+the same VPC in parallel) is fine. The plain connector and the security group stay, as before. Subnets still held
+after 10 minutes fail the teardown with that step named; they are free, and a later opt-in reuses them.
+
+Known gaps: the reference count is not a lock, so an app whose deploy reaches the gateway in the minute a last
+user's teardown is removing it fails that deploy (its `nat_vpc` is recorded, so its next deploy makes a new one
+and nothing is left unaccounted for); apps of a project deleted with *keep* are no longer counted, so their kept
+services lose the gateway when the last remaining app leaves it.
 
 ### Permissions added (`DeployerDatabases` and `DeployerHosting`, shown in Settings -> Cloud accounts)
 
@@ -1203,7 +1215,7 @@ In `DeployerDatabases` (the databases' VPC): `InternetRead` - `ec2:DescribeAddre
 `vpc`, `subnet`, `elastic-ip`, `ipv4pool-ec2`, `natgateway` and `route-table` resource types (creating cannot
 touch what exists; `CreateNatGateway` names the account's own public subnet, so no tag condition is possible
 there); `InternetTag` - `ec2:CreateTags` on those four types only while creating one (`ec2:CreateAction`);
-`InternetChange` - `ec2:CreateRoute`, `AssociateRouteTable`, `DisassociateRouteTable`, `DeleteRouteTable`,
+`InternetChange` - `ec2:CreateRoute`, `ReplaceRoute`, `AssociateRouteTable`, `DisassociateRouteTable`, `DeleteRouteTable`,
 `DeleteNatGateway`, `ReleaseAddress`, `DeleteSubnet` only on resources tagged `managed-by=deployer` (which only
 the create statements can put there). In `DeployerHosting`: `AppRunnerVpcConnectorDelete` -
 `apprunner:DeleteVpcConnector` on `vpcconnector/deployer-nat-*` only. Owners paste the two changed policies over
@@ -1230,9 +1242,13 @@ sequence and the private-subnet connector, sharing between two apps, opt-out (th
 last user, the dropped switch, MCP, the policy) and every EC2 / App Runner call of the NAT network against botocore's real
 service models with `Stubber` (create, find-by-tag, the no-public-subnet error, the gateway's states, and the
 removal with its retries). Not yet run against a live account: how long AWS takes to make and delete a NAT
-gateway and to release a deleted connector's network interfaces (the bounds are 10 minutes each), whether App
-Runner accepts the private subnets' zones (the same as the plain connector's), and the public-subnet detection on
-VPCs with several route tables.
+gateway and to release a deleted connector's network interfaces (the bounds are 10 minutes each), and the
+public-subnet detection on VPCs with several route tables. App Runner does not support every availability zone
+in every region and publishes no list or API for it: a private subnet in such a zone makes the service's create /
+update fail with App Runner's error naming the zone (the same limit as the plain connector's); Deployer does not
+yet leave such zones out. Also tested: the stale route replaced, the route retried while the new gateway is
+unknown, IPv6-only subnets left out, and the users counted when the teardown runs (apps deleted together, an
+app that started using the gateway meanwhile).
 
 ## C3 as built: GitHub Actions builds (pushes deploy with the PC off)
 

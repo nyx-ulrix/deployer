@@ -193,6 +193,15 @@ def free_blocks(vpc_cidr: str, used: list[str], count: int, prefix: int = 24) ->
     )
 
 
+def _unless_gone(call, **params) -> None:
+    """An EC2 delete for which already gone is fine (two teardowns of the same VPC, e.g. a project delete)."""
+    try:
+        call(**params)
+    except Exception as exc:  # noqa: BLE001
+        if not _code(exc).endswith("NotFound"):
+            raise
+
+
 def _wrap(fn):
     """botocore errors -> CloudError with AWS's code and message (no request data, no credentials)."""
 
@@ -908,7 +917,7 @@ class AwsClient:
             subnet_ids = private_subnets
         else:  # the VPC's own subnets, not the private ones Deployer added for the NAT gateway
             subnets = self._c("ec2").describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["Subnets"]
-            subnet_ids = [s["SubnetId"] for s in subnets if not _ours(s)]
+            subnet_ids = [s["SubnetId"] for s in subnets if not _ours(s) and s.get("CidrBlock")]  # no IPv6-only
         out = self._c("apprunner").create_vpc_connector(
             VpcConnectorName=name, Subnets=subnet_ids, SecurityGroups=[group], Tags=[TAG]
         )
@@ -950,7 +959,8 @@ class AwsClient:
         in_vpc = {"Name": "vpc-id", "Values": [vpc_id]}
         named = {"Name": "tag:Name", "Values": [nat_name(vpc_id)]}
         # Everything is looked up first, so a VPC that cannot take the gateway fails before anything is made.
-        subnets = ec2.describe_subnets(Filters=[in_vpc])["Subnets"]
+        # IPv6-only subnets (no CidrBlock) take neither App Runner nor a public NAT gateway: left out.
+        subnets = [s for s in ec2.describe_subnets(Filters=[in_vpc])["Subnets"] if s.get("CidrBlock")]
         ours = {s["AvailabilityZone"]: s["SubnetId"] for s in subnets if _ours(s)}
         theirs = [s for s in subnets if not _ours(s)]
         if not theirs:
@@ -996,14 +1006,22 @@ class AwsClient:
             table = ec2.create_route_table(VpcId=vpc_id, TagSpecifications=self._nat_tags("route-table", vpc_id))[
                 "RouteTable"
             ]
-        if not any(r.get("DestinationCidrBlock") == "0.0.0.0/0" for r in table.get("Routes") or []):
-            try:
-                ec2.create_route(
-                    RouteTableId=table["RouteTableId"], DestinationCidrBlock="0.0.0.0/0", NatGatewayId=nat_id
-                )
-            except Exception as exc:  # noqa: BLE001
-                if _code(exc) != "RouteAlreadyExists":
-                    raise
+        route = next((r for r in table.get("Routes") or [] if r.get("DestinationCidrBlock") == "0.0.0.0/0"), None)
+        if route is None or route.get("NatGatewayId") != nat_id:  # a gateway that failed earlier: point at this one
+            call = ec2.create_route if route is None else ec2.replace_route
+            started = time.monotonic()
+            while True:
+                try:
+                    call(RouteTableId=table["RouteTableId"], DestinationCidrBlock="0.0.0.0/0", NatGatewayId=nat_id)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    code = _code(exc)
+                    if code == "RouteAlreadyExists":
+                        break
+                    # a gateway created a moment ago is not known to the route API yet (eventual consistency)
+                    if code != "InvalidNatGatewayID.NotFound" or time.monotonic() - started > NAT_WAIT_S:
+                        raise
+                    time.sleep(POLL_S)
         associated = {a.get("SubnetId") for a in table.get("Associations") or []}
         for subnet in private:
             if subnet not in associated:
@@ -1013,7 +1031,12 @@ class AwsClient:
     @_wrap
     def nat_gateway_state(self, nat_id: str) -> tuple[str, str | None]:
         """(`pending` | `available` | `failed` | `deleting` | `deleted`, AWS's failure message)."""
-        found = self._c("ec2").describe_nat_gateways(NatGatewayIds=[nat_id])["NatGateways"]
+        try:
+            found = self._c("ec2").describe_nat_gateways(NatGatewayIds=[nat_id])["NatGateways"]
+        except Exception as exc:  # noqa: BLE001 - AWS forgets a deleted gateway after about an hour
+            if not _code(exc).endswith("NotFound"):
+                raise
+            found = []
         if not found:
             return "deleted", None
         return str(found[0].get("State") or "pending"), found[0].get("FailureMessage")
@@ -1025,15 +1048,15 @@ class AwsClient:
         named = {"Name": "tag:Name", "Values": [nat_name(vpc_id)]}
         nats = ec2.describe_nat_gateways(Filter=[{"Name": "vpc-id", "Values": [vpc_id]}, named])["NatGateways"]
         for nat in nats:
-            if nat.get("State") not in ("deleting", "deleted"):
-                ec2.delete_nat_gateway(NatGatewayId=nat["NatGatewayId"])
+            if nat.get("State") not in ("deleting", "deleted", "failed"):  # AWS removes failed ones itself
+                _unless_gone(ec2.delete_nat_gateway, NatGatewayId=nat["NatGatewayId"])
             started = time.monotonic()
             while self.nat_gateway_state(nat["NatGatewayId"])[0] not in ("deleted", "failed"):
                 if time.monotonic() - started > NAT_WAIT_S:
                     raise CloudError("AWS is still deleting the NAT gateway; its IP address could not be released yet")
                 time.sleep(POLL_S)
         for address in ec2.describe_addresses(Filters=[named])["Addresses"]:
-            ec2.release_address(AllocationId=address["AllocationId"])
+            _unless_gone(ec2.release_address, AllocationId=address["AllocationId"])
 
     @_wrap
     def delete_nat_routes(self, vpc_id: str) -> None:
@@ -1043,8 +1066,8 @@ class AwsClient:
         for table in ec2.describe_route_tables(Filters=filters)["RouteTables"]:
             for assoc in table.get("Associations") or []:
                 if not assoc.get("Main"):
-                    ec2.disassociate_route_table(AssociationId=assoc["RouteTableAssociationId"])
-            ec2.delete_route_table(RouteTableId=table["RouteTableId"])
+                    _unless_gone(ec2.disassociate_route_table, AssociationId=assoc["RouteTableAssociationId"])
+            _unless_gone(ec2.delete_route_table, RouteTableId=table["RouteTableId"])
 
     @_wrap
     def delete_nat_subnets(self, vpc_id: str) -> None:

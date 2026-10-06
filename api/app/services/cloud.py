@@ -384,6 +384,7 @@ AWS_DATABASE_STATEMENTS = [
         "Effect": "Allow",
         "Action": [
             "ec2:CreateRoute",
+            "ec2:ReplaceRoute",  # the route still points at a gateway that failed
             "ec2:AssociateRouteTable",
             "ec2:DisassociateRouteTable",
             "ec2:DeleteRouteTable",
