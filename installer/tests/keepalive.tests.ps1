@@ -31,15 +31,15 @@ try {
     Invoke-DeployerKeepAliveLoop -InstallDir $dir -HeldSeconds 0 -Start {
         $script:starts++
         # The user runs "deployer stop" while the restarted stack is up.
-        if ($script:starts -eq 2) { Set-Content -LiteralPath $marker -Value 'test' }
+        if ($script:starts -eq 3) { Set-Content -LiteralPath $marker -Value 'test' }
     }
-    Assert-That ($script:starts -eq 2 -and $script:keepAlives -eq 2) 'the loop starts the stack, starts it again after the keep-alive ended, then exits on the stop marker'
-    Assert-That (($script:sleeps -join ',') -eq '15,15') 'a keep-alive that held resets the delay to 15 s'
+    Assert-That ($script:starts -eq 3 -and $script:keepAlives -eq 2) 'the loop starts the stack, starts it again after the keep-alive ended, and a stop during that start ends it without a new keep-alive'
+    Assert-That (($script:sleeps -join ',') -eq '15,15,30') 'a keep-alive that held resets the delay to 15 s'
 
     Reset-Loop
     Set-Content -LiteralPath $marker -Value 'test'
     Invoke-DeployerKeepAliveLoop -InstallDir $dir -Start { $script:starts++ }
-    Assert-That ($script:starts -eq 1 -and $script:keepAlives -eq 1) 'the loop never starts again after an intentional stop'
+    Assert-That ($script:starts -eq 1 -and $script:keepAlives -eq 0) 'the loop never starts again after an intentional stop'
 
     # (K) wsl.exe cannot launch while the WSL Store package updates itself (Win32 error 1260): the loop
     # logs one line, backs off (15 s doubling) and keeps trying instead of ending the task.
@@ -76,6 +76,8 @@ $loopCall = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Langua
 $startStack = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Start-Stack' }, $true)
 Assert-That ($null -ne $loopCall -and $loopCall.Extent.Text -match 'Start-Stack' -and $startStack.Extent.Text -match 'Update-LanForwarding') 'the keep-alive start refreshes LAN forwarding'
 Assert-That ($startStack.Extent.Text -match 'Start-DeployerKeepAlive[\s\S]*Invoke-DeployerCompose') 'the keep-alive is started before compose up, so WSL cannot stop the distro during the health wait'
+$update = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-Update' }, $true)
+Assert-That ($update.Extent.Text -match "Test-DeployerTaskRegistered[\s\S]*'installer\\deployer\.ps1'\) autostart on[\s\S]*Start-ScheduledTask") 'deployer update registers the sign-in task again with the new files (the watchdog) and restarts its loop'
 
 # 3b. (K) The sign-in task also runs every 5 minutes as a watchdog (IgnoreNew while the loop runs).
 #     The module is loaded first: autoloading it later would put its own Register-ScheduledTask over the fake.

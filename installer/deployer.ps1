@@ -211,12 +211,22 @@ function Start-Stack {
 
 function Invoke-Start {
     $ctx = Get-Context
+    $marker = Join-Path $InstallDir $script:DeployerStopMarker
     if ($Background) {
         $script:DeployerQuiet = $true
         $script:DeployerLogFile = Join-Path $InstallDir 'logs\deployer.log'
         New-Item -ItemType Directory -Path (Split-Path -Parent $script:DeployerLogFile) -Force | Out-Null
         $log = Get-Item -LiteralPath $script:DeployerLogFile -ErrorAction SilentlyContinue
         if ($log -and $log.Length -gt 1MB) { Move-Item -LiteralPath $log.FullName -Destination "$($log.FullName).1" -Force }
+        if (Test-Path -LiteralPath $marker) {
+            # The task also runs every 5 minutes as a watchdog (Register-DeployerTask). A stop from this
+            # sign-in stays a stop; a marker older than the sign-in is from an earlier one, and a sign-in starts.
+            $signIn = Get-DeployerSignInTime
+            if ($signIn -and (Get-Item -LiteralPath $marker).LastWriteTime -gt $signIn) {
+                Write-DeployerLog 'INFO' 'Deployer was stopped on purpose ("deployer stop"); not starting it until "deployer start" or the next sign-in.'
+                return
+            }
+        }
         Write-DeployerLog 'INFO' "Autostart (runtime $($ctx.Runtime))"
         # The first 'deployer update' from a pre-A-067 install runs the old script, which never locks
         # the WSL disk and logs; the elevated sign-in task does it instead.
@@ -226,16 +236,6 @@ function Invoke-Start {
         }
     }
     Write-DeployerStep 'Starting Deployer'
-    $marker = Join-Path $InstallDir $script:DeployerStopMarker
-    if ($Background -and (Test-Path -LiteralPath $marker)) {
-        # The task also runs every 5 minutes as a watchdog (Register-DeployerTask). A stop from this
-        # sign-in stays a stop; a marker older than the sign-in is from an earlier one, and a sign-in starts.
-        $signIn = Get-DeployerSignInTime
-        if ($signIn -and (Get-Item -LiteralPath $marker).LastWriteTime -gt $signIn) {
-            Write-DeployerLog 'INFO' 'Deployer was stopped on purpose ("deployer stop"); not starting it until "deployer start" or the next sign-in.'
-            return
-        }
-    }
     Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
     if ($Background -and $ctx.Runtime -eq 'wsl-engine') {
         # Blocks while the user is signed in: starts the stack, tries again when that fails (WSL
@@ -690,6 +690,18 @@ function Invoke-Update {
     Save-DeployerState -InstallDir $InstallDir -State $table
     try { [void](Set-DeployerDisplayVersion -Ref $target) } catch { Write-DeployerLog 'WARN' "Apps & Features version not updated: $($_.Exception.Message)" }
     Write-DeployerOk "Updated to $target"
+    if (Test-DeployerTaskRegistered) {
+        # The sign-in task's definition changes between versions (K: the WSL watchdog repeat). This process
+        # runs the version being replaced, so the new files register it; it repeats from the next sign-in.
+        & (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -NoProfile -ExecutionPolicy Bypass `
+            -File (Join-Path $InstallDir 'installer\deployer.ps1') autostart on -InstallDir $InstallDir
+        if ($LASTEXITCODE -ne 0) { Write-DeployerWarn 'The sign-in task was not updated; run setup again (Deployer Control -> Settings) to update it.' }
+        if ($ctx.Runtime -eq 'wsl-engine') {
+            # The update started Deployer, so bring back the task's keep-alive loop too (a no-op while it runs).
+            Remove-Item -LiteralPath (Join-Path $InstallDir $script:DeployerStopMarker) -Force -ErrorAction SilentlyContinue
+            try { Start-ScheduledTask -TaskName $script:DeployerTaskName -ErrorAction Stop } catch { Write-DeployerWarn "Could not start the sign-in task ($($_.Exception.Message))." }
+        }
+    }
     [void](Invoke-DeployerCompose -InstallDir $InstallDir -Runtime $ctx.Runtime -Arguments @('image', 'prune', '-f'))
 }
 

@@ -384,7 +384,9 @@ distros stop), the task keeps trying - after 15 s, then 30 s, up to every 5 minu
 again, and with the WSL runtime it also runs every 5 minutes as a watchdog, so a sign-in task that was ended comes back
 without a new sign-in. `deployer stop` (or *Deployer Control → Stop*) keeps it stopped until you
 start it again or sign in next time. An install from before this watchdog gets it the next time setup
-runs (an update with `DeployerSetup.exe`, or *Deployer Control → Settings → Run setup again*).
+runs (an update with `DeployerSetup.exe`, or *Deployer Control → Settings → Run setup again*); the
+`deployer update` that brings this version runs the old script and cannot add it, later updates do. The
+watchdog repeats from the next sign-in after that.
 
 Files live in `%ProgramData%\Deployer`: `docker-compose.yml`, `Caddyfile`, `mongodb\` and `tunnel\`
 (sidecar files), `.env` (secrets, readable only by Administrators, SYSTEM and you), `runtime.json`,

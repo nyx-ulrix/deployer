@@ -485,7 +485,8 @@ function Invoke-DeployerKeepAliveLoop {
             try { & $Start; $started = $true }
             catch { Write-DeployerLog 'WARN' "Deployer did not start ($($_.Exception.Message)); trying again in $delay s." }
         }
-        if ($started) {
+        # A "deployer stop" during the start (its marker is written before it ends the keep-alive) wins.
+        if ($started -and -not (Test-Path -LiteralPath $marker)) {
             $since = Get-Date
             try { Start-DeployerKeepAlive -Wait }
             catch { Write-DeployerLog 'WARN' "The WSL keep-alive could not start ($($_.Exception.Message)); trying again in $delay s." }
@@ -1524,7 +1525,7 @@ function Register-DeployerTask {
     # -Watchdog (WSL runtime): the task's keep-alive loop is what keeps Deployer up, so the task repeats.
     param([string]$InstallDir, [switch]$Watchdog)
     $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $ps =Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $ps = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $script = Join-Path $InstallDir 'installer\deployer.ps1'
     $psArgs = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "{0}" start -Background' -f $script
     # `-WindowStyle Hidden` alone still flashes a console at sign-in, and when Windows Terminal is the
