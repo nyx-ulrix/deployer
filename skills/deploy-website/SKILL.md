@@ -342,7 +342,8 @@ The same app, served from the user's own cloud account so it **keeps running whe
    `confirm_billing: true` only after they agree. It needs the admin's GitHub connection with the workflow
    permission (`github_scope_missing`: they reconnect GitHub in the dashboard). Then `deploy_app` runs the
    workflow (answer `{github_actions: true}`), `list_github_runs` shows the runs (also those while the PC
-   was off), runs report back as deployments when the PC is on, rollbacks still run on the PC, and changed
+   was off), runs report back as deployments when the PC is on (runs that finished while it was off are
+   recorded within minutes of it coming back, with their artifact), rollbacks still run on the PC, and changed
    environment variables reach the app with the next rollback (GitHub never sees them). `location: "pc"`
    removes the workflow and the sign-in again.
 6. **Domain**: `POST .../apps/{app_id}/domains {hostname}` (admin, after the first deploy): with

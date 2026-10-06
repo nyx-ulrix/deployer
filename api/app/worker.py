@@ -139,7 +139,17 @@ _last_alerts = float("-inf")
 
 def scheduler_tick() -> None:
     global _last_query_log_prune, _last_alerts
-    from app.services import alerts, audit, backups, cloud_db, cohost_apps, deployments, query_log, remote_access
+    from app.services import (
+        alerts,
+        audit,
+        backups,
+        cloud_db,
+        cohost_apps,
+        deployments,
+        github_actions,
+        query_log,
+        remote_access,
+    )
 
     jobs.recover_stale()
     try:
@@ -155,6 +165,10 @@ def scheduler_tick() -> None:
         cloud_db.refresh_pc_ips(jobs.get_sessionmaker())
     except Exception:  # noqa: BLE001 - never skip the work below over this
         log.exception("could not follow this PC's public IP on cloud databases")
+    try:  # docs/CLOUD.md "C3": GitHub Actions runs that finished while this PC was off become deployments
+        github_actions.reconcile(jobs.get_sessionmaker())
+    except Exception:  # noqa: BLE001 - never skip the work below over this
+        log.exception("could not record GitHub Actions runs")
     if time.monotonic() - _last_alerts >= alerts.EVALUATE_EVERY_S:
         _last_alerts = time.monotonic()
         alerts.evaluate(jobs.get_sessionmaker())  # docs/MONITORING.md

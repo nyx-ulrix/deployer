@@ -390,12 +390,16 @@ AWS_ROLE_STATEMENTS = [
         "Action": [
             "iam:GetRole",
             "iam:TagRole",
+            "iam:ListRoleTags",
             "iam:UpdateAssumeRolePolicy",
             "iam:DeleteRolePolicy",
             "iam:DeleteRole",
         ],
         "Resource": f"arn:aws:iam::*:role/{cloud_aws.GITHUB_ROLE_PREFIX}*",
     },
+    # The sweep after a teardown finds deployer-gha-* roles left by an app deleted during its setup
+    # (ListRoles has no resource scope; only roles with Deployer's tag are touched).
+    {"Sid": "GitHubActionsRoleList", "Effect": "Allow", "Action": "iam:ListRoles", "Resource": "*"},
 ]
 AWS_POLICIES = [
     {

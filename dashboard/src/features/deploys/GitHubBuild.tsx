@@ -179,7 +179,7 @@ export function GitHubRuns({ projectId, app }: { projectId: string; app: App }) 
   return (
     <Card
       title="GitHub Actions runs"
-      description="Builds on GitHub, newest first. A run that finished while this PC was off shows here but not in the deployments below."
+      description="Builds on GitHub, newest first. A run that finished while this PC was off is added to the deployments below within a few minutes of the PC coming back on."
       actions={
         runs.data?.runs_url ? (
           <a href={runs.data.runs_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs text-accent hover:underline">

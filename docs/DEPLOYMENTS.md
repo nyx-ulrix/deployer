@@ -91,7 +91,8 @@ workflow to the app's GitHub repository that builds every push with the same rec
 the cloud, signing in with GitHub's OIDC token (an AWS role / Google workload identity limited to that
 repository's branch). Pushes then deploy while this PC is off: the PC's push webhook ignores them, **Deploy
 now** starts the workflow (`workflow_dispatch`), each run reports back to `/hooks/github/{app_id}` (signed by
-GitHub, `X-GitHub-Event: deployer_build`) and becomes a deployment with `trigger: github`, and
+GitHub, `X-GitHub-Event: deployer_build`) and becomes a deployment with `trigger: github` (a run that finished
+while this PC was off is recorded the same way within minutes of the PC coming back on), and
 `GET /apps/{id}/github-runs` lists the runs from the GitHub API. Rollbacks still run on this PC.
 
 ## Database access

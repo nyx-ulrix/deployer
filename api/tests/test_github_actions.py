@@ -1,8 +1,9 @@
 """GitHub Actions builds (docs/CLOUD.md "C3"): switching a cloud app to GitHub Actions (checks, billing
 confirmation, the setup job's AWS role / Google workload identity and the committed workflow), pushes left to
 the workflow, "Deploy now" dispatching it, the signed run reports becoming deployments (and rollback targets),
-the runs list, rewriting the workflow when build settings change, and switching back (teardown). AWS, Google
-and GitHub are fakes; GitHub's OIDC tokens are signed with a key made here."""
+the runs list, rewriting the workflow when build settings change, and switching back (teardown); runs that
+finished while the PC was off recorded afterwards (G2) and deleting an app during its setup leaving no role /
+provider behind. AWS, Google and GitHub are fakes; GitHub's OIDC tokens are signed with a key made here."""
 
 import base64
 import hashlib
@@ -10,6 +11,7 @@ import hmac
 import json
 import secrets
 import time
+from datetime import datetime, timedelta
 
 import httpx
 import jwt
@@ -17,7 +19,7 @@ import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
-from app.models import App, Deployment, Job
+from app.models import App, Deployment, Job, utcnow
 from app.services import cloud, cloud_aws, cloud_deploy, cloud_gcp, deployments, github, github_actions, jobs
 from tests.apps_support import make_app
 from tests.test_cloud import FakeCloud, connection
@@ -394,6 +396,13 @@ def test_requirements_list_what_the_setup_uses():
     assert statements["GitHubActionsSignIn"]["Resource"].endswith(":oidc-provider/token.actions.githubusercontent.com")
     assert statements["GitHubActionsRoles"]["Resource"] == "arn:aws:iam::*:role/deployer-gha-*"
     assert "iam:PassRole" not in statements["GitHubActionsRoles"]["Action"]
+    assert "iam:ListRoleTags" in statements["GitHubActionsRoles"]["Action"]  # the sweep checks the tag
+    assert statements["GitHubActionsRoleList"] == {
+        "Sid": "GitHubActionsRoleList",
+        "Effect": "Allow",
+        "Action": "iam:ListRoles",
+        "Resource": "*",
+    }
     roles = {r["role"]: r for r in cloud.GOOGLE_ROLES}
     assert roles["roles/iam.serviceAccountAdmin"]["on"] == "service_account"
     assert {"iam.googleapis.com", "sts.googleapis.com", "iamcredentials.googleapis.com"} <= {
@@ -444,3 +453,244 @@ def test_real_google_client_binding_and_provider_requests():
     patch = next(b for m, p, b in seen if m == "PATCH")
     assert patch["attributeCondition"] == "assertion.ref == 'refs/heads/main'"
     assert patch["oidc"] == {"issuerUri": "https://token.actions.githubusercontent.com"}
+
+
+# --- runs this PC missed, deleting during the setup (G2) ----------------------------------------
+
+
+def run_json(run_id: int, conclusion, when: datetime, *, status="completed", branch="main", message="Fix") -> dict:
+    stamp = "%Y-%m-%dT%H:%M:%SZ"
+    return {
+        "id": run_id,
+        "run_attempt": 1,
+        "status": status,
+        "conclusion": conclusion,
+        "event": "push",
+        "head_branch": branch,
+        "head_sha": SHA,
+        "head_commit": {"message": message},
+        "created_at": when.strftime(stamp),
+        "updated_at": (when + timedelta(minutes=3)).strftime(stamp),
+        "html_url": f"https://github.com/{REPO}/actions/runs/{run_id}",
+    }
+
+
+def runs_path(app: App) -> str:
+    return f"/repos/{REPO}/actions/workflows/{github_actions.workflow_path(app).rsplit('/', 1)[1]}/runs"
+
+
+def by_run(db, app: App) -> dict[int, Deployment]:
+    db.expire_all()
+    deps = db.query(Deployment).filter(Deployment.app_id == app.id, Deployment.trigger == "github")
+    return {int(d.log.split("/runs/")[1].split("/")[0]): d for d in deps}
+
+
+def test_runs_that_finished_while_the_pc_was_off_become_deployments(client, db, people, gh, aws, oidc, docker):
+    app = cloud_app(db, people["project"])
+    set_up(client, db, people, gh, app)
+    now = utcnow().replace(microsecond=0)
+    ago = lambda minutes: now - timedelta(minutes=minutes)  # noqa: E731
+    gh.routes[("GET", runs_path(app))] = (
+        200,
+        {
+            "workflow_runs": [
+                run_json(11, None, ago(1), status="in_progress"),  # still running: nothing to record yet
+                run_json(10, "success", ago(5), branch="dev"),  # another branch: not this app's workflow deploy
+                run_json(9, "success", ago(20), message="Third"),
+                run_json(8, "failure", ago(40)),
+                run_json(7, "success", ago(60), message="First"),
+            ]
+        },
+    )
+    factory = jobs.get_sessionmaker()
+    assert len(github_actions.reconcile(factory, force=True)) == 3
+    deps = by_run(db, app)
+    assert set(deps) == {7, 8, 9}
+    app = db.get(App, app.id)
+    assert deps[9].status == "live" and deps[9].image_tag == f"{ECR}:gh-9-1" and app.live_deployment_id == deps[9].id
+    assert deps[9].commit_sha == SHA and deps[9].commit_message == "Third"
+    assert deps[9].target_url == app.cloud_state["service_url"]
+    assert deps[9].created_at == ago(20) and deps[9].finished_at == ago(17)  # the run's own times
+    assert "while this PC was off" in deps[9].log
+    assert deps[7].status == "superseded" and deps[7].image_tag == f"{ECR}:gh-7-1"  # still a rollback target
+    assert deps[8].status == "failed" and "runs/8" in deps[8].error and deps[8].image_tag is None
+    assert db.query(Job).filter(Job.type == "app.cloud_prune").count() == 1  # the usual retention
+    jobs.run_queued()
+    assert db.query(Job).filter(Job.type == "app.cloud_prune").one().status == "succeeded"
+
+    # Repeating changes nothing, and the check is rate-limited (one GitHub call per app and interval).
+    calls = len([c for c in gh.calls if c[1] == runs_path(app)])
+    assert github_actions.reconcile(factory, force=True) == [] and len(by_run(db, app)) == 3
+    assert github_actions.reconcile(factory) == []
+    assert len([c for c in gh.calls if c[1] == runs_path(app)]) == calls + 1
+    # The run's own report arriving later (the PC was on by then) is a duplicate.
+    assert report(client, app, report_token(oidc, app, run_id="9"), status="success").json() == {"ignored": True}
+
+    # A newer run goes live; an older one found later (older than what is live) is recorded as superseded.
+    runs = [run_json(12, "success", ago(3)), run_json(9, "success", ago(20)), run_json(6, "success", ago(90))]
+    gh.routes[("GET", runs_path(app))] = (200, {"workflow_runs": runs})
+    assert len(github_actions.reconcile(factory, force=True)) == 2
+    deps = by_run(db, app)
+    assert deps[12].status == "live" and deps[9].status == "superseded" and deps[6].status == "superseded"
+    assert db.get(App, app.id).live_deployment_id == deps[12].id
+
+    # Rolling back to a run recorded this way republishes its image from this PC, like any other.
+    back, _ = deployments.rollback(db, db.get(App, app.id), deps[7], user_id=None)
+    db.commit()
+    jobs.run_queued()
+    db.expire_all()
+    assert db.get(Deployment, back.id).status == "live" and aws.args("update_service")[-1][1] == f"{ECR}:gh-7-1"
+
+
+def test_missed_hosting_runs_take_the_live_version_only_for_the_newest(client, db, people, gh, gcp):
+    state = {"site": "shop-x", "released": True}
+    app = cloud_app(db, people["project"], target="firebase_hosting", state=state, provider="firebase", preset="static")
+    set_up(client, db, people, gh, app)
+    gcp.returns["live_version"] = "sites/shop-x/versions/v9"
+    now = utcnow().replace(microsecond=0)
+    runs = [run_json(9, "success", now - timedelta(minutes=20)), run_json(7, "success", now - timedelta(hours=1))]
+    gh.routes[("GET", runs_path(app))] = (200, {"workflow_runs": runs})
+    assert len(github_actions.reconcile(jobs.get_sessionmaker(), force=True)) == 2
+    deps = by_run(db, app)
+    assert deps[9].status == "live" and deps[9].image_tag == "sites/shop-x/versions/v9"
+    assert deps[7].status == "superseded" and deps[7].image_tag is None  # its version is not known any more
+    assert gcp.args("live_version") == [("shop-x",)]
+
+
+def test_deleting_the_app_before_the_setup_ran_removes_the_role_by_name_and_sweeps(client, db, people, gh, aws, docker):
+    app = cloud_app(db, people["project"])
+    app_id, slug, role = app.id, app.slug, github_actions.role_name(app)
+    connect_github(db, people["admin_user"])
+    setup_id = switch(client, people, app).json()["job_id"]  # queued, not run yet
+    other = cloud_app(db, people["project"], name="Other")
+    other.cloud_state = {**AWS_APP_STATE, "github": {"status": "ready", "role": github_actions.role_name(other)}}
+    db.commit()
+    ghost = "deployer-gha-ghost-0000aaaa"  # left by an app deleted long ago
+    existing = [role, github_actions.role_name(other), ghost]
+    aws.returns["github_roles"] = lambda: [
+        n for n in existing if (n, cloud_aws.GITHUB_ROLE_POLICY) not in aws.args("delete_instance_role")
+    ]
+
+    gone = client.delete(f"{people['base']}/{app_id}", headers=people["admin"])
+    assert gone.status_code == 200, gone.text
+    db.expire_all()
+    assert db.get(Job, setup_id).status == "cancelled"
+    teardown = db.get(Job, gone.json()["teardown_job_id"])
+    assert teardown.params["setup_job_id"] == setup_id and teardown.params["slug"] == slug
+    assert "role" not in teardown.params["state"]["github"]  # the setup never got to record it
+    jobs.run_queued()
+    db.expire_all()
+    assert db.get(Job, teardown.id).status == "succeeded"
+    assert [a[0] for a in aws.args("delete_instance_role")] == [role, ghost]  # Other's role is kept
+
+
+def test_setup_stops_when_the_app_is_deleted_while_it_runs(client, db, people, gh, aws, docker):
+    app = cloud_app(db, people["project"])
+    app_id, role = app.id, github_actions.role_name(app)
+    connect_github(db, people["admin_user"])
+    gh.routes[("PUT", contents_path(app))] = (201, {"commit": {"sha": "c" * 40}})
+
+    def delete_meanwhile(name, trust, policy, boundary_arn):
+        assert client.delete(f"{people['base']}/{app_id}", headers=people["admin"]).status_code == 200
+        return f"arn:aws:iam::1:role/{name}"
+
+    aws.returns["ensure_github_role"] = delete_meanwhile
+    setup_id = switch(client, people, app).json()["job_id"]
+    jobs.run_queued()
+    db.expire_all()
+    assert db.get(Job, setup_id).status == "cancelled"
+    assert not [c for c in gh.calls if c[0] == "PUT"]  # the workflow file was never committed
+    teardown = db.query(Job).filter(Job.type == "app.cloud_teardown").one()
+    assert teardown.status == "succeeded", teardown.error
+    assert (role, cloud_aws.GITHUB_ROLE_POLICY) in aws.args("delete_instance_role")
+
+
+def test_google_sweep_removes_unknown_providers_and_pool_members(db, people, gcp):
+    app = cloud_app(db, people["project"], target="firebase_app", state=RUN_STATE, provider="firebase")
+    pool = (
+        f"principalSet://iam.googleapis.com/projects/555/locations/global/workloadIdentityPools/{github_actions.POOL}"
+    )
+    member = f"{pool}/attribute.repository/{REPO}"
+    app.cloud_state = {**RUN_STATE, "github": {"status": "ready", "member": member, "service_account": "x@y"}}
+    db.commit()
+    stale = f"{pool}/attribute.repository/Old/Repo"
+    gcp.service_account_email = "x@y"
+    gcp.returns["wif_providers"] = lambda pool: [github_actions.provider_id(app.id), "gh-00000000", "other"]
+    gcp.returns["sa_members"] = lambda email, role: [member, stale, "user:a@b.c"]
+    removed = github_actions.sweep_orphans(db, gcp, "firebase")
+    assert gcp.args("delete_wif_provider") == [(github_actions.POOL, "gh-00000000")]
+    assert gcp.args("set_sa_member") == [("x@y", github_actions.SA_ROLE, stale, False)]
+    assert len(removed) == 2 and "Old/Repo" in removed[1]
+
+
+def test_real_aws_client_lists_only_tagged_github_roles():
+    """`github_roles` against botocore's IAM model (Stubber validates every request and response)."""
+    from botocore.stub import Stubber
+
+    from app.services.cloud_aws import TAG, AwsClient
+
+    aws = AwsClient({"region": "eu-west-1", "access_key_id": "test", "secret_access_key": "test"})
+    iam = aws._session.client("iam", region_name="eu-west-1")
+    aws._c = lambda service, region=None: iam
+
+    def role(name: str) -> dict:
+        return {
+            "Path": "/",
+            "RoleName": name,
+            "RoleId": "AROAEXAMPLEROLEID01",
+            "Arn": f"arn:aws:iam::123456789012:role/{name}",
+            "CreateDate": datetime(2026, 1, 1),
+        }
+
+    with Stubber(iam) as stub:
+        page = {"Roles": [role("deployer-gha-a-1"), role("other")], "IsTruncated": True, "Marker": "m1"}
+        stub.add_response("list_roles", page, {})
+        stub.add_response("list_roles", {"Roles": [role("deployer-gha-b-2")]}, {"Marker": "m1"})
+        stub.add_response("list_role_tags", {"Tags": [TAG]}, {"RoleName": "deployer-gha-a-1"})
+        stub.add_response(
+            "list_role_tags", {"Tags": [{"Key": "owner", "Value": "me"}]}, {"RoleName": "deployer-gha-b-2"}
+        )
+        assert aws.github_roles() == ["deployer-gha-a-1"]
+        stub.assert_no_pending_responses()
+
+
+def test_real_google_client_lists_providers_members_and_the_live_version():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+    seen: list[tuple[str, str]] = []
+    pool = "/v1/projects/demo-proj-123/locations/global/workloadIdentityPools/deployer-github"
+    name = "projects/demo-proj-123/locations/global/workloadIdentityPools/deployer-github/providers/"
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == cloud_gcp.TOKEN_URL:
+            return httpx.Response(200, json={"access_token": "ya29." + secrets.token_hex(8), "expires_in": 3600})
+        path = request.url.path
+        seen.append((request.method, path + (f"?{request.url.query.decode()}" if request.url.query else "")))
+        if path == f"{pool}/providers":
+            if request.url.params.get("pageToken") == "p2":
+                return httpx.Response(200, json={"workloadIdentityPoolProviders": [{"name": name + "gh-bbbbbbbb"}]})
+            providers = [
+                {"name": name + "gh-aaaaaaaa", "state": "ACTIVE"},
+                {"name": name + "gh-deleted0", "state": "DELETED"},
+            ]
+            return httpx.Response(200, json={"workloadIdentityPoolProviders": providers, "nextPageToken": "p2"})
+        if path.endswith(":getIamPolicy"):
+            bindings = [{"role": github_actions.SA_ROLE, "members": ["principalSet://x"]}, {"role": "roles/other"}]
+            return httpx.Response(200, json={"bindings": bindings})
+        if path.endswith("/channels/live"):
+            return httpx.Response(200, json={"release": {"version": {"name": "sites/shop-x/versions/v9"}}})
+        return httpx.Response(404, json={})
+
+    cloud_gcp.set_transport(httpx.MockTransport(handle))
+    try:
+        sa = {"client_email": "deployer@demo-proj-123.iam.gserviceaccount.com", "private_key": pem.decode()}
+        client = cloud_gcp.GcpClient({"service_account": sa, "project_id": "demo-proj-123"})
+        assert client.service_account_email == sa["client_email"]
+        assert client.wif_providers("deployer-github") == ["gh-aaaaaaaa", "gh-bbbbbbbb"]
+        assert client.wif_providers("missing") == []
+        assert client.sa_members(sa["client_email"], github_actions.SA_ROLE) == ["principalSet://x"]
+        assert client.live_version("shop-x") == "sites/shop-x/versions/v9"
+    finally:
+        cloud_gcp.set_transport(None)
+    assert ("GET", f"{pool}/providers?pageToken=p2") in seen
+    assert ("GET", "/v1beta1/sites/shop-x/channels/live") in seen

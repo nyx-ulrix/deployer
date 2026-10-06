@@ -310,7 +310,15 @@ def _switch_target(db, request: Request, access: ProjectAccess, app: App, before
         raise conflict("deployment_active", "Wait for the running deployment to finish (or cancel it) first")
     if deployments.app_domains(db, app.id):
         raise conflict("domains_exist", "Remove the app's custom domains first; add them again on the new target")
-    old = App(id=app.id, project_id=app.project_id, target=target, cloud_connection_id=connection_id, cloud_state=state)
+    old = App(
+        id=app.id,
+        project_id=app.project_id,
+        name=app.name,
+        slug=app.slug,
+        target=target,
+        cloud_connection_id=connection_id,
+        cloud_state=state,
+    )
     job_id = cloud_deploy.enqueue_teardown(db, old, access.user.id)
     if target == "local" and app.live_deployment_id:
         job_id = jobs.enqueue(

@@ -447,7 +447,7 @@ def test_delete_app_tears_down_and_reports_failures(client, db, docker, aws, tea
     jobs.run_queued()
     job = db.get(Job, resp.json()["teardown_job_id"])
     assert job.status == "failed" and "App Runner service" in job.error and "AccessDenied" in job.error
-    assert aws.names() == ["delete_service", "delete_repository"]  # the other steps still ran
+    assert aws.names() == ["delete_service", "delete_repository"]  # the other steps still ran (no sweep: it failed)
 
 
 def test_switch_target_tears_down_old_resources(client, db, docker, aws, team):
@@ -459,7 +459,8 @@ def test_switch_target_tears_down_old_resources(client, db, docker, aws, team):
     assert resp.status_code == 200, resp.text
     assert resp.json()["target"] == "local" and resp.json()["cloud_connection_id"] is None
     jobs.run_queued()
-    assert aws.names() == ["delete_distribution", "delete_function", "delete_oac", "delete_bucket"]
+    # ...then the sweep for GitHub Actions leftovers (docs/CLOUD.md "C3"), which found nothing.
+    assert aws.names() == ["delete_distribution", "delete_function", "delete_oac", "delete_bucket", "github_roles"]
     db.expire_all()
     app = db.get(App, app.id)
     assert app.cloud_state is None and app.live_deployment_id is None

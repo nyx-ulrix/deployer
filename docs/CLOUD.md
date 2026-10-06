@@ -1253,8 +1253,22 @@ deployment republishes the live artifact with today's variables; GitHub never se
   runs_url}` instead of a deployment.
 - **Runs**: `GET /apps/{id}/github-runs` (viewer+) -> `{runs: [{id, attempt, status, conclusion, event, branch,
   sha, message, created_at, updated_at, url}], runs_url}`, the workflow's newest 10 runs from the GitHub API with
-  the setup admin's connection - including runs that finished while this PC was off, which have no deployment
-  row (and whose artifacts are not pruned).
+  the setup admin's connection - including runs that finished while this PC was off.
+- **Runs this PC missed** (`github_actions.reconcile`, from the worker's scheduler tick: on the first tick after
+  the worker starts, then every 5 minutes): for every app with a ready setup, the workflow's newest 10 runs are
+  fetched (one GitHub call per app; a failure is logged and tried again next time) and each *completed* run of
+  the app's branch (`push` / `workflow_dispatch`) that has no deployment yet becomes one, oldest first, with the
+  run's commit, message, its own `created_at` / `finished_at`, the log link and the same derived artifact as a
+  report (`d/gh-<run>`, `<ecr>:gh-<run>`, `<registry>/<package>:gh-<run>`), so rollback to it works. A success
+  newer than the live deployment goes **live** (superseding it; the next newer one supersedes that in turn); a
+  success older than what is live is recorded as `superseded` with its artifact; `cancelled` -> `cancelled`;
+  any other conclusion (`failure`, `timed_out`, ...) -> `failed` with the run's link. Only Firebase Hosting
+  can't derive the version from the run: the **newest** successful run gets the live channel's current version
+  (one Hosting call), older ones are recorded without an artifact (no rollback to them). Every live one queues
+  **`app.cloud_prune`**, so the S3 prefixes / ECR images of runs the PC never saw fall under the same keep-5
+  retention (Hosting versions and Artifact Registry images stay with the providers' retention, as after a PC
+  deploy). The log says *Recorded by Deployer afterwards: the run finished while this PC was off*. Idempotent
+  (a recorded run is skipped - also when its own report arrives later), safe to repeat, no migration.
 - **Rollbacks** still run on this PC (the `app.deploy` job republishes the old artifact), and so do
   environment changes ("G1 as built").
 
@@ -1267,14 +1281,33 @@ that connection still uses it. The shared OIDC provider / pool stay (like the sh
 Anything that can't be removed fails the job with the list. Moving or deleting the app does the same as part of
 its teardown.
 
+**Deleting (or moving, or switching back) while the setup job still runs** leaves nothing behind:
+
+- the teardown's caller cancels the app's queued / running `app.github_actions` job (`cancel_setup`, in every
+  `enqueue_teardown` / `enqueue_removal`) and stores its id (`setup_job_id`); the setup job checks for the
+  cancel between its steps, and every save it makes re-checks that the app still builds on GitHub (row gone,
+  state popped by a move or switch-back) and stops otherwise - so it never commits the workflow file for an app
+  that is gone;
+- the teardown job first waits for that setup job to stop (up to 5 minutes), then removes the role / provider
+  **by their deterministic names** (`deployer-gha-<slug>-<id8>`, `gh-<id8>`, from the job's `slug` / `app_id`)
+  even when the setup never got to record them in the state (missing ones are no errors);
+- after its steps every cloud teardown runs **`sweep_orphans`** on the connection: AWS - `ListRoles`, every
+  `deployer-gha-*` role tagged `managed-by=deployer` whose app no longer builds on GitHub Actions is deleted;
+  Google - every `gh-*` provider of the `deployer-github` pool, and every `attribute.repository` member of the
+  connection's service account, that no such app uses is removed. A sweep that can't run (an older policy
+  without `iam:ListRoles`) is noted in the job's result (`sweep_error`), it does not fail the teardown. The
+  sweep assumes one Deployer per cloud account (like the shared `deployer-github` pool and OIDC provider): a
+  second Deployer's `deployer-gha-*` roles in the same account would count as leftovers.
+
 ### Permissions added
 
 - **AWS** (now the `DeployerRoles` policy): `iam:CreateOpenIDConnectProvider`, `TagOpenIDConnectProvider` on
-  `oidc-provider/token.actions.githubusercontent.com`; `iam:GetRole`, `CreateRole`, `TagRole`,
+  `oidc-provider/token.actions.githubusercontent.com`; `iam:GetRole`, `CreateRole`, `TagRole`, `ListRoleTags`,
   `UpdateAssumeRolePolicy`, `PutRolePolicy`, `DeleteRolePolicy`, `DeleteRole` on `role/deployer-gha-*` (no
-  `PassRole`: GitHub assumes the role, nothing passes it). Like the `deployer-app-*` roles, Deployer writes these
-  roles' policies itself; since G3 the `deployer-boundary` permissions boundary caps what they can be given
-  ("G3 as built").
+  `PassRole`: GitHub assumes the role, nothing passes it); `iam:ListRoles` on `*` for the orphan sweep (it has
+  no resource scope; only roles with Deployer's tag are touched). Like the `deployer-app-*` roles, Deployer
+  writes these roles' policies itself; since G3 the `deployer-boundary` permissions boundary caps what they can
+  be given ("G3 as built").
 - **Google** (`cloud.GOOGLE_ROLES` / `GOOGLE_APIS`, marked "only needed to build apps on GitHub Actions"): **IAM
   Workload Identity Pool Admin** (`roles/iam.workloadIdentityPoolAdmin`) and **Service Account Admin**
   (`roles/iam.serviceAccountAdmin`) granted **on the deployer service account itself** (its Permissions tab), not
@@ -1303,7 +1336,8 @@ workflow_url, runs_url, reports}`; deployments gain `trigger: "github"`; `PATCH`
   says the webhook is not used for pushes then.
 - **App page**: a *Builds on GitHub Actions* badge; **GitHub Actions runs** (status, commit, time, log link;
   polled while one runs) above the deployments, where GitHub-built deployments show the trigger *GitHub
-  Actions*; **Deploy now** starts a run there.
+  Actions* (the card says runs that finished while the PC was off join the deployments within minutes of it
+  coming back on); **Deploy now** starts a run there.
 - **Settings -> Cloud accounts**: the AWS step mentions the GitHub Actions statements; the Firebase role list
   marks the two new roles and APIs and says to grant Service Account Admin on the deployer account itself.
 
@@ -1320,13 +1354,19 @@ Tested with fakes (`tests/test_github_actions.py`: the switch's checks and billi
 trust and scoped policy, the Google pool / provider / binding calls, the committed workflow and its recipe,
 pushes ignored, dispatch, the runs list, signed reports with a wrong audience / repository / ref / workflow
 refused, derived artifacts, rollback to a GitHub-built deployment, rewriting on settings changes, the `${{`
-guard, both teardowns; the Google REST shapes of the binding and the provider undelete / patch against
-`httpx.MockTransport`; the dashboard chooser in `GitHubBuild.test.tsx`). Not yet run for real: the workflow
+guard, both teardowns; missed runs recorded with their artifact, live / superseded / failed in order, the
+rate limit, the duplicate report, the Hosting live version, rollback to a recorded run; a delete before and
+during the setup job cancelling it, the role removed by name and the orphan sweep on both providers; the Google
+REST shapes of the binding and the provider undelete / patch, the provider list, the pool members and the live
+channel against `httpx.MockTransport`; `github_roles` (ListRoles pages + ListRoleTags) against botocore's IAM
+model with `Stubber`; the dashboard chooser in `GitHubBuild.test.tsx`). Not yet run for real: the workflow
 itself on GitHub's runners (the AWS CLI / `jq` / `firebase-tools` / `gcloud` steps, `firebase-tools` signing in
 through the workload identity credentials file), the IAM / IAM Credentials request shapes against live
 accounts, GitHub's `sub` claim for organisations that customised it (the AWS trust expects the default
-`repo:<owner>/<repo>:ref:<ref>`), and committing to a protected branch (the setup then fails with GitHub's
-message).
+`repo:<owner>/<repo>:ref:<ref>`), committing to a protected branch (the setup then fails with GitHub's
+message), the runs list's field names on a live repository (`workflow_runs[].run_attempt`, `head_branch`,
+`updated_at`, as documented), and the delete-during-setup race with two real worker runners (the teardown's wait
+is tested with the sequential test runner).
 
 ## G1 as built: app secrets in a secret store, environment changes without a rollback
 

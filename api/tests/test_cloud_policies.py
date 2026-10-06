@@ -39,9 +39,9 @@ BEFORE_SPLIT_SIDS = [
     "StaticSiteBuckets",
     "WhoAmI",
 ]
-BEFORE_SPLIT_SHA256 = "8f797fbf0af388822b160627d65623dde477ccd1e1161ef4d56e1791e779e11f"
+BEFORE_SPLIT_SHA256 = "49a3cd3956814527fde2040f61229f0a746724dfaff6e76b755681b8a8e5fdcf"  # G2 added iam:ListRoleTags
 # A statement added after the split: put its Sid here (a changed one updates the fingerprint instead).
-ADDED_SINCE_SPLIT: set[str] = set()
+ADDED_SINCE_SPLIT: set[str] = {"GitHubActionsRoleList"}  # G2: the orphan sweep lists roles
 
 
 def _size(document: dict) -> int:

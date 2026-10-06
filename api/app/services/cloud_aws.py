@@ -1011,3 +1011,15 @@ class AwsClient:
             )["Role"]["Arn"]
         iam.put_role_policy(RoleName=name, PolicyName=GITHUB_ROLE_POLICY, PolicyDocument=json.dumps(policy))
         return arn
+
+    @_wrap
+    def github_roles(self) -> list[str]:
+        """Names of the account's `deployer-gha-*` roles that carry Deployer's tag (the orphan sweep)."""
+        iam = self._c("iam")
+        names = [
+            r["RoleName"]
+            for page in iam.get_paginator("list_roles").paginate()
+            for r in page["Roles"]
+            if r["RoleName"].startswith(GITHUB_ROLE_PREFIX)
+        ]
+        return [n for n in names if TAG in iam.list_role_tags(RoleName=n)["Tags"]]

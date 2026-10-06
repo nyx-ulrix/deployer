@@ -700,10 +700,14 @@ def enqueue_teardown(db: Session, app: App, user_id: str | None) -> str | None:
         params={
             "app_id": app.id,
             "name": app.name,
+            "slug": app.slug,
             "target": app.target,
             "connection_id": app.cloud_connection_id,
             "state": state,
             "domains": domains,
+            # docs/CLOUD.md "C3": a GitHub Actions setup still running is stopped and waited for, so it can't
+            # create a role / provider after the teardown looked.
+            "setup_job_id": github_actions.cancel_setup(db, app.id),
         },
         project_id=app.project_id,
         created_by_id=user_id,
@@ -731,9 +735,16 @@ def _delete_cf_records(db: Session, records: list[dict]) -> list[str]:
 
 
 def teardown_steps(
-    target: str, config: dict, state: dict, github_token: str | None = None, keep_member: bool = False
+    target: str,
+    config: dict,
+    state: dict,
+    github_token: str | None = None,
+    keep_member: bool = False,
+    slug: str | None = None,
+    app_id: str | None = None,
 ) -> list[tuple[str, object]]:
-    """(label, zero-argument call) in dependency order; GitHub Actions' workflow / role / provider last."""
+    """(label, zero-argument call) in dependency order; GitHub Actions' workflow / role / provider last (the
+    role / provider by their name from `slug` / `app_id` even when the state never recorded them)."""
     s = state
     steps: list[tuple[str, object]] = []
     if target in ("aws_static", "aws_app"):
@@ -781,8 +792,8 @@ def teardown_steps(
         if s.get("site"):
             steps.append((f"Firebase Hosting site {s['site']}", lambda: gcp.delete_site(s["site"])))
     steps += cloud_secrets.teardown_steps(client, cloud.TARGETS[target]["provider"], s)
-    if s.get("github"):
-        steps += github_actions.teardown_steps(client, target, s["github"], github_token, keep_member)
+    if s.get("github"):  # present from the moment the switch was asked for, so an interrupted setup has it too
+        steps += github_actions.teardown_steps(client, target, s["github"], github_token, keep_member, slug, app_id)
     return steps
 
 
@@ -791,6 +802,9 @@ def _job_teardown(ctx: jobs.JobContext) -> dict:
     p = ctx.params
     state = p.get("state") or {}
     records = [r for d in p.get("domains") or [] for r in d.get("dns_records") or []]
+    if p.get("setup_job_id"):
+        ctx.progress(0.0, "Waiting for the GitHub Actions setup to stop", force=True)
+        github_actions.wait_for_setup(ctx.session_factory, p["setup_job_id"])
     with ctx.session_factory() as db:
         conn = db.get(CloudConnection, p.get("connection_id")) if p.get("connection_id") else None
         config = cloud.config_of(conn) if conn else None
@@ -803,7 +817,7 @@ def _job_teardown(ctx: jobs.JobContext) -> dict:
         raise jobs.JobError("The cloud connection was removed; delete these by hand: " + "; ".join(left))
     removed = []
     try:
-        steps = teardown_steps(p["target"], config, state, token, keep_member)
+        steps = teardown_steps(p["target"], config, state, token, keep_member, p.get("slug"), p["app_id"])
     except CloudError as exc:
         raise jobs.JobError(f"Could not connect to the cloud account: {exc.message}") from None
     for i, (label, call) in enumerate(steps):
@@ -815,6 +829,16 @@ def _job_teardown(ctx: jobs.JobContext) -> dict:
             failures.append(f"{label}: {exc.message}")
     if failures:
         raise jobs.JobError("Some cloud resources were not removed - " + "; ".join(failures))
+    # Leftovers of apps deleted during their setup (or of a failed teardown) go too; a sweep that can't
+    # run (e.g. the account's policy predates iam:ListRoles) does not fail the teardown, it is noted.
+    ctx.progress(1.0, "Looking for leftovers of GitHub Actions setups", force=True)
+    provider = "aws" if p["target"].startswith("aws") else "firebase"
+    client = cloud_aws.client(config) if provider == "aws" else cloud_gcp.client(config)
+    try:
+        with ctx.session_factory() as db:
+            removed += github_actions.sweep_orphans(db, client, provider)
+    except CloudError as exc:
+        return {"removed": removed, "sweep_error": exc.message}
     return {"removed": removed}
 
 

@@ -138,6 +138,10 @@ class GcpClient:
     def __repr__(self) -> str:
         return f"GcpClient(project={self.project!r}, <key hidden>)"
 
+    @property
+    def service_account_email(self) -> str:
+        return self._email
+
     # --- plumbing --------------------------------------------------------------------------------
 
     def access_token(self, scopes: str = SCOPES) -> str:
@@ -372,6 +376,12 @@ class GcpClient:
         base = f"{HOSTING}/sites/{_name(site)}" + (f"/channels/{_name(channel)}" if channel else "")
         self._json("POST", f"{base}/releases", {}, params={"versionName": version})
 
+    def live_version(self, site: str) -> str | None:
+        """The version the site's live channel serves right now (what a GitHub Actions run released)."""
+        channel = self._send("GET", f"{HOSTING}/sites/{_name(site)}/channels/live")
+        name = str(((channel.get("release") or {}).get("version") or {}).get("name") or "")
+        return name if _VERSION.match(name) else None
+
     def add_domain(self, site: str, hostname: str) -> None:
         url = f"{HOSTING}/projects/{self.project}/sites/{_name(site)}/customDomains"
         self._json("POST", url, {}, params={"customDomainId": hostname}, ok=(200, 409))
@@ -553,6 +563,27 @@ class GcpClient:
 
     def delete_wif_provider(self, pool: str, provider: str) -> None:
         self._send("DELETE", f"{self._pools()}/{_name(pool)}/providers/{_name(provider)}", ok=(200, 404))
+
+    def wif_providers(self, pool: str) -> list[str]:
+        """Ids of the pool's active providers (the orphan sweep); an unknown pool is empty."""
+        url = f"{self._pools()}/{_name(pool)}/providers"
+        out: list[str] = []
+        token = None
+        while True:
+            page = self._send("GET", url, params={"pageToken": token} if token else None, ok=(200, 404)) or {}
+            for p in page.get("workloadIdentityPoolProviders") or []:
+                if p.get("state", "ACTIVE") == "ACTIVE":
+                    out.append(str(p.get("name") or "").rsplit("/", 1)[-1])
+            token = page.get("nextPageToken")
+            if not token:
+                return out
+
+    def sa_members(self, email: str, role: str) -> list[str]:
+        """The members holding `role` on the service account `email` itself."""
+        if not _SA_EMAIL.match(email):
+            raise CloudError("Invalid service account email")
+        policy = self._json("POST", f"{IAM}/projects/{self.project}/serviceAccounts/{email}:getIamPolicy", {})
+        return [m for b in policy.get("bindings") or [] if b.get("role") == role for m in b.get("members") or []]
 
     def set_sa_member(self, email: str, role: str, member: str, present: bool) -> None:
         """Adds (or removes) `member` in `role` on the service account `email` itself."""
