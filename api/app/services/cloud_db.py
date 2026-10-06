@@ -162,7 +162,8 @@ FIRESTORE_WHAT = (
 FIRESTORE_CONNECT = (
     "Pick the database: every Firebase project can have one called (default), made in the Firebase console under "
     "Build -> Firestore Database -> Create database (choose production mode and a location near your users), or "
-    "create a new one below. Deployer never deletes a Firestore database: removing it here keeps the data."
+    "create a new one below. Removing it here only forgets it (the data stays in Firebase); deleting the database "
+    "itself is on its Backups tab, with its name typed."
 )
 FIRESTORE_COST_NOTE = (
     "Connecting is free. Google bills reads, writes and storage to your Firebase project, including what you do in "
@@ -720,7 +721,8 @@ def create_firestore(
     "Firestore backups"): a new empty one, a backup restored into it (`restore_from`, a backup name) or a managed
     export imported into it (`import_from`, a gs:// prefix) or a database copied as it was at a minute (`clone_from`,
     `{database, snapshotTime}`). Default id `deployer-<name>-<id8>`. The caller checks
-    the name, commits and dispatches. `created` stays false: Deployer never deletes a Firestore database."""
+    the name, commits and dispatches. `created` stays false: removing the source only forgets the database (deleting
+    it is the Backups tab's name-confirmed step, firestore_admin.delete_database)."""
     plain = not restore_from and not import_from and not clone_from
     if not _LOCATION.match(location or "") or (plain and location not in FIRESTORE_LOCATIONS):
         raise ApiError(422, "validation_error", "Pick one of the offered locations", {"field": "location"})
