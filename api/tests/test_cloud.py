@@ -455,12 +455,15 @@ def test_switch_target_tears_down_old_resources(client, db, docker, aws, team):
     app = make_app(db, team["project"], "Site", preset="static", target="aws_static", cloud_connection_id=conn.id)
     first = deploy(db, app)
     aws.calls.clear()
+    aws.fail["github_roles"] = "AWS AccessDenied: not authorized to perform iam:ListRoles"  # a policy from before G2
     resp = client.patch(f"{team['base']}/{app.id}", json={"target": "local"}, headers=team["admin"])
     assert resp.status_code == 200, resp.text
     assert resp.json()["target"] == "local" and resp.json()["cloud_connection_id"] is None
     jobs.run_queued()
-    # ...then the sweep for GitHub Actions leftovers (docs/CLOUD.md "C3"), which found nothing.
+    # ...then the sweep for GitHub Actions leftovers (docs/CLOUD.md "C3"): it could not list, which is noted.
     assert aws.names() == ["delete_distribution", "delete_function", "delete_oac", "delete_bucket", "github_roles"]
+    teardown = db.query(Job).filter(Job.type == "app.cloud_teardown").one()
+    assert teardown.status == "succeeded" and "iam:ListRoles" in teardown.result["sweep_error"]
     db.expire_all()
     app = db.get(App, app.id)
     assert app.cloud_state is None and app.live_deployment_id is None

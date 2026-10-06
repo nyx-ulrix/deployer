@@ -738,11 +738,13 @@ def sweep_orphans(db: Session, client, provider: str) -> list[str]:
         if name.startswith("gh-") and name not in known:
             client.delete_wif_provider(POOL, name)
             removed.append(f"Workload identity provider {name}")
-    members = {(state_of(a) or {}).get("member") for a in apps}
+    # By repository, not by the saved member: a setup saves its repository before it adds the member (and the
+    # member only after), so a setup running meanwhile never loses its binding.
+    repos = {(state_of(a) or {}).get("repo") for a in apps}
     marker = f"/workloadIdentityPools/{POOL}/attribute.repository/"
     email = client.service_account_email
     for member in (client.sa_members(email, SA_ROLE) or []) if isinstance(email, str) else []:
-        if marker in member and member not in members:
+        if marker in member and member.split(marker, 1)[1] not in repos:
             client.set_sa_member(email, SA_ROLE, member, False)
             removed.append(f"GitHub Actions access of {member.split(marker, 1)[1]} to {email}")
     return removed
@@ -836,6 +838,19 @@ def record_report(db: Session, app: App, authorization: str, body: Any) -> Deplo
     )
 
 
+def _run_url(gh: dict, run_id: str, attempt: str) -> str:
+    return f"https://github.com/{gh['repo']}/actions/runs/{run_id}/attempts/{attempt}"
+
+
+def _recorded(db: Session, app: App, gh: dict, run_id: str, attempt: str) -> bool:
+    """A deployment exists for this run attempt (its log starts with the run's link)."""
+    header = f"Built on GitHub Actions: {_run_url(gh, run_id, attempt)}"
+    return (
+        db.scalar(select(Deployment.id).where(Deployment.app_id == app.id, Deployment.log.startswith(header)))
+        is not None
+    )
+
+
 def _record(
     db: Session,
     app: App,
@@ -857,11 +872,11 @@ def _record(
     newer is live already), cancelled -> cancelled, anything else -> failed. Caller commits."""
     from app.services import cloud_deploy
 
+    if _recorded(db, app, gh, run_id, attempt):
+        return None
     run = f"{run_id}-{attempt}"
-    url = f"https://github.com/{gh['repo']}/actions/runs/{run_id}/attempts/{attempt}"
+    url = _run_url(gh, run_id, attempt)
     header = f"Built on GitHub Actions: {url}"
-    if db.scalar(select(Deployment.id).where(Deployment.app_id == app.id, Deployment.log.startswith(header))):
-        return None  # already recorded
     status = {"success": "live" if go_live else "superseded", "cancelled": "cancelled"}.get(outcome, "failed")
     dep = Deployment(
         app_id=app.id,
@@ -933,11 +948,16 @@ def _reconcile_app(factory: jobs.SessionFactory, app_id: str) -> list[str]:
         token = _token(db, gh.get("user_id"))
         if token is None:
             return []
-        runs = [
+        found = [
             r
             for r in github.workflow_runs(token, gh["repo"], gh["workflow_path"], limit=RECONCILE_RUNS)
+            if r.get("branch") == gh.get("branch")
+        ]
+        busy = any(r.get("status") != "completed" for r in found)  # a run still going may have released already
+        runs = [
+            r
+            for r in found
             if r.get("status") == "completed"
-            and r.get("branch") == gh.get("branch")
             and r.get("event") in ("push", "workflow_dispatch")
             and str(r.get("id")).isdigit()
             and str(r.get("attempt")).isdigit()
@@ -948,11 +968,13 @@ def _reconcile_app(factory: jobs.SessionFactory, app_id: str) -> list[str]:
         recorded: list[str] = []
         prune = False
         for r in reversed(runs):  # oldest first: successes supersede each other in order
+            if _recorded(db, app, gh, str(r["id"]), str(r["attempt"])):
+                continue  # reported (or found before): also no Hosting call for it
             finished = _when(r.get("updated_at"))
             live = db.get(Deployment, app.live_deployment_id) if app.live_deployment_id else None
             go_live = live is None or (live.finished_at or live.created_at) < finished
             artifact = ""
-            if r is newest and go_live and app.target == "firebase_hosting":
+            if r is newest and go_live and not busy and app.target == "firebase_hosting":
                 # The workflow reports the version it released; afterwards only the live one is known, and it
                 # is the newest run's (older runs stay without one: no rollback to them).
                 _, config = cloud_deploy._connection(factory, app)

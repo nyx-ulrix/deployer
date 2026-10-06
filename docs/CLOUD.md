@@ -1264,7 +1264,9 @@ deployment republishes the live artifact with today's variables; GitHub never se
   success older than what is live is recorded as `superseded` with its artifact; `cancelled` -> `cancelled`;
   any other conclusion (`failure`, `timed_out`, ...) -> `failed` with the run's link. Only Firebase Hosting
   can't derive the version from the run: the **newest** successful run gets the live channel's current version
-  (one Hosting call), older ones are recorded without an artifact (no rollback to them). Every live one queues
+  (one Hosting call, only while that run is not recorded yet), older ones are recorded without an artifact (no
+  rollback to them); while another run of the branch is still going it may have released already, so then the
+  newest is recorded without one too. Every live one queues
   **`app.cloud_prune`**, so the S3 prefixes / ECR images of runs the PC never saw fall under the same keep-5
   retention (Hosting versions and Artifact Registry images stay with the providers' retention, as after a PC
   deploy). The log says *Recorded by Deployer afterwards: the run finished while this PC was off*. Idempotent
@@ -1293,8 +1295,9 @@ its teardown.
   even when the setup never got to record them in the state (missing ones are no errors);
 - after its steps every cloud teardown runs **`sweep_orphans`** on the connection: AWS - `ListRoles`, every
   `deployer-gha-*` role tagged `managed-by=deployer` whose app no longer builds on GitHub Actions is deleted;
-  Google - every `gh-*` provider of the `deployer-github` pool, and every `attribute.repository` member of the
-  connection's service account, that no such app uses is removed. A sweep that can't run (an older policy
+  Google - every `gh-*` provider of the `deployer-github` pool that no such app uses, and every
+  `attribute.repository` member of the connection's service account whose repository no such app builds from
+  (matched by repository, which a setup saves before it adds the member), is removed. A sweep that can't run (an older policy
   without `iam:ListRoles`) is noted in the job's result (`sweep_error`), it does not fail the teardown. The
   sweep assumes one Deployer per cloud account (like the shared `deployer-github` pool and OIDC provider): a
   second Deployer's `deployer-gha-*` roles in the same account would count as leftovers.

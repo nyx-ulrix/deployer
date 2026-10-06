@@ -555,6 +555,16 @@ def test_missed_hosting_runs_take_the_live_version_only_for_the_newest(client, d
     assert deps[9].status == "live" and deps[9].image_tag == "sites/shop-x/versions/v9"
     assert deps[7].status == "superseded" and deps[7].image_tag is None  # its version is not known any more
     assert gcp.args("live_version") == [("shop-x",)]
+    # Runs already recorded cost no Hosting call on the next ticks.
+    assert github_actions.reconcile(jobs.get_sessionmaker(), force=True) == []
+    assert len(gcp.args("live_version")) == 1
+    # With a newer run still going, the live version may already be that run's: none is taken.
+    runs = [run_json(11, None, now, status="in_progress"), run_json(10, "success", now - timedelta(minutes=5))]
+    gh.routes[("GET", runs_path(app))] = (200, {"workflow_runs": runs})
+    assert len(github_actions.reconcile(jobs.get_sessionmaker(), force=True)) == 1
+    deps = by_run(db, app)
+    assert deps[10].status == "live" and deps[10].image_tag is None
+    assert len(gcp.args("live_version")) == 1
 
 
 def test_deleting_the_app_before_the_setup_ran_removes_the_role_by_name_and_sweeps(client, db, people, gh, aws, docker):
@@ -611,12 +621,21 @@ def test_google_sweep_removes_unknown_providers_and_pool_members(db, people, gcp
         f"principalSet://iam.googleapis.com/projects/555/locations/global/workloadIdentityPools/{github_actions.POOL}"
     )
     member = f"{pool}/attribute.repository/{REPO}"
-    app.cloud_state = {**RUN_STATE, "github": {"status": "ready", "member": member, "service_account": "x@y"}}
+    gh = {"status": "ready", "repo": REPO, "member": member, "service_account": "x@y"}
+    app.cloud_state = {**RUN_STATE, "github": gh}
+    # Another app's setup is running: it saved its repository and added the member, but not saved it yet.
+    busy = cloud_app(db, people["project"], name="Busy", target="firebase_app", state=RUN_STATE, provider="firebase")
+    busy.cloud_state = {**RUN_STATE, "github": {"status": "setting_up", "repo": "acme/busy"}}
     db.commit()
     stale = f"{pool}/attribute.repository/Old/Repo"
     gcp.service_account_email = "x@y"
     gcp.returns["wif_providers"] = lambda pool: [github_actions.provider_id(app.id), "gh-00000000", "other"]
-    gcp.returns["sa_members"] = lambda email, role: [member, stale, "user:a@b.c"]
+    gcp.returns["sa_members"] = lambda email, role: [
+        member,
+        stale,
+        f"{pool}/attribute.repository/acme/busy",
+        "user:a@b.c",
+    ]
     removed = github_actions.sweep_orphans(db, gcp, "firebase")
     assert gcp.args("delete_wif_provider") == [(github_actions.POOL, "gh-00000000")]
     assert gcp.args("set_sa_member") == [("x@y", github_actions.SA_ROLE, stale, False)]
