@@ -97,294 +97,330 @@ _AWS_KEY_ID = re.compile(r"^(AKIA|ASIA)[A-Z0-9]{16}$")
 _AWS_REGION = re.compile(r"^[a-z]{2}(-gov)?-[a-z]+-\d$")
 _ROLE_ARN = re.compile(r"^arn:aws(-[a-z]+)?:iam::\d{12}:role/[\w+=,.@/-]{1,512}$")
 
-# Least privilege for everything cloud_aws.AwsClient does; resources are named deployer-*.
-AWS_POLICY = {
-    "Version": "2012-10-17",
-    "Statement": [
-        {"Sid": "WhoAmI", "Effect": "Allow", "Action": "sts:GetCallerIdentity", "Resource": "*"},
-        {
-            "Sid": "StaticSiteBuckets",
-            "Effect": "Allow",
-            "Action": [
-                "s3:CreateBucket",
-                "s3:DeleteBucket",
-                "s3:PutBucketPolicy",
-                "s3:PutBucketPublicAccessBlock",
-                "s3:ListBucket",
-                "s3:PutObject",
-                "s3:GetObject",
-                "s3:DeleteObject",
-                "s3:AbortMultipartUpload",
-            ],
-            "Resource": ["arn:aws:s3:::deployer-*", "arn:aws:s3:::deployer-*/*"],
+# --- AWS permissions ------------------------------------------------------------------------------
+# Least privilege for everything cloud_aws.AwsClient does; resources are named deployer-*. Settings -> Cloud
+# accounts shows them as separate managed policies by purpose (AWS_POLICIES): IAM caps one managed policy at
+# 6,144 characters (whitespace not counted) and an IAM user can have 10 attached.
+# A NEW PERMISSION goes into the list below whose purpose it serves. tests/test_cloud_policies.py keeps every
+# policy 600 characters under the cap; when one runs out of room, add a new entry to AWS_POLICIES (and say in
+# CloudAccountsPage's guide what owners must create) instead of squeezing.
+
+# DeployerHosting: static sites, container images, App Runner services and their secrets.
+AWS_HOSTING_STATEMENTS = [
+    {"Sid": "WhoAmI", "Effect": "Allow", "Action": "sts:GetCallerIdentity", "Resource": "*"},
+    {
+        "Sid": "StaticSiteBuckets",
+        "Effect": "Allow",
+        "Action": [
+            "s3:CreateBucket",
+            "s3:DeleteBucket",
+            "s3:PutBucketPolicy",
+            "s3:PutBucketPublicAccessBlock",
+            "s3:ListBucket",
+            "s3:PutObject",
+            "s3:GetObject",
+            "s3:DeleteObject",
+            "s3:AbortMultipartUpload",
+        ],
+        "Resource": ["arn:aws:s3:::deployer-*", "arn:aws:s3:::deployer-*/*"],
+    },
+    {
+        "Sid": "CloudFront",
+        "Effect": "Allow",
+        "Action": [
+            "cloudfront:CreateDistribution",
+            "cloudfront:GetDistribution",
+            "cloudfront:GetDistributionConfig",
+            "cloudfront:UpdateDistribution",
+            "cloudfront:DeleteDistribution",
+            "cloudfront:CreateInvalidation",
+            "cloudfront:CreateOriginAccessControl",
+            "cloudfront:GetOriginAccessControl",
+            "cloudfront:DeleteOriginAccessControl",
+            "cloudfront:CreateFunction",
+            "cloudfront:PublishFunction",
+            "cloudfront:DescribeFunction",
+            "cloudfront:DeleteFunction",
+        ],
+        "Resource": "*",
+    },
+    {
+        "Sid": "Certificates",
+        "Effect": "Allow",
+        "Action": ["acm:RequestCertificate", "acm:DescribeCertificate", "acm:DeleteCertificate"],
+        "Resource": "*",
+    },
+    {"Sid": "RegistryLogin", "Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*"},
+    {
+        "Sid": "ContainerRepositories",
+        "Effect": "Allow",
+        "Action": [
+            "ecr:CreateRepository",
+            "ecr:DescribeRepositories",
+            "ecr:DeleteRepository",
+            "ecr:BatchDeleteImage",
+            "ecr:BatchCheckLayerAvailability",
+            "ecr:InitiateLayerUpload",
+            "ecr:UploadLayerPart",
+            "ecr:CompleteLayerUpload",
+            "ecr:PutImage",
+            "ecr:BatchGetImage",
+            "ecr:GetDownloadUrlForLayer",
+        ],
+        "Resource": "arn:aws:ecr:*:*:repository/deployer-*",
+    },
+    {
+        "Sid": "AppRunner",
+        "Effect": "Allow",
+        "Action": [
+            "apprunner:CreateService",
+            "apprunner:UpdateService",
+            "apprunner:DeleteService",
+            "apprunner:DescribeService",
+            "apprunner:ListOperations",
+            "apprunner:AssociateCustomDomain",
+            "apprunner:DisassociateCustomDomain",
+            "apprunner:DescribeCustomDomains",
+            "apprunner:CreateVpcConnector",
+            "apprunner:ListVpcConnectors",
+        ],
+        "Resource": "*",
+    },
+    # App secrets (docs/CLOUD.md "G1"): one deployer-* secret per variable of an App Runner app that keeps
+    # them in Secrets Manager; GetSecretValue only to skip rewriting an unchanged value.
+    {
+        "Sid": "AppSecrets",
+        "Effect": "Allow",
+        "Action": [
+            "secretsmanager:CreateSecret",
+            "secretsmanager:GetSecretValue",
+            "secretsmanager:PutSecretValue",
+            "secretsmanager:DeleteSecret",
+            "secretsmanager:TagResource",
+        ],
+        "Resource": "arn:aws:secretsmanager:*:*:secret:deployer-*",
+    },
+]
+# DeployerDatabases: cloud databases (RDS / Aurora and the firewall around them, DynamoDB).
+AWS_DATABASE_STATEMENTS = [
+    # Cloud databases (docs/CLOUD.md "C2"): list RDS / Aurora to connect one, create and delete
+    # deployer-* instances (the final snapshot needs CreateDBSnapshot), and the firewall around them.
+    {
+        "Sid": "DatabasesRead",
+        "Effect": "Allow",
+        "Action": [
+            "rds:DescribeDBInstances",
+            "rds:DescribeDBClusters",
+            "ec2:DescribeVpcs",
+            "ec2:DescribeSubnets",
+            "ec2:DescribeSecurityGroups",
+        ],
+        "Resource": "*",
+    },
+    {
+        "Sid": "Databases",
+        "Effect": "Allow",
+        "Action": [
+            "rds:CreateDBInstance",
+            "rds:ModifyDBInstance",
+            "rds:DeleteDBInstance",
+            "rds:CreateDBSnapshot",
+            "rds:AddTagsToResource",
+        ],
+        "Resource": [
+            "arn:aws:rds:*:*:db:deployer-*",
+            "arn:aws:rds:*:*:snapshot:deployer-*",
+            "arn:aws:rds:*:*:subgrp:default",
+            "arn:aws:rds:*:*:pg:default.*",
+            "arn:aws:rds:*:*:og:default:*",
+        ],
+    },
+    {
+        "Sid": "DatabaseFirewallCreate",
+        "Effect": "Allow",
+        "Action": "ec2:CreateSecurityGroup",
+        "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:security-group/*"],
+    },
+    {
+        # Only while creating a group: tagging an existing one would hand it to the next statement.
+        "Sid": "DatabaseFirewallTag",
+        "Effect": "Allow",
+        "Action": "ec2:CreateTags",
+        "Resource": "arn:aws:ec2:*:*:security-group/*",
+        "Condition": {"StringEquals": {"ec2:CreateAction": "CreateSecurityGroup"}},
+    },
+    {
+        "Sid": "DatabaseFirewallRules",
+        "Effect": "Allow",
+        "Action": [
+            "ec2:AuthorizeSecurityGroupIngress",
+            "ec2:RevokeSecurityGroupIngress",
+            "ec2:DeleteSecurityGroup",
+        ],
+        "Resource": "arn:aws:ec2:*:*:security-group/*",
+        "Condition": {"StringEquals": {"aws:ResourceTag/managed-by": "deployer"}},
+    },
+    # DynamoDB (docs/CLOUD.md "C2-2"): list tables to connect them; read / write items, schema and
+    # on-demand backups of any table a source names (connected tables keep their own names); create,
+    # change and delete only deployer-* tables.
+    # ListTables and ListBackups have no resource-level permissions: AWS only accepts "*" for them.
+    {
+        "Sid": "DynamoDBList",
+        "Effect": "Allow",
+        "Action": ["dynamodb:ListTables", "dynamodb:ListBackups"],
+        "Resource": "*",
+    },
+    {
+        "Sid": "DynamoDBData",
+        "Effect": "Allow",
+        "Action": [
+            "dynamodb:DescribeTable",
+            "dynamodb:GetItem",
+            "dynamodb:Query",
+            "dynamodb:Scan",
+            "dynamodb:PutItem",
+            "dynamodb:UpdateItem",
+            "dynamodb:DeleteItem",
+            "dynamodb:CreateBackup",
+            "dynamodb:DescribeBackup",
+            # Point-in-time recovery and restores; the restored copy is always a new deployer-* table.
+            "dynamodb:DescribeContinuousBackups",
+            "dynamodb:UpdateContinuousBackups",
+            "dynamodb:RestoreTableFromBackup",
+            "dynamodb:RestoreTableToPointInTime",
+        ],
+        "Resource": ["arn:aws:dynamodb:*:*:table/*", "arn:aws:dynamodb:*:*:table/*/backup/*"],
+    },
+    {
+        "Sid": "DynamoDBTables",
+        "Effect": "Allow",
+        "Action": [
+            "dynamodb:CreateTable",
+            "dynamodb:UpdateTable",
+            "dynamodb:DeleteTable",
+            "dynamodb:TagResource",
+            "dynamodb:BatchWriteItem",  # a restore writes the copied items into the new table
+        ],
+        "Resource": "arn:aws:dynamodb:*:*:table/deployer-*",
+    },
+    {
+        # Apps whose traffic goes through the VPC (they also use an RDS database) reach DynamoDB through
+        # a free gateway endpoint; describing is read-only.
+        "Sid": "DynamoDBEndpointRead",
+        "Effect": "Allow",
+        "Action": ["ec2:DescribeVpcEndpoints", "ec2:DescribeRouteTables"],
+        "Resource": "*",
+    },
+    {
+        "Sid": "DynamoDBEndpointCreate",
+        "Effect": "Allow",
+        "Action": "ec2:CreateVpcEndpoint",
+        "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:route-table/*", "arn:aws:ec2:*:*:vpc-endpoint/*"],
+    },
+    {
+        "Sid": "DynamoDBEndpointTag",
+        "Effect": "Allow",
+        "Action": "ec2:CreateTags",
+        "Resource": "arn:aws:ec2:*:*:vpc-endpoint/*",
+        "Condition": {"StringEquals": {"ec2:CreateAction": "CreateVpcEndpoint"}},
+    },
+]
+# DeployerRoles: every IAM permission - the roles Deployer creates for App Runner and GitHub Actions, always
+# within the deployer-boundary (docs/CLOUD.md "G3"), and the service-linked roles those services need.
+AWS_ROLE_STATEMENTS = [
+    {
+        "Sid": "AppRunnerImageAccessRole",
+        "Effect": "Allow",
+        "Action": ["iam:GetRole", "iam:PassRole"],
+        "Resource": f"arn:aws:iam::*:role/{cloud_aws.ACCESS_ROLE}",
+    },
+    # docs/CLOUD.md "G3": every role Deployer creates or gives permissions to must carry the
+    # deployer-boundary policy as its permissions boundary (IAM refuses these calls otherwise), and the
+    # boundary itself can be created and read but never changed or deleted with this key.
+    {
+        "Sid": "RolesWithinBoundary",
+        "Effect": "Allow",
+        "Action": ["iam:CreateRole", "iam:PutRolePolicy", "iam:AttachRolePolicy", "iam:PutRolePermissionsBoundary"],
+        "Resource": [
+            f"arn:aws:iam::*:role/{cloud_aws.ACCESS_ROLE}",
+            f"arn:aws:iam::*:role/{cloud_aws.INSTANCE_ROLE_PREFIX}*",
+            f"arn:aws:iam::*:role/{cloud_aws.GITHUB_ROLE_PREFIX}*",
+        ],
+        "Condition": {"ArnLike": {"iam:PermissionsBoundary": f"arn:aws:iam::*:policy/{cloud_aws.BOUNDARY_POLICY}"}},
+    },
+    {
+        "Sid": "BoundaryPolicy",
+        "Effect": "Allow",
+        "Action": ["iam:CreatePolicy", "iam:GetPolicy", "iam:GetPolicyVersion"],
+        "Resource": f"arn:aws:iam::*:policy/{cloud_aws.BOUNDARY_POLICY}",
+    },
+    {
+        "Sid": "ServiceLinkedRoles",
+        "Effect": "Allow",
+        "Action": "iam:CreateServiceLinkedRole",
+        "Resource": "*",
+        "Condition": {
+            "StringLike": {
+                "iam:AWSServiceName": [
+                    "apprunner.amazonaws.com",
+                    "networking.apprunner.amazonaws.com",
+                    "rds.amazonaws.com",
+                ]
+            }
         },
-        {
-            "Sid": "CloudFront",
-            "Effect": "Allow",
-            "Action": [
-                "cloudfront:CreateDistribution",
-                "cloudfront:GetDistribution",
-                "cloudfront:GetDistributionConfig",
-                "cloudfront:UpdateDistribution",
-                "cloudfront:DeleteDistribution",
-                "cloudfront:CreateInvalidation",
-                "cloudfront:CreateOriginAccessControl",
-                "cloudfront:GetOriginAccessControl",
-                "cloudfront:DeleteOriginAccessControl",
-                "cloudfront:CreateFunction",
-                "cloudfront:PublishFunction",
-                "cloudfront:DescribeFunction",
-                "cloudfront:DeleteFunction",
-            ],
-            "Resource": "*",
-        },
-        {
-            "Sid": "Certificates",
-            "Effect": "Allow",
-            "Action": ["acm:RequestCertificate", "acm:DescribeCertificate", "acm:DeleteCertificate"],
-            "Resource": "*",
-        },
-        {"Sid": "RegistryLogin", "Effect": "Allow", "Action": "ecr:GetAuthorizationToken", "Resource": "*"},
-        {
-            "Sid": "ContainerRepositories",
-            "Effect": "Allow",
-            "Action": [
-                "ecr:CreateRepository",
-                "ecr:DescribeRepositories",
-                "ecr:DeleteRepository",
-                "ecr:BatchDeleteImage",
-                "ecr:BatchCheckLayerAvailability",
-                "ecr:InitiateLayerUpload",
-                "ecr:UploadLayerPart",
-                "ecr:CompleteLayerUpload",
-                "ecr:PutImage",
-                "ecr:BatchGetImage",
-                "ecr:GetDownloadUrlForLayer",
-            ],
-            "Resource": "arn:aws:ecr:*:*:repository/deployer-*",
-        },
-        {
-            "Sid": "AppRunner",
-            "Effect": "Allow",
-            "Action": [
-                "apprunner:CreateService",
-                "apprunner:UpdateService",
-                "apprunner:DeleteService",
-                "apprunner:DescribeService",
-                "apprunner:ListOperations",
-                "apprunner:AssociateCustomDomain",
-                "apprunner:DisassociateCustomDomain",
-                "apprunner:DescribeCustomDomains",
-                "apprunner:CreateVpcConnector",
-                "apprunner:ListVpcConnectors",
-            ],
-            "Resource": "*",
-        },
-        {
-            "Sid": "AppRunnerImageAccessRole",
-            "Effect": "Allow",
-            "Action": ["iam:GetRole", "iam:PassRole"],
-            "Resource": f"arn:aws:iam::*:role/{cloud_aws.ACCESS_ROLE}",
-        },
-        # docs/CLOUD.md "G3": every role Deployer creates or gives permissions to must carry the
-        # deployer-boundary policy as its permissions boundary (IAM refuses these calls otherwise), and the
-        # boundary itself can be created and read but never changed or deleted with this key.
-        {
-            "Sid": "RolesWithinBoundary",
-            "Effect": "Allow",
-            "Action": ["iam:CreateRole", "iam:PutRolePolicy", "iam:AttachRolePolicy", "iam:PutRolePermissionsBoundary"],
-            "Resource": [
-                f"arn:aws:iam::*:role/{cloud_aws.ACCESS_ROLE}",
-                f"arn:aws:iam::*:role/{cloud_aws.INSTANCE_ROLE_PREFIX}*",
-                f"arn:aws:iam::*:role/{cloud_aws.GITHUB_ROLE_PREFIX}*",
-            ],
-            "Condition": {"ArnLike": {"iam:PermissionsBoundary": f"arn:aws:iam::*:policy/{cloud_aws.BOUNDARY_POLICY}"}},
-        },
-        {
-            "Sid": "BoundaryPolicy",
-            "Effect": "Allow",
-            "Action": ["iam:CreatePolicy", "iam:GetPolicy", "iam:GetPolicyVersion"],
-            "Resource": f"arn:aws:iam::*:policy/{cloud_aws.BOUNDARY_POLICY}",
-        },
-        {
-            "Sid": "ServiceLinkedRoles",
-            "Effect": "Allow",
-            "Action": "iam:CreateServiceLinkedRole",
-            "Resource": "*",
-            "Condition": {
-                "StringLike": {
-                    "iam:AWSServiceName": [
-                        "apprunner.amazonaws.com",
-                        "networking.apprunner.amazonaws.com",
-                        "rds.amazonaws.com",
-                    ]
-                }
-            },
-        },
-        # Cloud databases (docs/CLOUD.md "C2"): list RDS / Aurora to connect one, create and delete
-        # deployer-* instances (the final snapshot needs CreateDBSnapshot), and the firewall around them.
-        {
-            "Sid": "DatabasesRead",
-            "Effect": "Allow",
-            "Action": [
-                "rds:DescribeDBInstances",
-                "rds:DescribeDBClusters",
-                "ec2:DescribeVpcs",
-                "ec2:DescribeSubnets",
-                "ec2:DescribeSecurityGroups",
-            ],
-            "Resource": "*",
-        },
-        {
-            "Sid": "Databases",
-            "Effect": "Allow",
-            "Action": [
-                "rds:CreateDBInstance",
-                "rds:ModifyDBInstance",
-                "rds:DeleteDBInstance",
-                "rds:CreateDBSnapshot",
-                "rds:AddTagsToResource",
-            ],
-            "Resource": [
-                "arn:aws:rds:*:*:db:deployer-*",
-                "arn:aws:rds:*:*:snapshot:deployer-*",
-                "arn:aws:rds:*:*:subgrp:default",
-                "arn:aws:rds:*:*:pg:default.*",
-                "arn:aws:rds:*:*:og:default:*",
-            ],
-        },
-        {
-            "Sid": "DatabaseFirewallCreate",
-            "Effect": "Allow",
-            "Action": "ec2:CreateSecurityGroup",
-            "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:security-group/*"],
-        },
-        {
-            # Only while creating a group: tagging an existing one would hand it to the next statement.
-            "Sid": "DatabaseFirewallTag",
-            "Effect": "Allow",
-            "Action": "ec2:CreateTags",
-            "Resource": "arn:aws:ec2:*:*:security-group/*",
-            "Condition": {"StringEquals": {"ec2:CreateAction": "CreateSecurityGroup"}},
-        },
-        {
-            "Sid": "DatabaseFirewallRules",
-            "Effect": "Allow",
-            "Action": [
-                "ec2:AuthorizeSecurityGroupIngress",
-                "ec2:RevokeSecurityGroupIngress",
-                "ec2:DeleteSecurityGroup",
-            ],
-            "Resource": "arn:aws:ec2:*:*:security-group/*",
-            "Condition": {"StringEquals": {"aws:ResourceTag/managed-by": "deployer"}},
-        },
-        # DynamoDB (docs/CLOUD.md "C2-2"): list tables to connect them; read / write items, schema and
-        # on-demand backups of any table a source names (connected tables keep their own names); create,
-        # change and delete only deployer-* tables.
-        # ListTables and ListBackups have no resource-level permissions: AWS only accepts "*" for them.
-        {
-            "Sid": "DynamoDBList",
-            "Effect": "Allow",
-            "Action": ["dynamodb:ListTables", "dynamodb:ListBackups"],
-            "Resource": "*",
-        },
-        {
-            "Sid": "DynamoDBData",
-            "Effect": "Allow",
-            "Action": [
-                "dynamodb:DescribeTable",
-                "dynamodb:GetItem",
-                "dynamodb:Query",
-                "dynamodb:Scan",
-                "dynamodb:PutItem",
-                "dynamodb:UpdateItem",
-                "dynamodb:DeleteItem",
-                "dynamodb:CreateBackup",
-                "dynamodb:DescribeBackup",
-                # Point-in-time recovery and restores; the restored copy is always a new deployer-* table.
-                "dynamodb:DescribeContinuousBackups",
-                "dynamodb:UpdateContinuousBackups",
-                "dynamodb:RestoreTableFromBackup",
-                "dynamodb:RestoreTableToPointInTime",
-            ],
-            "Resource": ["arn:aws:dynamodb:*:*:table/*", "arn:aws:dynamodb:*:*:table/*/backup/*"],
-        },
-        {
-            "Sid": "DynamoDBTables",
-            "Effect": "Allow",
-            "Action": [
-                "dynamodb:CreateTable",
-                "dynamodb:UpdateTable",
-                "dynamodb:DeleteTable",
-                "dynamodb:TagResource",
-                "dynamodb:BatchWriteItem",  # a restore writes the copied items into the new table
-            ],
-            "Resource": "arn:aws:dynamodb:*:*:table/deployer-*",
-        },
-        {
-            # The IAM role an App Runner app's code runs as, allowed only its project's tables.
-            "Sid": "AppRunnerInstanceRoles",
-            "Effect": "Allow",
-            "Action": ["iam:GetRole", "iam:TagRole", "iam:DeleteRolePolicy", "iam:DeleteRole", "iam:PassRole"],
-            "Resource": f"arn:aws:iam::*:role/{cloud_aws.INSTANCE_ROLE_PREFIX}*",
-        },
-        {
-            # Apps whose traffic goes through the VPC (they also use an RDS database) reach DynamoDB through
-            # a free gateway endpoint; describing is read-only.
-            "Sid": "DynamoDBEndpointRead",
-            "Effect": "Allow",
-            "Action": ["ec2:DescribeVpcEndpoints", "ec2:DescribeRouteTables"],
-            "Resource": "*",
-        },
-        {
-            "Sid": "DynamoDBEndpointCreate",
-            "Effect": "Allow",
-            "Action": "ec2:CreateVpcEndpoint",
-            "Resource": ["arn:aws:ec2:*:*:vpc/*", "arn:aws:ec2:*:*:route-table/*", "arn:aws:ec2:*:*:vpc-endpoint/*"],
-        },
-        {
-            "Sid": "DynamoDBEndpointTag",
-            "Effect": "Allow",
-            "Action": "ec2:CreateTags",
-            "Resource": "arn:aws:ec2:*:*:vpc-endpoint/*",
-            "Condition": {"StringEquals": {"ec2:CreateAction": "CreateVpcEndpoint"}},
-        },
-        # App secrets (docs/CLOUD.md "G1"): one deployer-* secret per variable of an App Runner app that keeps
-        # them in Secrets Manager; GetSecretValue only to skip rewriting an unchanged value.
-        {
-            "Sid": "AppSecrets",
-            "Effect": "Allow",
-            "Action": [
-                "secretsmanager:CreateSecret",
-                "secretsmanager:GetSecretValue",
-                "secretsmanager:PutSecretValue",
-                "secretsmanager:DeleteSecret",
-                "secretsmanager:TagResource",
-            ],
-            "Resource": "arn:aws:secretsmanager:*:*:secret:deployer-*",
-        },
-        # GitHub Actions builds (docs/CLOUD.md "C3"): the account's identity provider for GitHub's OIDC tokens
-        # (one, shared) and one deployer-gha-* role per app that only its repository's branch may assume.
-        {
-            "Sid": "GitHubActionsSignIn",
-            "Effect": "Allow",
-            "Action": ["iam:CreateOpenIDConnectProvider", "iam:TagOpenIDConnectProvider"],
-            "Resource": f"arn:aws:iam::*:oidc-provider/{cloud_aws.GITHUB_OIDC_HOST}",
-        },
-        {
-            "Sid": "GitHubActionsRoles",
-            "Effect": "Allow",
-            "Action": [
-                "iam:GetRole",
-                "iam:TagRole",
-                "iam:UpdateAssumeRolePolicy",
-                "iam:DeleteRolePolicy",
-                "iam:DeleteRole",
-            ],
-            "Resource": f"arn:aws:iam::*:role/{cloud_aws.GITHUB_ROLE_PREFIX}*",
-        },
-    ],
-}
+    },
+    {
+        # The IAM role an App Runner app's code runs as, allowed only its project's tables.
+        "Sid": "AppRunnerInstanceRoles",
+        "Effect": "Allow",
+        "Action": ["iam:GetRole", "iam:TagRole", "iam:DeleteRolePolicy", "iam:DeleteRole", "iam:PassRole"],
+        "Resource": f"arn:aws:iam::*:role/{cloud_aws.INSTANCE_ROLE_PREFIX}*",
+    },
+    # GitHub Actions builds (docs/CLOUD.md "C3"): the account's identity provider for GitHub's OIDC tokens
+    # (one, shared) and one deployer-gha-* role per app that only its repository's branch may assume.
+    {
+        "Sid": "GitHubActionsSignIn",
+        "Effect": "Allow",
+        "Action": ["iam:CreateOpenIDConnectProvider", "iam:TagOpenIDConnectProvider"],
+        "Resource": f"arn:aws:iam::*:oidc-provider/{cloud_aws.GITHUB_OIDC_HOST}",
+    },
+    {
+        "Sid": "GitHubActionsRoles",
+        "Effect": "Allow",
+        "Action": [
+            "iam:GetRole",
+            "iam:TagRole",
+            "iam:UpdateAssumeRolePolicy",
+            "iam:DeleteRolePolicy",
+            "iam:DeleteRole",
+        ],
+        "Resource": f"arn:aws:iam::*:role/{cloud_aws.GITHUB_ROLE_PREFIX}*",
+    },
+]
+AWS_POLICIES = [
+    {
+        "name": "DeployerHosting",
+        "for": "static sites (S3, CloudFront, certificates), container images, App Runner services, app secrets",
+        "document": {"Version": "2012-10-17", "Statement": AWS_HOSTING_STATEMENTS},
+    },
+    {
+        "name": "DeployerDatabases",
+        "for": "RDS / Aurora databases and their firewall, DynamoDB tables, backups and restores",
+        "document": {"Version": "2012-10-17", "Statement": AWS_DATABASE_STATEMENTS},
+    },
+    {
+        "name": "DeployerRoles",
+        "for": "the deployer-* IAM roles for apps and GitHub Actions builds, always within deployer-boundary",
+        "document": {"Version": "2012-10-17", "Statement": AWS_ROLE_STATEMENTS},
+    },
+]
+
+
+def aws_statements() -> list[dict]:
+    """Test hook: every statement of every AWS policy (never shown as one policy, IAM would refuse its size)."""
+    return [s for p in AWS_POLICIES for s in p["document"]["Statement"]]
+
+
 GOOGLE_ROLES = [
     {"role": "roles/firebasehosting.admin", "title": "Firebase Hosting Admin", "why": "sites, versions, releases"},
     {"role": "roles/firebase.viewer", "title": "Firebase Viewer", "why": "check the project on save"},
@@ -471,7 +507,7 @@ GOOGLE_APIS = [
 def requirements() -> dict:
     return {
         "aws": {
-            "policy": AWS_POLICY,
+            "policies": AWS_POLICIES,
             "boundary": cloud_aws.BOUNDARY_DOCUMENT,
             "boundary_name": cloud_aws.BOUNDARY_POLICY,
         },

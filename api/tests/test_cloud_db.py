@@ -521,7 +521,7 @@ def test_mcp_cloud_database_tools(client, db, team, aws, sqlite_engine, monkeypa
 
 
 def test_policy_covers_databases_and_scopes_the_firewall():
-    statements = {s["Sid"]: s for s in cloud.AWS_POLICY["Statement"]}
+    statements = {s["Sid"]: s for s in cloud.aws_statements()}
     assert "rds:CreateDBInstance" in statements["Databases"]["Action"]
     assert "arn:aws:rds:*:*:db:deployer-*" in statements["Databases"]["Resource"]
     rules = statements["DatabaseFirewallRules"]

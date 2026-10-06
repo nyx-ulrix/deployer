@@ -80,7 +80,7 @@ def list_connections(owner: InstanceOwner, db: DbSession) -> dict:
 
 @router.get("/instance/cloud/requirements")
 def requirements(owner: InstanceOwner) -> dict:
-    """The least-privilege IAM policy for the AWS user, the Google roles and APIs for the service account."""
+    """The least-privilege IAM policies for the AWS user, the Google roles and APIs for the service account."""
     return cloud.requirements()
 
 

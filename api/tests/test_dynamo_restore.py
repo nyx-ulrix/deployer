@@ -266,13 +266,12 @@ def test_mcp_restore_tools(client, db, team, aws):
 
 
 def test_policy_allows_restores_into_deployer_tables_only():
-    statements = {s["Sid"]: s for s in cloud.AWS_POLICY["Statement"]}
+    statements = {s["Sid"]: s for s in cloud.aws_statements()}
     data = set(statements["DynamoDBData"]["Action"])
     assert {"dynamodb:UpdateContinuousBackups", "dynamodb:RestoreTableFromBackup"} <= data
     # The restore writes the copied items: only ever into a deployer-* table.
     assert "dynamodb:BatchWriteItem" in statements["DynamoDBTables"]["Action"]
     assert "dynamodb:BatchWriteItem" not in data
-    assert len(json.dumps(cloud.AWS_POLICY, separators=(",", ":"))) <= 6144
 
 
 def test_restore_flow_against_the_real_botocore_model(client, db, team):

@@ -299,7 +299,7 @@ The same app, served from the user's own cloud account so it **keeps running whe
 (check Feature status first):
 
 1. **Account**: the instance **owner** connects it under *Settings → Cloud accounts* (guided: an IAM
-   user with the policy shown there, or a Firebase service account with the listed roles; Deployer
+   user with the policies shown there, or a Firebase service account with the listed roles; Deployer
    validates it). Never ask for AWS keys or a service-account file in chat - the user pastes them there.
 2. **Target**: a project **admin** picks it under the app's *Where should this run?* (New app or app
    Settings, with a tick confirming the cloud account pays), MCP `set_app_target`, or `target` +

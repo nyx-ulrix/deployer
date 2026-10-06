@@ -58,13 +58,14 @@ project, config_encrypted, status ok|error, status_message, created_by_id, creat
   `token_uri` is dropped, never used - then `GET firebase.googleapis.com/v1beta1/projects/{id}`.
 
 The owner manages them in **Settings → Cloud accounts** (`routers/cloud.py`, `services/cloud.py`),
-with step-by-step guides (StepCards): AWS - create an IAM user, create the `DeployerHosting` policy from
-the JSON shown (`GET /instance/cloud/requirements`), attach it, create an access key, paste and
-validate; Firebase - an explainer of the two Firebase options, create/pick the project (Blaze plan for
+with step-by-step guides (StepCards): AWS - create an IAM user, create the managed policies `DeployerHosting`,
+`DeployerDatabases` and `DeployerRoles` from the JSON shown (`GET /instance/cloud/requirements`; one policy
+no longer fits IAM's size limit, see "AWS policy split as built"), attach them, create an access key, paste
+and validate; Firebase - an explainer of the two Firebase options, create/pick the project (Blaze plan for
 full apps), enable the four APIs, create a service account with the listed roles, download a JSON key,
 paste and validate. A cost note heads the page.
 
-Required permissions (`cloud.AWS_POLICY`, scoped to `deployer-*` resources where AWS allows it):
+Required permissions (C1's part of `cloud.AWS_POLICIES`, scoped to `deployer-*` resources where AWS allows it):
 STS `GetCallerIdentity`; S3 bucket create/delete/policy/public-access-block and object put/get/delete;
 CloudFront distributions, invalidations, origin access controls and functions; ACM request/describe/
 delete; ECR login and repository/image operations; App Runner create/update/delete/describe/
@@ -129,7 +130,7 @@ left, e.g. a certificate still attached while CloudFront updates, comes back as 
 | Method | Path | Role | Body / Query | Response |
 |---|---|---|---|---|
 | GET | `/instance/cloud` | owner | – | `{connections: CloudConnection[], targets}` |
-| GET | `/instance/cloud/requirements` | owner | – | `{aws: {policy}, firebase: {roles, apis}}` |
+| GET | `/instance/cloud/requirements` | owner | – | `{aws: {policies: [{name, for, document}], boundary, boundary_name}, firebase: {roles, apis}}` |
 | POST | `/instance/cloud` | owner | `{provider, name, project_id?, aws?: {access_key_id, secret_access_key, region, role_arn?}, firebase?: {service_account_json, project_id?, region?}}` | `CloudConnection` (201); 422 `cloud_credentials_invalid` when the provider refuses them; audit `cloud.connection_create` (no credentials) |
 | POST | `/instance/cloud/{id}/check` | owner | – | `CloudConnection` with a fresh `status` |
 | DELETE | `/instance/cloud/{id}` | owner | – | `{ok}`; 409 `connection_in_use` while apps use it |
@@ -294,7 +295,7 @@ allow. A database still `creating`, in another account or in another VPC is skip
 Other cloud targets still refuse database access. Moving an app to `aws_app` keeps its database-access
 switch.
 
-### Permissions added (`cloud.AWS_POLICY`, shown in Settings -> Cloud accounts)
+### Permissions added (now in the `DeployerDatabases` policy, shown in Settings -> Cloud accounts)
 
 `rds:DescribeDBInstances`, `rds:DescribeDBClusters`, `ec2:DescribeVpcs`, `ec2:DescribeSubnets`,
 `ec2:DescribeSecurityGroups` (read, `*`); `rds:CreateDBInstance`, `ModifyDBInstance`, `DeleteDBInstance`,
@@ -461,7 +462,7 @@ table or one).
   database (its traffic then goes through the VPC), the deploy adds a free **DynamoDB gateway endpoint**
   to that VPC's route tables (created once, shared, kept), so the tables stay reachable without a NAT.
 
-### Permissions added (`cloud.AWS_POLICY`)
+### Permissions added (now in the `DeployerDatabases` policy)
 
 `dynamodb:ListTables`, `ListBackups` (`*`: AWS has no resource-level permissions for them);
 `DescribeTable`, `GetItem`, `Query`, `Scan`, `PutItem`, `UpdateItem`, `DeleteItem`, `CreateBackup`,
@@ -470,8 +471,8 @@ table, because connected tables keep their own names (a source still only uses i
 `UpdateTable`, `DeleteTable`, `TagResource` only on `table/deployer-*`; `iam:GetRole`, `CreateRole`,
 `TagRole`, `PutRolePolicy`, `DeleteRolePolicy`, `DeleteRole`, `PassRole` only on `role/deployer-app-*`;
 `ec2:DescribeVpcEndpoints`, `DescribeRouteTables` (read) and `ec2:CreateVpcEndpoint` + `CreateTags` (only
-while creating an endpoint) for the gateway endpoint. The policy stays under IAM's 6,144-character limit
-(test-enforced). Owners paste the new policy over the old one (the guide says so).
+while creating an endpoint) for the gateway endpoint. (The role statement is now in `DeployerRoles`, the rest in
+`DeployerDatabases`; see "AWS policy split as built".)
 
 Point-in-time recovery and restores add `DescribeContinuousBackups`, `UpdateContinuousBackups`,
 `RestoreTableFromBackup`, `RestoreTableToPointInTime` on `table/*` and `table/*/backup/*` (the source table and
@@ -1069,7 +1070,7 @@ accounts as noted there.
 
 Until now only the dashboard deleted a cloud database (typing its name). Agents and scripts now can too, with
 the same effect and two confirmations instead of the typed dialog. No migration, no new cloud permission (the
-cleanup is C2-1 / C2-2's `data_source.cloud_delete` job, already in `cloud.AWS_POLICY`).
+cleanup is C2-1 / C2-2's `data_source.cloud_delete` job, already in the `DeployerDatabases` policy).
 
 - **Route**: `DELETE /projects/{pid}/cloud/databases/{sid}?confirm_name=<name>&confirm_delete=true`. It calls
   the dashboard's `DELETE .../data-sources/{sid}` route function, so everything is the same: a database
@@ -1268,12 +1269,12 @@ its teardown.
 
 ### Permissions added
 
-- **AWS** (`cloud.AWS_POLICY`): `iam:CreateOpenIDConnectProvider`, `TagOpenIDConnectProvider` on
+- **AWS** (now the `DeployerRoles` policy): `iam:CreateOpenIDConnectProvider`, `TagOpenIDConnectProvider` on
   `oidc-provider/token.actions.githubusercontent.com`; `iam:GetRole`, `CreateRole`, `TagRole`,
   `UpdateAssumeRolePolicy`, `PutRolePolicy`, `DeleteRolePolicy`, `DeleteRole` on `role/deployer-gha-*` (no
   `PassRole`: GitHub assumes the role, nothing passes it). Like the `deployer-app-*` roles, Deployer writes these
   roles' policies itself; since G3 the `deployer-boundary` permissions boundary caps what they can be given
-  ("G3 as built"). The policy stays under the 6,144-character limit.
+  ("G3 as built").
 - **Google** (`cloud.GOOGLE_ROLES` / `GOOGLE_APIS`, marked "only needed to build apps on GitHub Actions"): **IAM
   Workload Identity Pool Admin** (`roles/iam.workloadIdentityPoolAdmin`) and **Service Account Admin**
   (`roles/iam.serviceAccountAdmin`) granted **on the deployer service account itself** (its Permissions tab), not
@@ -1390,9 +1391,9 @@ workflow at the same moment makes the provider refuse one of the two updates ("o
 
 ### Permissions added
 
-- **AWS** (`cloud.AWS_POLICY`, statement `AppSecrets`): `secretsmanager:CreateSecret`, `GetSecretValue`,
+- **AWS** (now the `DeployerHosting` policy, statement `AppSecrets`): `secretsmanager:CreateSecret`, `GetSecretValue`,
   `PutSecretValue`, `DeleteSecret`, `TagResource` on `secret:deployer-*` only (GetSecretValue is what skips
-  rewriting an unchanged value). The policy stays under IAM's 6,144-character limit (test-enforced). The
+  rewriting an unchanged value). The
   instance roles' `GetSecretValue` statements are written by Deployer through the existing `iam:PutRolePolicy`
   on `role/deployer-app-*`.
 - **Google** (`cloud.GOOGLE_ROLES` / `GOOGLE_APIS`, marked "only needed when an app keeps its variables in
@@ -1438,7 +1439,7 @@ policy is whatever `PutRolePolicy` says, so a bug in Deployer, a future change t
 anyone who got hold of the key (it is stored encrypted on this PC, but the PC is the trust boundary) could give one
 of those roles far more than its app or workflow needs - and an App Runner app or a GitHub workflow then runs with
 it, outside this PC, with the PC off. The key itself is already limited to `deployer-*` resources by
-`cloud.AWS_POLICY`, but `iam:PutRolePolicy` on `role/deployer-app-*` was a way around that: the policy text is
+its policies, but `iam:PutRolePolicy` on `role/deployer-app-*` was a way around that: the policy text is
 free, and the role is assumed by code Deployer does not control.
 
 ### The fix: `deployer-boundary`
@@ -1478,35 +1479,35 @@ only what both its own policies *and* the boundary allow, and the boundary canno
   instead of once), the GitHub Actions role when its setup runs again (a build-setting change, or switching
   GitHub Actions off and on). The deploy ensures the boundary before any role, so an account where the key may
   not create it fails the deploy with AWS's message instead of creating an uncapped role.
-- `cloud.AWS_POLICY` only allows `iam:CreateRole`, `PutRolePolicy`, `AttachRolePolicy` and
+- The key's policies (since the split: `DeployerRoles`, which holds every IAM statement) only allow `iam:CreateRole`, `PutRolePolicy`, `AttachRolePolicy` and
   `PutRolePermissionsBoundary` on the three role families (one statement `RolesWithinBoundary`) with the
   condition `ArnLike: iam:PermissionsBoundary = arn:aws:iam::*:policy/deployer-boundary` - IAM refuses the call
   unless the role carries (or is being created with) exactly that boundary. These four actions appear nowhere
-  else in the policy (test-enforced), and the statement is `ArnLike`, not `...IfExists`: a request without a
+  else in any of the policies (test-enforced), and the statement is `ArnLike`, not `...IfExists`: a request without a
   boundary must fail, which `IfExists` would let through. `GetRole`, `TagRole`, `PassRole`,
   `UpdateAssumeRolePolicy`, `DeleteRolePolicy` and `DeleteRole` stay unconditional in their families' statements
   (reading, tagging, passing and removing permissions cannot escalate, and a teardown must still remove a role made
   before G3); `DeleteRolePermissionsBoundary` is absent. The new statement `BoundaryPolicy` allows `CreatePolicy`,
-  `GetPolicy`, `GetPolicyVersion` on `policy/deployer-boundary` only. The policy stays under 6,144 characters
-  (test-enforced; about 6,100 now - the next permission added will need a statement merged).
+  `GetPolicy`, `GetPolicyVersion` on `policy/deployer-boundary` only. (At about 6,100 of IAM's 6,144 characters
+  this filled the single policy; "AWS policy split as built" below split it.)
 
 What this does **not** cover: the key's own direct permissions (S3, CloudFront, ECR, App Runner, RDS, DynamoDB,
-EC2 security groups) are limited by `AWS_POLICY` alone, as before; a boundary is for the roles. On Google there is
+EC2 security groups) are limited by the key's policies alone, as before; a boundary is for the roles. On Google there is
 no equivalent: the GitHub Actions workflow acts as the deployer service account itself (C3 says so in the dialog).
 
 ### Dashboard, API
 
 Settings -> Cloud accounts, AWS step 2 explains the ceiling in plain words and shows the `deployer-boundary` JSON
 under the user policy (create it yourself first, or paste it over an older copy). `GET /instance/cloud/requirements`
-returns `aws: {policy, boundary, boundary_name}`. No new routes, MCP tools or migrations.
+returns `aws: {policy, boundary, boundary_name}` (`policies` since the split). No new routes, MCP tools or migrations.
 
 ### Not verified against real clouds
 
 Tested in `tests/test_cloud_boundary.py`: `ensure_boundary`, `ensure_access_role`, `ensure_instance_role` and
 `ensure_github_role` run the real `AwsClient` bodies against botocore's IAM service model with `Stubber` (so a wrong
 operation or parameter name fails), including a pre-G3 role receiving the boundary and an outdated copy being
-reported; the shape of `AWS_POLICY` (the four role-writing actions only under the `ArnLike` condition, no
-escalation actions anywhere, the boundary policy read-only, the size limit); the boundary document's own scope; and
+reported; the shape of the AWS policies (the four role-writing actions only under the `ArnLike` condition, no
+escalation actions anywhere, the boundary policy read-only); the boundary document's own scope; and
 the deploy wiring with the fake (the boundary before any role, the log line for an older copy, a refused
 `CreatePolicy` failing the deploy before anything else is made). The GitHub Actions setup passing the boundary is
 in `tests/test_github_actions.py`. Not run against a live account: that IAM's evaluation of
@@ -1514,3 +1515,49 @@ in `tests/test_github_actions.py`. Not run against a live account: that IAM's ev
 `CreateRole` / `PutRolePolicy` / `AttachRolePolicy` / `PutRolePermissionsBoundary` (the condition key is listed for
 all four), that App Runner accepts an instance role carrying a boundary, and the real `GetPolicyVersion` document
 decoding (botocore returns it as a dict; a string is handled too).
+
+## AWS policy split as built: purpose-sized managed policies
+
+### Why
+
+IAM caps a customer managed policy at 6,144 characters (whitespace not counted). The single `DeployerHosting`
+policy had reached about 6,125 after G3, so no further permission fitted. An IAM user can have up to 10 managed
+policies attached, so the permissions are now three policies, one per purpose:
+
+| Policy | What for | Statements |
+|---|---|---|
+| `DeployerHosting` | static sites, container images, App Runner services, app secrets | `WhoAmI`, `StaticSiteBuckets`, `CloudFront`, `Certificates`, `RegistryLogin`, `ContainerRepositories`, `AppRunner`, `AppSecrets` |
+| `DeployerDatabases` | RDS / Aurora and their firewall, DynamoDB tables, backups, restores, the gateway endpoint | `DatabasesRead`, `Databases`, `DatabaseFirewall*`, `DynamoDB*` |
+| `DeployerRoles` | every IAM permission: the roles Deployer creates, always within `deployer-boundary` (G3), GitHub Actions sign-in, service-linked roles | `AppRunnerImageAccessRole`, `RolesWithinBoundary`, `BoundaryPolicy`, `ServiceLinkedRoles`, `AppRunnerInstanceRoles`, `GitHubActionsSignIn`, `GitHubActionsRoles` |
+
+The statements are exactly the previous ones, moved verbatim: nothing added, removed or changed. Every `iam:*`
+action is in `DeployerRoles`, so the G3 boundary condition on `RolesWithinBoundary` is reviewed in one place.
+
+### Code, API, dashboard
+
+- `services/cloud.py`: `AWS_HOSTING_STATEMENTS`, `AWS_DATABASE_STATEMENTS`, `AWS_ROLE_STATEMENTS` and
+  `AWS_POLICIES = [{name, for, document}]`. **A new permission goes into the statement list whose purpose it
+  serves**; when one runs out of room, add a new entry to `AWS_POLICIES` (and say in the guide what owners must
+  create) rather than squeezing. `cloud.AWS_POLICY` is gone; tests read `cloud.aws_statements()` (all statements).
+- `GET /instance/cloud/requirements` returns `aws: {policies: [{name, for, document}], boundary, boundary_name}`
+  instead of `aws.policy`. The only reader is the dashboard, which ships with the API.
+- Settings -> Cloud accounts, AWS step 2: create each policy with the name shown and attach all of them to the
+  `deployer` user. Owners who pasted the old single `DeployerHosting` policy are told what to do: create and attach
+  `DeployerDatabases` and `DeployerRoles` first, then replace `DeployerHosting`'s JSON with the new, shorter one
+  (in that order nothing stops working in between). Until they do, the old policy keeps working as before; only
+  permissions added after the split would be missing.
+- No migration, no MCP change, no change to `deployer-boundary`.
+
+### Tests
+
+`tests/test_cloud_policies.py`: every policy's minified size is at most 6,144 - 600 characters (600 of headroom
+each; today about 2,150 / 2,490 / 1,570), at most 10 policies, unique names; the union of the statements equals
+the pre-split statement set (statement ids plus a SHA-256 of their exact contents; a statement added later goes
+into `ADDED_SINCE_SPLIT`, a deliberately changed one updates the fingerprint), no statement in two policies; and
+every `iam:*` action sits in `DeployerRoles`.
+
+### Not verified against real clouds
+
+Not run against a live account: that IAM accepts each document as a managed policy (sizes are computed the way
+the IAM documentation describes: whitespace not counted) and that three attached policies grant the same as the
+one before (IAM evaluates the union of attached policies, so it should).

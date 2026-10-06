@@ -390,7 +390,7 @@ def test_moving_the_app_tears_github_actions_down_with_the_target(client, db, pe
 
 
 def test_requirements_list_what_the_setup_uses():
-    statements = {s["Sid"]: s for s in cloud.AWS_POLICY["Statement"]}
+    statements = {s["Sid"]: s for s in cloud.aws_statements()}
     assert statements["GitHubActionsSignIn"]["Resource"].endswith(":oidc-provider/token.actions.githubusercontent.com")
     assert statements["GitHubActionsRoles"]["Resource"] == "arn:aws:iam::*:role/deployer-gha-*"
     assert "iam:PassRole" not in statements["GitHubActionsRoles"]["Action"]

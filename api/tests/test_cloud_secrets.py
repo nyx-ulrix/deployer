@@ -291,7 +291,7 @@ def test_mcp_set_app_secrets_store(client, db, team, aws):
 
 
 def test_policy_and_roles_cover_the_secret_stores():
-    statement = next(s for s in cloud.AWS_POLICY["Statement"] if s["Sid"] == "AppSecrets")
+    statement = next(s for s in cloud.aws_statements() if s["Sid"] == "AppSecrets")
     assert statement["Resource"] == "arn:aws:secretsmanager:*:*:secret:deployer-*"
     assert set(statement["Action"]) == {
         "secretsmanager:CreateSecret",

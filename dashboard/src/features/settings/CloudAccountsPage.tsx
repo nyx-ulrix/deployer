@@ -61,7 +61,7 @@ export function CloudAccountsPage() {
             {requirements.isError && <ErrorAlert error={requirements.error} />}
             {provider === "aws" ? (
               <AwsGuide
-                policy={requirements.data ? JSON.stringify(requirements.data.aws.policy, null, 2) : ""}
+                policies={(requirements.data?.aws.policies ?? []).map((p) => ({ ...p, json: JSON.stringify(p.document, null, 2) }))}
                 boundary={requirements.data ? JSON.stringify(requirements.data.aws.boundary, null, 2) : ""}
               />
             ) : (
@@ -197,7 +197,7 @@ function useCreate(onDone: () => void) {
 
 const AWS_TITLES = ["Create an IAM user for Deployer", "Give it exactly the permissions it needs", "Create an access key", "Paste and validate"];
 
-function AwsGuide({ policy, boundary }: { policy: string; boundary: string }) {
+function AwsGuide({ policies, boundary }: { policies: { name: string; for: string; json: string }[]; boundary: string }) {
   const { steps, ack } = useGuide(AWS_TITLES.length);
   const [form, setForm] = useState({ name: "AWS", access_key_id: "", secret_access_key: "", region: "us-east-1", role_arn: "", project_id: "" });
   const create = useCreate(() => setForm((f) => ({ ...f, access_key_id: "", secret_access_key: "" })));
@@ -231,25 +231,27 @@ function AwsGuide({ policy, boundary }: { policy: string; boundary: string }) {
       <StepCard n={2} title={AWS_TITLES[1]} status={steps[1]} summary="S3, CloudFront, ACM, ECR, App Runner, RDS and DynamoDB databases, deployer-* IAM roles, GitHub Actions sign-in">
         <div className="space-y-3">
           <p className="text-muted">
-            Open <ExtLink href={`${iam}#/policies/create`}>IAM → Policies → Create policy</ExtLink>, switch to <strong>JSON</strong>, paste this,
-            name it <code className="font-mono">DeployerHosting</code> and create it. Then open the <code className="font-mono">deployer</code>{" "}
-            user → <em>Add permissions → Attach policies directly</em> → tick <code className="font-mono">DeployerHosting</code>. It only
-            reaches resources named <code className="font-mono">deployer-*</code> (and firewall rules Deployer created itself). The
-            one exception is reading and writing items of DynamoDB tables: tables you connect keep their own names, so Deployer may use
-            the items, backups and point-in-time recovery of any table, but it only creates, changes or deletes{" "}
+            AWS limits how long one policy can be, so the permissions come as {policies.length || "a few"} policies, one per purpose.
+            For each one below: open <ExtLink href={`${iam}#/policies/create`}>IAM → Policies → Create policy</ExtLink>, switch to{" "}
+            <strong>JSON</strong>, paste it, give it the name shown and create it. Then open the <code className="font-mono">deployer</code>{" "}
+            user → <em>Add permissions → Attach policies directly</em> → tick all of them (a user can have up to 10 attached). Together
+            they only reach resources named <code className="font-mono">deployer-*</code> (and firewall rules Deployer created itself).
+            The one exception is reading and writing items of DynamoDB tables: tables you connect keep their own names, so Deployer may
+            use the items, backups and point-in-time recovery of any table, but it only creates, changes or deletes{" "}
             <code className="font-mono">deployer-*</code> tables (a restore always makes a new one).
           </p>
-          <p className="text-muted">
-            Already attached an older version? Paste this one over it (<em>Edit → JSON</em>): it adds the permissions for databases in
-            your AWS account (create / connect RDS and the firewall that lets this PC and your apps in; DynamoDB tables, their
-            backups, point-in-time recovery and restores, and the role an App Runner app uses to reach its tables) and for building apps on GitHub Actions (GitHub&apos;s
-            sign-in for your account and one <code className="font-mono">deployer-gha-*</code> role per app, which only that app&apos;s
-            repository can use).
-          </p>
-          {policy && <CopyField label="Policy JSON" value={policy} />}
+          <Alert tone="warning" title="Set up with an older version of Deployer?">
+            Before, everything was one policy called <code className="font-mono">DeployerHosting</code>, and it no longer fits AWS&apos;s size
+            limit. First create and attach the other policies below; then open <code className="font-mono">DeployerHosting</code> →{" "}
+            <em>Edit → JSON</em> and replace its contents with the new, shorter <code className="font-mono">DeployerHosting</code> below. In
+            that order nothing stops working in between.
+          </Alert>
+          {policies.map((p) => (
+            <CopyField key={p.name} label={`${p.name} — ${p.for}`} value={p.json} />
+          ))}
           <p className="text-muted">
             <strong>A ceiling for the roles Deployer makes.</strong> Deployer creates IAM roles for your apps and for GitHub Actions
-            (<code className="font-mono">deployer-app-*</code>, <code className="font-mono">deployer-gha-*</code>). The policy above only lets
+            (<code className="font-mono">deployer-app-*</code>, <code className="font-mono">deployer-gha-*</code>). The policies above only let
             it create them with the <em>permissions boundary</em> <code className="font-mono">deployer-boundary</code> attached, which is the
             most any of those roles can ever do: pushing and pulling <code className="font-mono">deployer-*</code> images, updating{" "}
             <code className="font-mono">deployer-*</code> services and sites, reading <code className="font-mono">deployer-*</code> secrets,
@@ -268,7 +270,7 @@ function AwsGuide({ policy, boundary }: { policy: string; boundary: string }) {
           <p className="text-muted">
             On the user's <em>Security credentials</em> tab click <strong>Create access key</strong>, choose <em>Application running outside
             AWS</em>, and copy the <strong>Access key</strong> and <strong>Secret access key</strong>. Optionally, to use a role instead, give
-            the user only <code className="font-mono">sts:AssumeRole</code> on a role that has the policy and enter its ARN below.
+            the user only <code className="font-mono">sts:AssumeRole</code> on a role that has these policies attached and enter its ARN below.
           </p>
           <DoneButton status={steps[2]} onClick={() => ack(2)} />
         </div>

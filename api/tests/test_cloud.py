@@ -181,7 +181,8 @@ def test_aws_connection_is_validated_and_secrets_never_returned(client, db, team
     policy = client.get(f"{CLOUD}/requirements", headers=team["owner"]).json()
     actions = {
         a
-        for s in policy["aws"]["policy"]["Statement"]
+        for p in policy["aws"]["policies"]
+        for s in p["document"]["Statement"]
         for a in ([s["Action"]] if isinstance(s["Action"], str) else s["Action"])
     }
     assert {

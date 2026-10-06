@@ -6,8 +6,8 @@ tested against a fake (`set_factory`); tests never reach AWS. Rules:
 - credentials come from the decrypted connection config only (never the worker's environment or
   `~/.aws`), and are never logged or put in exception messages (`CloudError` carries AWS's own
   error code/message, which never contains the secret);
-- every resource Deployer creates is named `deployer-...`, which is what the IAM policy the dashboard
-  shows (`cloud.AWS_POLICY`) is scoped to.
+- every resource Deployer creates is named `deployer-...`, which is what the IAM policies the dashboard
+  show (`cloud.AWS_POLICIES`) are scoped to.
 """
 
 from __future__ import annotations
@@ -116,7 +116,7 @@ CACHING_OPTIMIZED = "658327ea-f89d-4fab-a63d-7e88639e58f6"  # AWS managed cache 
 CERT_REGION = "us-east-1"  # CloudFront only uses ACM certificates from us-east-1
 CHECKIP_URL = "https://checkip.amazonaws.com"
 # On every security group, RDS instance and VPC connector Deployer creates; the IAM policy only lets
-# Deployer change security groups that carry it (cloud.AWS_POLICY).
+# Deployer change security groups that carry it (cloud.AWS_DATABASE_STATEMENTS).
 TAG = {"Key": "managed-by", "Value": "deployer"}
 # CloudFront Function (viewer request): `/docs/` and `/docs` -> `/docs/index.html` like nginx's
 # `try_files $uri $uri/`; missing files fall back to /index.html through the 403/404 error responses.

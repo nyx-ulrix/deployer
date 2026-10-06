@@ -199,7 +199,7 @@ def _resources(statement: dict) -> set[str]:
 
 
 def test_deployer_user_may_only_write_roles_that_carry_the_boundary():
-    statements = {s["Sid"]: s for s in cloud.AWS_POLICY["Statement"]}
+    statements = {s["Sid"]: s for s in cloud.aws_statements()}
     bounded = statements["RolesWithinBoundary"]
     assert _actions(bounded) == ROLE_WRITES
     assert bounded["Condition"] == {"ArnLike": {"iam:PermissionsBoundary": f"arn:aws:iam::*:policy/{BOUNDARY_POLICY}"}}
@@ -219,7 +219,6 @@ def test_deployer_user_may_only_write_roles_that_carry_the_boundary():
     # Still the tightest statement per role family: GitHub roles are never passed, deleting needs no boundary.
     assert "iam:PassRole" not in _actions(statements["GitHubActionsRoles"])
     assert {"iam:DeleteRole", "iam:DeleteRolePolicy"} <= _actions(statements["AppRunnerInstanceRoles"])
-    assert len(json.dumps(cloud.AWS_POLICY, separators=(",", ":"))) <= 6144
 
 
 def test_boundary_document_caps_roles_to_deployer_resources():

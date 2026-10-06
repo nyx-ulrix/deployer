@@ -684,7 +684,7 @@ def test_mcp_dynamodb_tools(client, db, team, aws):
 
 
 def test_policy_scopes_dynamodb():
-    statements = {s["Sid"]: s for s in cloud.AWS_POLICY["Statement"]}
+    statements = {s["Sid"]: s for s in cloud.aws_statements()}
     # ListBackups has no resource-level permissions: scoped to a table ARN, AWS would always deny it.
     assert "dynamodb:ListBackups" in statements["DynamoDBList"]["Action"]
     assert statements["DynamoDBList"]["Resource"] == "*"
@@ -693,5 +693,3 @@ def test_policy_scopes_dynamodb():
     assert not {"dynamodb:DeleteTable", "dynamodb:CreateTable"} & set(statements["DynamoDBData"]["Action"])
     assert statements["AppRunnerInstanceRoles"]["Resource"] == "arn:aws:iam::*:role/deployer-app-*"
     assert statements["DynamoDBEndpointTag"]["Condition"]["StringEquals"]["ec2:CreateAction"] == "CreateVpcEndpoint"
-    # IAM's managed-policy limit is 6,144 characters, whitespace not counted.
-    assert len(json.dumps(cloud.AWS_POLICY, separators=(",", ":"))) <= 6144

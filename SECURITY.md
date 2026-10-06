@@ -95,8 +95,9 @@ Security fixes are made for the latest release. Update with `deployer update`.
   (optionally assuming a role) or a Google service-account key per connection, encrypted with
   `MASTER_KEY` (AES-256-GCM), validated on save and never returned by any endpoint, log, audit entry or
   MCP tool (lists show the account id / project and the key's last 4 characters only). Scope it: a
-  dedicated IAM user with the policy shown in the dashboard (every resource named `deployer-*`, one
-  IAM role it may create and pass) or a dedicated service account with the listed roles; a connection
+  dedicated IAM user with the policies shown in the dashboard (`DeployerHosting`, `DeployerDatabases`,
+  `DeployerRoles`, split by purpose to fit IAM's size limit: every resource named `deployer-*`, IAM roles
+  only within the `deployer-boundary`, all IAM permissions in `DeployerRoles`) or a dedicated service account with the listed roles; a connection
   can be limited to one project. Project admins choose which connection an app uses, so they can
   create billable resources in that account; developers cannot. Service API keys can create a database
   in the AWS account through MCP (`create_cloud_database`), only with `confirm_billing: true`. In the worker the keys
@@ -110,7 +111,7 @@ Security fixes are made for the latest release. Update with `deployer update`.
 - **Cloud databases** ([docs/CLOUD.md](docs/CLOUD.md) "C2-1"): a database Deployer creates in AWS gets a
   random 32-character master password stored like every data source password (`encrypt_json`), shown
   only through the audited connection details. Its endpoint is public, but its security group (tagged
-  `managed-by=deployer`; the IAM policy lets Deployer change only groups with that tag) lets in only
+  `managed-by=deployer`; the IAM policies let Deployer change only groups with that tag) lets in only
   this PC's current public IP and the App Runner VPC connector's group; MySQL / MariaDB users must use
   TLS (`REQUIRE SSL`), PostgreSQL forces it. Deployer verifies the RDS server certificate and host
   name against AWS's RDS CA bundle shipped in the API image (GovCloud / China endpoints and RDS Proxy
@@ -120,7 +121,7 @@ Security fixes are made for the latest release. Update with `deployer update`.
   and a source only reaches the tables it was given (so the project's API keys can't read the
   account's other tables); viewers may only run Query / Scan / GetItem in the console. App Runner apps
   get no key either, but an IAM role (`deployer-app-*`) whose only policy allows item operations on
-  exactly the project's tables. The IAM policy may read and write items of any table (connected tables
+  exactly the project's tables. The IAM policies may read and write items of any table (connected tables
   keep their own names) but create, change or delete only `deployer-*` tables.
   Firestore databases ("C2-3") also hold no credential of their own: Deployer calls the Firestore REST API
   with the Firebase connection's service-account token (requests only go to `firestore.googleapis.com`,
@@ -144,14 +145,14 @@ Security fixes are made for the latest release. Update with `deployer update`.
   bug or a stolen key could have given such a role anything. Every role Deployer creates carries the managed
   policy `deployer-boundary` as its **permissions boundary** (the ceiling: `deployer-*` images, services, sites
   and secrets, item access to the project's tables - nothing in IAM, nothing that creates or deletes
-  resources), and the key's policy allows `iam:CreateRole` / `PutRolePolicy` / `AttachRolePolicy` /
+  resources), and the key's policies (`DeployerRoles`) allow `iam:CreateRole` / `PutRolePolicy` / `AttachRolePolicy` /
   `PutRolePermissionsBoundary` only when `iam:PermissionsBoundary` is that policy's ARN. The key can create
   the boundary policy once (Deployer does it the moment the connection is saved) and read it, never version,
   replace or delete it or lift it from a role, so nothing done with the key can widen what an app or workflow
   may do beyond the boundary;
   owners who want the key never to write it create `deployer-boundary` themselves from the JSON in Settings ->
   Cloud accounts first. Roles made before this existed get the boundary the next time Deployer touches them.
-  The key's own direct permissions are still bounded by its policy alone.
+  The key's own direct permissions are still bounded by its policies alone.
 - **Rate limits:** sign-in 10 attempts / 15 min per IP+email and 50 failed attempts / hour per email
   from any IP (so rotating or forging IPs doesn't buy more guesses; the flip side is that someone
   guessing can lock an account for up to an hour - `deployer reset-password` clears it), plus 30
