@@ -202,10 +202,11 @@ latest release); no GitHub account is needed for that.
 - **What a release makes:** `ghcr.io/<owner>/deployer-api`, `deployer-dashboard` and `deployer-tunnel`
   (tagged with the version and, except for pre-releases, `latest`), and a GitHub release with
   `DeployerSetup.exe`, `deployer-deploy.zip` and their `.sha256` files.
-- **GHCR (GitHub Container Registry):** after the first release, open each of the three packages on
-  the owner's GitHub profile (*Packages* -> the package -> *Package settings* -> *Change visibility*) and
-  make it **public**, so installs can pull without signing in. Until then the installer builds the images
-  on the PC.
+- **GHCR (GitHub Container Registry):** installs pull the images without signing in, so the three
+  packages must be **public**. `v0.1.0`'s came out public (they are linked to the public repository; an
+  anonymous pull of `deployer-api:0.1.0` answers 200). A fork whose packages are private: open each one on
+  the owner's GitHub profile (*Packages* -> the package -> *Package settings* -> *Change visibility*).
+  While they cannot be pulled, the installer builds the images on the PC.
 - **Cost:** free for a public repository (Actions minutes and public packages included).
 
 ### Sign in with GitHub (an OAuth app)

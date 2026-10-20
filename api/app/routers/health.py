@@ -31,7 +31,7 @@ def _check_mariadb() -> bool:
 
 
 def _check_mongodb() -> bool | None:
-    """None when MongoDB is switched off (no AVX CPU): not running is expected, not a failure."""
+    """None when MongoDB is switched off (no AVX CPU, or a Linux kernel MongoDB 8 refuses): not running is expected."""
     if not get_settings().managed_mongodb_enabled:
         return None
     try:

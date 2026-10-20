@@ -392,8 +392,8 @@ def provision_managed_source(
             raise ApiError(
                 409,
                 "managed_mongodb_unavailable",
-                "Managed MongoDB is not available on this host (the CPU lacks AVX). "
-                "Attach an external MongoDB such as Atlas instead.",
+                "Managed MongoDB is not available on this host (the CPU lacks AVX, or MongoDB 8 cannot "
+                "start on this Linux kernel). Attach an external MongoDB such as Atlas instead.",
             )
         try:
             database = _pick_database_name(project.slug, database_name, mongo_database_exists)

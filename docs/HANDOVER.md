@@ -25,7 +25,7 @@ owner's own AWS / Firebase accounts so they stay up when the PC is off.
 | Code on `main` | tagged `v0.1.0` (Linux support), CI (including the `linux-installer` job) and secret scan green |
 | Installed on the owner's PC | `03a6f00` files and images (updated 2026-10-06; backup in `C:\ProgramData\Deployer\backups\20261006-203226`). **Stopped** since `deployer stop` on 2026-10-09 16:39, by the owner's choice: https://deployer.liewjiaen.com shows Cloudflare error 1033 / 530 until `deployer start`. The sign-in task's loop still runs the previous code until the next sign-in: **sign out and back in (or restart) once** |
 | Database schema | Alembic head `0014` |
-| Releases | `v0.1.0` (2026-10-21, the first): `DeployerSetup.exe`, `deployer-deploy.zip`, `install.sh` and their `.sha256` files, and the `deployer-api` / `-dashboard` / `-tunnel` images on GHCR. New GHCR packages start private, so until the owner makes them public, installs fall back to building the images locally |
+| Releases | `v0.1.0` (2026-10-21, the first): `DeployerSetup.exe`, `deployer-deploy.zip`, `install.sh` and their `.sha256` files, and the `deployer-api` / `-dashboard` / `-tunnel` images on GHCR, which are public (anonymous pulls answer 200), so installs of `v0.1.0` pull them instead of building |
 
 Work finished in the last stretch, newest first:
 
@@ -164,9 +164,6 @@ The owner prefers commit messages without attribution or co-author lines.
 
 - Sign out and back in (or restart) once, so the sign-in task runs the new keep-alive loop and the
   5-minute watchdog starts.
-- Make the three GHCR packages from `v0.1.0` public (github.com/nyx-ulrix → *Packages* →
-  `deployer-api`, `deployer-dashboard`, `deployer-tunnel` → *Package settings* → *Change visibility*), so
-  installs pull images instead of building them for 10-30 minutes.
 - Start the PC's Deployer again when wanted: `deployer start` (stopped since 2026-10-09).
 - Google sign-in for other people: publish the Google OAuth app, or add test users.
 - Try the cloud features against real accounts: attach the three AWS policies to a dedicated IAM user

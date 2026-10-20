@@ -252,7 +252,7 @@ print_health() {
   IFS=, read -ra pairs <<<"$services"
   for pair in ${pairs[@]+"${pairs[@]}"}; do
     name=${pair%%:*}; name=${name//\"/}; val=${pair#*:}
-    case $val in true) val=up ;; false) val=DOWN ;; null) val='switched off (this CPU has no AVX)' ;; esac
+    case $val in true) val=up ;; false) val=DOWN ;; null) val='switched off (no AVX, or a kernel MongoDB 8 refuses: deployer actions)' ;; esac
     info "  $(printf '%-8s' "$name"): $val"
   done
 }
@@ -351,15 +351,22 @@ copy_files() {
   ln -sfn "$INSTALL_DIR/installer/deployer.sh" "$BIN_LINK"
 }
 
-# Prints why the managed MongoDB cannot start on this computer, or nothing when it can. Asks the real
-# image: MongoDB 8 refuses Linux kernels 6.19 to 7.0.13 (MongoDB SERVER-121912, fixed by kernel 7.0.14),
-# e.g. Ubuntu 26.04's 7.0 kernel, and its rule may change, so no kernel table is kept here.
-mongo_start_problem() {
-  local image out
+# Whether MongoDB 8 itself refuses to start on this computer. Asks the real image: MongoDB 8 refuses Linux
+# kernels 6.19 to 7.0.13 (MongoDB SERVER-121912, fixed by kernel 7.0.14), e.g. Ubuntu 26.04's 7.0 kernel,
+# and its rule may change, so no kernel table is kept here.
+# 0 = it refuses (prints MongoDB's reason), 1 = it starts, 2 = could not tell (the image would not pull or
+# run: offline, rate limit, disk full), which must not be mistaken for a refusal.
+mongo_refuses() {
+  local image out msg
   image=$(env_get MONGODB_IMAGE)
-  out=$(docker run --rm --network none --entrypoint mongod "${image:-mongo:8.0}" --version 2>&1) && return 0
-  out=$(sed -n 's/.*"msg":"\([^"]*\)".*/\1/p' <<<"$out" | head -n 1)
-  printf '%s' "${out:-mongod --version failed in ${image:-mongo:8.0}}"
+  image=${image:-mongo:8.0}
+  out=$(docker run --rm --network none --entrypoint mongod "$image" --version 2>&1) && return 1
+  msg=$(sed -n 's/.*"msg":"\([^"]*\)".*/\1/p' <<<"$out" | head -n 1)
+  if [ -z "$msg" ]; then
+    warn "Could not run $image to check MongoDB: $(grep -v '^[[:space:]]*$' <<<"$out" | tail -n 1)" >&2
+    return 2
+  fi
+  printf '%s' "$msg"
 }
 
 # Whether a compose file starts MongoDB from ${MONGODB_IMAGE} (A-143 and later).
@@ -779,8 +786,11 @@ cmd_install() {
   ok "Docker Compose $code"
   if [ "$mongo" = 1 ]; then
     info 'Checking that MongoDB 8 can start on this kernel (downloads the MongoDB image once)...'
-    problem=$(mongo_start_problem)
-    if [ -n "$problem" ]; then
+    code=0
+    problem=$(mongo_refuses) || code=$?
+    if [ "$code" = 2 ]; then
+      info 'Keeping managed MongoDB on; if the image cannot be downloaded, the next steps say so.'
+    elif [ "$code" = 0 ]; then
       mongo=0
       warn "Managed MongoDB is turned off: MongoDB 8 cannot start here ($problem)."
       info "MongoDB 8 refuses Linux kernels 6.19 to 7.0.13 (this one is $(uname -r)); kernel 7.0.14 or newer fixes it,"
@@ -1123,15 +1133,21 @@ cmd_update() {
   copy_files "$SRC_ROOT"
   bind=$BIND
   # Managed MongoDB: wanted with AVX, and only where MongoDB 8 can start (a kernel update can change both ways).
-  local mongo=0 problem=''
+  local mongo=0 problem='' code=0
   if grep -qw avx /proc/cpuinfo; then
-    problem=$(mongo_start_problem)
-    if [ -z "$problem" ]; then
-      mongo=1
-    else
-      warn "Managed MongoDB stays off: MongoDB 8 cannot start here ($problem; kernel $(uname -r), see docs/SETUP.md)."
-      dc --profile mongodb rm -sf mongodb >/dev/null 2>&1 || true
-    fi
+    problem=$(mongo_refuses) || code=$?
+    case $code in
+      1) mongo=1 ;;
+      0)
+        warn "Managed MongoDB stays off: MongoDB 8 cannot start here ($problem; kernel $(uname -r), see docs/SETUP.md)."
+        dc --profile mongodb rm -sf mongodb >/dev/null 2>&1 || true
+        ;;
+      *)
+        # Could not tell: keep what this install had.
+        mongo_on && mongo=1
+        info "Managed MongoDB stays $([ "$mongo" = 1 ] && echo on || echo off) (could not check whether MongoDB 8 starts here)."
+        ;;
+    esac
   fi
   init_env "$PORT" "$mongo" "$repo" "$target" "$bind" 0 || true
   ok 'Deploy files updated; .env kept'
