@@ -68,6 +68,41 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/API.md](docs/API.md) for details.
 
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+    Browser["Browser on this PC, or the LAN once opened"] -->|"port 8080, apps on 8100-8199"| caddy
+    Internet["Anyone on the internet"] -->|"https, your domain or a quick-tunnel URL"| CF["Cloudflare tunnel"]
+    CF --> tunnel
+    subgraph PC["The owner's Windows PC"]
+        subgraph WSL["WSL distro running Docker Engine, or Docker Desktop"]
+            caddy --> dashboard
+            caddy -->|"/v1"| api
+            tunnel --> caddy
+            caddy --> apps["Deployed app containers"]
+            api --> mariadb
+            api --> mongodb
+            api --> redis
+            api --> queryshell["query-shell"]
+            migrate -.->|"runs first"| api
+            worker --> redis
+            worker --> mariadb
+            worker -->|"builds and runs"| apps
+        end
+    end
+    api <-->|"webhooks, sign-in, Actions"| GitHub
+    api -->|"OAuth sign-in"| Google
+    api -.->|"optional"| AWS["AWS account"]
+    api -.->|"optional"| Firebase["Firebase account"]
+    worker -->|"clones repos"| GitHub
+    worker -.->|"cloud deploys"| AWS
+    worker -.->|"cloud deploys"| Firebase
+    Hosts["Other host PCs"] -->|"co-hosting, via the tunnel or LAN"| caddy
+```
+
+Everything runs as Docker containers inside WSL on the owner's PC (a dedicated distro with Docker Engine by default): Caddy is the single front door, the dashboard and API sit behind it, and the worker builds and runs deployed apps and background jobs. People on the PC reach it on port 8080 (the LAN too, once the owner opens it there); the internet reaches it only through an optional Cloudflare tunnel, under the owner's own domain or a temporary quick-tunnel address for testing. Outside services are all the owner's own accounts (GitHub, Google, AWS, Firebase) and, for co-hosting, other PCs that connect out to this one - the full picture, network by network, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Documentation
 
 The full index of the specs in `docs/` (ARCHITECTURE and CONTRIBUTING link here instead of keeping their own lists):
@@ -91,6 +126,8 @@ The full index of the specs in `docs/` (ARCHITECTURE and CONTRIBUTING link here 
 | [SECURITY_REVIEW.md](docs/SECURITY_REVIEW.md) | Security review findings |
 | [AUDIT_REPORT.md](docs/AUDIT_REPORT.md) | Full audit checklist |
 | [HANDOVER.md](docs/HANDOVER.md) | Current state, how the owner's install runs, how to ship changes, what is open |
+| [FLOWS.md](docs/FLOWS.md) | Flowcharts of the main code paths: sign-in, data API, query console, deploys, backups, co-hosting, cloud, install and keep-alive |
+| [PLATFORMS.md](docs/PLATFORMS.md) | Every outside platform and account the project uses: what for, required or optional, where to set it up |
 
 ## Requirements
 
