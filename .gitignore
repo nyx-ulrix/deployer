@@ -105,5 +105,9 @@ tmp/
 .DS_Store
 Thumbs.db
 desktop.ini
-# graphify knowledge-graph output (local map of the codebase)
-graphify-out/
+# graphify knowledge-graph output (map of the codebase): publish the graph, the report and the
+# interactive viewer; keep the cache, dated snapshots and local tool state out
+graphify-out/*
+!graphify-out/graph.json
+!graphify-out/graph.html
+!graphify-out/GRAPH_REPORT.md
