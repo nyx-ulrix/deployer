@@ -166,7 +166,8 @@ function RemoteAccessContent({
           <p>
             On the Deployer PC itself the dashboard is at <code>{data.local_url}</code>. To open it from other devices
             on the same Wi-Fi or LAN, turn on <em>Deployer Control → Settings → Let other devices on my network open
-            Deployer</em>. Control then shows the address to type on them.
+            Deployer</em>. Control then shows the address to type on them. On a Linux server, run{" "}
+            <code>sudo deployer lan on</code>; it prints the addresses.
           </p>
           <p>
             The PC must be awake and signed in for Deployer to answer. Password and email sign-in work over the LAN;

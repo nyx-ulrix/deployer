@@ -147,7 +147,7 @@ export function DeviceStatusPage() {
             <div className="space-y-2 text-sm text-muted">
               <p>
                 Move this PC's databases to another host from the main Deployer first. Then detach locally (needs
-                Windows admin on this PC):
+                administrator rights on this PC, root on Linux):
               </p>
               <ul className="list-disc space-y-1 pl-5">
                 <li>

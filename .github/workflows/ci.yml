@@ -339,3 +339,128 @@ jobs:
           test "$(shell mongosh 'db.adminCommand({ getParameter: 1, featureCompatibilityVersion: 1 }).featureCompatibilityVersion.version')" = 8.0
           test "$(shell mongosh 'db.getSiblingDB("app").items.findOne({ _id: 1 }).v')" = kept
           docker exec mongodb mongosh --quiet --norc --eval 'db.adminCommand({ ping: 1 }).ok'
+
+  # The Linux installer and CLI (installer/install.sh, installer/deployer.sh) on a real headless Ubuntu
+  # VM with systemd: install from this checkout, every everyday command, the self-replacing update,
+  # backup + restore, and an uninstall that leaves nothing behind.
+  linux-installer:
+    name: Linux installer (install, CLI, update, uninstall)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      NO_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck
+        run: shellcheck -x installer/*.sh installer/wsl/*.sh deploy/mongodb/*.sh
+      - name: Install from this checkout (images built here)
+        run: sudo bash installer/install.sh --source-dir "$PWD" --from-source --yes
+      - name: Installed layout and permissions
+        run: |
+          set -eux
+          test "$(readlink /usr/local/bin/deployer)" = /opt/deployer/installer/deployer.sh
+          test "$(sudo stat -c %a /opt/deployer/.env)" = 600
+          test "$(sudo stat -c %a /opt/deployer/backups)" = 700
+          systemctl is-enabled deployer.service
+          systemctl is-active deployer.service
+          sudo grep -q '^DEPLOYER_BIND=127.0.0.1$' /opt/deployer/.env
+          sudo grep -q '^MONGODB_IMAGE=mongo:8.0$' /opt/deployer/.env
+          curl -fsS http://127.0.0.1:8080/v1/health | grep -q '"status":"ok"'
+      - name: Everyday commands
+        run: |
+          set -eux
+          deployer help | grep -q 'deployer actions'
+          sudo deployer status | tee status.txt
+          grep -q 'Health: ok' status.txt
+          grep -q 'Finish setup' status.txt
+          sudo deployer actions | tee actions.txt
+          grep -q 'Finish the setup wizard' actions.txt
+          sudo deployer guide | grep -q 'Domains & remote access'
+          sudo deployer config | grep -q 'MASTER_KEY *\*\*\*\*\*\*\*\*'
+          sudo deployer logs api --tail 5
+          sudo deployer compose -- ps --services | grep -qx api
+          sudo deployer oauth status | grep -q 'Callback URL: http://localhost:8080/v1/auth/oauth/github/callback'
+      - name: Owner account and password reset
+        run: |
+          set -eux
+          pw="$(openssl rand -hex 12)"
+          echo "::add-mask::$pw"
+          curl -fsS -X POST -H 'Content-Type: application/json' http://127.0.0.1:8080/v1/setup/owner \
+            -d "{\"email\":\"owner@example.com\",\"password\":\"$pw\"}" >/dev/null
+          new="$(openssl rand -hex 12)"
+          echo "::add-mask::$new"
+          sudo env DEPLOYER_NEW_PASSWORD="$new" deployer reset-password | grep -q 'Password reset for owner@example.com'
+          tok="$(curl -fsS -X POST -H 'Content-Type: application/json' http://127.0.0.1:8080/v1/auth/login \
+            -d "{\"email\":\"owner@example.com\",\"password\":\"$new\"}" | jq -r .access_token)"
+          echo "::add-mask::$tok"
+          echo "OWNER_TOKEN=$tok" >> "$GITHUB_ENV"
+      # docs/MCP.md on this install, as an agent uses it: a project with both managed databases, a
+      # service key, then initialize, tools/list and run_query against MariaDB and (query-shell) MongoDB.
+      - name: MCP server for AI agents
+        run: |
+          set -eux
+          api() { curl -fsS -H "Authorization: Bearer $OWNER_TOKEN" -H 'Content-Type: application/json' "http://127.0.0.1:8080/v1$@"; }
+          pid="$(api /projects -X POST -d '{"name":"MCP check","provision":{"sql":true,"nosql":true}}' | jq -r .id)"
+          key="$(api "/projects/$pid/api-keys" -X POST -d '{"name":"agent","role":"service"}' | jq -r .secret)"
+          echo "::add-mask::$key"
+          mcp() {
+            curl -fsS -X POST -H "Authorization: Bearer $key" -H 'Content-Type: application/json' \
+              -H 'Accept: application/json, text/event-stream' "http://127.0.0.1:8080/v1/projects/$pid/mcp" -d "$1"
+          }
+          call() { jq -nc --arg n "$1" --argjson a "$2" '{jsonrpc: "2.0", id: 9, method: "tools/call", params: {name: $n, arguments: $a}}'; }
+          mcp '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"1"}}}' |
+            jq -e '.result.serverInfo.name == "deployer"'
+          mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq -e '[.result.tools[].name] | index("run_query") != null'
+          sources="$(mcp "$(call list_data_sources '{}')" | jq -r '.result.content[0].text')"
+          sql="$(jq -r '.[] | select(.kind == "sql") | .id' <<<"$sources")"
+          nosql="$(jq -r '.[] | select(.kind == "nosql") | .id' <<<"$sources")"
+          mcp "$(call run_query "$(jq -nc --arg s "$sql" '{source_id: $s, query: "SELECT 41 + 1 AS answer"}')")" | tee sql.json
+          jq -e '.result.isError == false and (.result.content[0].text | contains("42"))' sql.json
+          mcp "$(call run_query "$(jq -nc --arg s "$nosql" '{source_id: $s, query: "db.runCommand({ ping: 1 })"}')")" | tee nosql.json
+          jq -e '.result.isError == false' nosql.json
+      - name: Backup and restore
+        run: |
+          set -eux
+          sudo deployer backup --yes
+          stamp="$(sudo ls /opt/deployer/backups | sort | tail -n 1)"
+          sudo test -s "/opt/deployer/backups/$stamp/mariadb.sql"
+          sudo test -s "/opt/deployer/backups/$stamp/mongodb.archive.gz"
+          sudo deployer restore "$stamp" --yes
+          curl -fsS http://127.0.0.1:8080/v1/setup/status | grep -q '"initialized":true'
+      - name: Stop, start, port and LAN settings
+        run: |
+          set -eux
+          sudo deployer stop
+          if curl -fsS --max-time 5 http://127.0.0.1:8080/v1/health; then exit 1; fi
+          sudo deployer start
+          sudo deployer set-port 8090
+          curl -fsS http://127.0.0.1:8090/v1/health | grep -q '"status":"ok"'
+          sudo deployer lan on
+          sudo grep -q '^DEPLOYER_BIND=0.0.0.0$' /opt/deployer/.env
+          sudo deployer lan off
+          sudo deployer set-port 8080
+          curl -fsS http://127.0.0.1:8080/v1/health
+      - name: Update to this commit (downloaded from GitHub, replaces the running CLI)
+        run: |
+          set -eux
+          sudo sed -i 's|^DEPLOYER_REPO=.*|DEPLOYER_REPO=${{ github.event.pull_request.head.repo.full_name || github.repository }}|' /opt/deployer/.env
+          sudo deployer update --ref "${{ github.sha }}" --from-source --yes
+          sudo grep -q '^DEPLOYER_REF=${{ github.sha }}$' /opt/deployer/.env
+          curl -fsS http://127.0.0.1:8080/v1/setup/status | grep -q '"initialized":true'
+          systemctl is-enabled deployer.service
+      - name: Diagnostics
+        if: failure()
+        run: |
+          sudo deployer compose -- ps --all || true
+          sudo deployer logs --tail 80 || true
+          sudo journalctl -u deployer -n 80 --no-pager || true
+          sudo sh -c 'tail -n 80 /opt/deployer/logs/*.log' || true
+      - name: Uninstall leaves nothing behind
+        run: |
+          set -eux
+          sudo deployer uninstall --yes
+          test ! -e /opt/deployer
+          test ! -e /usr/local/bin/deployer
+          test ! -e /etc/systemd/system/deployer.service
+          test -z "$(docker ps -aq --filter label=com.docker.compose.project=deployer)"
+          test -z "$(docker volume ls -q --filter label=com.docker.compose.project=deployer)"

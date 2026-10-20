@@ -29,23 +29,30 @@ owner's own AWS / Firebase accounts so they stay up when the PC is off.
 
 Work finished in the last stretch, newest first:
 
-1. **Keep-alive hardening** (after a real outage on 2026-10-05/06, below): the sign-in task's loop
+1. **Linux support, headless servers included** ([SETUP.md](SETUP.md)): `installer/install.sh`
+   (curl | sudo bash bootstrap) and `installer/deployer.sh` (the Linux `deployer` command, same
+   commands as on Windows plus `guide`, `actions` and `lan on <ip>`; most commands end with a *Next:*
+   block). Docker Engine comes from `download.docker.com` on Debian/Ubuntu (`setup-engine.sh --host`),
+   autostart is the systemd unit `deployer.service`, files live in `/opt/deployer`. CI job
+   `linux-installer` installs it on ubuntu-latest and runs every everyday command, MCP calls,
+   backup/restore, a self-replacing update and an uninstall. Audited by Fable 5.1.
+2. **Keep-alive hardening** (after a real outage on 2026-10-05/06, below): the sign-in task's loop
    retries a failed start or a failed `wsl.exe` launch (15 s, doubling up to 5 minutes) instead of
    exiting, starts the keep-alive before the containers, and the task repeats every 5 minutes as a
    watchdog. On the owner's PC this becomes active at the next sign-in (see the table above).
-2. **Cloud phases C1-C3** ([CLOUD.md](CLOUD.md)): hosting on AWS (S3 + CloudFront, App Runner) and
+3. **Cloud phases C1-C3** ([CLOUD.md](CLOUD.md)): hosting on AWS (S3 + CloudFront, App Runner) and
    Firebase (Hosting, Cloud Run); cloud databases (RDS / Aurora, DynamoDB, Firestore, Realtime
    Database) with backups, point-in-time recovery and restores; GitHub Actions builds with OIDC so
    pushes deploy with the PC off; app secrets in Secrets Manager / Secret Manager (opt-in); an IAM
    permissions boundary on every role Deployer creates; the Deployer AWS policy split into
    `DeployerHosting`, `DeployerDatabases` and `DeployerRoles`; an optional NAT gateway for App Runner
    apps linked to RDS. Every billable action is off by default and needs `confirm_billing`.
-3. **Fable 5.1 vetting pass** over everything shipped after the audit. Its confirmed findings were
+4. **Fable 5.1 vetting pass** over everything shipped after the audit. Its confirmed findings were
    fixed in the commits named `Fix V-01`, `Fix V-02` and `Fix V-04` to `Fix V-07` (V-03, MCP cloud
    tools skipping their routes' admin rule, was fixed in `8377c26`), and its smaller notes in
    `Fix L-01` to `Fix L-09` (several bundle more than one fix), each with `Follow-up` / `Audit fix`
    commits. There is no written vetting report in the repo; the commit messages are the record.
-4. **Full codebase audit** ([AUDIT_REPORT.md](AUDIT_REPORT.md)): 198 findings, all ticked. The few
+5. **Full codebase audit** ([AUDIT_REPORT.md](AUDIT_REPORT.md)): 198 findings, all ticked. The few
    that were only partly fixed, and the follow-ups that closed them, are noted under each item.
 
 Every change in those passes was built in its own git worktree, independently audited by a second

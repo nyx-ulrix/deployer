@@ -719,7 +719,7 @@ def listen_hint(app: App, port: int) -> str:
 # BuildKit reports a step killed by the kernel's OOM killer as "exit code: 137"; `docker run` as "exit 137".
 _OOM = re.compile(r"exit(?: code:?)? 137\b")
 _OOM_HINT = (
-    "Out of memory (exit code 137). WSL2 gives Deployer only about half of this PC's RAM: "
+    "Out of memory (exit code 137). On Windows, WSL2 gives Deployer only about half of this PC's RAM: "
     "stop other apps or projects, or add RAM (8 GB is recommended)."
 )
 

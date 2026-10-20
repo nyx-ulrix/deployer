@@ -44,7 +44,12 @@ Other clients take a JSON config such as this one (the file and the exact keys v
 ```
 
 An agent on another machine needs to reach the instance: see "Reaching Deployer from other devices"
-in the README (LAN access, or a Cloudflare hostname for the internet).
+in the README (LAN access, or a Cloudflare hostname for the internet). On a headless Linux server the
+agent can run on the server itself, or on your computer through an SSH tunnel
+(`ssh -L 8080:localhost:8080 <user>@<server>`): with the default `http://localhost:8080` public URL the
+snippets above then work unchanged on your computer. CI checks the MCP server on a fresh Linux install
+(`initialize`, `tools/list`, and `run_query` on managed MariaDB and MongoDB: `.github/workflows/ci.yml`,
+job `linux-installer`).
 
 ## Tools
 

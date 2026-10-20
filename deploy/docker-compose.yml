@@ -1,6 +1,6 @@
 # Deployer - production stack.
 #
-# Normally started by the Windows installer / `deployer` CLI, which writes `.env` next to this file
+# Normally started by the installer / `deployer` CLI (Windows or Linux), which writes `.env` next to this file
 # with locally generated secrets. For development: copy `.env.example` to `.env`, then
 #   docker compose -f deploy/docker-compose.yml up --build
 #
@@ -94,7 +94,8 @@ services:
     # install is run by the previous `deployer` script, which knows neither, so without the key
     # MongoDB stays on 5.0 (still able to open its data) until the next `deployer update`. A new
     # major also needs a `mongodb-upgrade-<major>` step below (MongoDB opens data only from its own
-    # or the previous major) and the new image in Update-DeployerMongo / Initialize-DeployerEnv.
+    # or the previous major) and the new image in Update-DeployerMongo / Initialize-DeployerEnv (and
+    # update_mongo / init_env in installer/deployer.sh, the Linux CLI).
     image: ${MONGODB_IMAGE:-mongo:5.0}
     profiles: ["mongodb"]
     restart: unless-stopped

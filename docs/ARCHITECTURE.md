@@ -51,7 +51,7 @@ Browser / phone / AI agent
 | `api/` | FastAPI control plane (`app/`), Alembic migrations, tests, Dockerfile |
 | `dashboard/` | React + TypeScript + Vite SPA, Dockerfile (nginx) |
 | `deploy/` | `docker-compose.yml`, `docker-compose.dev.yml` (API hot reload for checkouts), `Caddyfile`, `.env.example`, `mongodb/` (replica-set entrypoint), `tunnel/` (cloudflared sidecar image) |
-| `installer/` | `install.ps1` (Windows bootstrap), `deployer.ps1` (manage CLI), WSL engine scripts, `windows/` (`DeployerSetup.exe`: setup wizard + Deployer Control, C# WinForms on .NET Framework 4.8) |
+| `installer/` | `install.ps1` (Windows bootstrap), `deployer.ps1` (manage CLI), `install.sh` + `deployer.sh` (Linux bootstrap and manage CLI, docs/SETUP.md), WSL engine scripts (`setup-engine.sh --host` also installs Docker on Debian/Ubuntu servers), `windows/` (`DeployerSetup.exe`: setup wizard + Deployer Control, C# WinForms on .NET Framework 4.8) |
 | `docs/` | This file and the other specs: see the [documentation index](../README.md#documentation) |
 
 ## Diagrams

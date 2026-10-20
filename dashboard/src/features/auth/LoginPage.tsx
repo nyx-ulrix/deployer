@@ -91,7 +91,8 @@ export function LoginPage() {
           <summary className="cursor-pointer font-medium text-accent hover:underline">Forgot your password?</summary>
           <p className="mt-2 text-left">
             On the PC that runs Deployer, open <strong>Deployer Control</strong> &gt; <strong>Settings</strong> &gt;{" "}
-            <strong>Reset a password</strong>, or run <code>deployer reset-password</code> in PowerShell. Without an
+            <strong>Reset a password</strong>, or run <code>deployer reset-password</code> in PowerShell (on a Linux server:{" "}
+            <code>sudo deployer reset-password</code>). Without an
             email it resets the owner account. Members can ask the owner to reset theirs.
           </p>
         </details>

@@ -37,7 +37,7 @@ export function SetupGate() {
           <p className="max-w-sm text-center text-sm text-muted">
             This page reconnects on its own, usually within a minute or two after the PC starts. If it
             doesn't, open <strong>Deployer Control</strong> from the Start menu to check its status or
-            restart it.
+            restart it (on a Linux server: <code>sudo deployer status</code>).
           </p>
         </div>
       </FullPage>

@@ -4,7 +4,7 @@ Every outside platform, service or tool that Deployer needs or can use: what it 
 required (and for whom), where its console is, what to create there, where Deployer keeps the result,
 and what it costs. Three kinds of reader:
 
-- **Running an install**: someone who installs Deployer on their own PC. Only the Windows PC is required;
+- **Running an install**: someone who installs Deployer on their own PC. Only the computer (a Windows PC, or a Linux server) is required;
   everything else is optional and uses *their own* accounts (Deployer ships with no keys, apps or
   accounts from its authors: [ARCHITECTURE.md](ARCHITECTURE.md) "Guiding rules").
 - **Developing**: someone changing the code in this repository ("For developers" at the end).
@@ -15,7 +15,8 @@ and what it costs. Three kinds of reader:
 
 | Platform | Used for | Required? |
 |---|---|---|
-| [Windows PC](#the-windows-pc) (Windows 10 2004+ / 11, WSL 2, Docker Engine, PowerShell 5.1) | Runs everything | **Required** for every install |
+| [Windows PC](#the-windows-pc) (Windows 10 2004+ / 11, WSL 2, Docker Engine, PowerShell 5.1) | Runs everything | **Required** for every install, unless it runs on a Linux server |
+| [Linux server](#a-linux-server-instead-of-the-windows-pc) (x86_64, systemd, Docker Engine + Compose 2.20+) | Runs everything instead of a Windows PC, headless included | Optional alternative |
 | [GitHub](#github) | Source code, CI and releases; optional sign-in; push-to-deploy; cloud builds | Required for developing; optional for an install |
 | [Cloudflare](#cloudflare) | Reaching Deployer and its apps from the internet on your own domain | Optional (quick tunnel needs no account) |
 | [Google Cloud: sign-in client](#google-cloud-sign-in-with-google) | "Sign in with Google" | Optional |
@@ -153,8 +154,31 @@ reads files without a byte-order mark as ANSI.
 `logs\`, `backups\`, `wsl\`). **Cost:** free; your electricity and internet.
 
 **Other PCs (optional).** Host devices ([DEVICES.md](DEVICES.md)) and co-host PCs
-([COHOSTING.md](COHOSTING.md)) are more Windows PCs running Deployer, with the same requirements. They
-connect outbound to the main Deployer's public URL.
+([COHOSTING.md](COHOSTING.md)) are more computers running Deployer (Windows PCs, or Linux servers as
+below), with the same requirements. They connect outbound to the main Deployer's public URL.
+
+## A Linux server (instead of the Windows PC)
+
+**Optional alternative to the Windows PC**, headless servers included. Same containers, same
+`docker-compose.yml`; only the installer and the `deployer` command differ (`installer/install.sh`,
+`installer/deployer.sh`). Walkthrough: [SETUP.md](SETUP.md).
+
+| Item | What Deployer needs | Checked by |
+|---|---|---|
+| Linux | Any distribution with systemd (for start at boot; without it Docker's restart policy still brings the containers back when Docker starts) | `deployer.sh install` |
+| CPU | x86_64 only (the images are amd64); AVX for managed MongoDB 8.0, as on Windows | `deployer.sh install` refuses other architectures, turns MongoDB off without AVX |
+| Docker | Docker Engine with the Compose v2 plugin, 2.20 or newer (`depends_on.required`), and buildx for local builds. On Debian, Ubuntu and Ubuntu-based distributions the installer adds Docker's apt repository (`download.docker.com`) and installs `docker-ce` with `installer/wsl/setup-engine.sh --host` (asks first; never upgrades the server's other packages) | `deployer.sh install` |
+| Memory / disk | 4 GB RAM (8 GB recommended; no WSL halving), 10 GB free under `/var/lib` | warns |
+| Ports | 8080 (or `--port`) and 8100-8199 free; bound to `127.0.0.1` until `deployer lan on [ip]` | `ss` in `deployer.sh install` |
+| Root | `sudo`: Docker's socket and `.env` are root-only | the CLI re-runs itself with sudo |
+
+**Reaching a headless server:** an SSH tunnel (`ssh -L 8080:localhost:8080 you@server`) for the setup
+wizard; for everyone else the Cloudflare tunnel below (no open ports), or `deployer lan on` (Docker
+publishes ports past ufw/firewalld, so on a public IP prefer the tunnel or `lan on <LAN IP>`).
+
+**Where Deployer keeps its state:** `/opt/deployer` (`.env` with `MASTER_KEY`, `DEPLOYER_REPO` /
+`DEPLOYER_REF` in it instead of `runtime.json`, `logs/`, `backups/`), Docker volumes under
+`/var/lib/docker`, `/etc/systemd/system/deployer.service`, `/usr/local/bin/deployer`. **Cost:** free.
 
 ## GitHub
 

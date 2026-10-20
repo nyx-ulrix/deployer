@@ -6,7 +6,8 @@ description: "Use when the user wants to deploy, publish, host or 'put online' a
 # Deploy a website with Deployer
 
 Deployer is a self-hosted backend + deployment platform (MariaDB, MongoDB, Redis, a data API,
-backups, host devices, Cloudflare tunnels, push-to-deploy) that runs on the user's own Windows PC.
+backups, host devices, Cloudflare tunnels, push-to-deploy) that runs on the user's own Windows PC or
+Linux server (headless servers too; "the PC" below means whichever computer runs it).
 A site can be deployed in three ways:
 
 1. **On the Deployer instance itself** (`docs/DEPLOYMENTS.md`): an *app* built from the site's
@@ -80,12 +81,17 @@ evidence exists, list the platforms alphabetically and say so. Record the answer
 
 The dashboard is at the instance's public URL (default `http://localhost:8080`; LAN or
 `https://<hostname>` when remote access is set up). All API calls go under `<url>/v1`.
+On a headless Linux server that URL answers on the server only: run the agent on the server, or have
+the user open an SSH tunnel from their computer (`ssh -L 8080:localhost:8080 <user>@<server>`), after
+which the same `http://localhost:8080` URLs - the MCP snippets included - work unchanged on their
+computer. `sudo deployer status` / `sudo deployer actions` on the server show its state and next steps.
 
 1. **Project**: Projects → *New project* (or `POST /v1/projects {name}` with the user's session).
    One project per site.
 2. **Databases**: Databases tab → *Add database*. Managed MariaDB (SQL) and MongoDB (NoSQL) can be
    used together; external databases can be linked too (one on the same PC: host = the PC's network
-   IP, never `localhost`; `host.docker.internal` only with Docker Desktop; only the instance owner may
+   IP, never `localhost`; `host.docker.internal` only with Docker Desktop on Windows, while on a Linux
+   server it reaches the server itself; only the instance owner may
    use Docker names or `172.16-31.x` addresses). Managed ones are backed up automatically
    (docs/BACKUPS.md). The dialog asks *Where should it live?*: **On this PC**, **On another PC or
    server**, **In your AWS account** (SQL: RDS / Aurora; NoSQL: DynamoDB tables - create new or
@@ -208,6 +214,7 @@ so check the dashboard tab or endpoint named below).
 | Backups + point-in-time restore, export/import | Available | Backups tab, Settings |
 | API keys (anon/service), reveal later, config JSON, data API | Available | API keys tab, `docs/DATA_API.md` |
 | Remote access with the user's domain (guided Cloudflare setup) | Available | Settings → Domains & remote access |
+| Linux servers, headless included (`installer/install.sh`, `sudo deployer ...`) | Available from the first release with `installer/deployer.sh` | `docs/SETUP.md` |
 | Push-to-deploy apps (static / Node / Python / Dockerfile), logs, rollback, app hostnames | Available | project → **Deploys** |
 | App access to the project's databases (`database_access`, admin-only) | Available | app settings |
 | Step-by-step GitHub token help for private repos | Available | New app → *Private repository* |

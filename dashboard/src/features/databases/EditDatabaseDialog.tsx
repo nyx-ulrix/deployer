@@ -139,7 +139,7 @@ export function EditDatabaseDialog({
               hint={
                 fixedHost
                   ? "Deployer created this database in your AWS account, so it stays there."
-                  : "On this PC? Use its network IP (ipconfig), not localhost."
+                  : "On this PC? Use its network IP (ipconfig, or ip addr on Linux), not localhost."
               }
             >
               {(id) => (

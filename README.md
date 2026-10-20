@@ -1,8 +1,12 @@
 # Deployer
 
 **Deployer is an open-source, self-hosted backend and deployment platform - think Supabase + Vercel -
-that runs on an ordinary (even old) Windows PC.** Install it with one command, open the setup wizard,
-and you get a dashboard where you and your collaborators manage projects with SQL and NoSQL databases.
+that runs on an ordinary (even old) Windows PC or Linux server, headless ones included.** Install it
+with one command, open the setup wizard, and you get a dashboard where you and your collaborators
+manage projects with SQL and NoSQL databases - from any device's browser once you add your own domain.
+
+**New here? Follow [docs/SETUP.md](docs/SETUP.md)** - install on Windows or Linux, create the owner
+account, open it from any device with your Cloudflare domain, invite people, deploy an app.
 
 Every installation is fully independent. Deployer ships with **no** API keys, OAuth apps or accounts
 from its authors: every password and key is generated on your computer during installation, and
@@ -64,7 +68,9 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
   rate on *Settings → Monitoring*; alerts for low disk, crash-looping containers, failed backups, a
   down tunnel and more, sent to your own webhook (Slack, Discord, ntfy)
   ([docs/MONITORING.md](docs/MONITORING.md)).
-- **Runs anywhere Windows does** - Docker Engine in WSL2 by default, sized for 4 GB RAM machines.
+- **Windows or Linux** - on Windows, Docker Engine in WSL2 by default; on a Linux server (headless is
+  fine) straight on Docker with a systemd service and the same `deployer` command. Sized for 4 GB RAM
+  machines ([docs/SETUP.md](docs/SETUP.md)).
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/API.md](docs/API.md) for details.
 
@@ -101,7 +107,7 @@ flowchart LR
     Hosts["Other host PCs"] -->|"co-hosting, via the tunnel or LAN"| caddy
 ```
 
-Everything runs as Docker containers inside WSL on the owner's PC (a dedicated distro with Docker Engine by default): Caddy is the single front door, the dashboard and API sit behind it, and the worker builds and runs deployed apps and background jobs. People on the PC reach it on port 8080 (the LAN too, once the owner opens it there); the internet reaches it only through an optional Cloudflare tunnel, under the owner's own domain or a temporary quick-tunnel address for testing. Outside services are all the owner's own accounts (GitHub, Google, AWS, Firebase) and, for co-hosting, other PCs that connect out to this one - the full picture, network by network, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Everything runs as Docker containers inside WSL on the owner's PC (a dedicated distro with Docker Engine by default), or straight on a Linux server's Docker Engine: Caddy is the single front door, the dashboard and API sit behind it, and the worker builds and runs deployed apps and background jobs. People on the PC reach it on port 8080 (the LAN too, once the owner opens it there); the internet reaches it only through an optional Cloudflare tunnel, under the owner's own domain or a temporary quick-tunnel address for testing. Outside services are all the owner's own accounts (GitHub, Google, AWS, Firebase) and, for co-hosting, other PCs that connect out to this one - the full picture, network by network, is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Documentation
 
@@ -109,6 +115,7 @@ The full index of the specs in `docs/` (ARCHITECTURE and CONTRIBUTING link here 
 
 | Document | What it covers |
 |---|---|
+| [SETUP.md](docs/SETUP.md) | Step-by-step setup on Windows or Linux (headless too), opening it from any device with your own domain, the `deployer` command |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Services, repository layout, platform data model |
 | [API.md](docs/API.md) | The HTTP API contract used by the dashboard, webhooks and AI agents |
 | [CONVENTIONS.md](docs/CONVENTIONS.md) | Database schema planning conventions |
@@ -134,9 +141,10 @@ The full index of the specs in `docs/` (ARCHITECTURE and CONTRIBUTING link here 
 | | |
 |---|---|
 | Windows | 64-bit Windows 10 version 2004 (build 19041) or newer, or Windows 11 |
-| CPU | Intel or AMD 64-bit (ARM PCs are not supported yet) with hardware virtualization enabled in BIOS/UEFI (Intel VT-x / AMD SVM) |
-| Memory | 4 GB RAM minimum, 8 GB recommended. WSL2 gives Deployer about half the PC's RAM, so a 4 GB PC has about 2 GB: expect 1-2 small apps. |
-| Disk | 10 GB free |
+| Linux (instead) | Any x86_64 distribution with systemd. Debian and Ubuntu get Docker Engine installed for you; others need Docker Engine with Compose 2.20 or newer. Headless servers are fine. |
+| CPU | Intel or AMD 64-bit (ARM computers are not supported yet) with hardware virtualization enabled in BIOS/UEFI on Windows (Intel VT-x / AMD SVM) |
+| Memory | 4 GB RAM minimum, 8 GB recommended. WSL2 gives Deployer about half the PC's RAM, so a 4 GB Windows PC has about 2 GB: expect 1-2 small apps. On Linux all of it is available. |
+| Disk | 10 GB free (Linux: under `/var/lib`, where Docker keeps images and databases) |
 | MongoDB | Managed MongoDB 8.0 needs a CPU with **AVX** (most CPUs since ~2011). Without AVX the installer turns managed MongoDB off; projects can still use an external MongoDB such as a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster. |
 
 ## Install
@@ -194,6 +202,43 @@ With options (all optional):
 
 If Windows must restart to finish enabling WSL, the installer resumes automatically after you sign in.
 Running it again later upgrades an existing installation and keeps your `.env` and data.
+
+### Install on Linux (headless servers too)
+
+Over SSH, on the server:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nyx-ulrix/deployer/main/installer/install.sh | sudo bash
+```
+
+It checks the server, installs Docker Engine from `download.docker.com` when it is missing (Debian and
+Ubuntu; it asks first), installs the latest release into `/opt/deployer` with secrets generated on the
+server, starts it, and registers `deployer.service` so it starts at boot and stops cleanly at shutdown.
+It then prints the SSH command that opens the setup wizard from your own computer, because Deployer
+answers on the server only (`127.0.0.1:8080`) until you choose otherwise:
+
+```bash
+ssh -L 8080:localhost:8080 you@your-server
+```
+
+then `http://localhost:8080/setup` on your computer. To open it from any device, add your own domain
+under *Settings → Domains & remote access* (Cloudflare tunnel: no open ports, HTTPS). Options go after
+`bash -s --`, e.g. `| sudo bash -s -- --port 8090 --yes`:
+
+| Option | Meaning |
+|---|---|
+| `--port 8090` | Dashboard port (not 8100-8199) |
+| `--lan` | Let other devices connect directly (every interface; Docker bypasses ufw/firewalld) |
+| `--no-autostart` | No systemd service |
+| `--prevent-sleep` | Never suspend (laptops with the lid closed) |
+| `--from-source` | Build the images on the server |
+| `--yes` | No questions |
+| `--ref <tag>` / `--repo owner/name` | A specific release or branch / a fork |
+| `--source-dir <dir>` / `--install-dir <dir>` | Install from a local checkout / somewhere else than `/opt/deployer` |
+
+Running it again upgrades the install and keeps `.env` and the data. Afterwards `sudo deployer guide`
+walks through the first steps and `sudo deployer actions` lists what is left to do on this server. The
+full walkthrough is [docs/SETUP.md](docs/SETUP.md).
 
 ### Container runtime choices
 
@@ -383,7 +428,13 @@ to the clock (right-click it for actions) and tells you if Deployer stops unexpe
 
 ## The `deployer` command
 
-Open a new terminal after installing:
+Open a new terminal after installing. On Linux the same commands are `sudo deployer <command>` (it
+runs itself with sudo when you forget), flags are spelled `--yes`, `--follow`, `--ref`, `--keep-data`
+(the Windows spelling below works too), and three more help you along: `deployer guide` (first steps
+on a new server, with its port and SSH command filled in), `deployer actions` (a numbered list of what
+to do next, checked against the live install) and `deployer lan on <ip>` (listen on one address).
+Most commands end with a **Next:** block naming the command to run next. Linux specifics are in
+[docs/SETUP.md](docs/SETUP.md#8-the-deployer-command).
 
 | Command | What it does |
 |---|---|
@@ -434,10 +485,20 @@ install gets this at the next sign-in after updating, or when you re-run the ins
 stored in the database and the encrypted backup versions. To restore the daily platform snapshot
 (users, projects, settings), see [docs/BACKUPS.md](docs/BACKUPS.md#restoring-platform-data).
 
+On Linux, files live in `/opt/deployer` (the same layout without `runtime.json` and `wsl\`; `.env` is
+root-only `0600`, `backups/` and `logs/` `0700`), the databases in Docker volumes under
+`/var/lib/docker`, autostart is the systemd unit `/etc/systemd/system/deployer.service` (starts the
+stack at boot, stops it cleanly at shutdown; `systemctl status deployer`), and the command is
+`/usr/local/bin/deployer`. `deployer stop` keeps it stopped until `deployer start` or the next boot.
+
 ## Troubleshooting
+
+Linux servers: see [docs/SETUP.md "Troubleshooting"](docs/SETUP.md#9-troubleshooting), and run
+`sudo deployer actions`.
 
 | Problem | What to do |
 |---|---|
+| `https://<your domain>` shows Cloudflare *error 1033* / *530* | The tunnel is not connected: Deployer is stopped, or the PC is off, asleep or signed out. Start it (*Deployer Control → Start*, or `deployer start`), then check `deployer logs tunnel`. |
 | *"Windows protected your PC"* when opening `DeployerSetup.exe` | The exe isn't code-signed yet. Click **More info → Run anyway**, or install with PowerShell instead. |
 | *Setup is running as another account, not as you* | Your account isn't an administrator, so Windows ran setup as the account whose password you typed, and Deployer would be installed (and only run) for that account. Cancel, make your account an administrator (*Settings → Accounts → Other users*) and run setup again, or sign in as the administrator and install there. |
 | *Virtualization is turned off* | Restart, open the BIOS/UEFI setup (usually F2, F10, Del or Esc while the PC starts), enable *Intel Virtualization Technology* (VT-x) or *SVM Mode* (AMD), save and run setup again. |

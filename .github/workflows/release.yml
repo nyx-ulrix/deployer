@@ -149,6 +149,9 @@ jobs:
           zip -r dist/deployer-deploy.zip deploy installer -x 'deploy/.env' -x 'installer/windows/obj/*' -x 'installer/windows/bin/*'
           unzip -l dist/deployer-deploy.zip | grep -q 'deploy/tunnel/Dockerfile'
           (cd dist && sha256sum deployer-deploy.zip > deployer-deploy.zip.sha256)
+          # The Linux installer: downloads this release's source and runs installer/deployer.sh install.
+          cp installer/install.sh dist/install.sh
+          (cd dist && sha256sum install.sh > install.sh.sha256)
 
       - uses: actions/download-artifact@v4
         with:
@@ -162,6 +165,8 @@ jobs:
             dist/DeployerSetup.exe.sha256
             dist/deployer-deploy.zip
             dist/deployer-deploy.zip.sha256
+            dist/install.sh
+            dist/install.sh.sha256
           generate_release_notes: true
           # Keeps an RC out of releases/latest, which the installer resolves when no -Ref is given (A-190).
           prerelease: ${{ contains(github.ref_name, '-') }}
@@ -177,6 +182,17 @@ jobs:
             ```powershell
             & ([scriptblock]::Create((irm https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/installer/install.ps1))) -Repo ${{ github.repository }} -Ref ${{ github.ref_name }}
             ```
+
+            ## Install on Linux (headless servers too)
+
+            Debian, Ubuntu (Docker Engine is installed for you) or any x86_64 distribution with Docker + Compose 2.20+:
+
+            ```bash
+            curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/installer/install.sh | sudo bash -s -- --repo ${{ github.repository }} --ref ${{ github.ref_name }}
+            ```
+
+            Or download **install.sh** below (checksum: `install.sh.sha256`) and run `sudo bash install.sh`. Then `sudo deployer guide`.
+            Setup guide: [docs/SETUP.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/SETUP.md).
 
             Images: `ghcr.io/${{ github.repository_owner }}/deployer-api`, `deployer-dashboard` and `deployer-tunnel`, tagged with this version (without the leading `v`), and `latest` unless this is a pre-release. An install from a release pins its version in `.env` (`DEPLOYER_VERSION`).
             Existing installs: `deployer update -Ref ${{ github.ref_name }}`.
