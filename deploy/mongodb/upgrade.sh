@@ -14,16 +14,26 @@ set -euo pipefail
 
 db=/data/db
 marker="$db/deployer-fcv"
-target="$(mongod --version | sed -n 's/^db version v\([0-9]*\)\..*/\1.0/p')"
-if [ -z "$target" ]; then
-    echo "deployer: could not read the mongod version" >&2
-    exit 1
-fi
 if [ ! -e "$db/WiredTiger" ]; then
     echo "deployer: no MongoDB data yet; nothing to upgrade"
     exit 0
 fi
-current="$(tr -d '\r\n' < "$marker" 2>/dev/null || true)"
+# The official images name their major (ENV MONGO_MAJOR, e.g. 8.0), so no mongod has to start just to
+# read it: `mongod --version` sometimes exits 1 on CI runners, and under pipefail it did so silently
+# (its stdout went into sed). It stays the fallback, with its output shown when it fails.
+target="${MONGO_MAJOR:-}"
+if [ -z "$target" ]; then
+    if ! version_out="$(mongod --version 2>&1)"; then
+        printf 'deployer: mongod --version failed:\n%s\n' "$version_out" >&2
+        exit 1
+    fi
+    target="$(sed -n 's/^db version v\([0-9]*\)\..*/\1.0/p' <<<"$version_out")"
+fi
+if [ -z "$target" ]; then
+    echo "deployer: could not read the mongod version" >&2
+    exit 1
+fi
+current="$(tr -d '\r\n' 2>/dev/null < "$marker" || true)"
 current="${current:-5.0}"
 if [ "${current%%.*}" -ge "${target%%.*}" ]; then
     echo "deployer: MongoDB data is already at $current"
