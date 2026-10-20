@@ -27,7 +27,17 @@ chmod 0400 "$keyfile"
 # Feature-compatibility marker for deploy/mongodb/upgrade.sh (A-143): a new volume starts at this
 # image's version. Data without the marker is from MongoDB 5.0 and needs `deployer update` first.
 if [ ! -e /data/db/WiredTiger ]; then
-    mongod --version | sed -n 's/^db version v\([0-9]*\)\..*/\1.0/p' > /data/db/deployer-fcv
+    # The official images name their major (ENV MONGO_MAJOR, e.g. 8.0). `mongod --version` is only the
+    # fallback: it sometimes exits 1, which under pipefail ended this script with no message at all.
+    fcv="${MONGO_MAJOR:-}"
+    if [ -z "$fcv" ]; then
+        if ! version_out="$(mongod --version 2>&1)"; then
+            printf 'deployer: mongod --version failed:\n%s\n' "$version_out" >&2
+            exit 1
+        fi
+        fcv="$(sed -n 's/^db version v\([0-9]*\)\..*/\1.0/p' <<<"$version_out")"
+    fi
+    printf '%s\n' "$fcv" > /data/db/deployer-fcv
     chown mongodb:mongodb /data/db/deployer-fcv
 elif [ ! -e /data/db/deployer-fcv ]; then
     echo "deployer: this MongoDB data is from MongoDB 5.0; run 'deployer update' to upgrade it (docs/BACKUPS.md)" >&2
