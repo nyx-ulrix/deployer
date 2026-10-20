@@ -25,7 +25,7 @@ browser.
 | CPU | Intel/AMD 64-bit (no ARM) | Intel/AMD 64-bit (no ARM, e.g. no Raspberry Pi) |
 | Memory | 4 GB minimum, 8 GB recommended (WSL 2 gets about half) | 4 GB minimum, 8 GB recommended (all of it is available) |
 | Disk | 10 GB free | 10 GB free under `/var/lib` (Docker keeps images and databases there) |
-| MongoDB | Managed MongoDB 8.0 needs AVX; without it, use an external MongoDB such as Atlas | same |
+| MongoDB | Managed MongoDB 8.0 needs AVX; without it, use an external MongoDB such as Atlas | same, and a kernel MongoDB 8 starts on: not 6.19 to 7.0.13 ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912), e.g. Ubuntu 26.04's 7.0 kernel). The installer checks and turns managed MongoDB off otherwise |
 | Runs | while the installing account is signed in | from boot, as a systemd service |
 | Managed with | Deployer Control (tray app) or `deployer` in PowerShell | `sudo deployer ...` over SSH |
 
@@ -214,4 +214,5 @@ them.
 | Linux: the dashboard does not open from my laptop | Deployer answers on the server only: use the SSH tunnel from step 3, the Cloudflare domain from step 4, or `sudo deployer lan on`. |
 | Linux: it does not come back after a reboot | `systemctl status deployer`; `sudo deployer autostart on`. |
 | Forgot the owner password | `deployer reset-password` on the Deployer computer. |
+| Linux: *Managed MongoDB is turned off: MongoDB 8 cannot start here* | MongoDB 8 refuses Linux kernels 6.19 to 7.0.13 ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)). Everything else works; use an external MongoDB (e.g. Atlas) meanwhile. After a kernel update to 7.0.14 or newer and a reboot, `sudo deployer update` turns managed MongoDB back on (its data stays in the Docker volume). |
 | Anything else | `deployer actions` and `deployer status`, then the [README troubleshooting table](../README.md#troubleshooting). |

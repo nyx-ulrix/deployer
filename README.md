@@ -145,7 +145,7 @@ The full index of the specs in `docs/` (ARCHITECTURE and CONTRIBUTING link here 
 | CPU | Intel or AMD 64-bit (ARM computers are not supported yet) with hardware virtualization enabled in BIOS/UEFI on Windows (Intel VT-x / AMD SVM) |
 | Memory | 4 GB RAM minimum, 8 GB recommended. WSL2 gives Deployer about half the PC's RAM, so a 4 GB Windows PC has about 2 GB: expect 1-2 small apps. On Linux all of it is available. |
 | Disk | 10 GB free (Linux: under `/var/lib`, where Docker keeps images and databases) |
-| MongoDB | Managed MongoDB 8.0 needs a CPU with **AVX** (most CPUs since ~2011). Without AVX the installer turns managed MongoDB off; projects can still use an external MongoDB such as a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster. |
+| MongoDB | Managed MongoDB 8.0 needs a CPU with **AVX** (most CPUs since ~2011). Without AVX the installer turns managed MongoDB off; projects can still use an external MongoDB such as a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster. On Linux, MongoDB 8 also refuses kernels 6.19 to 7.0.13 ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912); e.g. Ubuntu 26.04's 7.0 kernel): the installer checks and turns it off there too, and `deployer update` turns it back on once the kernel is 7.0.14 or newer. |
 
 ## Install
 

@@ -167,6 +167,7 @@ below), with the same requirements. They connect outbound to the main Deployer's
 |---|---|---|
 | Linux | Any distribution with systemd (for start at boot; without it Docker's restart policy still brings the containers back when Docker starts) | `deployer.sh install` |
 | CPU | x86_64 only (the images are amd64); AVX for managed MongoDB 8.0, as on Windows | `deployer.sh install` refuses other architectures, turns MongoDB off without AVX |
+| Kernel | For managed MongoDB 8: not 6.19 to 7.0.13, which MongoDB refuses ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912); Ubuntu 26.04's 7.0 kernel, GitHub's `ubuntu-24.04` runners since 2026-10-18) | `deployer.sh install` / `update` run `mongod --version` in the real image and turn MongoDB off with MongoDB's reason; CI runs the MongoDB jobs on `ubuntu-22.04` |
 | Docker | Docker Engine with the Compose v2 plugin, 2.20 or newer (`depends_on.required`), and buildx for local builds. On Debian, Ubuntu and Ubuntu-based distributions the installer adds Docker's apt repository (`download.docker.com`) and installs `docker-ce` with `installer/wsl/setup-engine.sh --host` (asks first; never upgrades the server's other packages) | `deployer.sh install` |
 | Memory / disk | 4 GB RAM (8 GB recommended; no WSL halving), 10 GB free under `/var/lib` | warns |
 | Ports | 8080 (or `--port`) and 8100-8199 free; bound to `127.0.0.1` until `deployer lan on [ip]` | `ss` in `deployer.sh install` |

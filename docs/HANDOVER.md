@@ -178,6 +178,12 @@ The owner prefers commit messages without attribution or co-author lines.
 
 ### Known limits (documented, not bugs)
 
+- MongoDB 8 refuses to start on Linux kernels 6.19 to 7.0.13
+  ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)), and `mongod --version` exits 1 there
+  too. GitHub's `ubuntu-24.04` runners boot 7.0.0 since image 20261018, so the MongoDB CI jobs run on
+  `ubuntu-22.04` (move them back once runners have 7.0.14+); the Linux installer turns managed MongoDB
+  off on such kernels with MongoDB's reason. The WSL 2 kernel (6.6) is not affected; a future WSL or
+  Docker Desktop kernel in that range would need the same check in `install.ps1`.
 - App Runner rejects some availability zones and AWS publishes no list of them; a deploy into such a
   zone fails with App Runner's own error naming the zone.
 - The NAT gateway's reference count is not a lock: a deploy that lands while the last user's NAT

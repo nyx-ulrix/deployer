@@ -68,7 +68,9 @@ jobs:
   # deploy/docker-compose.yml) and MongoDB 8.0 (replica set rs0, the real deploy/mongodb wrapper).
   integration:
     name: API image + integration tests (MariaDB, MongoDB, Docker)
-    runs-on: ubuntu-latest
+    # ubuntu-22.04 (kernel 6.8): MongoDB 8 refuses Linux kernels 6.19 to 7.0.13 (SERVER-121912), and
+    # ubuntu-latest images from 2026-10-18 boot 7.0.0. Move back once runners have 7.0.14 or newer.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -272,7 +274,8 @@ jobs:
 
   compose:
     name: Compose file
-    runs-on: ubuntu-latest
+    # ubuntu-22.04: the MongoDB upgrade path needs a kernel MongoDB 8 starts on (see integration).
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - name: Validate with MongoDB profile
@@ -344,8 +347,14 @@ jobs:
   # VM with systemd: install from this checkout, every everyday command, the self-replacing update,
   # backup + restore, and an uninstall that leaves nothing behind.
   linux-installer:
-    name: Linux installer (install, CLI, update, uninstall)
-    runs-on: ubuntu-latest
+    # 22.04 (kernel 6.8) installs with managed MongoDB; ubuntu-latest (kernel 7.0.0, which MongoDB 8 refuses)
+    # checks that the installer turns it off with a reason and that everything else still works.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-latest]
+    name: Linux installer on ${{ matrix.os }} (install, CLI, update, uninstall)
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
       NO_COLOR: "1"
@@ -367,6 +376,14 @@ jobs:
           sudo grep -q '^DEPLOYER_BIND=127.0.0.1$' /opt/deployer/.env
           sudo grep -q '^MONGODB_IMAGE=mongo:8.0$' /opt/deployer/.env
           curl -fsS http://127.0.0.1:8080/v1/health | grep -q '"status":"ok"'
+          # Managed MongoDB is on only where MongoDB 8 starts (kernel 6.8 on 22.04: it must be on there).
+          if sudo grep -q '^MANAGED_MONGODB_ENABLED=true$' /opt/deployer/.env; then
+            echo MONGO=1 >> "$GITHUB_ENV"
+          else
+            test "${{ matrix.os }}" != ubuntu-22.04
+            echo MONGO=0 >> "$GITHUB_ENV"
+            echo "::notice::Managed MongoDB turned off by the installer on kernel $(uname -r) (MongoDB SERVER-121912)"
+          fi
       - name: Everyday commands
         run: |
           set -eux
@@ -401,7 +418,8 @@ jobs:
         run: |
           set -eu  # no -x: the API key
           api() { curl -fsS -H "Authorization: Bearer $OWNER_TOKEN" -H 'Content-Type: application/json' "http://127.0.0.1:8080/v1$@"; }
-          pid="$(api /projects -X POST -d '{"name":"MCP check","provision":{"sql":true,"nosql":true}}' | jq -r .id)"
+          nosql_on="$([ "$MONGO" = 1 ] && echo true || echo false)"
+          pid="$(api /projects -X POST -d "{\"name\":\"MCP check\",\"provision\":{\"sql\":true,\"nosql\":$nosql_on}}" | jq -r .id)"
           key="$(api "/projects/$pid/api-keys" -X POST -d '{"name":"agent","role":"service"}' | jq -r .secret)"
           echo "::add-mask::$key"
           mcp() {
@@ -414,18 +432,20 @@ jobs:
           mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' | jq -e '[.result.tools[].name] | index("run_query") != null'
           sources="$(mcp "$(call list_data_sources '{}')" | jq -r '.result.content[0].text')"
           sql="$(jq -r '.[] | select(.kind == "sql") | .id' <<<"$sources")"
-          nosql="$(jq -r '.[] | select(.kind == "nosql") | .id' <<<"$sources")"
           mcp "$(call run_query "$(jq -nc --arg s "$sql" '{source_id: $s, query: "SELECT 41 + 1 AS answer"}')")" | tee sql.json
           jq -e '.result.isError == false and (.result.content[0].text | contains("42"))' sql.json
-          mcp "$(call run_query "$(jq -nc --arg s "$nosql" '{source_id: $s, query: "db.runCommand({ ping: 1 })"}')")" | tee nosql.json
-          jq -e '.result.isError == false' nosql.json
+          if [ "$MONGO" = 1 ]; then
+            nosql="$(jq -r '.[] | select(.kind == "nosql") | .id' <<<"$sources")"
+            mcp "$(call run_query "$(jq -nc --arg s "$nosql" '{source_id: $s, query: "db.runCommand({ ping: 1 })"}')")" | tee nosql.json
+            jq -e '.result.isError == false' nosql.json
+          fi
       - name: Backup and restore
         run: |
           set -eux
           sudo deployer backup --yes
           stamp="$(sudo ls /opt/deployer/backups | sort | tail -n 1)"
           sudo test -s "/opt/deployer/backups/$stamp/mariadb.sql"
-          sudo test -s "/opt/deployer/backups/$stamp/mongodb.archive.gz"
+          [ "$MONGO" = 0 ] || sudo test -s "/opt/deployer/backups/$stamp/mongodb.archive.gz"
           sudo deployer restore "$stamp" --yes
           curl -fsS http://127.0.0.1:8080/v1/setup/status | grep -q '"initialized":true'
       - name: Stop, start, port and LAN settings

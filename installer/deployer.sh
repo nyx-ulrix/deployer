@@ -351,6 +351,17 @@ copy_files() {
   ln -sfn "$INSTALL_DIR/installer/deployer.sh" "$BIN_LINK"
 }
 
+# Prints why the managed MongoDB cannot start on this computer, or nothing when it can. Asks the real
+# image: MongoDB 8 refuses Linux kernels 6.19 to 7.0.13 (MongoDB SERVER-121912, fixed by kernel 7.0.14),
+# e.g. Ubuntu 26.04's 7.0 kernel, and its rule may change, so no kernel table is kept here.
+mongo_start_problem() {
+  local image out
+  image=$(env_get MONGODB_IMAGE)
+  out=$(docker run --rm --network none --entrypoint mongod "${image:-mongo:8.0}" --version 2>&1) && return 0
+  out=$(sed -n 's/.*"msg":"\([^"]*\)".*/\1/p' <<<"$out" | head -n 1)
+  printf '%s' "${out:-mongod --version failed in ${image:-mongo:8.0}}"
+}
+
 # Whether a compose file starts MongoDB from ${MONGODB_IMAGE} (A-143 and later).
 # shellcheck disable=SC2016
 compose_has_mongo_image() { grep -q '\${MONGODB_IMAGE' "$1" 2>/dev/null; }
@@ -636,6 +647,9 @@ cmd_actions() {
     add 'Deployer listens on every network interface (with a public IP: the whole internet; Docker bypasses ufw)' \
       'sudo deployer lan on <this server'"'"'s LAN IP>   (one address)   or   sudo deployer lan off'
   unit_enabled || [ ! -d /run/systemd/system ] || add 'Start Deployer when this server boots' 'sudo deployer autostart on'
+  [ "$(env_get MANAGED_MONGODB_ENABLED)" = false ] && grep -qw avx /proc/cpuinfo &&
+    add "Managed MongoDB is off: MongoDB 8 does not start on Linux kernels 6.19 to 7.0.13 (this one: $(uname -r))" \
+      'Update the kernel to 7.0.14 or newer and reboot, then: sudo deployer update (turns it back on). Meanwhile projects can use an external MongoDB such as Atlas'
   has_lid && ! sleep_masked &&
     add 'This computer has a lid: closing it suspends Linux and takes Deployer down' 'sudo deployer keepawake on'
   newest=$(find "$INSTALL_DIR/backups" -mindepth 1 -maxdepth 1 -type d -mtime -7 2>/dev/null | head -n 1 || true)
@@ -675,7 +689,7 @@ cmd_install() {
   REF=${REF:-local}
   mkdir -p "$INSTALL_DIR/logs"
   chmod 700 "$INSTALL_DIR/logs"
-  local log is_upgrade=0 set_port=0 bind mongo=1 created mem disk users code
+  local log is_upgrade=0 set_port=0 bind mongo=1 created mem disk users code problem
   log="$INSTALL_DIR/logs/install-$(date +%Y%m%d-%H%M%S).log"
   exec > >(tee >(sed -u 's/\x1b\[[0-9;]*m//g' >>"$log")) 2>&1
 
@@ -763,6 +777,21 @@ cmd_install() {
   [ "${code%%.*}" -gt 2 ] 2>/dev/null || { [ "${code%%.*}" = 2 ] && [ "$(cut -d. -f2 <<<"$code")" -ge 20 ]; } ||
     die "Docker Compose $code is too old; Deployer needs 2.20 or newer." "Update Docker: https://docs.docker.com/engine/install/"
   ok "Docker Compose $code"
+  if [ "$mongo" = 1 ]; then
+    info 'Checking that MongoDB 8 can start on this kernel (downloads the MongoDB image once)...'
+    problem=$(mongo_start_problem)
+    if [ -n "$problem" ]; then
+      mongo=0
+      warn "Managed MongoDB is turned off: MongoDB 8 cannot start here ($problem)."
+      info "MongoDB 8 refuses Linux kernels 6.19 to 7.0.13 (this one is $(uname -r)); kernel 7.0.14 or newer fixes it,"
+      info 'then "sudo deployer update" turns it back on. Its data (if any) stays in its Docker volume. Projects'
+      info 'can attach an external MongoDB such as a free MongoDB Atlas cluster meanwhile.'
+      # An upgrade's MongoDB container would only restart in a loop; its volume is kept.
+      [ "$is_upgrade" = 0 ] || dc --profile mongodb rm -sf mongodb >/dev/null 2>&1 || true
+    else
+      ok 'MongoDB 8 starts on this kernel'
+    fi
+  fi
   # Ports: an upgrade whose stack runs holds its own ports already; a new --port must still be free.
   if [ "$is_upgrade" = 0 ] || [ -z "$(dc ps -q caddy 2>/dev/null)" ]; then
     users=$(port_users "$PORT")
@@ -820,7 +849,7 @@ cmd_install() {
   [ "$bind" = 0.0.0.0 ] && for ip in $(lan_ips); do info "Other devices  http://$ip:$PORT"; done
   info "Install dir    $INSTALL_DIR"
   info "Version        $REF"
-  info "NoSQL          $([ "$mongo" = 1 ] && echo 'managed MongoDB 8.0 enabled' || echo 'managed MongoDB off (no AVX) - use an external MongoDB such as Atlas')"
+  info "NoSQL          $([ "$mongo" = 1 ] && echo 'managed MongoDB 8.0 enabled' || echo 'managed MongoDB off (see above) - use an external MongoDB such as Atlas')"
   info "Install log    $log"
   warn "Back up $ENV_FILE (it holds MASTER_KEY) together with your backups."
   if [ "$bind" = 0.0.0.0 ] && [ -n "$(lan_ips)" ]; then
@@ -1093,7 +1122,18 @@ cmd_update() {
   UPDATING=1
   copy_files "$SRC_ROOT"
   bind=$BIND
-  init_env "$PORT" "$(mongo_on && echo 1 || echo 0)" "$repo" "$target" "$bind" 0 || true
+  # Managed MongoDB: wanted with AVX, and only where MongoDB 8 can start (a kernel update can change both ways).
+  local mongo=0 problem=''
+  if grep -qw avx /proc/cpuinfo; then
+    problem=$(mongo_start_problem)
+    if [ -z "$problem" ]; then
+      mongo=1
+    else
+      warn "Managed MongoDB stays off: MongoDB 8 cannot start here ($problem; kernel $(uname -r), see docs/SETUP.md)."
+      dc --profile mongodb rm -sf mongodb >/dev/null 2>&1 || true
+    fi
+  fi
+  init_env "$PORT" "$mongo" "$repo" "$target" "$bind" 0 || true
   ok 'Deploy files updated; .env kept'
   images
   mongo_on && update_mongo
