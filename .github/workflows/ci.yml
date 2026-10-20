@@ -352,7 +352,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck -x installer/*.sh installer/wsl/*.sh deploy/mongodb/*.sh
+        # Warnings and errors fail the job; info notes (e.g. SC2015 on the intended `a && b || die`) do not.
+        run: shellcheck -x -S warning installer/*.sh installer/wsl/*.sh deploy/mongodb/*.sh
       - name: Install from this checkout (images built here)
         run: sudo bash installer/install.sh --source-dir "$PWD" --from-source --yes
       - name: Installed layout and permissions
