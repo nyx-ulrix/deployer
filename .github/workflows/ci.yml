@@ -382,7 +382,7 @@ jobs:
           sudo deployer oauth status | grep -q 'Callback URL: http://localhost:8080/v1/auth/oauth/github/callback'
       - name: Owner account and password reset
         run: |
-          set -eux
+          set -eu  # no -x: the passwords and token below must not reach the log before ::add-mask::
           pw="$(openssl rand -hex 12)"
           echo "::add-mask::$pw"
           curl -fsS -X POST -H 'Content-Type: application/json' http://127.0.0.1:8080/v1/setup/owner \
@@ -398,7 +398,7 @@ jobs:
       # service key, then initialize, tools/list and run_query against MariaDB and (query-shell) MongoDB.
       - name: MCP server for AI agents
         run: |
-          set -eux
+          set -eu  # no -x: the API key
           api() { curl -fsS -H "Authorization: Bearer $OWNER_TOKEN" -H 'Content-Type: application/json' "http://127.0.0.1:8080/v1$@"; }
           pid="$(api /projects -X POST -d '{"name":"MCP check","provision":{"sql":true,"nosql":true}}' | jq -r .id)"
           key="$(api "/projects/$pid/api-keys" -X POST -d '{"name":"agent","role":"service"}' | jq -r .secret)"
@@ -443,7 +443,8 @@ jobs:
       - name: Update to this commit (downloaded from GitHub, replaces the running CLI)
         run: |
           set -eux
-          sudo sed -i 's|^DEPLOYER_REPO=.*|DEPLOYER_REPO=${{ github.event.pull_request.head.repo.full_name || github.repository }}|' /opt/deployer/.env
+          # The tested commit (a PR merge commit included) always lives in this repository, not in a fork.
+          sudo sed -i "s|^DEPLOYER_REPO=.*|DEPLOYER_REPO=${{ github.repository }}|" /opt/deployer/.env
           sudo deployer update --ref "${{ github.sha }}" --from-source --yes
           sudo grep -q '^DEPLOYER_REF=${{ github.sha }}$' /opt/deployer/.env
           curl -fsS http://127.0.0.1:8080/v1/setup/status | grep -q '"initialized":true'

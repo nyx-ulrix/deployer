@@ -191,7 +191,7 @@ jobs:
             curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/installer/install.sh | sudo bash -s -- --repo ${{ github.repository }} --ref ${{ github.ref_name }}
             ```
 
-            Or download **install.sh** below (checksum: `install.sh.sha256`) and run `sudo bash install.sh`. Then `sudo deployer guide`.
+            Or download **install.sh** below (checksum: `install.sh.sha256`) and run `sudo bash install.sh --ref ${{ github.ref_name }}`. Then `sudo deployer guide`.
             Setup guide: [docs/SETUP.md](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/SETUP.md).
 
             Images: `ghcr.io/${{ github.repository_owner }}/deployer-api`, `deployer-dashboard` and `deployer-tunnel`, tagged with this version (without the leading `v`), and `latest` unless this is a pre-release. An install from a release pins its version in `.env` (`DEPLOYER_VERSION`).
