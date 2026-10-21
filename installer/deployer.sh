@@ -283,7 +283,7 @@ sleep_masked() { [ "$(systemctl is-enabled sleep.target 2>/dev/null)" = masked ]
 latest_release() {
   local tag
   tag=$(curl -fsSL --max-time 20 -H 'User-Agent: deployer-installer' "https://api.github.com/repos/$1/releases/latest" 2>/dev/null |
-    sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1) || true
+    sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1) || true # the API may answer compact or pretty JSON
   printf '%s' "${tag:-main}"
 }
 

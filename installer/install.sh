@@ -46,7 +46,7 @@ main() {
     if [ -z "$ref" ]; then
       # The latest release, else main (no release published yet).
       tag=$(curl -fsSL --max-time 30 -H 'User-Agent: deployer-installer' "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null |
-        sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1) || true
+        sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1) || true  # compact or pretty JSON
       ref=${tag:-main}
     fi
     tmp=$(mktemp -d)
