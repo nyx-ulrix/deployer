@@ -29,30 +29,39 @@ owner's own AWS / Firebase accounts so they stay up when the PC is off.
 
 Work finished in the last stretch, newest first:
 
-1. **Linux support, headless servers included** ([SETUP.md](SETUP.md)): `installer/install.sh`
+1. **First releases** (2026-10-21): `v0.1.0`, `v0.1.1` (a post-release audit fix) and `v0.1.2` (the
+   Linux latest-release lookup: GitHub's API now answers compact JSON). Getting `v0.1.0` out found the
+   real cause of the "flaky" MongoDB CI step: MongoDB 8 refuses Linux kernels 6.19-7.0.13
+   ([SERVER-121912](https://jira.mongodb.org/browse/SERVER-121912)), which GitHub's newest
+   `ubuntu-24.04` image boots, and `upgrade.sh` / `entrypoint.sh` failed silently on it
+   (`mongod --version` under `pipefail`). Both scripts now read the image's `MONGO_MAJOR`, and the
+   MongoDB CI jobs run on `ubuntu-22.04` (Known limits below).
+2. **Linux support, headless servers included** ([SETUP.md](SETUP.md)): `installer/install.sh`
    (curl | sudo bash bootstrap) and `installer/deployer.sh` (the Linux `deployer` command, same
    commands as on Windows plus `guide`, `actions` and `lan on <ip>`; most commands end with a *Next:*
    block). Docker Engine comes from `download.docker.com` on Debian/Ubuntu (`setup-engine.sh --host`),
-   autostart is the systemd unit `deployer.service`, files live in `/opt/deployer`. CI job
-   `linux-installer` installs it on ubuntu-latest and runs every everyday command, MCP calls,
-   backup/restore, a self-replacing update and an uninstall. Audited by Fable 5.1.
-2. **Keep-alive hardening** (after a real outage on 2026-10-05/06, below): the sign-in task's loop
+   autostart is the systemd unit `deployer.service`, files live in `/opt/deployer`; the installer and
+   `deployer update` turn managed MongoDB off where MongoDB 8 refuses the kernel. CI job
+   `linux-installer` installs it on `ubuntu-22.04` and `ubuntu-latest` and runs every everyday
+   command, MCP calls, backup/restore, a self-replacing update and an uninstall. Audited by Fable 5.1
+   (five audits; every finding fixed).
+3. **Keep-alive hardening** (after a real outage on 2026-10-05/06, below): the sign-in task's loop
    retries a failed start or a failed `wsl.exe` launch (15 s, doubling up to 5 minutes) instead of
    exiting, starts the keep-alive before the containers, and the task repeats every 5 minutes as a
    watchdog. On the owner's PC this becomes active at the next sign-in (see the table above).
-3. **Cloud phases C1-C3** ([CLOUD.md](CLOUD.md)): hosting on AWS (S3 + CloudFront, App Runner) and
+4. **Cloud phases C1-C3** ([CLOUD.md](CLOUD.md)): hosting on AWS (S3 + CloudFront, App Runner) and
    Firebase (Hosting, Cloud Run); cloud databases (RDS / Aurora, DynamoDB, Firestore, Realtime
    Database) with backups, point-in-time recovery and restores; GitHub Actions builds with OIDC so
    pushes deploy with the PC off; app secrets in Secrets Manager / Secret Manager (opt-in); an IAM
    permissions boundary on every role Deployer creates; the Deployer AWS policy split into
    `DeployerHosting`, `DeployerDatabases` and `DeployerRoles`; an optional NAT gateway for App Runner
    apps linked to RDS. Every billable action is off by default and needs `confirm_billing`.
-4. **Fable 5.1 vetting pass** over everything shipped after the audit. Its confirmed findings were
+5. **Fable 5.1 vetting pass** over everything shipped after the audit. Its confirmed findings were
    fixed in the commits named `Fix V-01`, `Fix V-02` and `Fix V-04` to `Fix V-07` (V-03, MCP cloud
    tools skipping their routes' admin rule, was fixed in `8377c26`), and its smaller notes in
    `Fix L-01` to `Fix L-09` (several bundle more than one fix), each with `Follow-up` / `Audit fix`
    commits. There is no written vetting report in the repo; the commit messages are the record.
-5. **Full codebase audit** ([AUDIT_REPORT.md](AUDIT_REPORT.md)): 198 findings, all ticked. The few
+6. **Full codebase audit** ([AUDIT_REPORT.md](AUDIT_REPORT.md)): 198 findings, all ticked. The few
    that were only partly fixed, and the follow-ups that closed them, are noted under each item.
 
 Every change in those passes was built in its own git worktree, independently audited by a second
@@ -123,15 +132,26 @@ lists every spec.
 | `api/` | `ruff format --check`, `ruff check`, `pytest` (about 950 unit tests on SQLite; the 25 in `tests/integration` skip locally unless their servers are configured) |
 | `dashboard/` | `npm run lint`, `npm run typecheck`, `npx vitest run`, `npm run build` |
 | `installer/` | PowerShell parse + `Invoke-ScriptAnalyzer -Severity Error` + the 14 self-checking scripts in `installer/tests` (plain PowerShell, not Pester: `powershell -NoProfile -ExecutionPolicy Bypass -File installer\tests\<name>.tests.ps1`); `installer/windows/build.ps1` for the C# app |
+| `installer/*.sh`, `deploy/mongodb/*.sh` | `bash -n` and `shellcheck -x -S warning` (the runner's older shellcheck reports info notes such as SC2015 that newer ones do not; only warnings fail). Never run `installer/deployer.sh` on the owner's Windows PC: Windows 11 has its own `sudo`, which the script calls to re-run itself |
 
 CI (`.github/workflows/ci.yml`) runs all of that, builds the images, and in the integration job runs
 the unit suite again on real MariaDB 11 plus the integration tests against MariaDB, MongoDB 8.0,
 Docker and the query-shell sidecar; a skipped integration test fails the job. `secret-scan.yml` runs
 gitleaks on every push: never commit real credentials, and build fake ones in tests at runtime (see
-`api/tests/test_cloud.py`). `release.yml` runs only on `v*` tags, gates on CI, pushes the api,
-dashboard and tunnel images to GHCR, and creates a GitHub release with `DeployerSetup.exe` and
-`deployer-deploy.zip` (pre-release tags never become `latest`, as an image tag or as the latest
-release).
+`api/tests/test_cloud.py`). The `linux-installer` job installs on `ubuntu-22.04` and `ubuntu-latest`;
+the MongoDB jobs (`integration`, `compose`) run on `ubuntu-22.04` because MongoDB 8 refuses the
+`ubuntu-latest` kernel (7.0.0); move them back once runners boot 7.0.14 or newer. `release.yml` runs
+only on `v*` tags, gates on CI, pushes the api, dashboard and tunnel images to GHCR, and creates a
+GitHub release with `DeployerSetup.exe`, `deployer-deploy.zip` and `install.sh`, each with a `.sha256`
+(pre-release tags never become `latest`, as an image tag or as the latest release).
+
+**Cutting a release:** CI green on the `main` commit, then `git tag -a vX.Y.Z -m "..."` and
+`git push origin vX.Y.Z`. Afterwards check the release page (six files, the checksums), that
+`releases/latest` names the tag, and that `ghcr.io/nyx-ulrix/deployer-api:X.Y.Z` pulls anonymously. A
+failed release run publishes nothing (images and the release wait for CI), so fix on `main`, delete
+the unpublished tag (`git push origin :refs/tags/vX.Y.Z`), tag the new commit and push again; never
+move a tag that has a release. Scripts that read GitHub's API must not assume pretty-printed JSON (it
+answers compact JSON now; that broke the Linux lookup until `v0.1.2`).
 
 Rules that tests enforce, so they are easy to trip over:
 
@@ -155,8 +175,9 @@ The owner prefers commit messages without attribution or co-author lines.
   `C:\Users\malco\.claude\skills\deploy-website\SKILL.md`; refresh it whenever the repo copy changes.
 - The MCP server is described in [MCP.md](MCP.md); destructive and billable tools need explicit
   confirmation arguments, and agents must ask the user first.
-- The repo is mapped with graphify (`graphify-out/`, git-ignored); run `graphify update .` after
-  code changes.
+- The repo is mapped with graphify: `graphify-out/graph.json`, `graph.html` and `GRAPH_REPORT.md` are
+  committed (the cache and dated backups stay ignored). Run `graphify update .` after code changes and
+  commit those three files; changed docs need the `/graphify . --update` skill run for their nodes.
 
 ## What is open
 

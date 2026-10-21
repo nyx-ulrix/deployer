@@ -185,7 +185,7 @@ With options (all optional):
 
 ```powershell
 & ([scriptblock]::Create((irm https://raw.githubusercontent.com/nyx-ulrix/deployer/main/installer/install.ps1))) `
-    -Runtime wsl-engine -Port 8080 -InstallDir "$env:ProgramData\Deployer" -Ref v0.1.0
+    -Runtime wsl-engine -Port 8080 -InstallDir "$env:ProgramData\Deployer" -Ref v0.1.2
 ```
 
 | Option | Meaning |
@@ -556,6 +556,13 @@ To try the Windows installer against your checkout, run it from the repository:
 `powershell -ExecutionPolicy Bypass -File installer\install.ps1` (it uses the local files and
 `-FromSource` builds the images from them). Add `-DryRun` for a read-only walkthrough.
 
+To try the Linux installer against your checkout, on a Linux machine or VM you can wipe:
+`sudo bash installer/install.sh --source-dir . --from-source` (then `sudo deployer uninstall --yes`).
+`shellcheck -x -S warning installer/*.sh installer/wsl/*.sh deploy/mongodb/*.sh` must stay clean. CI's
+`linux-installer` job does a real install on `ubuntu-22.04` (with managed MongoDB) and `ubuntu-latest`
+(whose kernel MongoDB 8 refuses, so it checks the installer turns MongoDB off), then runs the everyday
+commands, MCP calls, backup and restore, a self-replacing `deployer update` and an uninstall.
+
 `DeployerSetup.exe` is a WinForms app (C# 5, .NET Framework 4.8) built with the compiler that ships
 with Windows - no SDK needed:
 
@@ -569,13 +576,22 @@ It embeds `installer\install.ps1`, `deployer.ps1` and the git-tracked files in `
 `install.ps1 -LocalDeployDir <extracted deploy files>`, following its `##deployer:` progress markers.
 
 Releases (`v*` tags) publish `ghcr.io/<owner>/deployer-api`, `-dashboard` and `-tunnel`, a
-`deployer-deploy.zip` and `DeployerSetup.exe` (signed only if the repository has the
-`WINDOWS_SIGNING_PFX` / `WINDOWS_SIGNING_PASSWORD` secrets), but only after the full CI suite passes
-on the tag. A pre-release tag (`v1.2.3-rc.1`) gets no `latest` image tag and is marked as a GitHub
-pre-release, so installs without `-Ref` never pick it up. The dashboard image's links to docs
-and the agent skill point at the release tag, so they describe the installed version (builds from
-source link to `main`). On a fork, make the three GHCR packages **public** after the first release
-so installers can pull them anonymously (otherwise the installer falls back to building from source).
+`deployer-deploy.zip`, `DeployerSetup.exe` (signed only if the repository has the
+`WINDOWS_SIGNING_PFX` / `WINDOWS_SIGNING_PASSWORD` secrets) and the Linux `install.sh`, each with a
+`.sha256`, but only after the full CI suite passes on the tag. A pre-release tag (`v1.2.3-rc.1`) gets
+no `latest` image tag and is marked as a GitHub pre-release, so installs without `-Ref` / `--ref`
+never pick it up. The dashboard image's links to docs and the agent skill point at the release tag,
+so they describe the installed version (builds from source link to `main`). The packages of this
+repository are public; on a fork, check they are (*Package settings -> Change visibility*) after the
+first release so installers can pull them anonymously (otherwise the installer falls back to building
+from source).
+
+To cut a release: make sure CI is green on the `main` commit, then
+`git tag -a v1.2.3 -m "..." && git push origin v1.2.3`, and check the release page (six files) and
+`releases/latest`. If the release's own CI run fails, nothing is published, so fix it on `main` and move
+the unpublished tag (`git push origin :refs/tags/v1.2.3`, tag the new commit, push again). Current
+release: [v0.1.2](https://github.com/nyx-ulrix/deployer/releases/tag/v0.1.2) (v0.1.0, v0.1.1 and v0.1.2
+shipped on 2026-10-21; only v0.1.2 finds the latest release on Linux by itself).
 
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -609,6 +625,10 @@ The one roadmap for the project (docs link here rather than keeping their own co
    DynamoDB, C2-3 Cloud Firestore, C2-4 Firebase Realtime Database and C2-5 (MCP, export / import,
    project delete) done; C3 GitHub Actions builds (pushes deploy with the PC off) done; not yet run
    against live cloud accounts.
+9. **Linux servers, headless included** - `installer/install.sh` and the Linux `deployer` command
+   (systemd autostart, `deployer guide` / `deployer actions`, next-step hints), first releases with
+   `install.sh` (v0.1.0-v0.1.2). *(done: [docs/SETUP.md](docs/SETUP.md))* Not yet tried on a real
+   home server, ARM computers or non-Debian distributions outside CI.
 
 ## Security
 
