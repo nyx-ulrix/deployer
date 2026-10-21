@@ -22,10 +22,10 @@ owner's own AWS / Firebase accounts so they stay up when the PC is off.
 
 | | |
 |---|---|
-| Code on `main` | tagged `v0.1.0` (Linux support), CI (including the `linux-installer` job) and secret scan green |
+| Code on `main` | `v0.1.1` plus `0a69238` (the Linux latest-release lookup fix: GitHub now answers compact JSON); CI (including both `linux-installer` runs) and secret scan green |
 | Installed on the owner's PC | `03a6f00` files and images (updated 2026-10-06; backup in `C:\ProgramData\Deployer\backups\20261006-203226`). **Stopped** since `deployer stop` on 2026-10-09 16:39, by the owner's choice: https://deployer.liewjiaen.com shows Cloudflare error 1033 / 530 until `deployer start`. The sign-in task's loop still runs the previous code until the next sign-in: **sign out and back in (or restart) once** |
 | Database schema | Alembic head `0014` |
-| Releases | `v0.1.0` (2026-10-21, the first): `DeployerSetup.exe`, `deployer-deploy.zip`, `install.sh` and their `.sha256` files, and the `deployer-api` / `-dashboard` / `-tunnel` images on GHCR, which are public (anonymous pulls answer 200), so installs of `v0.1.0` pull them instead of building |
+| Releases | `v0.1.1` (latest) and `v0.1.0`, both 2026-10-21: `DeployerSetup.exe`, `deployer-deploy.zip`, `install.sh` and their `.sha256` files, and the `deployer-api` / `-dashboard` / `-tunnel` images on GHCR (`0.1.1` and `latest`), which are public (anonymous pulls answer 200), so installs pull them instead of building. In both, `deployer update` without `-Ref` on Linux and `install.sh` without `--ref` take `main` instead of the latest release (fixed on `main` in `0a69238`); the README one-liner fetches `install.sh` from `main`, so it already resolves the latest release |
 
 Work finished in the last stretch, newest first:
 
