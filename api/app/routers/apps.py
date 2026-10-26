@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import and_, or_, select
 from sqlalchemy.orm import Session
 
@@ -138,16 +138,52 @@ class AppFields(BaseModel):
     @field_validator("env")
     @classmethod
     def _env(cls, value: dict[str, str] | None) -> dict[str, str] | None:
-        if value is None:
-            return None
-        for key in value:
-            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$", key):
-                raise ValueError(f"invalid environment variable name {key!r}")
-            if app_runner.reserved_env(key):
-                raise ValueError(f"{key} is reserved (DOCKER_*, LD_* and PATH configure the worker's docker)")
-        if len(json.dumps(value)) > 64 * 1024:
-            raise ValueError("environment is too large (64 KB max)")
-        return value
+        return _check_env(value)
+
+
+def _check_env(value: dict[str, str] | None) -> dict[str, str] | None:
+    if value is None:
+        return None
+    for key in value:
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$", key):
+            raise ValueError(f"invalid environment variable name {key!r}")
+        if app_runner.reserved_env(key):
+            raise ValueError(f"{key} is reserved (DOCKER_*, LD_* and PATH configure the worker's docker)")
+    if len(json.dumps(value)) > 64 * 1024:
+        raise ValueError("environment is too large (64 KB max)")
+    return value
+
+
+class AppUpdate(AppFields):
+    # docs/CLI.md: change some variables without sending (or first revealing) the rest. Not with `env`.
+    env_set: dict[str, str] | None = None
+    env_unset: list[str] | None = Field(default=None, max_length=200)
+
+    @field_validator("env_set")
+    @classmethod
+    def _env_set(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        return _check_env(value)
+
+    @model_validator(mode="after")
+    def _one_env_form(self) -> AppUpdate:
+        if "env" in self.model_fields_set and self.model_fields_set & {"env_set", "env_unset"}:
+            raise ValueError("send either env or env_set/env_unset, not both")
+        return self
+
+
+def _merge_env(app: App, body: AppUpdate) -> None:
+    """Turns env_set/env_unset into the whole `env` the rest of update_app works with."""
+    if not body.model_fields_set & {"env_set", "env_unset"}:
+        return
+    env = deployments.env_of(app)
+    for key in body.env_unset or []:
+        env.pop(key, None)
+    env.update(body.env_set or {})
+    if len(json.dumps(env)) > 64 * 1024:
+        raise ApiError(422, "validation_error", "environment is too large (64 KB max)")
+    body.env = env
+    body.model_fields_set.add("env")
+    body.model_fields_set.difference_update({"env_set", "env_unset"})
 
 
 class AppCreate(AppFields):
@@ -498,8 +534,9 @@ def get_app(app_id: str, access: Viewer, db: DbSession) -> dict:
 
 
 @router.patch(BASE + "/{app_id}")
-def update_app(app_id: str, body: AppFields, request: Request, access: Developer, db: DbSession) -> dict:
+def update_app(app_id: str, body: AppUpdate, request: Request, access: Developer, db: DbSession) -> dict:
     app = deployments.get_app(db, access.project.id, app_id)
+    _merge_env(app, body)
     changed = sorted(body.model_fields_set - {"confirm_billing"})
     if "database_access" in changed:
         _check_database_access(access, body.database_access and not app.database_access)

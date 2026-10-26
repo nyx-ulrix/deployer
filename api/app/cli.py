@@ -6,6 +6,7 @@
     python -m app.cli oauth set --provider google|github   # JSON {"client_id", "client_secret"} on stdin
     python -m app.cli oauth clear --provider google|github
     python -m app.cli user reset-password [--email E]  # JSON {"password"} on stdin; no --email = the owner
+    python -m app.cli cli-token create [--email E] [--name N]  # a command-line token as JSON (docs/CLI.md)
     python -m app.cli platform list                # platform snapshots, newest first (JSON)
     python -m app.cli platform restore --yes [--backup-id ID]  # default: the newest snapshot
 
@@ -33,7 +34,7 @@ from app.db import get_sessionmaker
 from app.errors import ApiError
 from app.models import User
 from app.serializers import iso
-from app.services import audit, backups, device_agent, device_host, instance_settings, rate_limit, tokens
+from app.services import audit, backups, cli_tokens, device_agent, device_host, instance_settings, rate_limit, tokens
 from app.services.instance_settings import validate_oauth_value
 from app.services.passwords import hash_password, normalize_email, validate_password
 
@@ -107,6 +108,42 @@ def _read_json_stdin() -> object:
         return None
 
 
+def _find_user(session, email: str | None) -> User | None:
+    """The active account with that email, else the instance owner; prints why and returns None if neither."""
+    if email:
+        user = session.scalar(select(User).where(func.lower(User.email) == normalize_email(email)))
+        if user is None:
+            print(f"No account uses the email {email.strip()}.")
+            return None
+    else:
+        owners = session.scalars(select(User).where(User.is_instance_owner.is_(True))).all()
+        if len(owners) != 1:
+            print("Enter the account's email." if owners else "Deployer has no owner account yet.")
+            return None
+        user = owners[0]
+    if not user.is_active:  # sign-in refuses it whatever the password, so a "success" would mislead
+        print(f"{user.email} is disabled. The owner enables it again in Instance settings -> Users first.")
+        return None
+    return user
+
+
+def _token_create(email: str | None, name: str) -> int:
+    """`deployer login --local`: a command-line token without the browser approval, for whoever can run
+    commands as root on this PC (they could reset the password anyway). Prints {"token", "email"} JSON."""
+    session = get_sessionmaker()()
+    try:
+        user = _find_user(session, email)
+        if user is None:
+            return 2
+        row, raw = cli_tokens.issue_token(session, user, name)
+        audit.record(session, "cli.token_create", user_id=user.id, token_id=row.id, source="cli")
+        session.commit()
+        print(json.dumps({"token": raw, "email": user.email}))
+    finally:
+        session.close()
+    return 0
+
+
 def _reset_password(email: str | None) -> int:
     """Reads {"password"} JSON from stdin (never argv). Errors are one line on stdout with exit code 2."""
     data = _read_json_stdin()
@@ -121,19 +158,8 @@ def _reset_password(email: str | None) -> int:
         return 2
     session = get_sessionmaker()()
     try:
-        if email:
-            user = session.scalar(select(User).where(func.lower(User.email) == normalize_email(email)))
-            if user is None:
-                print(f"No account uses the email {email.strip()}.")
-                return 2
-        else:
-            owners = session.scalars(select(User).where(User.is_instance_owner.is_(True))).all()
-            if len(owners) != 1:
-                print("Enter the account's email." if owners else "Deployer has no owner account yet.")
-                return 2
-            user = owners[0]
-        if not user.is_active:  # sign-in refuses it whatever the password, so a "success" would mislead
-            print(f"{user.email} is disabled. The owner enables it again in Instance settings -> Users first.")
+        user = _find_user(session, email)
+        if user is None:
             return 2
         user.password_hash = hash_password(password)
         tokens.revoke_user_tokens(session, user.id)
@@ -259,6 +285,11 @@ def main(argv: list[str] | None = None) -> int:
     user_sub = user.add_subparsers(dest="command", required=True)
     reset = user_sub.add_parser("reset-password", help='set a new password, read as JSON {"password"} from stdin')
     reset.add_argument("--email", help="the account to reset (default: the instance owner)")
+    token = sub.add_parser("cli-token", help="command-line tokens (docs/CLI.md)")
+    token_sub = token.add_subparsers(dest="command", required=True)
+    create = token_sub.add_parser("create", help='issue a token; prints {"token", "email"} JSON')
+    create.add_argument("--email", help="the account (default: the instance owner)")
+    create.add_argument("--name", default="deployer CLI (local)", help="shown in Account settings")
     platform = sub.add_parser("platform", help="platform data snapshots")
     platform_sub = platform.add_subparsers(dest="command", required=True)
     platform_sub.add_parser("list", help="list platform snapshots, newest first")
@@ -270,6 +301,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.group == "platform":
         return _platform_list() if args.command == "list" else _platform_restore(args.backup_id, args.yes)
+    if args.group == "cli-token" and args.command == "create":
+        return _token_create(args.email, args.name)
     if args.group == "user" and args.command == "reset-password":
         return _reset_password(args.email)
     if args.group == "device" and args.command == "status":

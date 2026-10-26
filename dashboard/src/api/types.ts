@@ -781,6 +781,27 @@ export type DeviceEnrollment = {
   created_at: string;
 };
 
+/** `deployer login` waiting for approval (docs/CLI.md). */
+export type CliLogin = {
+  id: string;
+  user_code: string;
+  name: string;
+  hostname: string | null;
+  os: string | null;
+  status: "pending" | "approved" | "denied" | "expired" | "consumed";
+  expires_at: string;
+  created_at: string;
+};
+
+export type CliToken = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  current: boolean;
+};
+
 export type DeviceApproval = {
   user_code: string;
   name: string;

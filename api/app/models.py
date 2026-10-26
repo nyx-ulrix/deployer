@@ -103,6 +103,41 @@ class RefreshToken(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
+class CliToken(Base):
+    """A long-lived personal token for the `deployer` command line (docs/CLI.md); acts as its user."""
+
+    __tablename__ = "cli_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class CliLogin(Base):
+    """`deployer login`: a pending request the user approves in the dashboard (device flow)."""
+
+    __tablename__ = "cli_logins"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    user_code: Mapped[str] = mapped_column(String(9), unique=True, nullable=False)  # ABCD-EFGH
+    poll_secret_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    hostname: Mapped[str | None] = mapped_column(String(255))
+    os: Mapped[str | None] = mapped_column(String(120))
+    # pending | approved | denied | expired | consumed
+    status: Mapped[str] = mapped_column(String(10), default="pending", nullable=False)
+    approved_by_id: Mapped[str | None] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"))
+    # Raw token encrypted with MASTER_KEY; kept only between approval and the command line's poll.
+    token_encrypted: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
 class Project(Base):
     __tablename__ = "projects"
 

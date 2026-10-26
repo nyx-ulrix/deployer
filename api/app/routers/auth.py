@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
-from app.deps import CurrentUser, DbSession, client_ip
+from app.deps import CurrentUser, DbSession, SessionUser, client_ip
 from app.errors import ApiError, conflict, not_found
 from app.models import User, UserIdentity
 from app.serializers import user_out
@@ -156,7 +156,7 @@ class PasswordChange(BaseModel):
 
 
 @router.post("/auth/password")
-def change_password(body: PasswordChange, request: Request, user: CurrentUser, db: DbSession) -> dict:
+def change_password(body: PasswordChange, request: Request, user: SessionUser, db: DbSession) -> dict:
     if user.password_hash is not None:
         if not body.current_password or not verify_password(user.password_hash, body.current_password):
             raise ApiError(400, "invalid_current_password", "Current password is incorrect")
@@ -199,7 +199,7 @@ class LinkIn(BaseModel):
 
 @router.post("/auth/oauth/{provider}/link")
 def oauth_link(
-    provider: str, request: Request, response: Response, user: CurrentUser, db: DbSession, body: LinkIn | None = None
+    provider: str, request: Request, response: Response, user: SessionUser, db: DbSession, body: LinkIn | None = None
 ) -> dict:
     redirect = body.redirect if body else None
     url, nonce = oauth.begin(db, provider, intent="link", redirect=redirect, user_id=user.id)
@@ -236,7 +236,7 @@ def oauth_callback(
 
 
 @router.delete("/auth/identities/{identity_id}")
-def unlink_identity(identity_id: str, request: Request, user: CurrentUser, db: DbSession) -> dict:
+def unlink_identity(identity_id: str, request: Request, user: SessionUser, db: DbSession) -> dict:
     identity = db.get(UserIdentity, identity_id)
     if identity is None or identity.user_id != user.id:
         raise not_found("Identity")

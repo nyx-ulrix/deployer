@@ -33,6 +33,13 @@ CMD=${1:-help}
 ORIG=("$@")
 CMD=${CMD,,}
 case $CMD in -h|--help) CMD=help ;; esac
+# docs/CLI.md: everyday commands sign in with a token (`deployer login`) instead of sudo.
+case $CMD in
+  login|logout|whoami|tokens|projects|apps|app|deploy|domain|env|google-oauth)
+    command -v python3 >/dev/null || { echo "deployer $CMD needs python3: sudo apt install python3" >&2; exit 1; }
+    exec python3 "$(dirname "$SELF")/deployer_cli.py" "$CMD" "${ORIG[@]}"
+    ;;
+esac
 POS=() YES=0 FOLLOW=0 TAIL=200 REF='' REPO='' PORT_ARG='' FROM_SOURCE=0 KEEP_DATA=0 FORCE=0 JSON=0
 BACKGROUND=0 LAN='' AUTOSTART=1 PREVENT_SLEEP=0 SOURCE_ROOT='' INSTALL_DIR=${DEPLOYER_HOME:-}
 NESTED=0 UPDATING=0 LAST_BACKUP='' PREV_REF='' PREV_MONGO8=1
@@ -75,7 +82,7 @@ done
 if [ "$(id -u)" -ne 0 ] && [ "$CMD" != help ]; then
   command -v sudo >/dev/null || { echo "deployer needs root: run it as root." >&2; exit 1; }
   keep=()
-  for v in DEPLOYER_HOME DEPLOYER_NEW_PASSWORD DEPLOYER_OAUTH_CLIENT_ID DEPLOYER_OAUTH_CLIENT_SECRET NO_COLOR; do
+  for v in DEPLOYER_HOME DEPLOYER_NEW_PASSWORD DEPLOYER_OAUTH_CLIENT_ID DEPLOYER_OAUTH_CLIENT_SECRET DEPLOYER_CLI_TOKEN_NAME NO_COLOR; do
     [[ -v $v ]] && keep+=("$v")
   done
   pe=()
@@ -568,7 +575,19 @@ ${C_STEP}Deployer management CLI (Linux)${C_OFF}
     deployer device status             Host device link, connection and hosted databases
     deployer device detach [--force]   Forget the main Deployer this computer is attached to
 
-  Options: --yes skips questions and confirmations (scripts). Commands run with sudo by themselves.
+  Everyday work, no sudo (docs/CLI.md) - sign in once by approving a code from any device
+    deployer login [--local]           Sign in: open the link it prints on your phone/PC and approve the code
+    deployer apps | projects           What you can see (projects create <name> to add one)
+    deployer app create <project> --repo <url>   A new app from a repository (settings detected)
+    deployer domain add <app> <host>   Give an app https://<host> (--overwrite replaces a DNS record)
+    deployer env set <app> NAME        Set a variable; asks for the value hidden (--generate: random secret)
+    deployer env list|unset <app>      Variable names (--show for values) / remove some
+    deployer google-oauth <app>...     Google sign-in: what to enter in Google's console, then saves it
+    deployer deploy <app> [--wait]     Deploy now (--wait streams the build log)
+    deployer app show|logs <app>       Settings and addresses / the app's runtime logs
+    deployer whoami | tokens | logout  The saved sign-in
+
+  Options: --yes skips questions and confirmations (scripts). Server commands run with sudo by themselves.
   Install directory: $INSTALL_DIR
 
 EOF
@@ -1394,6 +1413,14 @@ cmd_reset_password() {
   next 'Sign in with the new password; other sessions of that account were signed out'
 }
 
+cmd_cli_token() { # used by `deployer login --local` (docs/CLI.md); prints {"token", "email"}
+  load_ctx
+  require_running
+  local a=(cli-token create --name "${DEPLOYER_CLI_TOKEN_NAME:-deployer CLI (local)}")
+  [ -n "${POS[0]:-}" ] && a+=(--email "${POS[0]}")
+  api_cli '' "${a[@]}"
+}
+
 case "$CMD" in
   help|-h|--help) cmd_help ;;
   guide|tutorial) cmd_guide ;;
@@ -1418,6 +1445,7 @@ case "$CMD" in
   device) cmd_device ;;
   oauth) cmd_oauth ;;
   reset-password) cmd_reset_password ;;
+  cli-token) cmd_cli_token ;;
   *)
     err "Unknown command '$CMD'."
     cmd_help

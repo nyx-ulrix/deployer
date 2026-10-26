@@ -143,6 +143,7 @@ def scheduler_tick() -> None:
         alerts,
         audit,
         backups,
+        cli_tokens,
         cloud_db,
         cohost_apps,
         deployments,
@@ -175,10 +176,10 @@ def scheduler_tick() -> None:
     if time.monotonic() - _last_query_log_prune >= PRUNE_QUERY_LOG_EVERY_S:
         _last_query_log_prune = time.monotonic()
         with jobs.get_sessionmaker()() as session:
-            pruned = query_log.prune(session) + audit.prune(session)  # A-102
+            pruned = query_log.prune(session) + audit.prune(session) + cli_tokens.prune(session)  # A-102
             session.commit()
         if pruned:
-            log.info("pruned %d query log / audit / expired session row(s)", pruned)
+            log.info("pruned %d query log / audit / expired session / CLI login row(s)", pruned)
 
 
 def scheduler_loop(stop: threading.Event, client_factory: Callable[[], redis.Redis] = _worker_redis) -> None:

@@ -449,3 +449,19 @@ def test_webhook_body_is_capped(client, env, fake_redis, monkeypatch):
     monkeypatch.setattr(apps_router, "WEBHOOK_MAX_BODY", 64)
     resp = client.post(f"/v1/hooks/github/{app['id']}", content=b"x" * 65, headers={"X-GitHub-Event": "push"})
     assert (resp.status_code, resp.json()["error"]["code"]) == (413, "payload_too_large")
+
+
+def test_env_set_and_unset_merge_without_sending_the_rest(client, env):
+    """docs/CLI.md: `deployer env set` changes one variable; the others are kept and never sent."""
+    resp = client.post(env["base"], json={**BODY, "env": {"KEEP": "1", "OLD": "2"}}, headers=env["dev"])
+    url = f"{env['base']}/{resp.json()['id']}"
+    body = {"env_set": {"NEW": "3", "KEEP": "1b"}, "env_unset": ["OLD", "MISSING"]}
+    resp = client.patch(url, json=body, headers=env["dev"])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["env_keys"] == ["KEEP", "NEW"]
+    assert client.get(f"{url}/env", headers=env["admin"]).json()["env"] == {"KEEP": "1b", "NEW": "3"}
+
+    assert client.patch(url, json={"env_unset": ["NEW"]}, headers=env["dev"]).json()["env_keys"] == ["KEEP"]
+    assert client.patch(url, json={"env_set": {"bad-name": "x"}}, headers=env["dev"]).status_code == 422
+    assert client.patch(url, json={"env": {}, "env_set": {"A": "1"}}, headers=env["dev"]).status_code == 422
+    assert client.patch(url, json={"env_set": {"A": "1"}}, headers=env["viewer"]).status_code == 403

@@ -33,6 +33,10 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 - **MCP server for AI agents** - connect Claude Code or any MCP client to a project with an API key:
   it can read the schema, rows and documents, run queries, and (with a `service` key) change data and
   deploy apps. Copy-ready config under API keys → *Show usage* → *AI agents (MCP)* ([docs/MCP.md](docs/MCP.md)).
+- **Command line for headless servers** - `deployer login` prints a link and a code; approve it from
+  your phone through the public URL and the terminal (or an AI agent on it) keeps a revocable token:
+  create apps, add hostnames, set secrets with hidden input or `--generate`, deploy. No browser or sudo on
+  the server ([docs/CLI.md](docs/CLI.md)).
 - **Query console** - SQL and MongoDB shell (`mongosh`) in the browser, per database, with the
   project's roles (viewers are limited to read-only queries) ([docs/QUERY_CONSOLE.md](docs/QUERY_CONSOLE.md)).
 - **Full export / import** - one encrypted JSON file with settings, users, projects **and the data
@@ -121,6 +125,7 @@ The full index of the specs in `docs/` (ARCHITECTURE and CONTRIBUTING link here 
 | [CONVENTIONS.md](docs/CONVENTIONS.md) | Database schema planning conventions |
 | [DATA_API.md](docs/DATA_API.md) | The project data API authenticated by API keys |
 | [MCP.md](docs/MCP.md) | The MCP server for AI agents |
+| [CLI.md](docs/CLI.md) | The `deployer` command line for everyday work: sign in by approving a code from any device, apps, hostnames, variables, deploys |
 | [QUERY_CONSOLE.md](docs/QUERY_CONSOLE.md) | The Query Console (Terminal mode) |
 | [QUERY_EDITOR.md](docs/QUERY_EDITOR.md) | The Query Notebook, saved queries and the query log |
 | [DEVICES.md](docs/DEVICES.md) | Host devices (other PCs that run databases and apps) |

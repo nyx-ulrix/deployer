@@ -14,7 +14,7 @@ from app.crypto import sha256_hex
 from app.db import get_db
 from app.errors import ApiError, forbidden, not_found, unauthorized
 from app.models import ApiKey, Project, ProjectMember, User, role_rank, utcnow
-from app.services import rate_limit
+from app.services import cli_tokens, rate_limit
 from app.services.instance_settings import api_key_rate_limit, owner_only_projects
 
 DbSession = Annotated[Session, Depends(get_db)]
@@ -45,6 +45,11 @@ def get_current_user(request: Request, db: DbSession) -> User:
     token = bearer_token(request)
     if token.startswith(API_KEY_PREFIX):
         raise api_key_not_allowed()
+    if token.startswith(cli_tokens.TOKEN_PREFIX):
+        # docs/CLI.md: a command-line token acts as its user; `require_session` routes refuse it.
+        user, row = cli_tokens.authenticate(db, token)
+        request.state.cli_token_id = row.id
+        return user
     claims = decode_access_token(token)
     user = db.get(User, claims["sub"])
     if user is None or not user.is_active:
@@ -53,6 +58,17 @@ def get_current_user(request: Request, db: DbSession) -> User:
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def require_session(request: Request, user: CurrentUser) -> User:
+    """A signed-in dashboard session, not a command-line token: approving new command-line logins and
+    changing the password need it, so a leaked token can't mint more tokens or lock the owner out."""
+    if getattr(request.state, "cli_token_id", None):
+        raise forbidden("Sign in to the dashboard to do this; command-line tokens can't")
+    return user
+
+
+SessionUser = Annotated[User, Depends(require_session)]
 
 
 def require_instance_owner(user: CurrentUser) -> User:

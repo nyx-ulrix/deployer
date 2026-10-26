@@ -17,6 +17,8 @@ import type {
   AppLogs,
   AppPatch,
   AppWebhook,
+  CliLogin,
+  CliToken,
   CloudConnection,
   CloudConnectionInput,
   CloudBackup,
@@ -208,6 +210,17 @@ export const api = {
       }),
     unlinkIdentity: (identityId: string) =>
       client.del<User>(`/auth/identities/${e(identityId)}`),
+    // docs/CLI.md: `deployer login` codes approved here, and the tokens they made.
+    cliLoginByCode: (code: string) =>
+      client.get<CliLogin>("/auth/cli/logins", { query: { code } }),
+    approveCliLogin: (loginId: string, userCode: string) =>
+      client.post<{ login: CliLogin; token: CliToken }>(`/auth/cli/logins/${e(loginId)}/approve`, {
+        user_code: userCode,
+      }),
+    denyCliLogin: (loginId: string, userCode: string) =>
+      client.post<CliLogin>(`/auth/cli/logins/${e(loginId)}/deny`, { user_code: userCode }),
+    cliTokens: () => client.get<CliToken[]>("/auth/cli/tokens"),
+    revokeCliToken: (tokenId: string) => client.del<Ok>(`/auth/cli/tokens/${e(tokenId)}`),
   },
 
   instance: {
@@ -1157,6 +1170,8 @@ export const qk = {
   devices: (scope: "mine" | "all") => ["devices", scope] as const,
   devicesAll: ["devices"] as const,
   enrollment: (code: string) => ["device-enrollment", code] as const,
+  cliLogin: (code: string) => ["cli-login", code] as const,
+  cliTokens: ["cli-tokens"] as const,
   localDevice: ["device-local", "status"] as const,
   enrollStatus: ["device-local", "enroll-status"] as const,
   placement: (id: string) => ["projects", id, "placement-options"] as const,

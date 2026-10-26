@@ -4,6 +4,7 @@ import { RedirectIfAuthed, RequireAuth, RequireInstanceOwner, SetupGate } from "
 import { AppLayout, AuthShell } from "./components/layout/AppLayout";
 import { PageSpinner } from "./components/ui/Spinner";
 import { EmptyState, ErrorState } from "./components/ui/States";
+import { ApproveCliLoginPage } from "./features/auth/ApproveCliLoginPage";
 import { AuthCompletePage } from "./features/auth/AuthCompletePage";
 import { InvitePage } from "./features/auth/InvitePage";
 import { LoginPage } from "./features/auth/LoginPage";
@@ -90,6 +91,7 @@ const router = createBrowserRouter([
         children: [
           // Focused page (no app chrome); the login redirect keeps `?code=`.
           { path: "/devices/approve", element: <ApproveDevicePage /> },
+          { path: "/cli/approve", element: <ApproveCliLoginPage /> },
           // Back from GitHub's authorize page (docs/DEPLOYMENTS.md "Connect a Git repository").
           { path: "/integrations/github/done", element: <GitHubDonePage /> },
           {

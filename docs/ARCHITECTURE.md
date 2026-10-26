@@ -206,6 +206,7 @@ Source of truth: `api/app/models.py`.
 | `users` | accounts; `password_hash` nullable (OAuth-only users); first user is `is_instance_owner` |
 | `user_identities` | linked Google/GitHub identities (`provider`, `provider_user_id`) |
 | `refresh_tokens` | hashed rotating refresh tokens, grouped by `family_id` for reuse detection |
+| `cli_tokens`, `cli_logins` | hashed `deployer login` tokens per user, and the pending code approvals that issue them ([CLI.md](CLI.md)) |
 | `projects` | a project groups data sources, members, API keys and apps (deployments) |
 | `project_members` | `owner` / `admin` / `developer` / `viewer` |
 | `project_invites` | hashed single-use invite tokens (optional email lock) |

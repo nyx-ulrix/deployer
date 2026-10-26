@@ -6,6 +6,7 @@ their design:
 | Area | Endpoints documented in |
 |---|---|
 | Host devices (enrollment, device management, placement, moving databases, device-local status) | [DEVICES.md](DEVICES.md) |
+| Command-line sign-in: `deployer login` codes approved in the dashboard (`/auth/cli/logins`) and the `dpt_` tokens they make (`/auth/cli/tokens`), which act as their user wherever a session works | [CLI.md](CLI.md) |
 | Backups, versions, point-in-time restore, jobs, recently deleted | [BACKUPS.md](BACKUPS.md) |
 | Cloudflare remote access & custom domains | [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
 | Query console (`POST /projects/{id}/data-sources/{sid}/query`: SQL scripts, MongoDB shell code or one DynamoDB / Firestore / Realtime Database JSON request per data source; `api_keys: true`, service keys only) | [QUERY_CONSOLE.md](QUERY_CONSOLE.md) |
@@ -98,11 +99,14 @@ type ApiKey = { id: string; name: string; prefix: string; role: "anon" | "servic
 | POST | `/auth/logout` | cookie | – | `{ok:true}` (revokes refresh token, clears cookie) |
 | GET | `/auth/me` | bearer | – | `User` |
 | PATCH | `/auth/me` | bearer | `{display_name?}` | `User` |
-| POST | `/auth/password` | bearer | `{current_password?, new_password}` | `{ok:true}` (`current_password` required if one exists; a forgotten one is reset on the Deployer PC with `python -m app.cli user reset-password [--email]`, password as `{"password"}` JSON on stdin; refused for a disabled account) |
+| POST | `/auth/password` | session | `{current_password?, new_password}` | `{ok:true}` (`current_password` required if one exists; a forgotten one is reset on the Deployer PC with `python -m app.cli user reset-password [--email]`, password as `{"password"}` JSON on stdin; refused for a disabled account) |
 | GET | `/auth/oauth/{provider}/start?redirect=/path&invite_token=` | – | – | **302** to provider (login/signup intent) |
-| POST | `/auth/oauth/{provider}/link` | bearer | `{redirect?:"/settings/account"}` | `{authorize_url}` — dashboard navigates to it |
+| POST | `/auth/oauth/{provider}/link` | session | `{redirect?:"/settings/account"}` | `{authorize_url}` — dashboard navigates to it |
 | GET | `/auth/oauth/{provider}/callback?code&state` | – | – | **302** to dashboard (see below) |
-| DELETE | `/auth/identities/{identity_id}` | bearer | – | `User`; 409 `last_login_method` |
+| DELETE | `/auth/identities/{identity_id}` | session | – | `User`; 409 `last_login_method` |
+
+"bearer" is a dashboard session's access token or a command-line token (`dpt_`, [CLI.md](CLI.md));
+"session" refuses command-line tokens (403).
 
 OAuth callback redirects:
 - Success (login): sets refresh cookie, 302 → `{public_url}/auth/complete?redirect=<path>`; the
