@@ -49,7 +49,7 @@ terminal* and choose **Approve**. The terminal finishes by itself and saves the 
 | `deployer projects` | Projects you belong to; `projects create <name> [--sql] [--nosql]` adds one |
 | `deployer apps [project]` | Apps with their type, status and addresses |
 | `deployer app show <app>` | One app: repository, type, addresses, variable names, push-to-deploy |
-| `deployer app create <project> --repo <url>` | A new app; settings are detected from the repository (`--name`, `--branch`, `--root-dir`, `--port`, `--preset` override them). With GitHub connected (Account settings) pushes deploy it |
+| `deployer app create <project> --repo <url>` | A new app; settings are detected from the repository (`--name`, `--branch`, `--root-dir`, `--port`, `--preset`, `--install`, `--build`, `--start` override them; `--api-key <name>` attaches a project API key). With GitHub connected (Account settings) pushes deploy it |
 | `deployer app logs <app> [--tail N]` | The app's recent runtime logs |
 | `deployer domain add <app> <host> [--overwrite]` | Serve the app at `https://<host>` through the Cloudflare tunnel; `--overwrite` replaces an existing DNS record (it lists it first). `domain remove <app> <host>` |
 | `deployer env list <app> [--show]` | Variable names (`--show` prints the values too, audited as a reveal) |

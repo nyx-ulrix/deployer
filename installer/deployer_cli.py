@@ -391,9 +391,19 @@ def cmd_app_create(args) -> int:
         "build_command", "start_command", "output_dir", "container_port",
     )
     body = {k: draft.get(k) for k in fields if draft.get(k) is not None}
-    for key, value in (("name", args.name), ("root_dir", args.root_dir), ("container_port", args.port), ("preset", args.preset)):
+    overrides = (
+        ("name", args.name), ("root_dir", args.root_dir), ("container_port", args.port), ("preset", args.preset),
+        ("install_command", args.install), ("build_command", args.build), ("start_command", args.start),
+    )
+    for key, value in overrides:
         if value:
             body[key] = value
+    if args.api_key:
+        keys = api.call("GET", f"/projects/{project['id']}/api-keys")
+        match = [k for k in keys if args.api_key in (k["id"], k["name"]) and not k.get("revoked_at")]
+        if not match:
+            raise CliError(f"No API key {args.api_key!r} in {project['slug']}: create it under the project's API keys")
+        body["api_key_id"] = match[0]["id"]
     github = api.call("GET", "/integrations/github")
     body["use_github_connection"] = bool(github.get("connected")) and "github.com" in args.repo
     app = api.call("POST", base, body)
@@ -583,6 +593,10 @@ def parser() -> argparse.ArgumentParser:
     a.add_argument("--root-dir")
     a.add_argument("--port", type=int, help="the port the app listens on")
     a.add_argument("--preset", choices=["static", "node", "python", "dockerfile"])
+    a.add_argument("--install", help="install command (default: detected)")
+    a.add_argument("--build", help="build command (default: detected)")
+    a.add_argument("--start", help="start command (default: detected)")
+    a.add_argument("--api-key", help="attach this project API key (name or id)")
     a.set_defaults(func=cmd_app_create)
     a = asub.add_parser("logs", help="the app's recent runtime logs")
     a.add_argument("app")
