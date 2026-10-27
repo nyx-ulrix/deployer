@@ -809,6 +809,187 @@ def cmd_ask(args) -> int:
     return 0
 
 
+# --- commands: instance settings (instance owner) ----------------------------------------------
+# Each asks for its values through an input request (--prompt: in this terminal), so a headless
+# server needs neither sudo nor a browser on it. The values go straight to the API, never to stdout.
+
+
+def _ask_values(args, title: str, fields: list[dict], description: str) -> dict:
+    if not getattr(args, "prompt", False):
+        return ask_web(api_from_config(args), title, fields, description=description)
+    print(description + "\n")
+    out = {}
+    for f in fields:
+        if f.get("secret"):
+            out[f["key"]] = ask_secret(f"{f['label']} (hidden)")
+        else:
+            out[f["key"]] = input(f"{f['label']}: ").strip()
+    return out
+
+
+def _oauth_guide(provider: str, settings: dict) -> tuple[str, str]:
+    """The console link and what to do there, for Deployer's own sign-in app (docs/SETUP.md)."""
+    callback = settings[provider]["callback_url"]
+    home = settings["public_url"]
+    if provider == "github":
+        query = urllib.parse.urlencode({
+            "oauth_application[name]": "Deployer",
+            "oauth_application[url]": home,
+            "oauth_application[callback_url]": callback,
+        })
+        link = f"https://github.com/settings/applications/new?{query}"
+        steps = (
+            f"Open GitHub's 'Register a new OAuth app' form (the link fills it in: name Deployer, "
+            f"Homepage URL {home}, Authorization callback URL {callback}). Click Register application, "
+            "then Generate a new client secret, and paste both values here."
+        )
+        return link, steps
+    link = "https://console.cloud.google.com/auth/clients/create"
+    steps = (
+        "In Google's console create an OAuth client: Application type Web application, name Deployer, "
+        f"Authorized redirect URI {callback}. (First time in this project: fill in Branding, and under "
+        "Audience choose External.) Create, then paste the Client ID and Client secret here; Google shows "
+        "the secret only once."
+    )
+    return link, steps
+
+
+def cmd_oauth(args) -> int:
+    """`deployer oauth status|set|clear [google|github]` without sudo: Deployer's own sign-in buttons."""
+    api = api_from_config(args)
+    settings = api.call("GET", "/instance/settings")
+    if args.action == "status":
+        def human(s):
+            for name in ("google", "github"):
+                p = s[name]
+                state = (
+                    f"configured (Client ID {p['client_id']})" if p["configured"]
+                    else "Client secret missing" if p["client_id"] else "not configured"
+                )
+                print(f"{name.title().replace('Github', 'GitHub')}: {state}\n  Callback URL: {p['callback_url']}")
+        emit(args, {k: settings[k] for k in ("public_url", "google", "github")}, human)
+        return 0
+    if not args.provider:
+        raise CliError(f"Which one? deployer oauth {args.action} google|github")
+    name = args.provider.title().replace("Github", "GitHub")
+    if args.action == "clear":
+        api.call("PUT", "/instance/settings", {f"{args.provider}_client_id": "", f"{args.provider}_client_secret": ""})
+        print(f"Removed the {name} sign-in app; the dashboard no longer offers Continue with {name}.")
+        return 0
+    link, steps = _oauth_guide(args.provider, settings)
+    fields = [
+        {"key": "client_id", "label": "Client ID", "link": link, "link_label": f"{name} console"},
+        {"key": "client_secret", "label": "Client secret", "secret": True},
+    ]
+    if not args.prompt:
+        print(f"\n{steps}\n\n{name} console: {link}", file=sys.stderr)
+    values = _ask_values(args, f"{name} sign-in for Deployer", fields, steps)
+    client_id, secret = (values.get("client_id") or "").strip(), (values.get("client_secret") or "").strip()
+    if not client_id or not secret:
+        raise CliError("Both the Client ID and the Client secret are needed; nothing was changed.")
+    out = api.call("PUT", "/instance/settings", {f"{args.provider}_client_id": client_id, f"{args.provider}_client_secret": secret})
+    if not out[args.provider]["configured"]:
+        raise CliError(f"Saved, but Deployer doesn't report {name} as configured. Check: deployer oauth status")
+    print(f"Saved. The sign-in page now offers Continue with {name}: {settings['public_url']}/login")
+    return 0
+
+
+def cmd_alerts(args) -> int:
+    """`deployer alerts status|set|clear`: the Slack/Discord/any-https webhook alerts are posted to (docs/MONITORING.md)."""
+    api = api_from_config(args)
+    if args.action == "status":
+        url = api.call("GET", "/instance/settings").get("alert_webhook_url")
+        emit(args, {"alert_webhook": bool(url)}, lambda d: print("Alert webhook: " + ("set" if d["alert_webhook"] else "not set")))
+        return 0
+    if args.action == "clear":
+        api.call("PUT", "/instance/settings", {"alert_webhook_url": ""})
+        print("Removed the alert webhook; alerts show only in the dashboard now.")
+        return 0
+    steps = (
+        "Paste an incoming-webhook URL that alerts are posted to. Slack: Apps -> Incoming Webhooks -> Add to a "
+        "channel. Discord: Channel settings -> Integrations -> Webhooks -> New webhook -> Copy URL, then add "
+        "/slack to its end."
+    )
+    fields = [{"key": "url", "label": "Webhook URL", "secret": True, "pattern": "^https://\\S+$"}]
+    url = (_ask_values(args, "Alert webhook", fields, steps).get("url") or "").strip()
+    if not url:
+        print(NOTHING_ENTERED)
+        return 0
+    api.call("PUT", "/instance/settings", {"alert_webhook_url": url})
+    print("Saved. Deployer posts alerts (app down, disk nearly full, failed backups, ...) there.")
+    return 0
+
+
+CLOUD_FIELDS = {
+    "aws": (
+        "In the AWS console (IAM -> Users) create a user for Deployer with the policy shown in Deployer under "
+        "Settings -> Cloud, then Security credentials -> Create access key, and paste it here.",
+        [
+            {"key": "access_key_id", "label": "Access key ID", "placeholder": "AKIA...", "pattern": "^A[A-Z0-9]{15,39}$",
+             "link": "https://console.aws.amazon.com/iam/home#/users", "link_label": "AWS IAM"},
+            {"key": "secret_access_key", "label": "Secret access key", "secret": True},
+            {"key": "region", "label": "Region", "placeholder": "ap-southeast-1"},
+            {"key": "role_arn", "label": "Role ARN to assume", "optional": True},
+        ],
+    ),
+    "firebase": (
+        "In Google Cloud (IAM -> Service accounts) create a key for a service account with the roles shown in "
+        "Deployer under Settings -> Cloud: Keys -> Add key -> JSON. Paste the whole downloaded file here.",
+        [
+            {"key": "service_account_json", "label": "Service account key (JSON)", "secret": True, "multiline": True,
+             "link": "https://console.cloud.google.com/iam-admin/serviceaccounts", "link_label": "Service accounts"},
+            {"key": "region", "label": "Region", "placeholder": "asia-southeast1", "optional": True},
+        ],
+    ),
+}
+
+
+def cmd_cloud(args) -> int:
+    """`deployer cloud list | cloud add aws|firebase <name>`: cloud accounts for cloud databases and hosting (docs/CLOUD.md)."""
+    api = api_from_config(args)
+    if args.action == "list":
+        out = api.call("GET", "/instance/cloud")
+        rows = [[c.get("name", ""), c.get("provider", ""), c.get("project_id") or "all projects", c.get("status") or ""]
+                for c in out.get("connections", [])]
+        emit(args, out, lambda _d: table(rows, ["NAME", "PROVIDER", "SCOPE", "STATUS"]))
+        return 0
+    if args.provider not in CLOUD_FIELDS or not args.name:
+        raise CliError("Usage: deployer cloud add aws|firebase <name> [--project <project>]")
+    steps, fields = CLOUD_FIELDS[args.provider]
+    title = f"{'AWS' if args.provider == 'aws' else 'Firebase'} account for Deployer"
+    values = {k: v.strip() for k, v in _ask_values(args, title, fields, steps).items() if v and v.strip()}
+    if not values:
+        print(NOTHING_ENTERED)
+        return 0
+    body: dict = {"provider": args.provider, "name": args.name, args.provider: values}
+    if args.project:
+        body["project_id"] = find_project(api, args.project)["id"]
+    conn = api.call("POST", "/instance/cloud", body)
+    print(f"Connected {conn.get('name', args.name)} ({args.provider}). Check it any time in Settings -> Cloud.")
+    return 0
+
+
+def cmd_cloudflare(args) -> int:
+    """`deployer cloudflare link`: a Cloudflare API token for permanent addresses on your own domain (docs/REMOTE_ACCESS.md)."""
+    api = api_from_config(args)
+    steps = (
+        "In Cloudflare (My Profile -> API Tokens -> Create Token -> Custom token) give the token Account: "
+        "Cloudflare Tunnel Edit, and Zone: DNS Edit and Zone: Zone Read for your domain. Paste it here with "
+        "your Account ID (on the domain's Overview page, bottom right)."
+    )
+    fields = [
+        {"key": "api_token", "label": "API token", "secret": True,
+         "link": "https://dash.cloudflare.com/profile/api-tokens", "link_label": "Cloudflare API tokens"},
+        {"key": "account_id", "label": "Account ID", "pattern": "^[A-Za-z0-9]+$"},
+    ]
+    values = {k: (v or "").strip() for k, v in _ask_values(args, "Cloudflare for Deployer", fields, steps).items()}
+    if not values.get("api_token") or not values.get("account_id"):
+        raise CliError("Both the API token and the Account ID are needed; nothing was changed.")
+    api.call("POST", "/instance/remote-access/cloudflare/link", values)
+    print("Linked Cloudflare. Add an address: deployer domain add <app> <hostname>")
+    return 0
+
+
 # --- main --------------------------------------------------------------------------------------
 
 
@@ -906,6 +1087,30 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--link", help="an https link shown as an Open button next to the first field")
     s.add_argument("--app", action="append", help="store the values in this app's Environment (repeatable); prints keys only")
     s.set_defaults(func=cmd_ask)
+
+    s = sub.add_parser("oauth", help="oauth status|set|clear google|github: Deployer's own Google/GitHub sign-in (owner)")
+    s.add_argument("action", choices=["status", "set", "clear"])
+    s.add_argument("provider", nargs="?", choices=["google", "github"])
+    s.add_argument("--prompt", action="store_true", help="set: type the values here instead of on a web page")
+    s.set_defaults(func=cmd_oauth)
+
+    s = sub.add_parser("alerts", help="alerts status|set|clear: the webhook alerts are posted to (owner)")
+    s.add_argument("action", choices=["status", "set", "clear"])
+    s.add_argument("--prompt", action="store_true", help="set: type the URL here instead of on a web page")
+    s.set_defaults(func=cmd_alerts)
+
+    s = sub.add_parser("cloud", help="cloud list | cloud add aws|firebase <name>: cloud accounts (owner)")
+    s.add_argument("action", choices=["list", "add"])
+    s.add_argument("provider", nargs="?", choices=["aws", "firebase"])
+    s.add_argument("name", nargs="?")
+    s.add_argument("--project", help="add: only this project may use it (default: every project)")
+    s.add_argument("--prompt", action="store_true", help="add: type the keys here instead of on a web page")
+    s.set_defaults(func=cmd_cloud)
+
+    s = sub.add_parser("cloudflare", help="cloudflare link: a Cloudflare API token for your own domain (owner)")
+    s.add_argument("action", choices=["link"])
+    s.add_argument("--prompt", action="store_true", help="type the token here instead of on a web page")
+    s.set_defaults(func=cmd_cloudflare)
     return p
 
 

@@ -521,3 +521,72 @@ def test_env_set_on_the_web_takes_a_long_name(cli, client, db, owner, owner_head
     assert cli.main(["env", "set", "kanban", name]) == 0
     db.expire_all()
     assert deployments.env_of(db.get(type(app), app.id)) == {name: "v"}
+
+
+def test_oauth_set_on_the_web_saves_deployers_own_sign_in_app(cli, client, owner_headers, monkeypatch, capsys):
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    secret = "0123456789abcdef0123456789abcdef01234567"
+    created, filled = _fill(
+        cli, client, owner_headers, monkeypatch, {"client_id": "Ov23liAbc123", "client_secret": secret}
+    )
+    assert cli.main(["oauth", "set", "github"]) == 0
+    assert filled["status"] == 200
+    body = created["body"]
+    assert "/v1/auth/oauth/github/callback" in body["description"]
+    assert body["fields"][0]["link"].startswith("https://github.com/settings/applications/new?")
+    assert body["fields"][1]["secret"] is True and "app_ids" not in body
+    captured = capsys.readouterr()
+    assert secret not in captured.out + captured.err
+    github = client.get("/v1/instance/settings", headers=owner_headers).json()["github"]
+    assert github["client_id"] == "Ov23liAbc123" and github["configured"] is True
+
+    assert cli.main(["oauth", "status", "--json"]) == 0
+    status = json.loads(capsys.readouterr().out)
+    assert status["github"]["configured"] is True and status["google"]["configured"] is False
+    assert cli.main(["oauth", "clear", "github"]) == 0
+    assert client.get("/v1/instance/settings", headers=owner_headers).json()["github"]["configured"] is False
+
+
+def test_oauth_set_rejects_a_pasted_secret_in_the_id_field_and_saves_nothing(
+    cli, client, owner_headers, monkeypatch, capsys
+):
+    _login(cli, client, owner_headers, monkeypatch)
+    _fill(cli, client, owner_headers, monkeypatch, {"client_id": "GOCSPX-oops", "client_secret": "GOCSPX-secret"})
+    assert cli.main(["oauth", "set", "google"]) == 1
+    assert "Client secret" in capsys.readouterr().err
+    assert client.get("/v1/instance/settings", headers=owner_headers).json()["google"]["client_id"] is None
+
+
+def test_alerts_set_on_the_web_then_clear(cli, client, owner_headers, monkeypatch, capsys):
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    hook = "https://hooks.slack.com/services/T000/B000/xyz"
+    _fill(cli, client, owner_headers, monkeypatch, {"url": hook})
+    assert cli.main(["alerts", "set"]) == 0
+    captured = capsys.readouterr()
+    assert hook not in captured.out + captured.err
+    assert client.get("/v1/instance/settings", headers=owner_headers).json()["alert_webhook_url"] == hook
+    assert cli.main(["alerts", "status"]) == 0
+    assert "set" in capsys.readouterr().out
+    assert cli.main(["alerts", "clear"]) == 0
+    assert client.get("/v1/instance/settings", headers=owner_headers).json()["alert_webhook_url"] is None
+
+
+def test_instance_commands_need_the_owner(cli, client, make_user, monkeypatch, capsys):
+    from app.services.tokens import create_access_token
+
+    member = make_user("member@example.com")
+    headers = {"Authorization": f"Bearer {create_access_token(member)}"}
+    _login(cli, client, headers, monkeypatch)
+    capsys.readouterr()
+    assert cli.main(["alerts", "status"]) == 1
+    assert "instance owner" in capsys.readouterr().err
+
+
+def test_cloud_add_needs_a_provider_and_name(cli, client, owner_headers, monkeypatch, capsys):
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    assert cli.main(["cloud", "add", "aws"]) == 1
+    assert "Usage: deployer cloud add" in capsys.readouterr().err
+    assert not [c for c in cli.calls if c[1] == "/v1/auth/cli/inputs"]

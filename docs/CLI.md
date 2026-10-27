@@ -59,6 +59,10 @@ terminal* and choose **Approve**. The terminal finishes by itself and saves the 
 | `deployer google-oauth <app>... [--path /auth/callback]` | Google sign-in for apps: prints what to enter in Google's console, then one link where you paste `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, saved on each app (below); `--prompt` asks here; two piped lines (`printf 'ID\nSECRET\n' \| …`) are used as is |
 | `deployer ask "<title>" KEY[:secret]... [--app <app>]...` | Asks you to type anything on any device; prints the values as JSON, or with `--app` stores them in the app's Environment and prints only the names ([Input requests](#input-requests)) |
 | `deployer deploy <app> [--wait]` | Deploys now; `--wait` streams the build log until it is live or failed |
+| `deployer oauth status\|set\|clear google\|github` | Deployer's own *Continue with Google/GitHub* buttons ([below](#instance-settings-without-sudo)) |
+| `deployer alerts status\|set\|clear` | The Slack/Discord (or any https) webhook alerts are posted to |
+| `deployer cloud list` / `deployer cloud add aws\|firebase <name> [--project <p>]` | Cloud accounts for cloud databases and hosting ([CLOUD.md](CLOUD.md)) |
+| `deployer cloudflare link` | A Cloudflare API token and Account ID for addresses on your own domain ([REMOTE_ACCESS.md](REMOTE_ACCESS.md)) |
 
 `<app>` is the app's name, slug or id, or `project/app` when two projects have one with that name.
 Variables apply at the app's next deploy (`deployer deploy <app>`); apps on App Runner or Cloud Run are
@@ -128,6 +132,26 @@ code=$(deployer ask "Verification code" CODE --link https://example.com/device |
 - After a submit with `--app` (or `env set`, `google-oauth`) the values apply at each app's next deploy;
   apps on App Runner or Cloud Run are republished with them at once.
 
+### Instance settings without sudo
+
+The instance owner can set up the keys a headless server would otherwise need typed into its terminal
+(or the dashboard) through the same [input requests](#input-requests): each command prints what to do in
+the provider's console and a link where you paste the result on any device. The values go straight to
+Deployer's API and are never printed. `--prompt` asks in the terminal instead.
+
+| Command | What you paste |
+| --- | --- |
+| `deployer oauth set github` | Client ID and secret of a GitHub OAuth app; the link opens GitHub's form already filled in (name, homepage, callback URL) |
+| `deployer oauth set google` | Client ID and secret of a Google *Web application* client; the page lists the redirect URI to add |
+| `deployer alerts set` | A Slack incoming-webhook URL, or a Discord webhook URL with `/slack` added |
+| `deployer cloud add aws <name>` | Access key ID, secret access key, region (and optionally a role to assume) |
+| `deployer cloud add firebase <name>` | The service account's JSON key file, pasted whole |
+| `deployer cloudflare link` | An API token (Cloudflare Tunnel Edit, DNS Edit, Zone Read) and the Account ID |
+
+Run without sudo, `deployer oauth` uses your sign-in like the other commands here; `sudo deployer oauth`
+still works on the server itself without one. Accounts other than the instance owner get *Only the
+instance owner can do that*.
+
 ## How it works
 
 | Method | Path | Auth | Body / Query | Response |
@@ -182,6 +206,6 @@ code=$(deployer ask "Verification code" CODE --link https://example.com/device |
   **Account settings → Command-line sign-ins**; that also cancels its open requests.
 
 The client is `installer/deployer_cli.py` (standard library only); `deployer.sh` hands it `login`,
-`logout`, `whoami`, `tokens`, `projects`, `apps`, `app`, `deploy`, `domain`, `env`, `google-oauth` and
-`ask` before its sudo re-run. The Windows `deployer.ps1` does not have these commands yet; run the Python file
+`logout`, `whoami`, `tokens`, `projects`, `apps`, `app`, `deploy`, `domain`, `env`, `google-oauth`, `ask`,
+`alerts`, `cloud` and `cloudflare` (and `oauth`, when run without sudo and signed in) before its sudo re-run. The Windows `deployer.ps1` does not have these commands yet; run the Python file
 directly there.

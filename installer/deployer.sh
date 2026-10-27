@@ -34,8 +34,14 @@ ORIG=("$@")
 CMD=${CMD,,}
 case $CMD in -h|--help) CMD=help ;; esac
 # docs/CLI.md: everyday commands sign in with a token (`deployer login`) instead of sudo.
+# `deployer oauth` without sudo, once signed in, goes through the API the same way (no root needed).
+if [ "$CMD" = oauth ] && [ "$(id -u)" != 0 ] && { [ -n "${DEPLOYER_TOKEN:-}" ] ||
+  [ -f "${DEPLOYER_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/deployer/cli.json}" ]; }; then
+  CMD=oauth-cli
+fi
 case $CMD in
-  login|logout|whoami|tokens|projects|apps|app|deploy|domain|env|google-oauth|ask)
+  login|logout|whoami|tokens|projects|apps|app|deploy|domain|env|google-oauth|ask|alerts|cloud|cloudflare|oauth-cli)
+    [ "$CMD" = oauth-cli ] && CMD=oauth
     command -v python3 >/dev/null || { echo "deployer $CMD needs python3: sudo apt install python3" >&2; exit 1; }
     exec python3 "$(dirname "$SELF")/deployer_cli.py" "$CMD" "${ORIG[@]}"
     ;;
@@ -569,7 +575,9 @@ ${C_STEP}Deployer management CLI (Linux)${C_OFF}
 
   Accounts and devices
     deployer oauth status [--json]     Google/GitHub sign-in apps and the callback URLs to register
-    deployer oauth set google|github   Save a Client ID and secret (asks, or reads DEPLOYER_OAUTH_CLIENT_ID/_SECRET)
+    deployer oauth set google|github   Save a Client ID and secret (signed in without sudo: a link to paste
+                                       them on any device; with sudo: asks here or reads
+                                       DEPLOYER_OAUTH_CLIENT_ID/_SECRET)
     deployer oauth clear google|github Remove a sign-in app
     deployer reset-password [email]    Forgot a password? Set a new one (default: the owner account)
     deployer device status             Host device link, connection and hosted databases
@@ -585,6 +593,9 @@ ${C_STEP}Deployer management CLI (Linux)${C_OFF}
     deployer env list|unset <app>      Variable names (--show for values) / remove some
     deployer google-oauth <app>...     Google sign-in: what to enter in Google's console, then saves it
     deployer ask "<title>" KEY[:secret]...   Ask the owner to type values on any device (--app: into its Environment)
+    deployer alerts set|clear|status   The Slack/Discord webhook alerts go to (owner; set prints a link)
+    deployer cloud add aws|firebase <name>   Connect a cloud account: a link to paste its keys (owner)
+    deployer cloudflare link           Cloudflare API token for your own domain: a link to paste it (owner)
     deployer deploy <app> [--wait]     Deploy now (--wait streams the build log)
     deployer app show|logs <app>       Settings and addresses / the app's runtime logs
     deployer whoami | tokens | logout  The saved sign-in
