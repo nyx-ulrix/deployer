@@ -793,6 +793,43 @@ export type CliLogin = {
   created_at: string;
 };
 
+/** One field of an input request (docs/CLI.md "Input requests"). */
+export type CliInputField = {
+  key: string;
+  label: string;
+  secret?: boolean;
+  help?: string | null;
+  placeholder?: string | null;
+  /**
+   * A regex the whole (trimmed) value must match. A browser-side hint only: the server never runs it on
+   * submitted values. Checked with JS semantics and the `u` flag; a pattern JS can't compile is skipped.
+   */
+  pattern?: string | null;
+  optional?: boolean;
+  multiline?: boolean;
+  /** https URL shown as an "Open …" button next to the field. */
+  link?: string | null;
+  link_label?: string | null;
+};
+
+/** `GET /v1/inputs/{id}`: an input request a command line is waiting on (never carries values). */
+export type CliInput = {
+  id: string;
+  title: string;
+  description: string | null;
+  fields: CliInputField[];
+  apps: { id: string; name: string; project_name: string }[];
+  /** How many of the request's apps no longer exist or are no longer writable by you (then it can't be filled). */
+  unavailable_apps: number;
+  /** Who asked: a command line (dpt_ token name and prefix) or a dashboard session (name/prefix null). */
+  requested_by: CliInputRequester;
+  status: "pending" | "submitted" | "consumed" | "cancelled" | "expired";
+  expires_at: string;
+  created_at: string;
+};
+
+export type CliInputRequester = { kind: "cli" | "session"; name: string | null; prefix: string | null };
+
 export type CliToken = {
   id: string;
   name: string;

@@ -1,9 +1,14 @@
 """installer/deployer_cli.py end to end against this API (docs/CLI.md): its HTTP calls go to the test client."""
 
+import http.client
 import importlib.util
 import io
 import json
+import os
+import signal
 import stat
+import threading
+import time
 import urllib.error
 from pathlib import Path
 
@@ -69,8 +74,8 @@ def _login(cli, client, owner_headers, monkeypatch):
     cli_code = {}
     real_call = cli.Api.call
 
-    def call(self, method, path, body=None, *, auth=True):
-        out = real_call(self, method, path, body, auth=auth)
+    def call(self, method, path, body=None, **kw):
+        out = real_call(self, method, path, body, **kw)
         if path == "/auth/cli/logins" and method == "POST":
             cli_code["code"] = out["user_code"]
         return out
@@ -142,7 +147,7 @@ def test_google_oauth_saves_both_values_on_each_app(
     monkeypatch.setattr(cli.sys, "stdin", io.StringIO("123-abc.apps.googleusercontent.com\nGOCSPX-secret\n"))
     redirects = ["https://kanban.example.com/auth/callback", "https://printer-editor.example.com/auth/callback"]
     args = ["google-oauth", "kanban", "printer-editor", "--redirect", redirects[0], "--redirect", redirects[1]]
-    assert cli.main(args) == 0
+    assert cli.main([*args, "--prompt"]) == 0
     out = capsys.readouterr().out
     assert all(r in out for r in redirects) and "GOCSPX-secret" not in out
     db.expire_all()
@@ -152,6 +157,109 @@ def test_google_oauth_saves_both_values_on_each_app(
             "GOOGLE_CLIENT_ID": "123-abc.apps.googleusercontent.com",
             "GOOGLE_CLIENT_SECRET": "GOCSPX-secret",
         }
+
+
+def _fill(cli, client, owner_headers, monkeypatch, values):
+    """The owner opens the input link and submits the form during the first poll wait."""
+    created, filled = {}, {}
+    real_call = cli.Api.call
+
+    def call(self, method, path, body=None, **kw):
+        out = real_call(self, method, path, body, **kw)
+        if path == "/auth/cli/inputs" and method == "POST":
+            created.update(out, body=body)
+        return out
+
+    def fill_once(_seconds):
+        if filled:
+            return
+        resp = client.post(f"/v1/inputs/{created['id']}/submit", json={"values": values}, headers=owner_headers)
+        filled["status"] = resp.status_code
+
+    monkeypatch.setattr(cli.Api, "call", call)
+    monkeypatch.setattr(cli.time, "sleep", fill_once)
+    return created, filled
+
+
+def test_env_set_on_the_web_writes_the_value_and_prints_no_secret(
+    cli, client, db, owner, owner_headers, make_project, monkeypatch, capsys
+):
+    project = make_project(owner, "Tools")
+    app = make_app(db, project, "Kanban", env={"KEEP": "1"})
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    created, filled = _fill(cli, client, owner_headers, monkeypatch, {"AGENT_TOKEN": "web-secret"})
+    assert cli.main(["env", "set", "kanban", "AGENT_TOKEN"]) == 0
+    assert filled["status"] == 200
+    assert created["body"]["app_ids"] == [app.id] and created["body"]["fields"][0]["secret"] is True
+    assert created["body"]["title"] == "Set AGENT_TOKEN"  # the page names the app itself
+    captured = capsys.readouterr()
+    assert f"/input/{created['id']}" in captured.err and "Set AGENT_TOKEN" in captured.out
+    assert "web-secret" not in captured.out + captured.err
+    db.expire_all()
+    assert deployments.env_of(db.get(type(app), app.id)) == {"KEEP": "1", "AGENT_TOKEN": "web-secret"}
+
+
+def test_google_oauth_on_the_web_saves_both_values_on_each_app(
+    cli, client, db, owner, owner_headers, make_project, monkeypatch, capsys
+):
+    project = make_project(owner, "Tools")
+    kanban = make_app(db, project, "Kanban")
+    editor = make_app(db, project, "Printer Editor")
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    values = {"GOOGLE_CLIENT_ID": "123-abc.apps.googleusercontent.com", "GOOGLE_CLIENT_SECRET": "GOCSPX-secret"}
+    created, filled = _fill(cli, client, owner_headers, monkeypatch, values)
+    redirect = "https://kanban.example.com/auth/callback"
+    assert cli.main(["google-oauth", "kanban", "printer-editor", "--redirect", redirect]) == 0
+    assert filled["status"] == 200
+    assert sorted(created["body"]["app_ids"]) == sorted([kanban.id, editor.id])
+    assert redirect in created["body"]["description"]
+    captured = capsys.readouterr()
+    assert redirect in captured.out and "GOCSPX-secret" not in captured.out + captured.err
+    db.expire_all()
+    for app in (kanban, editor):
+        assert deployments.env_of(db.get(type(app), app.id)) == values
+
+
+def test_ask_prints_the_values_as_json(cli, client, owner_headers, monkeypatch, capsys):
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    created, filled = _fill(cli, client, owner_headers, monkeypatch, {"CODE": "4711", "TOKEN": "t0p"})
+    args = ["ask", "Verification code", "CODE", "TOKEN:secret", "--link", "https://example.com/device", "--json"]
+    assert cli.main(args) == 0
+    assert filled["status"] == 200
+    fields = created["body"]["fields"]
+    assert fields[0]["link"] == "https://example.com/device" and fields[1]["secret"] is True
+    assert json.loads(capsys.readouterr().out) == {"CODE": "4711", "TOKEN": "t0p"}
+    # Delivered once: the request is consumed.
+    poll = client.post(f"/v1/auth/cli/inputs/{created['id']}/poll", headers=owner_headers).json()
+    assert "values" not in poll
+
+
+def test_ask_into_an_app_prints_only_the_keys(cli, client, db, owner, owner_headers, make_project, monkeypatch, capsys):
+    project = make_project(owner, "Tools")
+    app = make_app(db, project, "Shop")
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    _fill(cli, client, owner_headers, monkeypatch, {"STRIPE_KEY": "sk_live_x"})
+    assert cli.main(["ask", "Stripe", "STRIPE_KEY:secret", "--app", "shop"]) == 0
+    captured = capsys.readouterr()
+    assert "STRIPE_KEY" in captured.out and "sk_live_x" not in captured.out + captured.err
+    db.expire_all()
+    assert deployments.env_of(db.get(type(app), app.id)) == {"STRIPE_KEY": "sk_live_x"}
+
+
+def test_ctrl_c_cancels_the_request(cli, client, owner_headers, monkeypatch, capsys):
+    _login(cli, client, owner_headers, monkeypatch)
+
+    def interrupt(_seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.time, "sleep", interrupt)
+    assert cli.main(["ask", "Code", "CODE"]) == 130
+    cancels = [c for c in cli.calls if c[0] == "POST" and c[1].endswith("/cancel")]
+    assert len(cancels) == 1
 
 
 def test_app_lookup(cli, client, db, owner, owner_headers, make_project, monkeypatch, capsys):
@@ -171,3 +279,245 @@ def test_app_lookup(cli, client, db, owner, owner_headers, make_project, monkeyp
 def test_not_signed_in(cli, capsys):
     assert cli.main(["apps"]) == 1
     assert "deployer login" in capsys.readouterr().err
+
+
+def _fail_on(cli, monkeypatch, match, errors):
+    """urlopen raises the next of `errors` for each request whose path contains `match`, then passes."""
+    real = cli.urllib.request.urlopen
+    queue, seen = list(errors), []
+
+    def urlopen(req, timeout=None):
+        seen.append(timeout)
+        if match in req.full_url and queue:
+            exc = queue.pop(0)
+            raise exc(req) if callable(exc) and not isinstance(exc, BaseException) else exc
+        return real(req, timeout=timeout)
+
+    monkeypatch.setattr(cli.urllib.request, "urlopen", urlopen)
+    return seen
+
+
+def _http_error(status):
+    return lambda req: urllib.error.HTTPError(
+        req.full_url, status, "error", {}, io.BytesIO(b"<html>Bad gateway</html>")
+    )
+
+
+def test_poll_retries_transient_failures_until_it_gets_the_value(
+    cli, client, db, owner, owner_headers, make_project, monkeypatch, capsys
+):
+    project = make_project(owner, "Tools")
+    app = make_app(db, project, "Kanban")
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    _fill(cli, client, owner_headers, monkeypatch, {"API_KEY": "web-secret"})
+    # The API restarts (502), then a poll connection is dropped and one times out: it keeps waiting.
+    errors = [_http_error(502), http.client.RemoteDisconnected("closed"), TimeoutError("timed out")]
+    _fail_on(cli, monkeypatch, "/poll", errors)
+    assert cli.main(["env", "set", "kanban", "API_KEY"]) == 0
+    captured = capsys.readouterr()
+    assert captured.err.count("retrying") == 1 and "Traceback" not in captured.err
+    assert "App Runner or Cloud Run" in captured.out
+    db.expire_all()
+    assert deployments.env_of(db.get(type(app), app.id)) == {"API_KEY": "web-secret"}
+    assert not [c for c in cli.calls if c[1].endswith("/cancel")]
+
+
+def test_poll_gives_up_on_a_404_and_cancels(cli, client, owner_headers, monkeypatch, capsys):
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    _fail_on(cli, monkeypatch, "/poll", [_http_error(404)])
+    assert cli.main(["ask", "Code", "CODE"]) == 1
+    assert "retrying" not in capsys.readouterr().err
+    assert [c for c in cli.calls if c[1].endswith("/cancel")]
+
+
+@pytest.mark.parametrize(
+    "error", [http.client.RemoteDisconnected("closed"), TimeoutError("timed out"), ConnectionResetError(104, "reset")]
+)
+def test_ctrl_c_exits_130_even_when_the_cancel_fails(cli, client, owner_headers, monkeypatch, capsys, error):
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+
+    def interrupt(_seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.time, "sleep", interrupt)
+    timeouts = _fail_on(cli, monkeypatch, "/cancel", [error])
+    assert cli.main(["ask", "Code", "CODE"]) == 130
+    assert timeouts[-1] == 5  # the cancel waits 5 s at most
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_sigterm_cancels_the_request(cli, client, owner_headers, monkeypatch, capsys):
+    _login(cli, client, owner_headers, monkeypatch)
+    before = signal.getsignal(signal.SIGTERM)
+    monkeypatch.setattr(cli.time, "sleep", lambda _s: os.kill(os.getpid(), signal.SIGTERM))
+    assert cli.main(["ask", "Code", "CODE"]) == 130
+    assert len([c for c in cli.calls if c[1].endswith("/cancel")]) == 1
+    assert signal.getsignal(signal.SIGTERM) == before
+
+
+def _no_input_request(cli):
+    return not [c for c in cli.calls if c[1] == "/v1/auth/cli/inputs"]
+
+
+def test_env_set_reads_a_redirected_file(cli, client, db, owner, owner_headers, make_project, monkeypatch, tmp_path):
+    project = make_project(owner, "Tools")
+    app = make_app(db, project, "Kanban")
+    _login(cli, client, owner_headers, monkeypatch)
+    path = tmp_path / "secret.txt"
+    path.write_text("file-secret\n")
+    with open(path, encoding="utf-8") as fh:
+        monkeypatch.setattr(cli.sys, "stdin", fh)
+        assert cli.main(["env", "set", "kanban", "API_KEY"]) == 0
+    assert _no_input_request(cli)
+    db.expire_all()
+    assert deployments.env_of(db.get(type(app), app.id)) == {"API_KEY": "file-secret"}
+
+
+def _pipe(monkeypatch, cli, text=None, delay=0.0):
+    """stdin is a real pipe; `text` is written after `delay` seconds and the pipe closed (None: left idle)."""
+    r, w = os.pipe()
+    reader = os.fdopen(r, "r", encoding="utf-8")
+    monkeypatch.setattr(cli.sys, "stdin", reader)
+
+    def produce():
+        time.sleep(delay)
+        os.write(w, text.encode())
+        os.close(w)
+
+    if text is not None:
+        threading.Thread(target=produce, daemon=True).start()
+    return reader, w
+
+
+def test_env_set_waits_for_a_slow_pipe(cli, client, db, owner, owner_headers, make_project, monkeypatch):
+    project = make_project(owner, "Tools")
+    app = make_app(db, project, "Kanban")
+    _login(cli, client, owner_headers, monkeypatch)
+    reader, _ = _pipe(monkeypatch, cli, "piped-value\n", delay=0.6)  # like `op read` or `aws secretsmanager`
+    try:
+        assert cli.main(["env", "set", "kanban", "API_KEY"]) == 0
+    finally:
+        reader.close()
+    assert _no_input_request(cli)
+    db.expire_all()
+    assert deployments.env_of(db.get(type(app), app.id)) == {"API_KEY": "piped-value"}
+
+
+def test_env_set_with_an_idle_pipe_asks_on_the_web(cli, client, db, owner, owner_headers, make_project, monkeypatch):
+    project = make_project(owner, "Tools")
+    app = make_app(db, project, "Kanban")
+    _login(cli, client, owner_headers, monkeypatch)
+    monkeypatch.setattr(cli, "PIPE_WAIT", 0.05)
+    reader, w = _pipe(monkeypatch, cli)  # an agent's stdin: open, never written
+    _fill(cli, client, owner_headers, monkeypatch, {"API_KEY": "web-secret"})
+    try:
+        assert cli.main(["env", "set", "kanban", "API_KEY"]) == 0
+    finally:
+        reader.close()
+        os.close(w)
+    assert not _no_input_request(cli)
+    db.expire_all()
+    assert deployments.env_of(db.get(type(app), app.id)) == {"API_KEY": "web-secret"}
+
+
+def test_env_set_stdin_waits_as_long_as_the_producer_needs(
+    cli, client, db, owner, owner_headers, make_project, monkeypatch
+):
+    project = make_project(owner, "Tools")
+    app = make_app(db, project, "Kanban")
+    _login(cli, client, owner_headers, monkeypatch)
+    monkeypatch.setattr(cli, "PIPE_WAIT", 0.05)
+    reader, _ = _pipe(monkeypatch, cli, "slow-value\n", delay=0.3)
+    try:
+        assert cli.main(["env", "set", "kanban", "API_KEY", "--stdin"]) == 0
+    finally:
+        reader.close()
+    assert _no_input_request(cli)
+    db.expire_all()
+    assert deployments.env_of(db.get(type(app), app.id)) == {"API_KEY": "slow-value"}
+    assert cli.main(["env", "set", "kanban", "API_KEY", "--stdin", "--generate"]) == 1
+
+
+def test_google_oauth_reads_two_piped_lines_without_prompt(
+    cli, client, db, owner, owner_headers, make_project, monkeypatch, capsys
+):
+    project = make_project(owner, "Tools")
+    kanban = make_app(db, project, "Kanban")
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO("123-abc.apps.googleusercontent.com\nGOCSPX-secret\n"))
+    assert cli.main(["google-oauth", "kanban", "--redirect", "https://kanban.example.com/auth/callback"]) == 0
+    assert _no_input_request(cli)
+    assert "GOCSPX-secret" not in capsys.readouterr().out
+    db.expire_all()
+    assert deployments.env_of(db.get(type(kanban), kanban.id)) == {
+        "GOOGLE_CLIENT_ID": "123-abc.apps.googleusercontent.com",
+        "GOOGLE_CLIENT_SECRET": "GOCSPX-secret",
+    }
+
+
+def test_ctrl_c_after_a_submit_into_an_app_says_the_values_were_saved(
+    cli, client, db, owner, owner_headers, make_project, monkeypatch, capsys
+):
+    project = make_project(owner, "Tools")
+    app = make_app(db, project, "Shop")
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    created, filled = _fill(cli, client, owner_headers, monkeypatch, {"STRIPE_KEY": "sk_live_x"})
+    fill = cli.time.sleep
+
+    def fill_then_interrupt(seconds):
+        fill(seconds)
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli.time, "sleep", fill_then_interrupt)
+    assert cli.main(["ask", "Stripe", "STRIPE_KEY:secret", "--app", "shop"]) == 130
+    assert filled["status"] == 200
+    assert "already been saved" in capsys.readouterr().err
+    db.expire_all()
+    assert deployments.env_of(db.get(type(app), app.id)) == {"STRIPE_KEY": "sk_live_x"}
+
+
+def test_an_empty_submit_into_an_app_changes_nothing(
+    cli, client, db, owner, owner_headers, make_project, monkeypatch, capsys
+):
+    project = make_project(owner, "Tools")
+    make_app(db, project, "Shop")
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+    _fill(cli, client, owner_headers, monkeypatch, {"NOTE": ""})
+    assert cli.main(["ask", "Note", "NOTE:optional", "--app", "shop"]) == 0
+    assert "Nothing was entered; nothing was changed." in capsys.readouterr().out
+
+
+def test_a_deleted_app_stops_the_wait_and_cancels(
+    cli, client, db, owner, owner_headers, make_project, monkeypatch, capsys
+):
+    project = make_project(owner, "Tools")
+    app = make_app(db, project, "Kanban")
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+
+    def delete_app(_seconds):
+        if db.get(type(app), app.id) is not None:
+            db.delete(db.get(type(app), app.id))
+            db.commit()
+
+    monkeypatch.setattr(cli.time, "sleep", delete_app)
+    assert cli.main(["env", "set", "kanban", "API_KEY"]) == 1
+    assert "no longer exists" in capsys.readouterr().err
+    assert len([c for c in cli.calls if c[1].endswith("/cancel")]) == 1
+
+
+def test_env_set_on_the_web_takes_a_long_name(cli, client, db, owner, owner_headers, make_project, monkeypatch):
+    project = make_project(owner, "Tools")
+    app = make_app(db, project, "Kanban")
+    _login(cli, client, owner_headers, monkeypatch)
+    name = "A" * 100
+    _fill(cli, client, owner_headers, monkeypatch, {name: "v"})
+    assert cli.main(["env", "set", "kanban", name]) == 0
+    db.expire_all()
+    assert deployments.env_of(db.get(type(app), app.id)) == {name: "v"}

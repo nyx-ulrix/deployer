@@ -20,6 +20,7 @@ from app.errors import ApiError, not_found, unauthorized
 from app.models import CliLogin, CliToken, User, utcnow
 from app.redis_client import get_redis
 from app.serializers import iso
+from app.services import cli_inputs
 from app.services.devices import generate_user_code, normalize_user_code
 
 TOKEN_PREFIX = "dpt_"
@@ -90,11 +91,13 @@ def list_tokens(db: Session, user: User) -> list[CliToken]:
 
 
 def revoke(db: Session, user: User, token_id: str) -> CliToken:
-    """Revokes one of the user's own tokens (caller commits)."""
+    """Revokes one of the user's own tokens and cancels the input requests it still waits on
+    (docs/CLI.md "Input requests"). Caller commits."""
     row = db.get(CliToken, token_id)
     if row is None or row.user_id != user.id or row.revoked_at is not None:
         raise not_found("Token")
     row.revoked_at = utcnow()
+    cli_inputs.cancel_for_token(db, row.id)
     return row
 
 

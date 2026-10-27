@@ -17,6 +17,7 @@ import type {
   AppLogs,
   AppPatch,
   AppWebhook,
+  CliInput,
   CliLogin,
   CliToken,
   CloudConnection,
@@ -221,6 +222,12 @@ export const api = {
       client.post<CliLogin>(`/auth/cli/logins/${e(loginId)}/deny`, { user_code: userCode }),
     cliTokens: () => client.get<CliToken[]>("/auth/cli/tokens"),
     revokeCliToken: (tokenId: string) => client.del<Ok>(`/auth/cli/tokens/${e(tokenId)}`),
+  },
+  // docs/CLI.md "Input requests": a command line asks the signed-in owner to fill a small form.
+  inputs: {
+    get: (id: string) => client.get<CliInput>(`/inputs/${e(id)}`),
+    submit: (id: string, values: Record<string, string>) =>
+      client.post<{ ok: boolean; keys: string[] }>(`/inputs/${e(id)}/submit`, { values }),
   },
 
   instance: {
@@ -1172,6 +1179,7 @@ export const qk = {
   enrollment: (code: string) => ["device-enrollment", code] as const,
   cliLogin: (code: string) => ["cli-login", code] as const,
   cliTokens: ["cli-tokens"] as const,
+  input: (id: string) => ["cli-input", id] as const,
   localDevice: ["device-local", "status"] as const,
   enrollStatus: ["device-local", "enroll-status"] as const,
   placement: (id: string) => ["projects", id, "placement-options"] as const,

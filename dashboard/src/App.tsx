@@ -17,6 +17,7 @@ import { DatabasesTab } from "./features/databases/DatabasesTab";
 import { AppPage } from "./features/deploys/AppPage";
 import { DeploysTab } from "./features/deploys/DeploysTab";
 import { GitHubDonePage } from "./features/deploys/GitHubConnect";
+import { InputRequestPage } from "./features/inputs/InputRequestPage";
 import { ApproveDevicePage } from "./features/devices/ApproveDevicePage";
 import { DevicesPage } from "./features/devices/DevicesPage";
 import { DeviceStatusPage } from "./features/devices/DeviceStatusPage";
@@ -92,6 +93,8 @@ const router = createBrowserRouter([
           // Focused page (no app chrome); the login redirect keeps `?code=`.
           { path: "/devices/approve", element: <ApproveDevicePage /> },
           { path: "/cli/approve", element: <ApproveCliLoginPage /> },
+          // A command line waiting for values (docs/CLI.md "Input requests").
+          { path: "/input/:id", element: <InputRequestPage /> },
           // Back from GitHub's authorize page (docs/DEPLOYMENTS.md "Connect a Git repository").
           { path: "/integrations/github/done", element: <GitHubDonePage /> },
           {

@@ -138,6 +138,35 @@ class CliLogin(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
 
 
+class CliInput(Base):
+    """An input request (docs/CLI.md "Input requests"): the command line asks its user to fill a small form
+    in the dashboard (a secret, an OAuth client id, a sign-in code) instead of prompting in a terminal."""
+
+    __tablename__ = "cli_inputs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    # The creator: only this user may see or fill it.
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    # The `dpt_` token that asked (None for a dashboard session): only it may poll or cancel, and revoking
+    # it cancels the request. Its name and prefix are copied so the form can say who asked.
+    cli_token_id: Mapped[str | None] = mapped_column(ForeignKey("cli_tokens.id", ondelete="SET NULL"), index=True)
+    token_name: Mapped[str | None] = mapped_column(String(80))
+    token_prefix: Mapped[str | None] = mapped_column(String(16))
+    title: Mapped[str] = mapped_column(String(120), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    fields: Mapped[list] = mapped_column(JSON, nullable=False)
+    # When set, the values go into these apps' Environment and are never stored here.
+    app_ids: Mapped[list | None] = mapped_column(JSON)
+    # pending | submitted | consumed | cancelled | expired
+    status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
+    # encrypt_secret(json.dumps(values)); kept only between the submit and the command line's poll.
+    # MEDIUMTEXT on MariaDB: TEXT (64 KB) can't hold the 48 KB of values once encrypted and base64'd.
+    values_encrypted: Mapped[str | None] = mapped_column(Text().with_variant(mysql.MEDIUMTEXT(), "mysql", "mariadb"))
+    expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
 class Project(Base):
     __tablename__ = "projects"
 

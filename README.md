@@ -35,8 +35,8 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
   deploy apps. Copy-ready config under API keys → *Show usage* → *AI agents (MCP)* ([docs/MCP.md](docs/MCP.md)).
 - **Command line for headless servers** - `deployer login` prints a link and a code; approve it from
   your phone through the public URL and the terminal (or an AI agent on it) keeps a revocable token:
-  create apps, add hostnames, set secrets with hidden input or `--generate`, deploy. No browser or sudo on
-  the server ([docs/CLI.md](docs/CLI.md)).
+  create apps, add hostnames, set secrets by typing them on a link it prints (any device), a hidden
+  prompt or `--generate`, deploy. No browser or sudo on the server ([docs/CLI.md](docs/CLI.md)).
 - **Query console** - SQL and MongoDB shell (`mongosh`) in the browser, per database, with the
   project's roles (viewers are limited to read-only queries) ([docs/QUERY_CONSOLE.md](docs/QUERY_CONSOLE.md)).
 - **Full export / import** - one encrypted JSON file with settings, users, projects **and the data

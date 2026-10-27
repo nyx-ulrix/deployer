@@ -143,6 +143,7 @@ def scheduler_tick() -> None:
         alerts,
         audit,
         backups,
+        cli_inputs,
         cli_tokens,
         cloud_db,
         cohost_apps,
@@ -159,6 +160,12 @@ def scheduler_tick() -> None:
     except Exception:  # noqa: BLE001 - never skip the backups/deploy work below over this
         log.exception("could not follow the quick-tunnel URL")
     jobs.redispatch_queued()
+    try:  # docs/CLI.md "Input requests": values nobody collected go 10 minutes after the submit
+        with jobs.get_sessionmaker()() as session:
+            cli_inputs.expire_due(session)
+            session.commit()
+    except Exception:  # noqa: BLE001 - never skip the backups/deploy work below over this
+        log.exception("could not expire input requests")
     backups.scheduler_tick(jobs.get_sessionmaker())
     deployments.scheduler_tick(jobs.get_sessionmaker())
     cohost_apps.sweep(jobs.get_sessionmaker())  # docs/COHOSTING.md: co-hosted apps on devices
@@ -176,10 +183,12 @@ def scheduler_tick() -> None:
     if time.monotonic() - _last_query_log_prune >= PRUNE_QUERY_LOG_EVERY_S:
         _last_query_log_prune = time.monotonic()
         with jobs.get_sessionmaker()() as session:
-            pruned = query_log.prune(session) + audit.prune(session) + cli_tokens.prune(session)  # A-102
+            pruned = (  # A-102
+                query_log.prune(session) + audit.prune(session) + cli_tokens.prune(session) + cli_inputs.prune(session)
+            )
             session.commit()
         if pruned:
-            log.info("pruned %d query log / audit / expired session / CLI login row(s)", pruned)
+            log.info("pruned %d query log / audit / expired session / CLI login / input request row(s)", pruned)
 
 
 def scheduler_loop(stop: threading.Event, client_factory: Callable[[], redis.Redis] = _worker_redis) -> None:

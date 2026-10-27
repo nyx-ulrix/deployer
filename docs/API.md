@@ -7,6 +7,7 @@ their design:
 |---|---|
 | Host devices (enrollment, device management, placement, moving databases, device-local status) | [DEVICES.md](DEVICES.md) |
 | Command-line sign-in: `deployer login` codes approved in the dashboard (`/auth/cli/logins`) and the `dpt_` tokens they make (`/auth/cli/tokens`), which act as their user wherever a session works | [CLI.md](CLI.md) |
+| Input requests: the command line asks its user to fill a small form on any device (`POST /auth/cli/inputs` with a token or session; `/poll` and `/cancel` only with the credential that created it, so the same `dpt_` token, or any session for one a session made; `GET /inputs/{id}` and `POST /inputs/{id}/submit` need a dashboard session, creator only). Values go back to the command line once or straight into apps' Environment (`app_ids`); uncollected values are wiped 10 minutes after the submit. `GET` also returns `requested_by` (the token's name and prefix, or a session) and `unavailable_apps`; `pattern` is a browser hint the server never runs; revoking a token cancels its open requests | [CLI.md](CLI.md) "Input requests" |
 | Backups, versions, point-in-time restore, jobs, recently deleted | [BACKUPS.md](BACKUPS.md) |
 | Cloudflare remote access & custom domains | [REMOTE_ACCESS.md](REMOTE_ACCESS.md) |
 | Query console (`POST /projects/{id}/data-sources/{sid}/query`: SQL scripts, MongoDB shell code or one DynamoDB / Firestore / Realtime Database JSON request per data source; `api_keys: true`, service keys only) | [QUERY_CONSOLE.md](QUERY_CONSOLE.md) |

@@ -35,7 +35,7 @@ CMD=${CMD,,}
 case $CMD in -h|--help) CMD=help ;; esac
 # docs/CLI.md: everyday commands sign in with a token (`deployer login`) instead of sudo.
 case $CMD in
-  login|logout|whoami|tokens|projects|apps|app|deploy|domain|env|google-oauth)
+  login|logout|whoami|tokens|projects|apps|app|deploy|domain|env|google-oauth|ask)
     command -v python3 >/dev/null || { echo "deployer $CMD needs python3: sudo apt install python3" >&2; exit 1; }
     exec python3 "$(dirname "$SELF")/deployer_cli.py" "$CMD" "${ORIG[@]}"
     ;;
@@ -580,9 +580,11 @@ ${C_STEP}Deployer management CLI (Linux)${C_OFF}
     deployer apps | projects           What you can see (projects create <name> to add one)
     deployer app create <project> --repo <url>   A new app from a repository (settings detected)
     deployer domain add <app> <host>   Give an app https://<host> (--overwrite replaces a DNS record)
-    deployer env set <app> NAME        Set a variable; asks for the value hidden (--generate: random secret)
+    deployer env set <app> NAME        Set a variable: prints a link to type it on any device (--prompt: hidden
+                                       prompt here, --stdin: read a piped value, --generate: random secret)
     deployer env list|unset <app>      Variable names (--show for values) / remove some
     deployer google-oauth <app>...     Google sign-in: what to enter in Google's console, then saves it
+    deployer ask "<title>" KEY[:secret]...   Ask the owner to type values on any device (--app: into its Environment)
     deployer deploy <app> [--wait]     Deploy now (--wait streams the build log)
     deployer app show|logs <app>       Settings and addresses / the app's runtime logs
     deployer whoami | tokens | logout  The saved sign-in

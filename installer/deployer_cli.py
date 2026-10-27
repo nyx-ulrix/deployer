@@ -3,7 +3,7 @@
 
     deployer login                 # prints a link + code; approve it on any device through the public URL
     deployer apps                  # every app you can see
-    deployer env set kanban GOOGLE_CLIENT_SECRET      # asks for the value with hidden input
+    deployer env set kanban GOOGLE_CLIENT_SECRET      # prints a link; type the value on any device
     deployer env set kanban SESSION_SECRET --generate # random 64-hex value, never printed
 
 `deployer.sh` hands these commands here before its sudo re-run; the server-management commands
@@ -16,11 +16,15 @@ from __future__ import annotations
 import argparse
 import functools
 import getpass
+import http.client
 import json
 import os
 import platform
 import secrets
+import select
+import signal
 import socket
+import stat
 import subprocess
 import sys
 import time
@@ -106,7 +110,7 @@ class Api:
         self.url = url.rstrip("/")
         self.token = token
 
-    def call(self, method: str, path: str, body: dict | None = None, *, auth: bool = True):
+    def call(self, method: str, path: str, body: dict | None = None, *, auth: bool = True, timeout: float = 60):
         data = json.dumps(body).encode() if body is not None else None
         req = urllib.request.Request(self.url + "/v1" + path, data=data, method=method)
         req.add_header("User-Agent", USER_AGENT)
@@ -118,12 +122,15 @@ class Api:
                 raise CliError("Not signed in. Run: deployer login")
             req.add_header("Authorization", f"Bearer {self.token}")
         try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
                 raw = resp.read()
         except urllib.error.HTTPError as exc:
             raise self._error(exc) from None
         except urllib.error.URLError as exc:
             raise CliError(f"Can't reach Deployer at {self.url}: {exc.reason}") from None
+        except (OSError, http.client.HTTPException) as exc:
+            # A dropped or reset connection, or a timeout: like URLError, a CliError without a status.
+            raise CliError(f"Lost the connection to Deployer at {self.url}: {exc!r}") from None
         return json.loads(raw) if raw else None
 
     def _error(self, exc: urllib.error.HTTPError) -> CliError:
@@ -175,6 +182,175 @@ def ask_secret(prompt: str) -> str:
     if not value:
         raise CliError("Nothing entered; nothing was changed.")
     return value
+
+
+PIPE_WAIT = 5.0  # seconds a pipe gets for its first line before the value is asked for on the web
+
+
+def piped_stdin() -> str | None:
+    """A value piped or redirected in (`echo x | deployer env set ...`, `< file`); None at a terminal or when
+    nothing arrives. A regular file is read. A pipe gets PIPE_WAIT seconds for its first line or EOF: agents
+    often run with an idle stdin that never closes, and then the value is asked for on the web (slower
+    producers: --stdin). On Windows, where select() only takes sockets, a pipe is read blocking."""
+    stdin = sys.stdin
+    try:
+        if stdin is None or stdin.isatty():
+            return None
+    except ValueError:
+        return None
+    try:
+        fd = stdin.fileno()
+    except (OSError, ValueError):
+        fd = None  # an in-memory stream: read it
+    if fd is not None:
+        try:
+            mode = os.fstat(fd).st_mode
+        except OSError:
+            return None
+        if not stat.S_ISREG(mode) and os.name != "nt":
+            try:
+                ready, _, _ = select.select([fd], [], [], PIPE_WAIT)
+            except (OSError, ValueError):
+                ready = [fd]  # select can't watch it: read it, as a terminal-less stdin always was
+            if not ready:
+                return None
+    try:
+        value = stdin.readline().rstrip("\r\n")
+    except (OSError, ValueError):
+        return None
+    return value or None
+
+
+def read_stdin(what: str) -> str:
+    """--stdin: one line from stdin, waiting as long as the producer needs (hidden prompt at a terminal)."""
+    if sys.stdin.isatty():
+        return ask_secret(what)
+    value = sys.stdin.readline().rstrip("\r\n")
+    if not value:
+        raise CliError("Nothing was piped in; nothing was changed.")
+    return value
+
+
+def _interrupt_on_signals() -> dict:
+    """SIGTERM and SIGHUP (an agent's tool timeout, a closed SSH session) stop a wait like Ctrl+C does, so
+    the request is cancelled instead of left open. Returns the old handlers for _restore_signals."""
+
+    def handler(signum, frame):
+        raise KeyboardInterrupt
+
+    old = {}
+    for name in ("SIGTERM", "SIGHUP"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        try:
+            previous = signal.signal(sig, handler)
+        except (ValueError, OSError):  # not the main thread
+            continue
+        old[sig] = previous if previous is not None else signal.SIG_DFL
+    return old
+
+
+def _restore_signals(old: dict) -> None:
+    for sig, previous in old.items():
+        try:
+            signal.signal(sig, previous)
+        except (ValueError, OSError, TypeError):
+            pass
+
+
+def _cancel_input(api: Api, base: str) -> str | None:
+    """Best effort: never raises, waits at most 5 s. Returns the request's status after the cancel."""
+    try:
+        out = api.call("POST", base + "/cancel", timeout=5)
+    except Exception:
+        return None
+    return out.get("status") if isinstance(out, dict) else None
+
+
+def _transient(exc: CliError) -> bool:
+    """No answer, a server or proxy error (API restarting, tunnel reconnecting) or a rate limit: retry.
+    401/403/404 and other client errors won't get better by waiting."""
+    status = getattr(exc, "status", None)
+    return status is None or status >= 500 or status == 429
+
+
+def ask_web(api: Api, title: str, fields: list[dict], *, description: str | None = None, app_ids: list[str] | None = None) -> dict:
+    """An input request (docs/CLI.md, "Input requests"): prints a link the owner opens on any device, then
+    waits until they fill it in. Returns the values, or with app_ids (the values went straight into those
+    apps' Environment and never come back) {"keys": [...], "apps": [{id, name}]}. Any other way out
+    (Ctrl+C, SIGTERM, an error) cancels the request. Its messages go to stderr so that stdout stays clean
+    for `deployer ask`."""
+    body: dict = {"title": title, "fields": fields}
+    if description:
+        body["description"] = description
+    if app_ids:
+        body["app_ids"] = app_ids
+    start = api.call("POST", "/auth/cli/inputs", body)
+    err = sys.stderr
+    print("\nOpen this link on your phone or computer to fill it in:\n", file=err)
+    print(f"    {start['url']}\n", file=err)
+    if urllib.parse.urlsplit(start["url"]).hostname in ("localhost", "127.0.0.1"):
+        print(
+            "Note: Deployer has no public address yet, so that link only opens on this server. Set one up under\n"
+            "Settings -> Domains & remote access, or use an SSH tunnel (ssh -L 8080:localhost:8080 ...).\n",
+            file=err,
+        )
+    expires = int(start.get("expires_in") or 1800)
+    print(f"Waiting for it (Ctrl+C to cancel; the link expires in {expires // 60} minutes)...", file=err, flush=True)
+    interval = int(start.get("interval") or 3)
+    deadline = time.monotonic() + expires + 5
+    base = f"/auth/cli/inputs/{start['id']}"
+    old_signals = _interrupt_on_signals()
+    ended = False  # the server reported a final status: nothing left to cancel
+    try:
+        lost: CliError | None = None
+        backoff = 0
+        while time.monotonic() < deadline:
+            time.sleep(backoff or interval)
+            try:
+                out = api.call("POST", base + "/poll")
+            except CliError as exc:
+                if getattr(exc, "code", "") == "slow_down":
+                    interval += 1
+                    continue
+                if not _transient(exc):
+                    raise
+                if lost is None:
+                    print("Connection to Deployer lost, retrying...", file=err, flush=True)
+                lost, backoff = exc, min(30, max(interval, backoff * 2))
+                continue
+            lost, backoff = None, 0
+            interval = int(out.get("interval") or interval)
+            status = out.get("status")
+            if status == "submitted":
+                ended = True
+                if "values" in out:
+                    return out["values"]
+                return {"keys": out.get("keys") or [], "apps": out.get("apps") or []}
+            if status in ("cancelled", "expired", "consumed"):
+                ended = True
+                raise CliError(f"The request was {status}; nothing was changed. Run the command again.")
+            if status == "pending" and out.get("unavailable_apps"):
+                n = int(out["unavailable_apps"])
+                raise CliError(
+                    f"{n} of the apps this request saves to {'no longer exists' if n == 1 else 'no longer exist'} "
+                    "or you can no longer change it; the request was cancelled and nothing was changed. "
+                    "Run the command again."
+                )
+        if lost is not None:
+            raise CliError(f"{lost} - gave up when the link expired. Run the command again.")
+        raise CliError("The link expired; nothing was changed. Run the command again.")
+    except BaseException:
+        if not ended and _cancel_input(api, base) == "submitted":
+            # An app_ids request filled just before the stop: cancelling does not undo it (docs/CLI.md).
+            print(
+                "Note: the values had already been saved in the apps' Environment; stopping did not undo that.",
+                file=err,
+            )
+        raise
+    finally:
+        _restore_signals(old_signals)
 
 
 # --- lookups -----------------------------------------------------------------------------------
@@ -493,20 +669,37 @@ def cmd_env(args) -> int:
         out = api.call("PATCH", app_path(app), {"env_unset": args.keys})
         print(f"Removed {', '.join(args.keys)}. {_apply_hint(args.app, out)}")
         return 0
-    if len(args.keys) != 1 and not (len(args.keys) == 2 and not args.generate):
-        raise CliError("Usage: deployer env set <app> NAME [value | --generate | --stdin]")
+    sources = (len(args.keys) == 2) + args.generate + args.prompt + args.stdin
+    if len(args.keys) not in (1, 2) or sources > 1:
+        raise CliError("Usage: deployer env set <app> NAME [value | --generate | --prompt | --stdin]")
     key = args.keys[0]
     if args.generate:
         value = secrets.token_hex(args.bytes)
     elif len(args.keys) == 2:
         value = args.keys[1]
         print("note: a value on the command line is kept in your shell history; leave it out to be asked.", file=sys.stderr)
-    else:
+    elif args.prompt:
         value = ask_secret(f"{key} for {app['slug']} (hidden)")
+    elif args.stdin:
+        value = read_stdin(f"{key} for {app['slug']} (hidden)")
+    else:
+        value = piped_stdin()
+        if value is None:
+            # The page names the app (and its project) itself, so the title stays short.
+            field = {"key": key, "label": key, "secret": True}
+            out = ask_web(api, f"Set {key}", [field], app_ids=[app["id"]])
+            if not out["keys"]:
+                print(NOTHING_ENTERED)
+                return 0
+            print(f"Set {key} to the value you typed. {_web_hint(args.app)}")
+            return 0
     out = api.call("PATCH", app_path(app), {"env_set": {key: value}})
     shown = "a new random value (not shown)" if args.generate else "the value"
     print(f"Set {key} to {shown}. {_apply_hint(args.app, out)}")
     return 0
+
+
+NOTHING_ENTERED = "Nothing was entered; nothing was changed."
 
 
 def _apply_hint(ref: str, app: dict) -> str:
@@ -515,12 +708,25 @@ def _apply_hint(ref: str, app: dict) -> str:
     return f"It applies at the next deploy: deployer deploy {ref}"
 
 
+def _web_hint(ref: str | None = None) -> str:
+    """After a web submit the server already wrote the values, and republished live App Runner / Cloud Run
+    apps; the poll doesn't say which, so the hint covers both."""
+    if ref:
+        return f"It applies at the next deploy (deployer deploy {ref}); an app on App Runner or Cloud Run is republished with it now."
+    return "They apply at each app's next deploy (deployer deploy <app>); apps on App Runner or Cloud Run are republished with them now."
+
+
 # --- commands: Google sign-in for an app -------------------------------------------------------
+
+
+GOOGLE_CONSOLE = "https://console.cloud.google.com/auth/clients/create"
+GOOGLE_CLIENT_ID_PATTERN = r"^[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com$"
 
 
 def cmd_google_oauth(args) -> int:
     """Google has no API for creating OAuth web clients: this prints exactly what to enter in its console
-    (from any device), then stores the ID and secret in each app's environment with hidden input."""
+    (from any device), then asks for the ID and secret through one input request (--prompt: in this
+    terminal) and stores them in each app's environment."""
     api = api_from_config(args)
     apps = [find_app(api, ref) for ref in args.apps]
     uris = list(args.redirect or [])
@@ -529,20 +735,77 @@ def cmd_google_oauth(args) -> int:
         if not hosts and not args.redirect:
             raise CliError(f"{app['slug']} has no hostname yet: deployer domain add {app['slug']} <hostname> first, or pass --redirect.")
         uris += [f"https://{h}{args.path}" for h in hosts]
-    print("\n1. Open https://console.cloud.google.com/auth/clients/create on any device")
+    print(f"\n1. Open {GOOGLE_CONSOLE} on any device")
     print("   (first time: also fill in Branding, and under Audience choose External and Publish app).")
     print("2. Application type: Web application. Add these Authorized redirect URIs:\n")
     for uri in dict.fromkeys(uris):
         print(f"     {uri}")
     print("\n3. Create, then copy the Client ID and Client secret (Google shows the secret only once).\n")
-    client_id = input("Client ID: ").strip() if sys.stdin.isatty() else sys.stdin.readline().strip()
+    piped = None if args.prompt else piped_stdin()  # `printf 'ID\nSECRET\n' | deployer google-oauth ...`
+    if not args.prompt and piped is None:
+        lines = [
+            "In Google's console create an OAuth client of type Web application with these Authorized redirect URIs:",
+            *dict.fromkeys(uris),
+            f"Console: {GOOGLE_CONSOLE}",
+            "Then paste the Client ID and Client secret here (Google shows the secret only once).",
+        ]
+        fields = [
+            {
+                "key": args.id_var, "label": "Client ID", "placeholder": "123-abc.apps.googleusercontent.com",
+                "pattern": GOOGLE_CLIENT_ID_PATTERN, "link": GOOGLE_CONSOLE, "link_label": "Google console",
+            },
+            {"key": args.secret_var, "label": "Client secret", "secret": True},
+        ]
+        out = ask_web(api, "Google sign-in", fields, description="\n\n".join(lines), app_ids=[a["id"] for a in apps])
+        if not out["keys"]:
+            print(NOTHING_ENTERED)
+            return 0
+        for app in apps:
+            print(f"Saved {', '.join(out['keys'])} on {app['_project']}/{app['slug']}.")
+        print(_web_hint())
+        return 0
+    if piped is not None:
+        client_id = piped.strip()
+    else:
+        client_id = input("Client ID: ").strip() if sys.stdin.isatty() else sys.stdin.readline().strip()
     if not client_id.endswith(".apps.googleusercontent.com"):
         raise CliError("That doesn't look like a Google Client ID (it ends in .apps.googleusercontent.com).")
     secret = ask_secret("Client secret (hidden)")
     for app in apps:
-        api.call("PATCH", app_path(app), {"env_set": {args.id_var: client_id, args.secret_var: secret}})
-        print(f"Saved {args.id_var} and {args.secret_var} on {app['_project']}/{app['slug']}.")
-    print("They apply at each app's next deploy (deployer deploy <app>).")
+        ref = f"{app['_project']}/{app['slug']}"
+        out = api.call("PATCH", app_path(app), {"env_set": {args.id_var: client_id, args.secret_var: secret}})
+        print(f"Saved {args.id_var} and {args.secret_var} on {ref}. {_apply_hint(ref, out)}")
+    return 0
+
+
+# --- commands: ask for anything ----------------------------------------------------------------
+
+
+def cmd_ask(args) -> int:
+    """`deployer ask "<title>" KEY[:secret] ...`: a generic input request for scripts and agents."""
+    api = api_from_config(args)
+    fields = []
+    for spec in args.fields:
+        key, _, flags = spec.partition(":")
+        flags_set = {f for f in flags.lower().split(",") if f}
+        unknown = flags_set - {"secret", "optional", "multiline"}
+        if unknown:
+            raise CliError(f"Unknown option {', '.join(sorted(unknown))} in {spec!r}: use KEY, KEY:secret, KEY:optional or KEY:multiline.")
+        field = {"key": key, "label": key}
+        field.update({f: True for f in flags_set})
+        fields.append(field)
+    if args.link:
+        fields[0]["link"] = args.link
+    apps = [find_app(api, ref) for ref in args.app or []]
+    out = ask_web(api, args.title, fields, description=args.description, app_ids=[a["id"] for a in apps] or None)
+    if not apps or args.json:
+        print(json.dumps(out, indent=2))
+        return 0
+    if not out["keys"]:
+        print(NOTHING_ENTERED)
+        return 0
+    names = ", ".join(f"{a['_project']}/{a['slug']}" for a in apps)
+    print(f"Saved {', '.join(out['keys'])} on {names}. {_web_hint()}")
     return 0
 
 
@@ -623,6 +886,8 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--generate", action="store_true", help="set: a random hex value (like openssl rand -hex 32)")
     s.add_argument("--bytes", type=int, default=32, help="with --generate: random bytes (default 32 = 64 hex)")
     s.add_argument("--show", action="store_true", help="list: also print the values")
+    s.add_argument("--prompt", action="store_true", help="set: type the value here (hidden) instead of on a web page")
+    s.add_argument("--stdin", action="store_true", help="set: read the value from stdin, however long the producer takes")
     s.set_defaults(func=cmd_env)
 
     s = sub.add_parser("google-oauth", help="Google sign-in for apps: what to enter in Google's console, then save it")
@@ -631,7 +896,16 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--redirect", action="append", help="a redirect URI to list instead (repeatable)")
     s.add_argument("--id-var", default="GOOGLE_CLIENT_ID")
     s.add_argument("--secret-var", default="GOOGLE_CLIENT_SECRET")
+    s.add_argument("--prompt", action="store_true", help="type the ID and secret here instead of on a web page")
     s.set_defaults(func=cmd_google_oauth)
+
+    s = sub.add_parser("ask", help='ask "<title>" KEY[:secret]...: the owner types values on any device')
+    s.add_argument("title")
+    s.add_argument("fields", nargs="+", metavar="KEY[:secret]", help="a field; :secret hides it, :optional, :multiline")
+    s.add_argument("--description", help="text shown above the fields")
+    s.add_argument("--link", help="an https link shown as an Open button next to the first field")
+    s.add_argument("--app", action="append", help="store the values in this app's Environment (repeatable); prints keys only")
+    s.set_defaults(func=cmd_ask)
     return p
 
 

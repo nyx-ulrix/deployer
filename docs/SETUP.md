@@ -205,7 +205,8 @@ them.
 
 **Everyday work without sudo or a browser on the server (Linux):** `deployer login` prints a link and a
 code; open it on your phone or laptop, approve, and the terminal keeps a token. Then `deployer apps`,
-`deployer app create`, `deployer domain add`, `deployer env set` (hidden input, or `--generate` for a
+`deployer app create`, `deployer domain add`, `deployer env set` (prints a link where you type the value
+on any device; `--prompt` asks here with hidden input, `--stdin` reads a piped value, `--generate` makes a
 random secret), `deployer google-oauth` and `deployer deploy`. Everything is in [CLI.md](CLI.md).
 
 ## 9. Troubleshooting

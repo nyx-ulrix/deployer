@@ -145,7 +145,7 @@ def _check_env(value: dict[str, str] | None) -> dict[str, str] | None:
     if value is None:
         return None
     for key in value:
-        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$", key):
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,127}", key):
             raise ValueError(f"invalid environment variable name {key!r}")
         if app_runner.reserved_env(key):
             raise ValueError(f"{key} is reserved (DOCKER_*, LD_* and PATH configure the worker's docker)")
@@ -184,6 +184,29 @@ def _merge_env(app: App, body: AppUpdate) -> None:
     body.env = env
     body.model_fields_set.add("env")
     body.model_fields_set.difference_update({"env_set", "env_unset"})
+
+
+def set_env_vars(db: Session, app: App, values: dict[str, str], *, user_id: str) -> tuple | None:
+    """Sets some variables of `app` the way PATCH env_set does for an environment-only change: same name
+    checks, merge and 64 KB limit, and (docs/CLOUD.md "G1") a republish of a live App Runner / Cloud Run
+    app. Used by input requests (docs/CLI.md). Returns PATCH's `env_dep` (or None); the caller commits,
+    then hands it to `dispatch_env_deployment`."""
+    try:
+        _check_env(values)
+    except ValueError as exc:
+        raise ApiError(422, "validation_error", str(exc)) from None
+    runtime_before = _runtime_settings(app)
+    body = AppUpdate(env_set=values)
+    _merge_env(app, body)
+    deployments.set_env(app, body.env or {})
+    if _runtime_settings(app) != runtime_before:
+        return deployments.republish(db, app, user_id=user_id)
+    return None
+
+
+def dispatch_env_deployment(env_dep: tuple | None) -> None:
+    if env_dep is not None:
+        _dispatch(env_dep[1])
 
 
 class AppCreate(AppFields):
