@@ -846,6 +846,100 @@ def unlink(db: Session, delete_dns: bool, delete_tunnel: bool, *, request: Reque
     return remote_access_out(db, live=False)
 
 
+# --- stale DNS records ---------------------------------------------------------------------------
+
+
+def _record_host(value) -> str:
+    return str(value or "").strip().rstrip(".").lower()
+
+
+def _find_stale(db: Session, client: cf.CloudflareClient, account_id: str) -> list[dict]:
+    """CNAMEs in the account's zones that point at one of Deployer's tunnels but belong to no Domain row.
+    Any Domain row (whatever its status or provider) counts as known, by hostname or by record id."""
+    targets = {
+        cf.tunnel_cname_target(str(t)).lower()
+        for t in (get_value(db, "cloudflare_tunnel_id"), get_value(db, "cloudflare_apps_tunnel_id"))
+        if t
+    }
+    domains = list(db.scalars(select(Domain)).all())
+    known_hosts = {d.hostname.lower() for d in domains}
+    known_ids = {d.dns_record_id for d in domains if d.dns_record_id}
+    try:
+        zones = fetch_zones(client, account_id)
+    except cf.CloudflareError as exc:
+        raise cf.to_api_error(exc, cf.PERM_ZONE) from None
+    stale: list[dict] = []
+    for zone in zones:
+        try:
+            records = client.list_dns_records(zone["id"])
+        except cf.CloudflareError as exc:
+            raise cf.to_api_error(exc, cf.PERM_DNS) from None
+        for r in records:
+            hostname, target = _record_host(r.get("name")), _record_host(r.get("content"))
+            if r.get("type") != "CNAME" or target not in targets or not r.get("id"):
+                continue
+            if hostname in known_hosts or r["id"] in known_ids:
+                continue
+            stale.append(
+                {
+                    "zone_id": zone["id"],
+                    "zone_name": zone["name"],
+                    "record_id": r["id"],
+                    "hostname": hostname,
+                    "target": target,
+                }
+            )
+    stale.sort(key=lambda s: (s["zone_name"], s["hostname"]))
+    return stale
+
+
+def stale_records(db: Session) -> list[dict]:
+    """`[{zone_id, zone_name, record_id, hostname, target}]`: tunnel CNAMEs Deployer no longer knows, e.g.
+    left behind when an app was deleted while Cloudflare was unreachable. 409 not_linked."""
+    token, account_id, _tunnel_id = _linked_state(db)
+    with _client(token) as client:
+        return _find_stale(db, client, account_id)
+
+
+def delete_stale_records(db: Session, record_ids: list[str], *, request: Request | None, user_id: str) -> dict:
+    """Deletes the given records after checking again, against Cloudflare and the database, that each one
+    is still stale; any other id is skipped, never deleted. Commits. Returns `{deleted, skipped}`."""
+    token, account_id, _tunnel_id = _linked_state(db)
+    wanted = list(dict.fromkeys(r.strip() for r in record_ids if r and r.strip()))
+    deleted: list[dict] = []
+    skipped: list[dict] = []
+
+    def finish() -> None:
+        if deleted:
+            audit.record(
+                db,
+                "remote_access.stale_dns_delete",
+                request=request,
+                user_id=user_id,
+                hostnames=[d["hostname"] for d in deleted],
+            )
+            db.commit()
+
+    with _client(token) as client:
+        stale = {s["record_id"]: s for s in _find_stale(db, client, account_id)}
+        for record_id in wanted:
+            record = stale.get(record_id)
+            if record is None:
+                skipped.append({"record_id": record_id, "reason": "not_stale"})
+                continue
+            try:
+                client.delete_dns_record(record["zone_id"], record_id)
+            except cf.CloudflareError as exc:
+                if exc.is_not_found:
+                    skipped.append({"record_id": record_id, "hostname": record["hostname"], "reason": "not_found"})
+                    continue
+                finish()  # keep the audit trail of what was already deleted
+                raise cf.to_api_error(exc, cf.PERM_DNS) from None
+            deleted.append(record)
+    finish()
+    return {"deleted": deleted, "skipped": skipped}
+
+
 def set_quick(db: Session, enabled: bool, *, request: Request | None, user_id: str) -> dict:
     previous = mode(db)
     if enabled:

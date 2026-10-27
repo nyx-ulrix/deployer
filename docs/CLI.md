@@ -57,12 +57,15 @@ terminal* and choose **Approve**. The terminal finishes by itself and saves the 
 | `deployer env set <app> NAME --generate [--bytes 32]` | A random value like `openssl rand -hex 32`, never printed |
 | `deployer env unset <app> NAME...` | Removes variables |
 | `deployer google-oauth <app>... [--path /auth/callback]` | Google sign-in for apps: prints what to enter in Google's console, then one link where you paste `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, saved on each app (below); `--prompt` asks here; two piped lines (`printf 'ID\nSECRET\n' \| …`) are used as is |
+| `deployer google-apis <api>... --app <app>` (or `--project <id>`) | Turns Google APIs on with your own `gcloud` sign-in (which you do once, yourself), in the project of the app's `GOOGLE_CLIENT_ID` (its number is the ID's prefix). Short names: calendar, drive, gmail, sheets, docs, people, tasks, youtube, maps; or a full `x.googleapis.com`. Checks they are on afterwards |
+| `deployer webhook <app> [--rotate]` | The repository's push webhook, so a push deploys: through the app's GitHub connection when it has one, else through your own GitHub CLI (`gh`) sign-in, which needs admin on the repository. The secret goes to `gh` on stdin, never on its command line or the screen. `--rotate` makes a new secret and updates the hook |
 | `deployer ask "<title>" KEY[:secret]... [--app <app>]...` | Asks you to type anything on any device; prints the values as JSON, or with `--app` stores them in the app's Environment and prints only the names ([Input requests](#input-requests)) |
 | `deployer deploy <app> [--wait]` | Deploys now; `--wait` streams the build log until it is live or failed |
 | `deployer oauth status\|set\|clear google\|github` | Deployer's own *Continue with Google/GitHub* buttons ([below](#instance-settings-without-sudo)) |
 | `deployer alerts status\|set\|clear` | The Slack/Discord (or any https) webhook alerts are posted to |
 | `deployer cloud list` / `deployer cloud add aws\|firebase <name> [--project <p>]` | Cloud accounts for cloud databases and hosting ([CLOUD.md](CLOUD.md)) |
 | `deployer cloudflare link` | A Cloudflare API token and Account ID for addresses on your own domain ([REMOTE_ACCESS.md](REMOTE_ACCESS.md)) |
+| `deployer cloudflare stale [--delete] [--yes]` | Lists stale DNS records: CNAMEs pointing at Deployer's tunnels for hostnames Deployer no longer has (HOSTNAME, ZONE, TARGET). `--delete` asks `Delete N records? [y/N]` and removes them; `--yes` skips the question (needed without a terminal). Each record is checked again just before it is deleted; records pointing elsewhere are never touched ([REMOTE_ACCESS.md](REMOTE_ACCESS.md) step 6) |
 
 `<app>` is the app's name, slug or id, or `project/app` when two projects have one with that name.
 Variables apply at the app's next deploy (`deployer deploy <app>`); apps on App Runner or Cloud Run are
@@ -148,6 +151,9 @@ Deployer's API and are never printed. `--prompt` asks in the terminal instead.
 | `deployer cloud add firebase <name>` | The service account's JSON key file, pasted whole |
 | `deployer cloudflare link` | An API token (Cloudflare Tunnel Edit, DNS Edit, Zone Read) and the Account ID |
 
+`deployer cloudflare stale [--delete]` (owner too, nothing to paste) cleans up DNS records left in
+Cloudflare after an app or hostname was removed while Cloudflare was unreachable.
+
 Run without sudo, `deployer oauth` uses your sign-in like the other commands here; `sudo deployer oauth`
 still works on the server itself without one. Accounts other than the instance owner get *Only the
 instance owner can do that*.
@@ -206,6 +212,8 @@ instance owner can do that*.
   **Account settings → Command-line sign-ins**; that also cancels its open requests.
 
 The client is `installer/deployer_cli.py` (standard library only); `deployer.sh` hands it `login`,
-`logout`, `whoami`, `tokens`, `projects`, `apps`, `app`, `deploy`, `domain`, `env`, `google-oauth`, `ask`,
-`alerts`, `cloud` and `cloudflare` (and `oauth`, when run without sudo and signed in) before its sudo re-run. The Windows `deployer.ps1` does not have these commands yet; run the Python file
-directly there.
+`logout`, `whoami`, `tokens`, `projects`, `apps`, `app`, `deploy`, `domain`, `env`, `google-oauth`,
+`google-apis`, `webhook`, `ask`, `alerts`, `cloud` and `cloudflare` (and `oauth`, when run without sudo
+and signed in) before its sudo re-run. The Windows `deployer.ps1` hands over the same commands before
+any administrator prompt (`oauth` from a normal, not administrator, window once signed in); it needs
+Python 3.9+ there (`winget install Python.Python.3.12`) and looks for `py -3`, then `python` / `python3`.

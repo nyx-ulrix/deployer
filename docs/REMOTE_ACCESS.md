@@ -99,6 +99,15 @@ https://dash.cloudflare.com/profile/api-tokens?permissionGroupKeys=%5B%7B%22key%
    reverts to `http://localhost:<port>`; the same happens when that hostname is deleted, and when quick
    mode is turned off while `public_url` is a `trycloudflare.com` URL. `<port>` is `DEPLOYER_HTTP_PORT`
    (passed to the API by compose), else the port of a `localhost` request, else 8080.
+6. **Stale DNS records** (`deployer cloudflare stale [--delete]`): a CNAME in any zone of the linked
+   account whose content is `<tunnel id>.cfargotunnel.com` for the dashboard or apps tunnel, but whose
+   hostname (or record id) belongs to no `domains` row, of any status. They are left behind when an app
+   was deleted while Cloudflare was unreachable, or a hostname row was removed by hand. Records that
+   point anywhere else are never listed or touched. `GET .../stale-records` reads the zones and their DNS
+   records live; `POST .../stale-records/delete` checks each requested id again (fresh from Cloudflare
+   and the database) and deletes only those still stale. Every other id comes back in `skipped` with
+   `reason: "not_stale"` (not a stale tunnel CNAME any more, or never was) or `"not_found"` (already
+   gone). Audit action `remote_access.stale_dns_delete` (`hostnames` only).
 
 `POST /quick {enabled:true}` switches the connector to a quick tunnel (a linked tunnel stays configured
 but its connector stops); `{enabled:false}` returns to `cloudflare` if linked, else `off`.
@@ -178,6 +187,8 @@ socket access.
 | POST | `/v1/instance/remote-access/cloudflare/hostnames` | `{zone_id, hostname, overwrite?}` | `Domain` |
 | DELETE | `/v1/instance/remote-access/cloudflare/hostnames/{domain_id}` | – | `{ok:true}` |
 | POST | `/v1/instance/remote-access/cloudflare/unlink` | `{delete_dns:boolean, delete_tunnel:boolean}` | `RemoteAccess` |
+| GET | `/v1/instance/remote-access/cloudflare/stale-records` | – | `{records: StaleRecord[]}` |
+| POST | `/v1/instance/remote-access/cloudflare/stale-records/delete` | `{record_ids: string[]}` (1-100) | `{deleted: StaleRecord[], skipped: {record_id, hostname?, reason: "not_stale" \| "not_found"}[]}` |
 | POST | `/v1/instance/remote-access/quick` | `{enabled:boolean}` | `RemoteAccess` |
 | POST | `/v1/instance/remote-access/public-url` | `{domain_id}` \| `{quick:true}` \| `{local:true}` | `{settings: InstanceSettings, oauth_callbacks:{google:string, github:string}, previous_public_url, warnings}` (re-points the apps' GitHub webhooks; `warnings` for any that could not follow) |
 
@@ -204,6 +215,8 @@ type RemoteAccess = {
   };
   quick: { url: string | null };
 };
+// A tunnel CNAME no `domains` row knows (flow step 6)
+type StaleRecord = { zone_id: string; zone_name: string; record_id: string; hostname: string; target: string };
 ```
 
 Errors:

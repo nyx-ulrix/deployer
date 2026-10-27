@@ -1,5 +1,7 @@
 """Remote access & custom domains via Cloudflare (docs/REMOTE_ACCESS.md). Instance owner only."""
 
+from typing import Annotated
+
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
@@ -72,6 +74,20 @@ class UnlinkBody(BaseModel):
 @router.post(f"{PREFIX}/cloudflare/unlink")
 def unlink(body: UnlinkBody, request: Request, owner: InstanceOwner, db: DbSession) -> dict:
     return ra.unlink(db, body.delete_dns, body.delete_tunnel, request=request, user_id=owner.id)
+
+
+@router.get(f"{PREFIX}/cloudflare/stale-records")
+def stale_records(owner: InstanceOwner, db: DbSession) -> dict:
+    return {"records": ra.stale_records(db)}
+
+
+class StaleDeleteBody(BaseModel):
+    record_ids: list[Annotated[str, Field(min_length=1, max_length=64)]] = Field(min_length=1, max_length=100)
+
+
+@router.post(f"{PREFIX}/cloudflare/stale-records/delete")
+def delete_stale_records(body: StaleDeleteBody, request: Request, owner: InstanceOwner, db: DbSession) -> dict:
+    return ra.delete_stale_records(db, body.record_ids, request=request, user_id=owner.id)
 
 
 class QuickBody(BaseModel):

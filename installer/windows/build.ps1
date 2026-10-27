@@ -9,7 +9,7 @@
       DeployerSetup.selftest.exe   same code with an asInvoker manifest, used by CI:
                                    DeployerSetup.selftest.exe /selftest <folder>
 
-    Embedded as resources: installer\install.ps1, installer\deployer.ps1 and the git-tracked files
+    Embedded as resources: installer\install.ps1, installer\deployer.ps1, installer\deployer_cli.py and the git-tracked files
     in installer\lib, installer\wsl and deploy\ (never .env or docker-compose.dev.yml). Needs git.
 
 .PARAMETER Version
@@ -89,7 +89,8 @@ $assemblyInfoPath = Join-Path $obj 'AssemblyInfo.g.cs'
 
 # --- Payload (normalised line endings: bash and Caddy need LF, PowerShell 5.1 prefers CRLF) ----------
 $payloadFiles = New-Object System.Collections.Generic.List[string]
-foreach ($rel in @('installer\install.ps1', 'installer\deployer.ps1', 'deploy\docker-compose.yml', 'deploy\Caddyfile', 'deploy\.env.example')) {
+# deployer_cli.py: the everyday commands deployer.ps1 hands to Python (docs/CLI.md).
+foreach ($rel in @('installer\install.ps1', 'installer\deployer.ps1', 'installer\deployer_cli.py', 'deploy\docker-compose.yml', 'deploy\Caddyfile', 'deploy\.env.example')) {
     $payloadFiles.Add($rel)
 }
 # Everything else in installer\lib, installer\wsl and deploy\ (sidecar build contexts, entrypoint

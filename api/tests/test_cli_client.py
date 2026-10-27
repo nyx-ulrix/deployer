@@ -590,3 +590,39 @@ def test_cloud_add_needs_a_provider_and_name(cli, client, owner_headers, monkeyp
     assert cli.main(["cloud", "add", "aws"]) == 1
     assert "Usage: deployer cloud add" in capsys.readouterr().err
     assert not [c for c in cli.calls if c[1] == "/v1/auth/cli/inputs"]
+
+
+def test_cloudflare_stale_lists_then_deletes_after_confirming(cli, client, owner_headers, fake_cf, monkeypatch, capsys):
+    from tests.test_remote_access import link
+
+    tunnel_id = link(client, owner_headers)["cloudflare"]["tunnel"]["id"]
+    gone = fake_cf.add_record("gone.example.com", "CNAME", f"{tunnel_id}.cfargotunnel.com")
+    other = fake_cf.add_record("elsewhere.example.com", "CNAME", "somewhere.else.net")
+    _login(cli, client, owner_headers, monkeypatch)
+    capsys.readouterr()
+
+    assert cli.main(["cloudflare", "stale"]) == 0
+    out = capsys.readouterr().out
+    assert "HOSTNAME" in out and "gone.example.com" in out and "elsewhere" not in out
+
+    # No terminal and no --yes: refuses. A terminal answering "n": nothing deleted.
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO("y\n"))
+    assert cli.main(["cloudflare", "stale", "--delete"]) == 1
+    assert "--yes" in capsys.readouterr().err
+
+    class Tty(io.StringIO):
+        def isatty(self):
+            return True
+
+    monkeypatch.setattr(cli.sys, "stdin", Tty("n\n"))
+    assert cli.main(["cloudflare", "stale", "--delete"]) == 1
+    assert "Delete 1 record? [y/N]" in capsys.readouterr().err
+    assert gone in fake_cf.records
+
+    monkeypatch.setattr(cli.sys, "stdin", Tty("y\n"))
+    assert cli.main(["cloudflare", "stale", "--delete"]) == 0
+    assert "Deleted gone.example.com (example.com)" in capsys.readouterr().out
+    assert gone not in fake_cf.records and other in fake_cf.records
+
+    assert cli.main(["cloudflare", "stale", "--delete", "--yes", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"records": [], "deleted": [], "skipped": []}

@@ -35,6 +35,8 @@ jobs:
       # A-194: the ruff config in pyproject.toml is enforced, not just advisory.
       - name: Lint and format check (ruff)
         run: ruff check . && ruff format --check .
+      - name: Lint and format check the command-line client (ruff)
+        run: ruff check --config pyproject.toml ../installer/deployer_cli.py && ruff format --check --config pyproject.toml ../installer/deployer_cli.py
       - name: Run tests
         # -rfEs also lists every skipped test with its reason (tests/integration runs in the job below).
         run: pytest -rfEs
@@ -238,6 +240,9 @@ jobs:
       - name: The administrator window waits on an error and logs it
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/elevated.tests.ps1; exit $LASTEXITCODE
+      - name: Everyday commands go to the Python client (deployer.ps1)
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/cli.tests.ps1; exit $LASTEXITCODE
       - name: The WSL step restarts only for a pending feature state
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File installer/tests/wslplatform.tests.ps1; exit $LASTEXITCODE

@@ -40,7 +40,7 @@ if [ "$CMD" = oauth ] && [ "$(id -u)" != 0 ] && { [ -n "${DEPLOYER_TOKEN:-}" ] |
   CMD=oauth-cli
 fi
 case $CMD in
-  login|logout|whoami|tokens|projects|apps|app|deploy|domain|env|google-oauth|ask|alerts|cloud|cloudflare|oauth-cli)
+  login|logout|whoami|tokens|projects|apps|app|deploy|domain|env|google-oauth|google-apis|webhook|ask|alerts|cloud|cloudflare|oauth-cli)
     [ "$CMD" = oauth-cli ] && CMD=oauth
     command -v python3 >/dev/null || { echo "deployer $CMD needs python3: sudo apt install python3" >&2; exit 1; }
     exec python3 "$(dirname "$SELF")/deployer_cli.py" "$CMD" "${ORIG[@]}"
@@ -592,10 +592,13 @@ ${C_STEP}Deployer management CLI (Linux)${C_OFF}
                                        prompt here, --stdin: read a piped value, --generate: random secret)
     deployer env list|unset <app>      Variable names (--show for values) / remove some
     deployer google-oauth <app>...     Google sign-in: what to enter in Google's console, then saves it
+    deployer google-apis <api>... --app <app>   Turn Google APIs on (calendar, drive, ...) with your gcloud
+    deployer webhook <app> [--rotate]  GitHub push webhook so a push deploys (GitHub connection, else your gh)
     deployer ask "<title>" KEY[:secret]...   Ask the owner to type values on any device (--app: into its Environment)
     deployer alerts set|clear|status   The Slack/Discord webhook alerts go to (owner; set prints a link)
     deployer cloud add aws|firebase <name>   Connect a cloud account: a link to paste its keys (owner)
     deployer cloudflare link           Cloudflare API token for your own domain: a link to paste it (owner)
+    deployer cloudflare stale          Leftover tunnel DNS records Deployer no longer uses (--delete [--yes]) (owner)
     deployer deploy <app> [--wait]     Deploy now (--wait streams the build log)
     deployer app show|logs <app>       Settings and addresses / the app's runtime logs
     deployer whoami | tokens | logout  The saved sign-in

@@ -40,6 +40,15 @@
     Account recovery (no administrator rights needed):
     deployer reset-password [email] Set a new password for a Deployer account (default: the owner) and sign it
                                     out everywhere. Read from DEPLOYER_NEW_PASSWORD, else asked for twice
+
+    Everyday work (docs/CLI.md; no administrator rights, needs Python 3.9+: winget install Python.Python.3.12).
+    Handed to installer\deployer_cli.py with the arguments as typed; options are --long (--json, --url ...):
+    deployer login                  Sign in: open the link it prints on your phone/PC and approve the code
+    deployer whoami | tokens | logout
+    deployer projects | apps | app | deploy | domain | env | google-oauth | google-apis | webhook | ask
+    deployer alerts | cloud | cloudflare
+                                    "deployer <command> --help" lists each one's options. "deployer oauth"
+                                    goes there too in a normal (not administrator) window once signed in
 #>
 [CmdletBinding()]
 param(
@@ -67,6 +76,105 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
 . (Join-Path $PSScriptRoot 'lib\common.ps1')
+
+# --- Everyday commands: the Python client -------------------------------------------------------
+# docs/CLI.md: they sign in with a token (`deployer login`) instead of administrator rights, so they go to
+# deployer_cli.py before anything below can ask Windows for those, the way deployer.sh hands them over
+# before its sudo re-run. `deployer oauth` goes there too in a normal window once signed in; elevated, or
+# from Deployer Control (which passes -InstallDir and reads the container CLI's JSON), it stays below.
+$CliCommands = @('login', 'logout', 'whoami', 'tokens', 'projects', 'apps', 'app', 'deploy', 'domain', 'env',
+    'google-oauth', 'google-apis', 'webhook', 'ask', 'alerts', 'cloud', 'cloudflare')
+
+function Test-CliSignedIn {
+    # DEPLOYER_TOKEN, or the file deployer_cli.py saves the sign-in to (its config_path()).
+    if ($env:DEPLOYER_TOKEN) { return $true }
+    $config = if ($env:DEPLOYER_CONFIG) { $env:DEPLOYER_CONFIG }
+    elseif ($env:XDG_CONFIG_HOME) { Join-Path $env:XDG_CONFIG_HOME 'deployer\cli.json' }
+    else { Join-Path $env:USERPROFILE '.config\deployer\cli.json' }
+    return [bool](Test-Path -LiteralPath $config -PathType Leaf)
+}
+
+function Test-CliCommand {
+    param([string]$Name, [bool]$IsAdmin, [bool]$InstallDirGiven)
+    if ($CliCommands -contains $Name) { return $true }
+    return ($Name -eq 'oauth' -and -not $IsAdmin -and -not $InstallDirGiven -and (Test-CliSignedIn))
+}
+
+function Get-CliArguments {
+    # The arguments after the command exactly as typed: PowerShell has already bound some of them to this
+    # script's parameters (-Json, a "--tail 50" ...). deployer.cmd runs "powershell.exe -File <this script> %*",
+    # so they are the rest of this process's command line; called any other way, they are rebuilt.
+    param($Bound)
+    $argv = @([Environment]::GetCommandLineArgs())
+    for ($i = 1; $i -lt $argv.Count - 2; $i++) {
+        if ($argv[$i] -notin @('-File', '-f')) { continue }
+        if ((Split-Path -Leaf $argv[$i + 1]) -ieq (Split-Path -Leaf $PSCommandPath) -and $argv[$i + 2] -ieq $Command) {
+            return @($argv | Select-Object -Skip ($i + 3))
+        }
+        break
+    }
+    $rebuilt = @()
+    if ($Service) { $rebuilt += $Service }
+    $rebuilt += @($Rest)
+    $skip = @('Command', 'Service', 'Rest', 'InstallDir', 'Elevated') + @([System.Management.Automation.PSCmdlet]::CommonParameters)
+    foreach ($name in @($Bound.Keys | Where-Object { $skip -notcontains $_ })) {
+        $value = $Bound[$name]
+        if ($value -is [System.Management.Automation.SwitchParameter]) {
+            if ($value.IsPresent) { $rebuilt += "--$($name.ToLowerInvariant())" }
+        } else {
+            $rebuilt += @("--$($name.ToLowerInvariant())", "$value")
+        }
+    }
+    return $rebuilt
+}
+
+function Find-Python {
+    # The python.org launcher (py -3) first, then python / python3 on PATH. Each must really run Python 3.9+:
+    # the Microsoft Store stub (WindowsApps\python.exe) only points at the Store.
+    $candidates = @()
+    foreach ($c in @(Get-Command py -CommandType Application -ErrorAction SilentlyContinue)) {
+        $candidates += [pscustomobject]@{ File = $c.Source; Args = @('-3') }
+    }
+    foreach ($name in @('python', 'python3')) {
+        foreach ($c in @(Get-Command $name -CommandType Application -ErrorAction SilentlyContinue)) {
+            $candidates += [pscustomobject]@{ File = $c.Source; Args = @() }
+        }
+    }
+    foreach ($candidate in $candidates) {
+        $probe = @($candidate.Args) + @('-c', 'import sys; sys.exit(sys.version_info < (3, 9))')
+        if ((Invoke-DeployerNative -FilePath $candidate.File -ArgumentList $probe -TimeoutSeconds 30).ExitCode -eq 0) { return $candidate }
+    }
+    return $null
+}
+
+function Invoke-PythonCli {
+    # Runs deployer_cli.py in this console (stdin, prompts and Ctrl+C included); returns its exit code.
+    param([string]$Name, [string[]]$Arguments)
+    $client = Join-Path $PSScriptRoot 'deployer_cli.py'
+    if (-not (Test-Path -LiteralPath $client)) {
+        Write-DeployerError "deployer $Name needs $client, which this install does not have yet. Run 'deployer update'."
+        return 1
+    }
+    $python = Find-Python
+    if (-not $python) {
+        Write-DeployerError "deployer $Name needs Python 3.9 or newer: winget install Python.Python.3.12 (then open a new window)."
+        return 1
+    }
+    # Quoted here, not by PowerShell 5.1, which drops empty arguments and mangles embedded quotes.
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $python.File
+    # $null (no arguments at all) is dropped; an empty string the user typed is kept.
+    $all = @($python.Args) + @($client, $Name) + @($Arguments | Where-Object { $null -ne $_ })
+    $psi.Arguments = ($all | ForEach-Object { ConvertTo-DeployerArgument $_ }) -join ' '
+    $psi.UseShellExecute = $false
+    $p = [System.Diagnostics.Process]::Start($psi)
+    $p.WaitForExit()
+    return $p.ExitCode
+}
+
+if (Test-CliCommand -Name $Command.ToLowerInvariant() -IsAdmin (Test-DeployerIsAdmin) -InstallDirGiven $PSBoundParameters.ContainsKey('InstallDir')) {
+    exit (Invoke-PythonCli -Name $Command.ToLowerInvariant() -Arguments (Get-CliArguments -Bound $PSBoundParameters))
+}
 
 if (-not $InstallDir) {
     $parent = Split-Path -Parent $PSScriptRoot
@@ -116,6 +224,19 @@ function Show-Help {
     Write-Host '  deployer oauth clear google|github   Remove a sign-in app'
     Write-Host ''
     Write-Host '  deployer reset-password [email]      Forgot your password? Set a new one (default: the owner account)'
+    Write-Host ''
+    Write-Host '  Everyday work, no administrator rights (docs/CLI.md; needs Python 3.9+: winget install Python.Python.3.12)'
+    Write-Host '  deployer login                       Sign in: open the link it prints on your phone/PC and approve the code'
+    Write-Host '  deployer apps | projects             What you can see (projects create <name> to add one)'
+    Write-Host '  deployer app create <project> --repo <url>   A new app from a repository (settings detected)'
+    Write-Host '  deployer env set <app> NAME          Set a variable: prints a link to type it on any device (--prompt, --generate)'
+    Write-Host '  deployer env list|unset <app>        Variable names (--show for values) / remove some'
+    Write-Host '  deployer deploy <app> [--wait]       Deploy now (--wait streams the build log)'
+    Write-Host '  deployer app show|logs <app>         Settings and addresses / the app''s runtime logs'
+    Write-Host '  deployer domain add <app> <host>     Give an app https://<host>'
+    Write-Host '  deployer google-oauth | google-apis | webhook | ask | alerts | cloud | cloudflare'
+    Write-Host '                                       "deployer <command> --help" for each one'
+    Write-Host '  deployer whoami | tokens | logout    The saved sign-in'
     Write-Host ''
     Write-Host "  Install directory: $InstallDir"
     Write-Host ''

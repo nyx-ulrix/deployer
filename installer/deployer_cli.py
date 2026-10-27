@@ -22,6 +22,7 @@ import os
 import platform
 import secrets
 import select
+import shutil
 import signal
 import socket
 import stat
@@ -45,10 +46,14 @@ class CliError(Exception):
 # --- config ------------------------------------------------------------------------------------
 
 
+def _is_root() -> bool:
+    return getattr(os, "geteuid", lambda: -1)() == 0  # Windows has no geteuid
+
+
 def _home() -> Path:
     # `sudo deployer login --local` writes the token for the person who ran sudo, not for root.
     user = os.environ.get("SUDO_USER")
-    if os.geteuid() == 0 and user and user != "root":
+    if _is_root() and user and user != "root":
         import pwd
 
         return Path(pwd.getpwnam(user).pw_dir)
@@ -80,7 +85,7 @@ def save_config(data: dict) -> Path:
         json.dump(data, fh, indent=2)
     os.replace(tmp, path)
     user = os.environ.get("SUDO_USER")
-    if os.geteuid() == 0 and user and user != "root":
+    if _is_root() and user and user != "root":
         import pwd
 
         pw = pwd.getpwnam(user)
@@ -164,7 +169,7 @@ def table(rows: list[list[str]], headers: list[str]) -> None:
         return
     widths = [max(len(str(r[i])) for r in [headers, *rows]) for i in range(len(headers))]
     for r in [headers, *rows]:
-        print("  ".join(str(c).ljust(w) for c, w in zip(r, widths)).rstrip())
+        print("  ".join(str(c).ljust(w) for c, w in zip(r, widths, strict=False)).rstrip())
 
 
 def emit(args, data, human) -> None:
@@ -263,7 +268,7 @@ def _cancel_input(api: Api, base: str) -> str | None:
     """Best effort: never raises, waits at most 5 s. Returns the request's status after the cancel."""
     try:
         out = api.call("POST", base + "/cancel", timeout=5)
-    except Exception:
+    except Exception:  # noqa: BLE001 - best effort by design: any failure means "unknown"
         return None
     return out.get("status") if isinstance(out, dict) else None
 
@@ -275,7 +280,9 @@ def _transient(exc: CliError) -> bool:
     return status is None or status >= 500 or status == 429
 
 
-def ask_web(api: Api, title: str, fields: list[dict], *, description: str | None = None, app_ids: list[str] | None = None) -> dict:
+def ask_web(
+    api: Api, title: str, fields: list[dict], *, description: str | None = None, app_ids: list[str] | None = None
+) -> dict:
     """An input request (docs/CLI.md, "Input requests"): prints a link the owner opens on any device, then
     waits until they fill it in. Returns the values, or with app_ids (the values went straight into those
     apps' Environment and never come back) {"keys": [...], "apps": [{id, name}]}. Any other way out
@@ -363,7 +370,9 @@ def _match(items: list[dict], ref: str, what: str, keys=("id", "slug", "name")) 
         return hits[0]
     if not hits:
         raise CliError(f"No {what} called '{ref}'.")
-    names = ", ".join(f"{h.get('_project', '')}{'/' if h.get('_project') else ''}{h.get('slug') or h['id']}" for h in hits)
+    names = ", ".join(
+        f"{h.get('_project', '')}{'/' if h.get('_project') else ''}{h.get('slug') or h['id']}" for h in hits
+    )
     raise CliError(f"'{ref}' matches several {what}s: {names}. Use project/app or the id.")
 
 
@@ -443,14 +452,18 @@ def cmd_login(args) -> int:
 
 def _login_local(args) -> int:
     """No browser at all: root on this server mints the token directly (`deployer cli-token`)."""
-    if os.geteuid() != 0:
+    if os.name == "nt":
+        raise CliError("--local works on the Linux server only; on Windows run: deployer login")
+    if not _is_root():
         cmd = ["sudo", "deployer", "login", "--local"] + (["--email", args.email] if args.email else [])
         os.execvp("sudo", cmd)
     cmd = ["deployer", "cli-token", "--json"] + ([args.email] if args.email else [])
     env = {**os.environ, "DEPLOYER_CLI_TOKEN_NAME": args.name or f"deployer CLI on {socket.gethostname()} (local)"}
     result = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if result.returncode != 0:
-        raise CliError((result.stdout + result.stderr).strip().splitlines()[-1] if result.stdout + result.stderr else "failed")
+        raise CliError(
+            (result.stdout + result.stderr).strip().splitlines()[-1] if result.stdout + result.stderr else "failed"
+        )
     out = json.loads(result.stdout.strip().splitlines()[-1])
     path = save_config({"url": local_url(), "token": out["token"], "email": out.get("email")})
     print(f"Signed in as {out.get('email')}. Token saved to {path}.")
@@ -490,7 +503,16 @@ def cmd_tokens(args) -> int:
         args,
         rows,
         lambda rs: table(
-            [[r["id"], r["name"], r["prefix"] + "...", r["last_used_at"] or "never", "this one" if r["current"] else ""] for r in rs],
+            [
+                [
+                    r["id"],
+                    r["name"],
+                    r["prefix"] + "...",
+                    r["last_used_at"] or "never",
+                    "this one" if r["current"] else "",
+                ]
+                for r in rs
+            ],
             ["ID", "NAME", "TOKEN", "LAST USED", ""],
         ),
     )
@@ -549,7 +571,10 @@ def cmd_app_show(args) -> int:
         print(f"  addresses  : {' '.join(a.get('urls') or []) or '-'}")
         print(f"  env        : {', '.join(a['env_keys']) or '-'}")
         gh = a.get("github")
-        print(f"  push deploy: {'on (webhook)' if gh and gh.get('hook_active') else 'off - connect GitHub in Account settings'}")
+        print(
+            "  push deploy: "
+            + ("on (webhook)" if gh and gh.get("hook_active") else "off - connect GitHub in Account settings")
+        )
 
     emit(args, app, human)
     return 0
@@ -559,17 +584,32 @@ def cmd_app_create(args) -> int:
     api = api_from_config(args)
     project = find_project(api, args.project)
     base = f"/projects/{project['id']}/apps"
-    draft = api.call("POST", base + "/detect", {"repo_url": args.repo, **({"branch": args.branch} if args.branch else {})})
+    draft = api.call(
+        "POST", base + "/detect", {"repo_url": args.repo, **({"branch": args.branch} if args.branch else {})}
+    )
     for w in draft.get("warnings") or []:
         print(f"warning: {w}", file=sys.stderr)
     fields = (
-        "name", "repo_url", "branch", "root_dir", "preset", "install_command",
-        "build_command", "start_command", "output_dir", "container_port",
+        "name",
+        "repo_url",
+        "branch",
+        "root_dir",
+        "preset",
+        "install_command",
+        "build_command",
+        "start_command",
+        "output_dir",
+        "container_port",
     )
     body = {k: draft.get(k) for k in fields if draft.get(k) is not None}
     overrides = (
-        ("name", args.name), ("root_dir", args.root_dir), ("container_port", args.port), ("preset", args.preset),
-        ("install_command", args.install), ("build_command", args.build), ("start_command", args.start),
+        ("name", args.name),
+        ("root_dir", args.root_dir),
+        ("container_port", args.port),
+        ("preset", args.preset),
+        ("install_command", args.install),
+        ("build_command", args.build),
+        ("start_command", args.start),
     )
     for key, value in overrides:
         if value:
@@ -639,7 +679,9 @@ def cmd_domain(args) -> int:
                 recs = (getattr(exc, "details", None) or {}).get("records") or []
                 for r in recs:
                     print(f"  existing: {r.get('type')} {r.get('content')}", file=sys.stderr)
-                raise CliError(f"{args.hostname} already has a DNS record. Run again with --overwrite to replace it.") from None
+                raise CliError(
+                    f"{args.hostname} already has a DNS record. Run again with --overwrite to replace it."
+                ) from None
             raise
         print(f"Added https://{dom['hostname']} ({dom['status']}).")
         return 0
@@ -677,7 +719,10 @@ def cmd_env(args) -> int:
         value = secrets.token_hex(args.bytes)
     elif len(args.keys) == 2:
         value = args.keys[1]
-        print("note: a value on the command line is kept in your shell history; leave it out to be asked.", file=sys.stderr)
+        print(
+            "note: a value on the command line is kept in your shell history; leave it out to be asked.",
+            file=sys.stderr,
+        )
     elif args.prompt:
         value = ask_secret(f"{key} for {app['slug']} (hidden)")
     elif args.stdin:
@@ -712,8 +757,14 @@ def _web_hint(ref: str | None = None) -> str:
     """After a web submit the server already wrote the values, and republished live App Runner / Cloud Run
     apps; the poll doesn't say which, so the hint covers both."""
     if ref:
-        return f"It applies at the next deploy (deployer deploy {ref}); an app on App Runner or Cloud Run is republished with it now."
-    return "They apply at each app's next deploy (deployer deploy <app>); apps on App Runner or Cloud Run are republished with them now."
+        return (
+            f"It applies at the next deploy (deployer deploy {ref}); "
+            "an app on App Runner or Cloud Run is republished with it now."
+        )
+    return (
+        "They apply at each app's next deploy (deployer deploy <app>); "
+        "apps on App Runner or Cloud Run are republished with them now."
+    )
 
 
 # --- commands: Google sign-in for an app -------------------------------------------------------
@@ -733,7 +784,10 @@ def cmd_google_oauth(args) -> int:
     for app in apps:
         hosts = [d["hostname"] for d in app.get("domains") or [] if d.get("status") == "active"]
         if not hosts and not args.redirect:
-            raise CliError(f"{app['slug']} has no hostname yet: deployer domain add {app['slug']} <hostname> first, or pass --redirect.")
+            raise CliError(
+                f"{app['slug']} has no hostname yet: deployer domain add {app['slug']} <hostname> first, "
+                "or pass --redirect."
+            )
         uris += [f"https://{h}{args.path}" for h in hosts]
     print(f"\n1. Open {GOOGLE_CONSOLE} on any device")
     print("   (first time: also fill in Branding, and under Audience choose External and Publish app).")
@@ -751,8 +805,12 @@ def cmd_google_oauth(args) -> int:
         ]
         fields = [
             {
-                "key": args.id_var, "label": "Client ID", "placeholder": "123-abc.apps.googleusercontent.com",
-                "pattern": GOOGLE_CLIENT_ID_PATTERN, "link": GOOGLE_CONSOLE, "link_label": "Google console",
+                "key": args.id_var,
+                "label": "Client ID",
+                "placeholder": "123-abc.apps.googleusercontent.com",
+                "pattern": GOOGLE_CLIENT_ID_PATTERN,
+                "link": GOOGLE_CONSOLE,
+                "link_label": "Google console",
             },
             {"key": args.secret_var, "label": "Client secret", "secret": True},
         ]
@@ -790,7 +848,10 @@ def cmd_ask(args) -> int:
         flags_set = {f for f in flags.lower().split(",") if f}
         unknown = flags_set - {"secret", "optional", "multiline"}
         if unknown:
-            raise CliError(f"Unknown option {', '.join(sorted(unknown))} in {spec!r}: use KEY, KEY:secret, KEY:optional or KEY:multiline.")
+            raise CliError(
+                f"Unknown option {', '.join(sorted(unknown))} in {spec!r}: "
+                "use KEY, KEY:secret, KEY:optional or KEY:multiline."
+            )
         field = {"key": key, "label": key}
         field.update({f: True for f in flags_set})
         fields.append(field)
@@ -806,6 +867,125 @@ def cmd_ask(args) -> int:
         return 0
     names = ", ".join(f"{a['_project']}/{a['slug']}" for a in apps)
     print(f"Saved {', '.join(out['keys'])} on {names}. {_web_hint()}")
+    return 0
+
+
+# --- commands: provider setup through your own sign-ins (gcloud, gh) ---------------------------
+# What a provider's own command line can do once you are signed in to it there; Deployer never sees
+# those credentials.
+
+GOOGLE_API_ALIASES = {
+    "calendar": "calendar-json.googleapis.com",
+    "drive": "drive.googleapis.com",
+    "gmail": "gmail.googleapis.com",
+    "sheets": "sheets.googleapis.com",
+    "docs": "docs.googleapis.com",
+    "people": "people.googleapis.com",
+    "tasks": "tasks.googleapis.com",
+    "youtube": "youtube.googleapis.com",
+    "maps": "maps-backend.googleapis.com",
+}
+
+
+def _run(cmd: list[str], *, stdin: str | None = None) -> subprocess.CompletedProcess:
+    exe = shutil.which(cmd[0])  # also finds gcloud.cmd on Windows, which a bare name doesn't
+    if exe is None:
+        raise CliError(f"{cmd[0]} is not installed here.")
+    try:
+        return subprocess.run([exe, *cmd[1:]], input=stdin, capture_output=True, text=True)
+    except FileNotFoundError:
+        raise CliError(f"{cmd[0]} is not installed here.") from None
+
+
+def _last_line(result: subprocess.CompletedProcess) -> str:
+    lines = (result.stderr or result.stdout or "").strip().splitlines()
+    return lines[-1] if lines else f"exit code {result.returncode}"
+
+
+def cmd_google_apis(args) -> int:
+    """`deployer google-apis <api>... --app <app> | --project <id>`: turns Google APIs on with gcloud, in the
+    Google Cloud project of the app's GOOGLE_CLIENT_ID (its number is the ID's prefix)."""
+    if bool(args.app) == bool(args.project):
+        raise CliError("Name the project: --app <app> (from its GOOGLE_CLIENT_ID) or --project <id or number>.")
+    project = args.project
+    if args.app:
+        api = api_from_config(args)
+        app = find_app(api, args.app)
+        client_id = api.call("GET", app_path(app, "/env"))["env"].get(args.id_var, "")
+        project = client_id.split("-", 1)[0]
+        if not project.isdigit():
+            raise CliError(f"{args.app} has no Google {args.id_var} to take the project from; pass --project.")
+    services = [GOOGLE_API_ALIASES.get(a.lower(), a) for a in args.apis]
+    for s in services:
+        if "." not in s:
+            raise CliError(
+                f"Unknown API {s!r}: use one of {', '.join(GOOGLE_API_ALIASES)} or a full name like x.googleapis.com."
+            )
+    gcloud = ["gcloud", "--quiet"]
+    account = _run([*gcloud, "config", "get-value", "account"]).stdout.strip()
+    if not account:
+        raise CliError("gcloud is not signed in. Run it yourself first: gcloud auth login --no-launch-browser")
+    result = _run([*gcloud, "services", "enable", *services, f"--project={project}"])
+    if result.returncode != 0:
+        raise CliError(f"gcloud: {_last_line(result)}")
+    listed = _run([*gcloud, "services", "list", "--enabled", f"--project={project}", "--format=value(config.name)"])
+    enabled = set(listed.stdout.split())
+    missing = [s for s in services if s not in enabled]
+    if missing:
+        raise CliError(
+            f"gcloud reported success but these are not on yet: {', '.join(missing)}. Try again in a minute."
+        )
+    print(f"On in project {project} (as {account}): {', '.join(services)}")
+    return 0
+
+
+def cmd_webhook(args) -> int:
+    """`deployer webhook <app> [--rotate]`: the repository's push webhook, so a push deploys. Through the
+    app's GitHub connection when it has one, else through the GitHub CLI (`gh`) you are signed in to."""
+    api = api_from_config(args)
+    app = find_app(api, args.app)
+    ref = f"{app['_project']}/{app['slug']}"
+    gh_conn = app.get("github")
+    if gh_conn and gh_conn.get("hook_active") and not args.rotate:
+        print(
+            f"{ref}: the push webhook is already on "
+            f"(added through {gh_conn['connected_by_email']}'s GitHub connection)."
+        )
+        return 0
+    if gh_conn:
+        out = api.call("POST", app_path(app, "/webhook/rotate"))
+        for w in out.get("warnings") or []:
+            print(f"warning: {w}", file=sys.stderr)
+        if not out.get("hook_active"):
+            raise CliError("GitHub didn't accept the webhook (see above); nothing else was changed.")
+        print(f"{ref}: push webhook on; a push to {app.get('branch') or 'its branch'} deploys it.")
+        return 0
+    parts = urllib.parse.urlsplit(app.get("repo_url") or "")
+    path = parts.path.strip("/").removesuffix(".git").split("/")
+    if parts.hostname != "github.com" or len(path) != 2:
+        raise CliError(f"{ref} doesn't deploy from a github.com repository.")
+    repo = "/".join(path)
+    if _run(["gh", "api", "user", "--jq", ".login"]).returncode != 0:
+        raise CliError(
+            "No GitHub connection on this app and the GitHub CLI isn't signed in. Either connect GitHub in "
+            "Deployer (Account settings) or sign in yourself with: gh auth login"
+        )
+    hook = api.call("POST" if args.rotate else "GET", app_path(app, "/webhook" + ("/rotate" if args.rotate else "")))
+    config = {"url": hook["url"], "content_type": "json", "secret": hook["secret"], "insecure_ssl": "0"}
+    listed = _run(["gh", "api", f"repos/{repo}/hooks", "--jq", f'.[] | select(.config.url == "{hook["url"]}") | .id'])
+    if listed.returncode != 0:
+        raise CliError(f"gh: {_last_line(listed)} (adding webhooks needs admin rights on {repo})")
+    existing = listed.stdout.split()
+    if existing:
+        cmd = ["gh", "api", "-X", "PATCH", f"repos/{repo}/hooks/{existing[0]}", "--input", "-"]
+        body = {"active": True, "events": ["push"], "config": config}
+    else:
+        cmd = ["gh", "api", "-X", "POST", f"repos/{repo}/hooks", "--input", "-"]
+        body = {"name": "web", "active": True, "events": ["push"], "config": config}
+    result = _run(cmd, stdin=json.dumps(body))  # the secret goes on stdin, never the command line
+    if result.returncode != 0:
+        raise CliError(f"gh: {_last_line(result)}")
+    print(f"{ref}: push webhook {'updated' if existing else 'added'} on {repo}; a push deploys it.")
     return 0
 
 
@@ -832,11 +1012,13 @@ def _oauth_guide(provider: str, settings: dict) -> tuple[str, str]:
     callback = settings[provider]["callback_url"]
     home = settings["public_url"]
     if provider == "github":
-        query = urllib.parse.urlencode({
-            "oauth_application[name]": "Deployer",
-            "oauth_application[url]": home,
-            "oauth_application[callback_url]": callback,
-        })
+        query = urllib.parse.urlencode(
+            {
+                "oauth_application[name]": "Deployer",
+                "oauth_application[url]": home,
+                "oauth_application[callback_url]": callback,
+            }
+        )
         link = f"https://github.com/settings/applications/new?{query}"
         steps = (
             f"Open GitHub's 'Register a new OAuth app' form (the link fills it in: name Deployer, "
@@ -859,14 +1041,19 @@ def cmd_oauth(args) -> int:
     api = api_from_config(args)
     settings = api.call("GET", "/instance/settings")
     if args.action == "status":
+
         def human(s):
             for name in ("google", "github"):
                 p = s[name]
                 state = (
-                    f"configured (Client ID {p['client_id']})" if p["configured"]
-                    else "Client secret missing" if p["client_id"] else "not configured"
+                    f"configured (Client ID {p['client_id']})"
+                    if p["configured"]
+                    else "Client secret missing"
+                    if p["client_id"]
+                    else "not configured"
                 )
                 print(f"{name.title().replace('Github', 'GitHub')}: {state}\n  Callback URL: {p['callback_url']}")
+
         emit(args, {k: settings[k] for k in ("public_url", "google", "github")}, human)
         return 0
     if not args.provider:
@@ -887,7 +1074,9 @@ def cmd_oauth(args) -> int:
     client_id, secret = (values.get("client_id") or "").strip(), (values.get("client_secret") or "").strip()
     if not client_id or not secret:
         raise CliError("Both the Client ID and the Client secret are needed; nothing was changed.")
-    out = api.call("PUT", "/instance/settings", {f"{args.provider}_client_id": client_id, f"{args.provider}_client_secret": secret})
+    out = api.call(
+        "PUT", "/instance/settings", {f"{args.provider}_client_id": client_id, f"{args.provider}_client_secret": secret}
+    )
     if not out[args.provider]["configured"]:
         raise CliError(f"Saved, but Deployer doesn't report {name} as configured. Check: deployer oauth status")
     print(f"Saved. The sign-in page now offers Continue with {name}: {settings['public_url']}/login")
@@ -895,11 +1084,15 @@ def cmd_oauth(args) -> int:
 
 
 def cmd_alerts(args) -> int:
-    """`deployer alerts status|set|clear`: the Slack/Discord/any-https webhook alerts are posted to (docs/MONITORING.md)."""
+    """`deployer alerts status|set|clear`: the Slack/Discord/any-https webhook alerts go to (docs/MONITORING.md)."""
     api = api_from_config(args)
     if args.action == "status":
         url = api.call("GET", "/instance/settings").get("alert_webhook_url")
-        emit(args, {"alert_webhook": bool(url)}, lambda d: print("Alert webhook: " + ("set" if d["alert_webhook"] else "not set")))
+        emit(
+            args,
+            {"alert_webhook": bool(url)},
+            lambda d: print("Alert webhook: " + ("set" if d["alert_webhook"] else "not set")),
+        )
         return 0
     if args.action == "clear":
         api.call("PUT", "/instance/settings", {"alert_webhook_url": ""})
@@ -925,8 +1118,14 @@ CLOUD_FIELDS = {
         "In the AWS console (IAM -> Users) create a user for Deployer with the policy shown in Deployer under "
         "Settings -> Cloud, then Security credentials -> Create access key, and paste it here.",
         [
-            {"key": "access_key_id", "label": "Access key ID", "placeholder": "AKIA...", "pattern": "^A[A-Z0-9]{15,39}$",
-             "link": "https://console.aws.amazon.com/iam/home#/users", "link_label": "AWS IAM"},
+            {
+                "key": "access_key_id",
+                "label": "Access key ID",
+                "placeholder": "AKIA...",
+                "pattern": "^A[A-Z0-9]{15,39}$",
+                "link": "https://console.aws.amazon.com/iam/home#/users",
+                "link_label": "AWS IAM",
+            },
             {"key": "secret_access_key", "label": "Secret access key", "secret": True},
             {"key": "region", "label": "Region", "placeholder": "ap-southeast-1"},
             {"key": "role_arn", "label": "Role ARN to assume", "optional": True},
@@ -936,8 +1135,14 @@ CLOUD_FIELDS = {
         "In Google Cloud (IAM -> Service accounts) create a key for a service account with the roles shown in "
         "Deployer under Settings -> Cloud: Keys -> Add key -> JSON. Paste the whole downloaded file here.",
         [
-            {"key": "service_account_json", "label": "Service account key (JSON)", "secret": True, "multiline": True,
-             "link": "https://console.cloud.google.com/iam-admin/serviceaccounts", "link_label": "Service accounts"},
+            {
+                "key": "service_account_json",
+                "label": "Service account key (JSON)",
+                "secret": True,
+                "multiline": True,
+                "link": "https://console.cloud.google.com/iam-admin/serviceaccounts",
+                "link_label": "Service accounts",
+            },
             {"key": "region", "label": "Region", "placeholder": "asia-southeast1", "optional": True},
         ],
     ),
@@ -945,12 +1150,14 @@ CLOUD_FIELDS = {
 
 
 def cmd_cloud(args) -> int:
-    """`deployer cloud list | cloud add aws|firebase <name>`: cloud accounts for cloud databases and hosting (docs/CLOUD.md)."""
+    """`deployer cloud list | cloud add aws|firebase <name>`: cloud accounts (docs/CLOUD.md)."""
     api = api_from_config(args)
     if args.action == "list":
         out = api.call("GET", "/instance/cloud")
-        rows = [[c.get("name", ""), c.get("provider", ""), c.get("project_id") or "all projects", c.get("status") or ""]
-                for c in out.get("connections", [])]
+        rows = [
+            [c.get("name", ""), c.get("provider", ""), c.get("project_id") or "all projects", c.get("status") or ""]
+            for c in out.get("connections", [])
+        ]
         emit(args, out, lambda _d: table(rows, ["NAME", "PROVIDER", "SCOPE", "STATUS"]))
         return 0
     if args.provider not in CLOUD_FIELDS or not args.name:
@@ -969,17 +1176,69 @@ def cmd_cloud(args) -> int:
     return 0
 
 
+def _cloudflare_stale(args, api: Api) -> int:
+    """`deployer cloudflare stale [--delete] [--yes]`: tunnel CNAMEs no Deployer hostname uses any more."""
+    base = "/instance/remote-access/cloudflare/stale-records"
+    records = api.call("GET", base).get("records", [])
+    rows = [[r.get("hostname", ""), r.get("zone_name", ""), r.get("target", "")] for r in records]
+    if not args.delete:
+        emit(args, {"records": records}, lambda _d: table(rows, ["HOSTNAME", "ZONE", "TARGET"]))
+        return 0
+    if not records:
+        emit(args, {"records": [], "deleted": [], "skipped": []}, lambda _d: print("No stale DNS records."))
+        return 0
+    if not args.json:
+        table(rows, ["HOSTNAME", "ZONE", "TARGET"])
+    if not args.yes:
+        if not sys.stdin.isatty():
+            raise CliError("Not deleting without a terminal to confirm in; add --yes to delete them anyway.")
+        print(
+            f"Delete {len(records)} record{'s' if len(records) != 1 else ''}? [y/N] ",
+            end="",
+            file=sys.stderr,
+            flush=True,
+        )
+        if sys.stdin.readline().strip().lower() not in ("y", "yes"):
+            print("Nothing was deleted.", file=sys.stderr)
+            return 1
+    ids = [r["record_id"] for r in records]
+    out: dict = {"records": records, "deleted": [], "skipped": []}
+    for i in range(0, len(ids), 100):  # the API takes up to 100 per call
+        part = api.call("POST", f"{base}/delete", {"record_ids": ids[i : i + 100]})
+        out["deleted"] += part.get("deleted", [])
+        out["skipped"] += part.get("skipped", [])
+
+    def human(d):
+        for r in d["deleted"]:
+            print(f"Deleted {r.get('hostname')} ({r.get('zone_name')})")
+        for r in d["skipped"]:
+            why = "no longer stale" if r.get("reason") == "not_stale" else "already gone"
+            print(f"Skipped {r.get('hostname') or r.get('record_id')}: {why}")
+        print(f"{len(d['deleted'])} deleted, {len(d['skipped'])} skipped.")
+
+    emit(args, out, human)
+    return 0
+
+
 def cmd_cloudflare(args) -> int:
-    """`deployer cloudflare link`: a Cloudflare API token for permanent addresses on your own domain (docs/REMOTE_ACCESS.md)."""
+    """`deployer cloudflare link|stale`: a Cloudflare API token for permanent addresses on your own domain,
+    or leftover tunnel DNS records (docs/REMOTE_ACCESS.md)."""
     api = api_from_config(args)
+    if args.action == "stale":
+        return _cloudflare_stale(args, api)
     steps = (
         "In Cloudflare (My Profile -> API Tokens -> Create Token -> Custom token) give the token Account: "
         "Cloudflare Tunnel Edit, and Zone: DNS Edit and Zone: Zone Read for your domain. Paste it here with "
         "your Account ID (on the domain's Overview page, bottom right)."
     )
     fields = [
-        {"key": "api_token", "label": "API token", "secret": True,
-         "link": "https://dash.cloudflare.com/profile/api-tokens", "link_label": "Cloudflare API tokens"},
+        {
+            "key": "api_token",
+            "label": "API token",
+            "secret": True,
+            "link": "https://dash.cloudflare.com/profile/api-tokens",
+            "link_label": "Cloudflare API tokens",
+        },
         {"key": "account_id", "label": "Account ID", "pattern": "^[A-Za-z0-9]+$"},
     ]
     values = {k: (v or "").strip() for k, v in _ask_values(args, "Cloudflare for Deployer", fields, steps).items()}
@@ -1068,7 +1327,9 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--bytes", type=int, default=32, help="with --generate: random bytes (default 32 = 64 hex)")
     s.add_argument("--show", action="store_true", help="list: also print the values")
     s.add_argument("--prompt", action="store_true", help="set: type the value here (hidden) instead of on a web page")
-    s.add_argument("--stdin", action="store_true", help="set: read the value from stdin, however long the producer takes")
+    s.add_argument(
+        "--stdin", action="store_true", help="set: read the value from stdin, however long the producer takes"
+    )
     s.set_defaults(func=cmd_env)
 
     s = sub.add_parser("google-oauth", help="Google sign-in for apps: what to enter in Google's console, then save it")
@@ -1085,10 +1346,26 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("fields", nargs="+", metavar="KEY[:secret]", help="a field; :secret hides it, :optional, :multiline")
     s.add_argument("--description", help="text shown above the fields")
     s.add_argument("--link", help="an https link shown as an Open button next to the first field")
-    s.add_argument("--app", action="append", help="store the values in this app's Environment (repeatable); prints keys only")
+    s.add_argument(
+        "--app", action="append", help="store the values in this app's Environment (repeatable); prints keys only"
+    )
     s.set_defaults(func=cmd_ask)
 
-    s = sub.add_parser("oauth", help="oauth status|set|clear google|github: Deployer's own Google/GitHub sign-in (owner)")
+    s = sub.add_parser("google-apis", help="google-apis <api>... --app <app>: turn Google APIs on with your gcloud")
+    s.add_argument("apis", nargs="+", metavar="API", help=f"{', '.join(GOOGLE_API_ALIASES)} or a full x.googleapis.com")
+    s.add_argument("--app", help="the project of this app's Google Client ID")
+    s.add_argument("--project", help="a Google Cloud project ID or number instead")
+    s.add_argument("--id-var", default="GOOGLE_CLIENT_ID", help="the app's variable holding the Client ID")
+    s.set_defaults(func=cmd_google_apis)
+
+    s = sub.add_parser("webhook", help="webhook <app> [--rotate]: GitHub push webhook so a push deploys")
+    s.add_argument("app")
+    s.add_argument("--rotate", action="store_true", help="a new secret (also updates the hook on GitHub)")
+    s.set_defaults(func=cmd_webhook)
+
+    s = sub.add_parser(
+        "oauth", help="oauth status|set|clear google|github: Deployer's own Google/GitHub sign-in (owner)"
+    )
     s.add_argument("action", choices=["status", "set", "clear"])
     s.add_argument("provider", nargs="?", choices=["google", "github"])
     s.add_argument("--prompt", action="store_true", help="set: type the values here instead of on a web page")
@@ -1107,9 +1384,14 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--prompt", action="store_true", help="add: type the keys here instead of on a web page")
     s.set_defaults(func=cmd_cloud)
 
-    s = sub.add_parser("cloudflare", help="cloudflare link: a Cloudflare API token for your own domain (owner)")
-    s.add_argument("action", choices=["link"])
-    s.add_argument("--prompt", action="store_true", help="type the token here instead of on a web page")
+    s = sub.add_parser(
+        "cloudflare",
+        help="cloudflare link|stale: a Cloudflare API token for your own domain / leftover DNS records (owner)",
+    )
+    s.add_argument("action", choices=["link", "stale"])
+    s.add_argument("--prompt", action="store_true", help="link: type the token here instead of on a web page")
+    s.add_argument("--delete", action="store_true", help="stale: delete the listed records (asks first)")
+    s.add_argument("--yes", action="store_true", help="stale --delete: do not ask (needed without a terminal)")
     s.set_defaults(func=cmd_cloudflare)
     return p
 
