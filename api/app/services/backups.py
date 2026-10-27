@@ -60,7 +60,7 @@ GFS_TRIGGERS = ("scheduled", "manual")
 SCHEDULES = {"hourly": timedelta(hours=1), "every_6h": timedelta(hours=6), "daily": timedelta(days=1)}
 SAFETY_KEEP = timedelta(days=30)
 DELETED_KEEP = timedelta(days=30)
-PLATFORM_KEEP = 30
+PLATFORM_KEEP = 2
 FAILED_KEEP = timedelta(days=1)
 JOB_KEEP = timedelta(days=14)  # finished job rows; failed ones are kept for FAILED_JOB_KEEP
 FAILED_JOB_KEEP = timedelta(days=30)
@@ -158,12 +158,13 @@ def _default_policy(data_source_id: str) -> BackupPolicy:
     return BackupPolicy(
         data_source_id=data_source_id,
         enabled=True,
-        schedule="hourly",
-        keep_hourly=24,
-        keep_daily=7,
-        keep_weekly=4,
-        keep_monthly=12,
-        pitr_enabled=True,
+        # One snapshot a day, the newest two kept; continuous PITR log archiving is opt-in (docs/BACKUPS.md).
+        schedule="daily",
+        keep_hourly=0,
+        keep_daily=2,
+        keep_weekly=0,
+        keep_monthly=0,
+        pitr_enabled=False,
         pitr_window_days=7,
         copy_to_primary=False,
         copy_to_device_id=None,

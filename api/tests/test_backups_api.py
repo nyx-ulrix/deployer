@@ -166,9 +166,17 @@ def _snapshot(client, env, label=None, headers="dev"):
     return body["backup_id"]
 
 
+def _hourly_with_pitr(db, ds):
+    """The policy these tests exercise: hourly snapshots and PITR (the default is daily, PITR off)."""
+    policy = backups.ensure_policy(db, ds)
+    policy.schedule, policy.keep_hourly, policy.pitr_enabled, policy.pitr_window_days = "hourly", 24, True, 7
+    db.commit()
+
+
 def test_policy_defaults_validation_and_roles(client, env):
     policy = client.get(f"{env['base']}/backup-policy", headers=env["viewer"]).json()
-    assert policy["schedule"] == "hourly" and policy["keep_hourly"] == 24 and policy["pitr_window_days"] == 7
+    assert policy["schedule"] == "daily" and policy["keep_daily"] == 2 and policy["keep_hourly"] == 0
+    assert policy["keep_weekly"] == policy["keep_monthly"] == 0 and not policy["pitr_enabled"]
     assert policy["copy_to_device_id"] is None and policy["safety_snapshots"] is True
     assert client.put(f"{env['base']}/backup-policy", json={"schedule": "daily"}, headers=env["dev"]).status_code == 403
     resp = client.put(
@@ -279,7 +287,7 @@ def test_list_without_policy_row_uses_the_default_policy(client, env, db):
     db.add_all([safety, newest])
     db.commit()
     listed = {b["id"]: b["kept_as"] for b in client.get(f"{env['base']}/backups", headers=env["viewer"]).json()}
-    assert listed == {safety.id: "safety", newest.id: "hourly"}
+    assert listed == {safety.id: "safety", newest.id: "daily"}
     assert db.query(BackupPolicy).count() == 0
 
 
@@ -375,6 +383,7 @@ def _segment(db, ds, seq, start_at, end_at, *, data=True, env=None):
 
 def test_recovery_window_pitr_restore_new_source(client, env, db):
     ds = env["ds"]
+    _hourly_with_pitr(db, ds)
     backup_id = _snapshot(client, env)
     t0 = backups.consistent_at(db.get(Backup, backup_id))
     s1 = _segment(db, ds, 1, t0, t0 + timedelta(minutes=5))
@@ -556,6 +565,7 @@ def test_sweep_leftovers_removes_stale_partials_and_temp_databases(tmp_path, mon
 
 def test_archive_logs_creates_and_extends_segments(client, env, db):
     ds = env["ds"]
+    _hourly_with_pitr(db, ds)
     _snapshot(client, env)
     now = utcnow().replace(microsecond=0)
     env["fake"].archive_result = [
@@ -666,8 +676,7 @@ def test_no_successful_backup_for_twice_the_schedule_alerts(client, env, db):
     from app.services import alerts
 
     ds = env["ds"]
-    backups.ensure_policy(db, ds)
-    db.commit()
+    _hourly_with_pitr(db, ds)
     out: dict = {}
     alerts._backup_rules(db, out)
     assert out == {}  # new database, not overdue yet
@@ -1054,6 +1063,7 @@ def test_prune_deletes_old_finished_jobs(env, db):
 
 
 def test_scheduler_tick(env, db, fake_redis):
+    _hourly_with_pitr(db, env["ds"])
     factory = jobs.get_sessionmaker()
     first = backups.scheduler_tick(factory)
     types = sorted(db.get(Job, j).type for j in first)

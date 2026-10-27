@@ -9,11 +9,11 @@ responsibility; the dashboard says so.
 
 | Protection | How | Default |
 |---|---|---|
-| **Snapshots (versions)** | MariaDB: `mariadb-dump --single-transaction --routines --triggers --events` of the one database, recording the binlog GTID/position. MongoDB: `mongodump --db <db> --archive --gzip`, recording the oplog timestamp before and after. | Hourly |
-| **Point-in-time recovery (PITR)** | MariaDB binary log (ROW format) archived every 5 min via `mariadb-binlog --read-from-remote-server --raw`; MongoDB oplog entries for `<db>.*` tailed every minute into segments. Restore = nearest snapshot before T + replay logs up to T. | On, 7-day window |
+| **Snapshots (versions)** | MariaDB: `mariadb-dump --single-transaction --routines --triggers --events` of the one database, recording the binlog GTID/position. MongoDB: `mongodump --db <db> --archive --gzip`, recording the oplog timestamp before and after. | Daily, newest 2 kept |
+| **Point-in-time recovery (PITR)** | MariaDB binary log (ROW format) archived every 5 min via `mariadb-binlog --read-from-remote-server --raw`; MongoDB oplog entries for `<db>.*` tailed every minute into segments. Restore = nearest snapshot before T + replay logs up to T. | Off (turn on per data source; 7-day window) |
 | **Safety snapshots** | Taken automatically before: restore in place, dropping a table/collection from the dashboard (the snapshot and the drop then run as a background job the dashboard follows; a table/collection that does not exist is a 404 before any snapshot), deleting a data source or project, moving a database to another device. | On |
 | **Deleted databases** | Deleting a data source/project keeps its final snapshot + logs for 30 days (a data source: the project's "Recently deleted", restorable in one click; a whole project: the instance owner restores it under *Settings → Backups → Deleted projects* - **Restore project** recreates it with the same name and the members who still have an account (the instance owner joins as admin if not one of them), and restores each database's final snapshot into a new managed database, one restore job each in the project's Activity; a failed one stays listed to retry - or downloads each final snapshot. Databases deleted on their own before the project are download-only). Then the purge drops the database and its user too if the delete did not (retried at each prune while the host is offline). If a deleted project's final snapshot or drop fails, *Settings → Backups* lists the database under "Deleted databases not removed yet"; the prune retries it every 6 hours (reusing a snapshot that succeeded) and, 30 days after the delete, drops it without a snapshot. | 30 days |
-| **Platform metadata** | The main server's `deployer` database (users, projects, settings) is snapshotted daily with the same mechanism. The instance owner can download the latest one (*Settings → Backups → Download latest*); restore it with the CLI (see [Restoring platform data](#restoring-platform-data)). | Daily, keep 30 |
+| **Platform metadata** | The main server's `deployer` database (users, projects, settings) is snapshotted daily with the same mechanism. The instance owner can download the latest one (*Settings → Backups → Download latest*); restore it with the CLI (see [Restoring platform data](#restoring-platform-data)). | Daily, newest 2 kept |
 | **Verification** | Weekly: restore the latest snapshot into a temporary database, compare table/collection row counts and checksums with the snapshot manifest, drop it, record `verified_at`. A failed check raises the `backup_verify_failed` alert, shows as "Restore test failed" in instance backup health, and is retried the next day. | Weekly (daily after a failure) |
 
 MongoDB PITR needs an oplog, so the managed MongoDB runs as a **single-node replica set** (`rs0`,
@@ -66,7 +66,10 @@ and the `mongodb` log says to run `deployer update`.
 
 ## Retention (grandfather-father-son)
 
-Default policy per data source: keep **24 hourly, 7 daily, 4 weekly, 12 monthly** snapshots.
+Default policy per data source: one snapshot **daily**, keeping the **2 daily** snapshots (hourly, weekly and
+monthly tiers at 0), so the oldest is pruned within the hour once a third exists. A policy can keep more
+(up to 1000 per tier) or snapshot hourly or every 6 hours; data sources created before v0.1.3 keep
+the policy they had.
 A scheduled or manual snapshot is kept if it is the newest one in any of the most recent N buckets
 (UTC hours/days/ISO weeks/months); the newest one is always kept. **Pinned** (labelled) versions and
 safety snapshots from the last 30 days are never pruned automatically; safety and final snapshots do
