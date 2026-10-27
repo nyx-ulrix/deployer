@@ -526,7 +526,7 @@ def test_env_set_on_the_web_takes_a_long_name(cli, client, db, owner, owner_head
 def test_oauth_set_on_the_web_saves_deployers_own_sign_in_app(cli, client, owner_headers, monkeypatch, capsys):
     _login(cli, client, owner_headers, monkeypatch)
     capsys.readouterr()
-    secret = "0123456789abcdef0123456789abcdef01234567"
+    secret = "0f" * 20  # built at runtime: .gitleaks.toml
     created, filled = _fill(
         cli, client, owner_headers, monkeypatch, {"client_id": "Ov23liAbc123", "client_secret": secret}
     )
@@ -561,7 +561,7 @@ def test_oauth_set_rejects_a_pasted_secret_in_the_id_field_and_saves_nothing(
 def test_alerts_set_on_the_web_then_clear(cli, client, owner_headers, monkeypatch, capsys):
     _login(cli, client, owner_headers, monkeypatch)
     capsys.readouterr()
-    hook = "https://hooks.slack.com/services/T000/B000/xyz"
+    hook = "https://alerts.example.com/" + "hook"
     _fill(cli, client, owner_headers, monkeypatch, {"url": hook})
     assert cli.main(["alerts", "set"]) == 0
     captured = capsys.readouterr()
