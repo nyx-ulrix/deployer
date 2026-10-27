@@ -30,6 +30,8 @@ ROLES = ("viewer", "developer", "admin", "owner")
 # MariaDB's plain DATETIME drops the microseconds (SQLite keeps them): rows written in the same second
 # tied in every ORDER BY created_at (job, query log and deployment order) - migration 0012.
 DateTime = _DateTime().with_variant(mysql.DATETIME(fsp=6), "mysql", "mariadb")
+# TEXT holds 64 KB on MariaDB; encrypted, base64'd payloads near that size need MEDIUMTEXT.
+LongText = Text().with_variant(mysql.MEDIUMTEXT(), "mysql", "mariadb")
 
 
 def new_id() -> str:
@@ -161,7 +163,7 @@ class CliInput(Base):
     status: Mapped[str] = mapped_column(String(16), default="pending", nullable=False)
     # encrypt_secret(json.dumps(values)); kept only between the submit and the command line's poll.
     # MEDIUMTEXT on MariaDB: TEXT (64 KB) can't hold the 48 KB of values once encrypted and base64'd.
-    values_encrypted: Mapped[str | None] = mapped_column(Text().with_variant(mysql.MEDIUMTEXT(), "mysql", "mariadb"))
+    values_encrypted: Mapped[str | None] = mapped_column(LongText)
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
@@ -568,7 +570,8 @@ class App(Base):
     start_command: Mapped[str | None] = mapped_column(String(500))
     output_dir: Mapped[str | None] = mapped_column(String(200))
     container_port: Mapped[int | None] = mapped_column(Integer)
-    env_encrypted: Mapped[str] = mapped_column(Text, nullable=False)  # encrypt_json({KEY: value})
+    # encrypt_json({KEY: value}); MEDIUMTEXT on MariaDB: the 64 KB env limit, encrypted and base64'd, overflows TEXT.
+    env_encrypted: Mapped[str] = mapped_column(LongText, nullable=False)
     repo_token_encrypted: Mapped[str | None] = mapped_column(Text)  # GitHub token for private repos; never logged
     webhook_secret_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     api_key_id: Mapped[str | None] = mapped_column(ForeignKey("api_keys.id", ondelete="SET NULL"))

@@ -1,37 +1,37 @@
 # Graph Report - deployer  (2026-10-27)
 
 ## Corpus Check
-- 519 files · ~645,670 words
+- 520 files · ~645,822 words
 - Verdict: corpus is large enough that graph structure adds value.
 - Unclassified: 19 file(s) not represented in the graph (top: (none) 11, .conf 2, .toml 1)
 
 ## Summary
-- 9642 nodes · 34339 edges · 243 communities (212 shown, 31 thin omitted)
+- 9645 nodes · 34347 edges · 246 communities (221 shown, 25 thin omitted)
 - Extraction: 90% EXTRACTED · 10% INFERRED · 0% AMBIGUOUS · INFERRED: 3337 edges (avg confidence: 0.91)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `449efc79`
+- Built from commit: `3280f203`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
 ## Community Hubs (Navigation)
 - Ui
-- react
+- PageSpinner
 - Button
 - types.ts
 - source_sync.py
 - oauth.py
 - Badge
 - ApiError
-- apps.py
+- update_app
 - FlatButton
 - Device
 - react
-- utcnow
-- get_connection
+- services/backups.py
+- App
 - rtdb.py
-- Alert
+- DevicesPage.tsx
 - docs/PLATFORMS.md - Platforms and accounts this project uses
 - SchemaTab.tsx
 - CloudflareSetup.tsx
@@ -44,39 +44,39 @@
 - ControlForm
 - routers/cloud.py
 - cloud_deploy.py
-- get_settings
-- conftest.py
+- provisioning.py
+- test_transfer_devices.py
 - firestore.py
 - Job
 - CloudflareClient
-- device_rpc.py
+- shell_runner.py
 - deployer.sh
-- make_app
+- deployments.py
 - WizardForm
 - ThemedForm
 - services/__init__.py
 - dynamo.py
-- App
+- _reconcile_app
 - deployer_cli.py
 - NotebookConsole.tsx
-- json.ts
-- test_source_sync.py
+- react
+- project-context.ts
 - MCP.md
 - README.md
 - re
 - routers/backups.py
-- data_sources.py
+- Backup
 - post
 - ddl_export.py
 - forbidden
-- .RenderChildren
+- Color
 - BackupExecutor
 - CONTRIBUTING.md
 - models.py
-- introspection.py
+- test_data_browser.py
 - Deployer HTTP API v1
 - IShellLinkW
-- test_backup_crypto.py
+- test_github_actions.py
 - services/cli_inputs.py
 - deployments.py
 - cloud_db.py
@@ -87,27 +87,27 @@
 - docker-compose.yml
 - environment
 - data.py
-- github.py
-- deployments.py
+- InputRequestPage.tsx
+- DockerCli
 - sqlalchemy
-- DataSource
-- FakeFirestore
-- cloud_deploy.py
+- terminal.ts
+- test_firestore_admin.py
+- useTerminalConsole.ts
 - services
-- device_moves.py
+- get_redis
 - QueryEditor.tsx
 - Deployments (push-to-deploy) — phase 4
 - tests/test_query_console.py
-- run_query
+- QueryRequest
 - test_remote_access.py
-- schema_ops.py
+- ApiError
 - test_oauth.py
 - deployer.ps1
 - UninstallForm
 - caddy
 - options
 - install.ps1
-- test_agent_skips_calls_whose_deadline_passed_and_keeps_short_calls_free
+- DeviceAgent
 - export_firestore
 - Usability for non-experts
 - DumpScanner
@@ -116,17 +116,17 @@
 - BaseModel
 - .TestMarkers
 - with
-- schema.py
+- health.py
 - EncryptingWriter
 - device_local.py
 - conventions.py
-- call
+- DeviceExecutor
 - saved_queries.py
-- test_firestore.py
-- PitrFake
+- NotebookSidebar.tsx
+- docs/ARCHITECTURE.md - Deployer Architecture
 - query-shell
 - .Ask
-- crowsfoot.ts
+- ScriptRunner
 - test_repo_detect.py
 - FakeDynamo
 - Query Console
@@ -134,19 +134,19 @@
 - _wrap
 - mongo_snapshot
 - AwsClient
-- fake_primary
+- query_console.py
 - approve_login
 - with
 - compilerOptions
-- shared_fixtures.py
+- test_data_sources.py
 - test_rtdb.py
-- not_found
-- test_firestore_admin.py
-- dependencies
+- record
+- AppFields
+- routers/remote_access.py
 - test_backups_engine.py
 - test_cli_client.py
 - FakeDockerCli
-- pytest
+- enqueue
 - package.json
 - Get-DeployerSource
 - mongodb
@@ -154,7 +154,7 @@
 - tunnel
 - AuditLog
 - worker
-- aws_for
+- integration/test_query_console.py
 - CloudError
 - schema_diff.py
 - Remote Access & Custom Domains (Cloudflare)
@@ -166,28 +166,28 @@
 - tempfile
 - images
 - FakeCloudflare
-- test_mcp.py
-- test_github_integration.py
+- test_document_tools
+- results.ts
 - _call_tool
-- query_log.py
-- FakeSide
+- test_query_log.py
+- CliError
 - apiSnippets.ts
 - HANDOVER.md
-- SourceReplica
+- test_conventions.py
 - backup_engine.py
 - readOnly.ts
 - error
-- client
+- restore_cloud_backup
 - LocalExecutor
 - services
 - test_container_config.py
 - query/diff.ts
-- Cloud hosting and databases (AWS, Firebase)
+- run_mongosh
 - wslplatform.tests.ps1
 - volumes
 - steps
 - bundle
-- C2-3 as built: Cloud Firestore
+- cursor
 - Deploy a website with Deployer
 - images
 - SetupOptions
@@ -195,17 +195,17 @@
 - api
 - lan.tests.ps1
 - jobs
-- SyncConflict
+- How the main code paths work
 - healthcheck
 - redis
 - steps
 - WizardPage
-- apply_changes
-- _fake_binlog
-- test_api_docs_routes.py
+- test_backups_pitr.py
+- _JsonReader
+- re
 - .ensure_github_role
-- test_query_log.py
-- FakeExecutor
+- rtdb_read
+- utcnow
 - mariadb
 - mongodb-upgrade-6
 - InputCreate
@@ -217,7 +217,7 @@
 - x-mongodb-upgrade
 - test_query_docs.py
 - test_skill_doc.py
-- test_version.py
+- API runtime dependencies (requirements.txt)
 - linux-installer
 - setup-exe
 - setup-engine.sh
@@ -226,34 +226,37 @@
 - test_real_aws_client_lists_only_tagged_github_roles
 - env
 - create_input
-- key_of
+- ThemeProvider.tsx
 - Schema endpoints, SchemaLink and ConventionIssue
-- run_console
-- CloudflareError
-- record_run
-- scripts
+- csv.ts
+- cmd_login
+- CheckRow
+- test_mysql_canceller_kills_the_query_from_a_private_pool
 - .delete_secret
-- test_pagination_accounts_zones_and_records
+- consoleMode.ts
 - services/cli_tokens.py
-- redact
-- Firestore point-in-time recovery and deletes (as built)
-- test_auto_increment_is_persisted_for_restarts_and_repaired_with_a_log
+- _clean_up_slot
+- test_managed_db_connection_cap.py
+- SqlStore
 - tsconfig.json
 - Invoke-DeployerNative
-- vite.config.ts
+- list_subcollections
 - runtime.tests.ps1
-- KeyRoutesCORS
+- _rtdb_source
 - docker-entrypoint.sh
-- head_db_url
-- test_query_route_refuses_anon_keys
+- list_jobs
+- Data API with API keys
+- _TempArtifact
+- m_drop
+- mongo_read_only_refusal
+- signal
+- _json_or_text
 - entrypoint.sh
 - upgrade.sh
 - ci.yml
 - release.yml
 - deployer-api
-- handle
 - C2-4 as built: Firebase Realtime Database
-- Firestore backups as built: new databases, managed exports, scheduled backups, restores
 - main
 
 ## God Nodes (most connected - your core abstractions)
@@ -275,10 +278,10 @@
   docs/CLOUD.md → api/app/crypto.py
 - `Co-hosted apps (docs/COHOSTING.md "Websites on both PCs")` --references--> `deploy()`  [INFERRED]
   docs/DEPLOYMENTS.md → api/app/routers/apps.py
-- `Checked and found OK` --references--> `deploy()`  [INFERRED]
-  docs/SECURITY_REVIEW.md → api/app/routers/apps.py
 - `How it works` --references--> `logout()`  [INFERRED]
   docs/CLI.md → api/app/routers/auth.py
+- `MCP` --references--> `firestore_import()`  [INFERRED]
+  docs/CLOUD.md → api/app/routers/cloud.py
 
 ## Import Cycles
 - 3-file cycle: `api/app/services/deployments.py -> api/app/services/jobs.py -> api/app/services/transfer.py -> api/app/services/deployments.py`
@@ -303,243 +306,251 @@
 - **MCP billable tools gated by confirm_billing** — docs_mcp_confirm_billing_pattern, docs_mcp_tool_set_app_target, docs_mcp_tool_create_cloud_database, docs_mcp_tool_set_build_location, docs_mcp_tool_set_app_secrets_store, docs_mcp_tool_set_app_internet_access [EXTRACTED 1.00]
 - **Cloudflare tunnel stack (link, sidecar, supervisor, handshake files, Caddy 8081)** — docs_remote_access_link_step, docs_remote_access_tunnel_sidecar, docs_remote_access_supervisor, docs_remote_access_desired_status_files, docs_remote_access_caddy_8081 [INFERRED 0.85]
 
-## Communities (243 total, 31 thin omitted)
+## Communities (246 total, 25 thin omitted)
 
 ### Community 0 - "Ui"
-Cohesion: 0.07
-Nodes (15): Card, BorderColor, Fill, Radius, Glyphs, InputBox, Invalid, ProgressLine (+7 more)
+Cohesion: 0.08
+Nodes (15): SettingsDialog, Autostart, KeepAwake, Lan, Port, InputBox, Invalid, Rule (+7 more)
 
-### Community 1 - "react"
-Cohesion: 0.05
-Nodes (126): isApiError(), isApiStarting(), api, qk, isJobFinished(), useApp(), useApps(), useDeployments() (+118 more)
+### Community 1 - "PageSpinner"
+Cohesion: 0.07
+Nodes (77): isApiError(), isApiStarting(), hasLiveReplica(), useCohostEligibility(), useDataSourcesWithReplicas(), useInstanceSettings(), useProviders(), useSetupStatus() (+69 more)
 
 ### Community 2 - "Button"
-Cohesion: 0.05
-Nodes (149): refresh(), errorMessage(), useDataSources(), ColumnSpec, ForeignKeyAction, JsonValue, Button, ConfirmDialog() (+141 more)
+Cohesion: 0.06
+Nodes (151): refresh(), errorMessage(), saveBlob(), isJobFinished(), useApps(), useJob(), usePlacementOptions(), useProjects() (+143 more)
 
 ### Community 3 - "types.ts"
 Cohesion: 0.02
-Nodes (142): ApiKey, ApiKeyConfig, ApiKeyCreateResponse, ApiKeyRole, AppBuild, AppCloud, AppCreated, AppInput (+134 more)
+Nodes (155): ApiKey, ApiKeyConfig, ApiKeyCreateResponse, ApiKeyRole, AppBuild, AppCloud, AppCreated, AppInput (+147 more)
 
 ### Community 4 - "source_sync.py"
-Cohesion: 0.04
-Nodes (32): dec(), enc(), enc_row(), ext(), _failed(), _mongo_change(), MongoStore, _named() (+24 more)
+Cohesion: 0.02
+Nodes (106): SyncVersion, mark_online(), add_version(), apply_changes(), DeviceSide, _dt(), enc(), enc_row() (+98 more)
 
 ### Community 5 - "oauth.py"
 Cohesion: 0.03
-Nodes (96): random_token(), sha256_hex(), client_ip(), CaddyProxyHeaders, RefreshToken, change_password(), LinkIn, login() (+88 more)
+Nodes (87): random_token(), change_password(), LinkIn, login(), LoginIn, logout(), me(), MeUpdate (+79 more)
 
 ### Community 6 - "Badge"
-Cohesion: 0.06
-Nodes (94): useSyncConflict(), useSyncConflicts(), useSyncHistory(), CohostEligibility, ConflictField, DataSource, JsonObject, Replica (+86 more)
+Cohesion: 0.05
+Nodes (118): isDeviceOffline(), useApp(), useDeployment(), useDeployments(), useSyncConflict(), useSyncConflicts(), useSyncHistory(), Deployment (+110 more)
 
 ### Community 7 - "ApiError"
-Cohesion: 0.04
-Nodes (94): _detach(), ApiError, _apps_method(), CallContext, capabilities(), clear_link(), collect_metrics(), _cpu_percent() (+86 more)
+Cohesion: 0.03
+Nodes (95): _detach(), _find_user(), main(), _oauth_set(), _oauth_status(), _oauth_write(), _platform_list(), _platform_restore() (+87 more)
 
-### Community 8 - "apps.py"
-Cohesion: 0.04
-Nodes (75): _actions_report(), add_domain(), AppCreate, AppFields, AppUpdate, _audit_cohost(), _audit_database_access(), BuildBody (+67 more)
+### Community 8 - "update_app"
+Cohesion: 0.06
+Nodes (47): add_domain(), _audit_cohost(), _audit_database_access(), cancel_deployment(), _check_billing(), check_domain(), _check_internet(), _check_preset() (+39 more)
 
 ### Community 9 - "FlatButton"
-Cohesion: 0.03
-Nodes (40): CheckOption, CheckColor, Checked, Description, CheckRow, Detail, SingleLine, State (+32 more)
+Cohesion: 0.04
+Nodes (27): CheckOption, CheckColor, Checked, Description, ChoiceCard, Badge, BadgeColor, Checked (+19 more)
 
 ### Community 10 - "Device"
-Cohesion: 0.05
-Nodes (69): AppReplica, Device, DeviceEnrollment, DeviceProjectGrant, approve_enrollment(), _can_remove_copy(), deny_enrollment(), enrollment_by_code_query() (+61 more)
+Cohesion: 0.03
+Nodes (114): AppReplica, Device, DeviceEnrollment, DeviceProjectGrant, SourceReplica, SyncConflict, enroll_cancel(), approve_enrollment() (+106 more)
 
 ### Community 11 - "react"
+Cohesion: 0.07
+Nodes (62): Backup, BackupCopy, BackupSchedule, BackupTrigger, KeptAs, RecoveryWindow, RestoreMode, COPY_ICONS (+54 more)
+
+### Community 12 - "services/backups.py"
+Cohesion: 0.05
+Nodes (90): validation_error(), BackupCopy, BackupPolicy, new_id(), sha256_file(), any_copy(), archive_source_logs(), _artifact_host() (+82 more)
+
+### Community 13 - "App"
 Cohesion: 0.04
-Nodes (106): hasLiveReplica(), invalidateProjectSources(), useCohostEligibility(), useDataSourcesWithReplicas(), usePlacementOptions(), Backup, BackupCopy, BackupSchedule (+98 more)
-
-### Community 12 - "utcnow"
-Cohesion: 0.02
-Nodes (187): Backup, BackupCopy, BackupLogSegment, BackupPolicy, new_id(), utcnow(), iso(), _backup_rules() (+179 more)
-
-### Community 13 - "get_connection"
-Cohesion: 0.09
-Nodes (19): GitHubConnection, github_connect(), github_disconnect(), github_repos(), github_status(), clone_token(), check_can_build(), apps_using() (+11 more)
+Nodes (67): App, Deployment, _switch_target(), cloud_url(), instance_role_name(), out(), set_enabled(), state_of() (+59 more)
 
 ### Community 14 - "rtdb.py"
-Cohesion: 0.10
-Nodes (27): _as_doc(), call(), check(), check_key(), check_path(), check_value(), _child(), connection_info() (+19 more)
+Cohesion: 0.09
+Nodes (29): analyze_documents(), _as_doc(), call(), check(), check_key(), check_path(), check_value(), _child() (+21 more)
 
-### Community 15 - "Alert"
-Cohesion: 0.05
-Nodes (77): useDevices(), CliInputField, Device, DeviceCapabilities, DeviceMetrics, DeviceRole, DeviceSharingMode, EngineAvailability (+69 more)
+### Community 15 - "DevicesPage.tsx"
+Cohesion: 0.07
+Nodes (50): useDevices(), DeviceCapabilities, DeviceMetrics, DeviceRole, DeviceSharingMode, EngineAvailability, ManagedEngine, useCurrentUser() (+42 more)
 
 ### Community 16 - "docs/PLATFORMS.md - Platforms and accounts this project uses"
-Cohesion: 0.25
-Nodes (21): Platform data model (UUID-keyed MariaDB tables), Cloud phases C1-C3 (AWS, Firebase, cloud databases, Actions builds), docs/PLATFORMS.md - Platforms and accounts this project uses, AWS hosting and databases, deployer-boundary IAM permissions boundary, Three AWS IAM policies: DeployerHosting, DeployerDatabases, DeployerRoles, Cloudflare tunnel and DNS, Cloudflare API token (four permissions) (+13 more)
+Cohesion: 0.20
+Nodes (25): Project API keys (dpl_role_random), Platform data model (UUID-keyed MariaDB tables), Cloud phases C1-C3 (AWS, Firebase, cloud databases, Actions builds), docs/PLATFORMS.md - Platforms and accounts this project uses, AWS hosting and databases, deployer-boundary IAM permissions boundary, Three AWS IAM policies: DeployerHosting, DeployerDatabases, DeployerRoles, Cloudflare tunnel and DNS (+17 more)
 
 ### Community 17 - "SchemaTab.tsx"
 Cohesion: 0.05
-Nodes (84): useSchema(), ConventionIssue, SourceSchema, SchemaTab, AlertBadge(), AppLayout(), navClass(), Avatar() (+76 more)
+Nodes (84): @xyflow/react@^12.11.6, useSchema(), ConventionIssue, Entity, LinkCardinality, ProjectSchema, RelationshipCardinality, SourceSchema (+76 more)
 
 ### Community 18 - "CloudflareSetup.tsx"
-Cohesion: 0.05
-Nodes (92): useInstanceSettings(), CloudflareZone, Domain, ImportSummary, ProviderName, ProviderSettings, PublicUrlRequest, PublicUrlResponse (+84 more)
+Cohesion: 0.06
+Nodes (74): CloudflareZone, CloudProvider, Domain, ProviderSettings, PublicUrlRequest, PublicUrlResponse, RemoteAccess, RemoteAccessMode (+66 more)
 
 ### Community 19 - "ApiError"
-Cohesion: 0.09
-Nodes (40): check_forbidden(), _coerce_for_column(), _collection(), _db_error(), decode_input(), delete_document(), delete_row(), encode_value() (+32 more)
+Cohesion: 0.13
+Nodes (20): check_forbidden(), _collection(), decode_input(), delete_document(), encode_value(), find_forbidden_operator(), _find_id(), id_candidates() (+12 more)
 
 ### Community 20 - "deploys.ts"
-Cohesion: 0.07
-Nodes (61): useDeployment(), App, AppDetectDraft, AppPatch, AppPreset, AppReplica, AppTarget, CloudTarget (+53 more)
+Cohesion: 0.08
+Nodes (55): useDataSources(), App, AppDetectDraft, AppPreset, AppTarget, CloudTarget, DeploymentStatus, DeploymentTrigger (+47 more)
 
 ### Community 21 - "GcpClient"
-Cohesion: 0.05
-Nodes (10): CloudError, _api_error(), GcpClient, _name(), _secret_id(), release(), call(), test_real_google_client_binding_and_provider_requests() (+2 more)
+Cohesion: 0.04
+Nodes (31): CloudError, _api_error(), client(), GcpClient, _name(), _secret_id(), set_transport(), teardown_steps() (+23 more)
 
 ### Community 22 - "mcp.py"
-Cohesion: 0.12
-Nodes (41): _confirmed(), Ctx, _limit(), _mongo(), _p(), _sql(), t_app_logs(), t_cloud_database_options() (+33 more)
+Cohesion: 0.10
+Nodes (53): _confirmed(), Ctx, _limit(), _mongo(), _p(), _rpc_error(), _sql(), t_app_logs() (+45 more)
 
 ### Community 23 - "services/remote_access.py"
-Cohesion: 0.07
-Nodes (53): switch_public_url(), tunnel_cname_target(), resync_webhooks(), get_value(), set_value(), _active_hostnames(), add_hostname(), apps_tunnel_name() (+45 more)
+Cohesion: 0.08
+Nodes (47): _add_cloud_domain(), get_value(), set_value(), _active_hostnames(), add_hostname(), apps_tunnel_name(), _cached_zones(), _client() (+39 more)
 
 ### Community 24 - "metrics.py"
 Cohesion: 0.05
-Nodes (61): get_redis(), dismiss_alert(), get_metrics(), get_summary(), list_alerts(), active(), alert_out(), _api_rule() (+53 more)
+Nodes (55): get_metrics(), get_summary(), list_alerts(), active(), _api_rule(), _cloud_cleanup_rule(), Condition, conditions() (+47 more)
 
 ### Community 25 - "ControlForm"
 Cohesion: 0.05
-Nodes (22): ControlForm, IsBusy, State, LogWindow, ToolbarHeight, OutputWindow, ToolbarHeight, RunState (+14 more)
+Nodes (19): ControlForm, IsBusy, State, RunState, Busy, Checking, NotResponding, Running (+11 more)
 
 ### Community 26 - "routers/cloud.py"
-Cohesion: 0.13
-Nodes (30): _audit(), _billing(), _confirm_delete(), connect_database(), connection_databases(), create_cloud_backup(), create_connection(), create_database() (+22 more)
+Cohesion: 0.10
+Nodes (32): _audit(), _billing(), check_connection(), _confirm_delete(), connect_database(), connection_databases(), create_connection(), create_database() (+24 more)
 
 ### Community 27 - "cloud_deploy.py"
-Cohesion: 0.05
-Nodes (28): cloud_env(), _export(), instance_role_name(), Publish, poll(), poll(), poll(), resource_name() (+20 more)
+Cohesion: 0.04
+Nodes (49): cache_control(), cloud_env(), _export(), Publish, poll(), poll(), poll(), cleanup() (+41 more)
 
-### Community 28 - "get_settings"
-Cohesion: 0.03
-Nodes (68): get_settings(), seal_process(), Settings, get_db(), _check_mariadb(), _check_mongodb(), _check_redis(), health() (+60 more)
+### Community 28 - "provisioning.py"
+Cohesion: 0.08
+Nodes (38): ensure_database(), database_size(), m_provision(), provision_target(), cap_mariadb_users(), _check(), _check_db(), create_mariadb_database() (+30 more)
 
-### Community 29 - "conftest.py"
-Cohesion: 0.06
-Nodes (43): get_engine(), set_redis(), auth_headers(), factory(), _clean_state(), client(), db(), fake_provisioning() (+35 more)
+### Community 29 - "test_transfer_devices.py"
+Cohesion: 0.22
+Nodes (14): _export_handler(), handler(), fake_provision(), provision_managed_source(), _payload(), test_export_fails_when_device_offline(), test_instance_export_includes_device_tables_and_device_data(), test_instance_import_offline_device_restores_on_main() (+6 more)
 
 ### Community 30 - "firestore.py"
-Cohesion: 0.07
-Nodes (47): _and(), _bad(), call(), check(), check_path(), collection_entity(), collection_ids(), composite_indexes() (+39 more)
+Cohesion: 0.08
+Nodes (42): _and(), _bad(), call(), check(), check_path(), collection_entity(), collection_ids(), _count() (+34 more)
 
 ### Community 31 - "Job"
 Cohesion: 0.05
-Nodes (43): Job, cancel_job(), get_job(), _get_job(), list_jobs(), claim(), _clamp(), _error_text() (+35 more)
+Nodes (44): Job, cancel_job(), reconcile_interrupted(), cancel_deployment(), claim(), _clamp(), finish(), heartbeat() (+36 more)
 
 ### Community 32 - "CloudflareClient"
-Cohesion: 0.12
-Nodes (5): CloudflareClient, _cname_body(), ensure_apps_tunnel(), test_bearer_header_and_verify(), test_tunnel_and_cname_calls()
+Cohesion: 0.07
+Nodes (17): CloudflareClient, CloudflareError, _cname_body(), to_api_error(), tunnel_cname_target(), test_bearer_header_and_verify(), test_check_permissions_all_ok(), test_check_permissions_missing() (+9 more)
 
-### Community 33 - "device_rpc.py"
-Cohesion: 0.02
-Nodes (103): _b64d(), _b64e(), decrypt_secret(), _derive(), encrypt_secret(), encrypt_with_passphrase(), _master_key(), _passphrase_key() (+95 more)
+### Community 33 - "shell_runner.py"
+Cohesion: 0.09
+Nodes (15): _as_uid(), _child_env(), _field(), _kill(), main(), make_server(), do_POST(), _reply() (+7 more)
 
 ### Community 34 - "deployer.sh"
 Cohesion: 0.11
 Nodes (78): api_cli(), ask(), assert_restore_folder(), check_port(), cmd_actions(), cmd_autostart(), cmd_backup(), cmd_cli_token() (+70 more)
 
-### Community 35 - "make_app"
-Cohesion: 0.06
-Nodes (64): Deployment, allocate_port(), _enqueue_job(), handle_push(), logs_key(), rollback(), runtime_logs(), start_deployment() (+56 more)
+### Community 35 - "deployments.py"
+Cohesion: 0.02
+Nodes (97): get_settings(), seal_process(), Settings, _b64d(), _b64e(), decrypt_with_passphrase(), _derive(), encrypt_secret() (+89 more)
 
 ### Community 36 - "WizardForm"
-Cohesion: 0.09
-Nodes (22): SettingsDialog, Autostart, KeepAwake, Lan, Port, IconBadge, Color, Kind (+14 more)
+Cohesion: 0.11
+Nodes (12): Card, BorderColor, Fill, Radius, TextBlock, RightAlign, SingleLine, TextColor (+4 more)
 
 ### Community 37 - "ThemedForm"
-Cohesion: 0.10
-Nodes (7): Json, ThemedForm, IsForcedScale, ResetPasswordDialog, SignInAppsDialog, Current, ProviderName
+Cohesion: 0.13
+Nodes (4): AppIcon, ThemedForm, IsForcedScale, ResetPasswordDialog
 
 ### Community 38 - "services/__init__.py"
-Cohesion: 0.03
-Nodes (81): _oauth_status(), api_key_not_allowed(), bearer_token(), check_api_key_rate(), decode_access_token(), get_current_user(), require_project_creator(), require_session() (+73 more)
+Cohesion: 0.02
+Nodes (101): sha256_hex(), api_key_not_allowed(), bearer_token(), check_api_key_rate(), client_ip(), decode_access_token(), get_current_user(), load_api_key_access() (+93 more)
 
 ### Community 39 - "dynamo.py"
-Cohesion: 0.13
-Nodes (17): backup_name(), _backup_out(), check(), connection_info(), display(), entity(), _error(), export_script() (+9 more)
+Cohesion: 0.10
+Nodes (42): aws_for(), backup_name(), _backup_out(), _bad(), call(), check(), create_backups(), _cursor_in() (+34 more)
 
-### Community 40 - "App"
-Cohesion: 0.05
-Nodes (73): App, cloud_url(), generate_dockerfile(), _shell_quote(), artifact_for(), audience(), builds_on_github(), cancel_setup() (+65 more)
+### Community 40 - "_reconcile_app"
+Cohesion: 0.03
+Nodes (51): github_disconnect(), github_repos(), github_status(), enqueue_teardown(), artifact_for(), cancel_setup(), check_can_build(), dispatch() (+43 more)
 
 ### Community 41 - "deployer_cli.py"
-Cohesion: 0.06
-Nodes (46): _JsonReader, fill_once(), all_apps(), Api, api_from_config(), app_path(), _app_status(), _apply_hint() (+38 more)
+Cohesion: 0.14
+Nodes (23): api_from_config(), app_path(), _app_status(), _apply_hint(), ask_secret(), cmd_app_show(), human(), cmd_apps() (+15 more)
 
 ### Community 42 - "NotebookConsole.tsx"
-Cohesion: 0.03
-Nodes (201): isDeviceOffline(), saveBlob(), useQueryLog(), useSavedQueries(), useSavedQueryVersion(), useSavedQueryVersions(), useSourceSchema(), DataSourceKind (+193 more)
+Cohesion: 0.12
+Nodes (47): useSourceSchema(), SavedQuery, newId(), attachSaved(), CELL_PERSIST_MAX, closeTab(), detachSaved(), EMPTY_NOTEBOOK (+39 more)
 
-### Community 43 - "json.ts"
+### Community 43 - "react"
+Cohesion: 0.07
+Nodes (66): api, qk, invalidateProjectSources(), CloudDatabaseOptions, ColumnSpec, DataSource, DataSourceKind, ForeignKeyAction (+58 more)
+
+### Community 44 - "project-context.ts"
 Cohesion: 0.06
-Nodes (27): _find_user(), main(), _oauth_set(), _oauth_write(), _platform_list(), _platform_restore(), _read_json_stdin(), _reset_password() (+19 more)
-
-### Community 44 - "test_source_sync.py"
-Cohesion: 0.19
-Nodes (17): sync_round(), _conflicts(), _replica(), _seed(), test_changes_flow_both_ways_without_echo(), test_concurrent_edit_opens_conflict_and_other_keys_keep_syncing(), test_delete_versus_update_is_a_conflict(), test_mongo_echo_is_suppressed_by_version() (+9 more)
+Nodes (43): useProject(), CloudRestoredFrom, Role, { api }, flush(), info, render(), source (+35 more)
 
 ### Community 45 - "MCP.md"
-Cohesion: 0.09
-Nodes (49): CI job: Linux installer (install, CLI, update, uninstall), Notes for AI agents (skill copy, MCP, graphify), anon API key (read-only but reads all project data), mcp.call audit logging (tool name, key id, outcome, never arguments), Connecting, JSON-RPC errors, Limits, Per-project MCP server (POST /v1/projects/<id>/mcp) (+41 more)
+Cohesion: 0.10
+Nodes (47): CI job: Linux installer (install, CLI, update, uninstall), anon API key (read-only but reads all project data), mcp.call audit logging (tool name, key id, outcome, never arguments), Connecting, JSON-RPC errors, Limits, Per-project MCP server (POST /v1/projects/<id>/mcp), MCP server for AI agents (+39 more)
 
 ### Community 46 - "README.md"
 Cohesion: 0.06
 Nodes (58): Linux support work: install.sh, deployer.sh, linux-installer CI, Docker Engine inside the deployer WSL distro (default runtime), Linux server platform (alternative to Windows PC), Windows PC platform (required unless Linux), docs/SETUP.md - Setting up Deployer, Cloudflare API token permissions (Tunnel Edit, Account Settings Read, DNS Edit, Zone Read), Open from any device with your own domain (Cloudflare tunnel), Deploy an app and connect an AI agent (MCP) (+50 more)
 
 ### Community 47 - "re"
-Cohesion: 0.07
-Nodes (35): backup_delete_summary(), backup_out(), bucket_location(), _call(), check_input_uri(), clone_spec(), collection_ids(), create_schedule() (+27 more)
+Cohesion: 0.05
+Nodes (68): DataSource, backup_delete_summary(), backup_out(), bucket_location(), _call(), check_input_uri(), clone_spec(), collection_ids() (+60 more)
 
 ### Community 48 - "routers/backups.py"
-Cohesion: 0.11
-Nodes (28): backup_schema(), BackupPatch, create_backup(), _decrypted_download(), delete_backup(), diff_backups(), download_backup(), download_deleted_project_backup() (+20 more)
-
-### Community 49 - "data_sources.py"
 Cohesion: 0.10
-Nodes (24): validation_error(), check_data_source(), _config_hosts(), create_data_source(), data_source_connection(), DataSourceInput, DataSourceUpdate, delete_data_source() (+16 more)
+Nodes (33): backup_schema(), BackupPatch, create_backup(), _decrypted_download(), delete_backup(), diff_backups(), download_backup(), download_deleted_project_backup() (+25 more)
+
+### Community 49 - "Backup"
+Cohesion: 0.10
+Nodes (30): Backup, BackupLogSegment, _bucket_keys(), contiguous(), _covers(), covers_anchor(), expire_project_backups(), _follows() (+22 more)
 
 ### Community 50 - "post"
-Cohesion: 0.09
-Nodes (27): cancel_transfer(), download_transfer(), instance_export(), instance_export_job(), InstanceExportInput, list_transfers(), _my_transfer_job(), _owned_projects() (+19 more)
+Cohesion: 0.06
+Nodes (35): cancel_transfer(), download_transfer(), instance_export(), instance_export_job(), InstanceExportInput, list_transfers(), _my_transfer_job(), _owned_projects() (+27 more)
 
 ### Community 51 - "ddl_export.py"
 Cohesion: 0.08
-Nodes (31): build_bundle(), _comment_safe(), _commented(), ejson(), export_mongo_source(), export_source(), export_sources(), export_sql_source() (+23 more)
+Nodes (33): build_bundle(), _comment_safe(), _commented(), ejson(), export_mongo_source(), export_source(), export_sources(), export_sql_source() (+25 more)
 
 ### Community 52 - "forbidden"
-Cohesion: 0.09
-Nodes (25): require_instance_owner(), forbidden(), role_rank(), accept_invite(), create_invite(), get_invite(), _get_member(), InviteCreate (+17 more)
+Cohesion: 0.07
+Nodes (23): role_rank(), keys_to_rotate(), accept_invite(), create_invite(), get_invite(), _get_member(), InviteCreate, list_invites() (+15 more)
+
+### Community 53 - "Color"
+Cohesion: 0.07
+Nodes (25): Logo, Glyphs, IconBadge, Color, Kind, Soft, IconKind, Check (+17 more)
+
+### Community 54 - "BackupExecutor"
+Cohesion: 0.05
+Nodes (10): register_copy_target(), unregister(), BackupExecutor, DeviceExecutorUnavailable, local_executor(), register_device_executor_factory(), run_local_call(), test_copy_hook() (+2 more)
 
 ### Community 55 - "CONTRIBUTING.md"
-Cohesion: 0.19
-Nodes (12): CI job: Windows installer checks and DeployerSetup.exe, Checks (run before opening a PR - CI runs the same), Commits and PRs (tests, Alembic migration, MIT license), Commits and pull requests, Contributing to Deployer, Development setup, Layout, PowerShell conventions (+4 more)
+Cohesion: 0.15
+Nodes (14): CI job: Windows installer checks and DeployerSetup.exe, Checks (run before opening a PR - CI runs the same), Commits and PRs (tests, Alembic migration, MIT license), Commits and pull requests, Contributing to Deployer, Development setup, Ground rules, Layout (+6 more)
 
 ### Community 56 - "models.py"
 Cohesion: 0.03
-Nodes (122): decrypt_json(), decrypt_with_passphrase(), encrypt_stream_with_passphrase(), Base, load_api_key_access(), load_project_access(), ProjectAccess, require_role() (+114 more)
+Nodes (117): decrypt_json(), decrypt_secret(), Base, ApiKey, CloudConnection, InstanceSetting, Project, ProjectInvite (+109 more)
 
-### Community 57 - "introspection.py"
-Cohesion: 0.08
-Nodes (36): chunks(), match_entity(), reference_base(), analyze_documents(), visit(), apply_mongo_indexes(), approximate_row_counts(), bson_type_name() (+28 more)
+### Community 57 - "test_data_browser.py"
+Cohesion: 0.17
+Nodes (20): _coerce_for_column(), _db_error(), delete_row(), _fetch_by_pk(), insert_row(), list_rows(), _pk_clause(), _pk_columns() (+12 more)
 
 ### Community 58 - "Deployer HTTP API v1"
-Cohesion: 0.06
-Nodes (57): Ground rules, Deployer HTTP API v1, Project API keys (dpl_role_random), Auth endpoints (signup, login, refresh, OAuth), Data sources endpoints and DataSourceInput, Error envelope and common error codes, Export and import endpoints, Health and setup endpoints (+49 more)
+Cohesion: 0.11
+Nodes (36): Data sources endpoints and DataSourceInput, Error envelope and common error codes, Health and setup endpoints, Backups, Versions & Recovery, Backups API, Backup data model (jobs, backup_policies, backups, segments, copies), Backup storage and encryption (chunked AES-256-GCM, HKDF), Backups error codes (+28 more)
 
 ### Community 59 - "IShellLinkW"
 Cohesion: 0.09
 Nodes (5): IShellLinkW, ShellLinkCoClass, MEMORYSTATUSEX, NativeMethods, RECT
 
-### Community 60 - "test_backup_crypto.py"
-Cohesion: 0.12
-Nodes (23): backup_key(), derive_backup_key(), export_key_material(), import_key_material(), _key_for(), key_id(), _keys_file(), _load_extra_keys() (+15 more)
+### Community 60 - "test_github_actions.py"
+Cohesion: 0.13
+Nodes (32): role_name(), role_name_for(), workflow_path(), aws(), by_run(), cloud_app(), committed(), connect_github() (+24 more)
 
 ### Community 61 - "services/cli_inputs.py"
 Cohesion: 0.10
@@ -547,107 +558,103 @@ Nodes (24): CliInput, get_input(), submit_input(), apps_out(), cancel(), cancel_
 
 ### Community 62 - "deployments.py"
 Cohesion: 0.04
-Nodes (69): _job_archive(), _job_drop(), _job_prune(), _job_restore(), _job_snapshot(), _job_verify(), client(), _backup_status() (+61 more)
+Nodes (72): _kill(), _watch(), _job_archive(), _job_drop(), _job_prune(), _job_restore(), _job_snapshot(), _job_verify() (+64 more)
 
 ### Community 63 - "cloud_db.py"
-Cohesion: 0.04
-Nodes (81): encrypt_json(), CloudConnection, DataSource, check_connection(), _cloud_cleanup(), _bad(), check_connection(), config_of() (+73 more)
+Cohesion: 0.07
+Nodes (30): encrypt_json(), app_databases(), _cloud_call(), cloud_out(), connect(), connect_firestore(), connect_rtdb(), connect_tables() (+22 more)
 
 ### Community 64 - "test_cli_inputs.py"
 Cohesion: 0.15
-Nodes (28): bearer(), _create(), _issue(), _poll(), _submit(), test_app_ids_need_developer(), test_app_ids_submit_with_nothing_typed_changes_nothing(), test_app_ids_write_the_environment() (+20 more)
+Nodes (28): _check_env(), reserved_env(), bearer(), _create(), _issue(), _poll(), _submit(), test_app_ids_need_developer() (+20 more)
 
 ### Community 65 - "common.ps1"
 Cohesion: 0.07
 Nodes (45): Invoke-Update(), Get-SystemFacts(), Add-DeployerUserPath(), Assert-DeployerMongoRef(), Assert-DeployerRestoreFolder(), ConvertTo-DeployerArgument(), ConvertTo-DeployerRuntimePath(), ConvertTo-DeployerStateTable() (+37 more)
 
 ### Community 66 - "connection"
-Cohesion: 0.05
-Nodes (71): set_factory(), aws_statements(), site_id(), aws(), aws_key_id(), aws_secret(), _actions(), aws() (+63 more)
+Cohesion: 0.03
+Nodes (104): set_factory(), aws_statements(), resource_name(), site_id(), set_factory(), aws(), aws_key_id(), aws_secret() (+96 more)
 
 ### Community 67 - "toast-context.ts"
-Cohesion: 0.02
-Nodes (80): ApiClientOptions, ApiError, buildQuery(), client, codeForStatus(), createApiClient(), download(), emit() (+72 more)
+Cohesion: 0.03
+Nodes (75): ApiClientOptions, ApiError, buildQuery(), client, codeForStatus(), createApiClient(), download(), emit() (+67 more)
 
 ### Community 68 - "docker-compose.yml"
-Cohesion: 0.07
-Nodes (50): CI workflow (ci.yml), CI job: API (pytest, ruff), CI job: compose file validation, CI job: dashboard lint, typecheck, test, build, CI job: dashboard and tunnel Docker images, CI job: API image + integration tests (MariaDB, MongoDB, Docker), MongoDB 5.0 to 8.0 upgrade path test, API runtime dependencies (requirements.txt) (+42 more)
+Cohesion: 0.10
+Nodes (38): CI workflow (ci.yml), CI job: API (pytest, ruff), CI job: compose file validation, CI job: dashboard lint, typecheck, test, build, CI job: dashboard and tunnel Docker images, CI job: API image + integration tests (MariaDB, MongoDB, Docker), MongoDB 5.0 to 8.0 upgrade path test, Checks to run before opening a PR (CI runs the same) (+30 more)
 
 ### Community 69 - "environment"
 Cohesion: 0.13
 Nodes (38): environment, ALLOW_SIGNUP, APP_DB_NETWORK, APP_MEM_LIMIT, APP_NETWORK, BACKUP_DIR, CADDY_APPS_DIR, DEPLOYER_ALLOW_INSECURE_PRIMARY (+30 more)
 
 ### Community 70 - "data.py"
-Cohesion: 0.11
-Nodes (24): delete_document(), delete_row(), DocumentInsert, DocumentUpdate, insert_document(), insert_row(), _json_or_text(), list_documents() (+16 more)
+Cohesion: 0.23
+Nodes (14): delete_document(), delete_row(), DocumentInsert, DocumentUpdate, insert_document(), insert_row(), _mongo_source(), RowDelete (+6 more)
 
-### Community 71 - "github.py"
-Cohesion: 0.11
-Nodes (16): _is_ip(), local_url(), _api(), _call(), _check_token_status(), delete_file(), dispatch_workflow(), GitHubError (+8 more)
+### Community 71 - "InputRequestPage.tsx"
+Cohesion: 0.10
+Nodes (37): CliInputField, JsonValue, Textarea, childPath(), cleanRtdbPath(), isBranch(), isRtdbKey(), parentPath() (+29 more)
 
-### Community 72 - "deployments.py"
-Cohesion: 0.03
-Nodes (57): get_sessionmaker(), receive_messages(), _record_heartbeat(), _record_progress(), DockerCli, on(), _kill(), _watch() (+49 more)
+### Community 72 - "DockerCli"
+Cohesion: 0.04
+Nodes (35): DockerCli, on(), DockerError, _git_env(), parse_size(), _percent(), build_image(), _docker_failure() (+27 more)
 
 ### Community 73 - "sqlalchemy"
 Cohesion: 0.06
-Nodes (26): run_migrations_offline(), run_migrations_online(), _url(), upgrade(), upgrade(), upgrade(), upgrade(), upgrade() (+18 more)
+Nodes (28): run_migrations_offline(), run_migrations_online(), _url(), upgrade(), upgrade(), upgrade(), upgrade(), upgrade() (+20 more)
 
-### Community 74 - "DataSource"
-Cohesion: 0.10
-Nodes (32): check_status(), connection_info(), create_collection(), create_table(), delete_document(), delete_row(), drop_collection(), drop_table() (+24 more)
+### Community 74 - "terminal.ts"
+Cohesion: 0.15
+Nodes (33): MongoQueryResponse, SqlStatementResult, QueryPrefs, docsToTable(), outputLines(), statementLabel(), asciiTable(), bracketsBalanced() (+25 more)
 
-### Community 75 - "FakeFirestore"
-Cohesion: 0.12
-Nodes (7): set_factory(), FakeAdmin, gcp(), viewer(), FakeFirestore, gcp(), viewer()
+### Community 75 - "test_firestore_admin.py"
+Cohesion: 0.06
+Nodes (45): requirements(), _size(), test_every_policy_leaves_room_under_the_iam_limit(), test_split_kept_exactly_the_previous_permissions(), base(), connected(), FakeAdmin, gcp() (+37 more)
 
-### Community 76 - "cloud_deploy.py"
-Cohesion: 0.12
-Nodes (17): conflict(), Domain, _add_cloud_domain(), add_domain(), cache_control(), check_domain(), _client_for(), content_type() (+9 more)
+### Community 76 - "useTerminalConsole.ts"
+Cohesion: 0.14
+Nodes (29): QueryRequest, addHistoryEntry(), HISTORY_LIMIT, HistoryEntry, historyKey(), isEntry(), loadHistory(), DEFAULT_PREFS (+21 more)
 
 ### Community 77 - "services"
 Cohesion: 0.09
 Nodes (24): build, extra_hosts, image, mem_limit, networks, restart, volumes, context (+16 more)
 
-### Community 78 - "device_moves.py"
-Cohesion: 0.06
-Nodes (35): create_move_job(), _device_removed(), dump_source(), _forget_lock(), release_stale_locks(), restore_into(), run_due_cleanups(), run_move() (+27 more)
+### Community 78 - "get_redis"
+Cohesion: 0.03
+Nodes (82): get_redis(), download_transfer(), iterate(), dismiss_alert(), alert_out(), mute(), read_status(), write_status() (+74 more)
 
 ### Community 79 - "QueryEditor.tsx"
-Cohesion: 0.14
-Nodes (19): COLLECTION_METHODS, CURSOR_METHODS, cursorLine(), DB_METHODS, editorKeys, EditorMode, editorTheme(), emit() (+11 more)
+Cohesion: 0.07
+Nodes (37): dependencies, @codemirror/autocomplete@^6.20.3, @codemirror/lang-javascript@^6.2.5, @codemirror/lang-sql@^6.10.0, @codemirror/language@^6.12.4, @dagrejs/dagre@^3.1.1, lucide-react@^1.46.0, react@^19.3.0 (+29 more)
 
 ### Community 80 - "Deployments (push-to-deploy) — phase 4"
-Cohesion: 0.11
-Nodes (22): static(), mariadb(), target(), local(), API, C1 as built, Cloud connections, Custom domains (+14 more)
+Cohesion: 0.12
+Nodes (22): provider(), static(), target(), local(), API, API, C1 as built, Cloud connections (+14 more)
 
 ### Community 81 - "tests/test_query_console.py"
-Cohesion: 0.03
-Nodes (82): _call_shell(), _canceller(), _clamp(), _connect_uri(), _enter_read_only(), _error_text(), _first_keyword(), _first_line() (+74 more)
-
-### Community 82 - "run_query"
-Cohesion: 0.13
-Nodes (6): delete_query_log(), get_query_run(), list_query_log(), _naive_utc(), QueryRequest, run_query()
+Cohesion: 0.09
+Nodes (28): run_sql(), _timeout_statement(), mongo_config(), run_fake(), test_mongosh_cursor_batch_and_truncation(), test_mongosh_errors_are_in_band(), test_mongosh_missing_in_sidecar_or_sidecar_down(), test_mongosh_node_escapes_refused_for_developers() (+20 more)
 
 ### Community 83 - "test_remote_access.py"
-Cohesion: 0.09
-Nodes (36): test_apps_tunnel_created_once_cname_moves_and_ingress(), add_host(), assert_no_secrets(), desired(), link(), test_add_hostname_dns_failure_rolls_back_ingress(), test_add_hostname_existing_record(), test_add_hostname_new() (+28 more)
+Cohesion: 0.08
+Nodes (39): Domain, fix_state_ownership(), test_apps_tunnel_created_once_cname_moves_and_ingress(), add_host(), assert_no_secrets(), desired(), link(), test_add_hostname_dns_failure_rolls_back_ingress() (+31 more)
 
-### Community 84 - "schema_ops.py"
-Cohesion: 0.13
-Nodes (21): build_create_table(), check_collection_name(), check_identifier(), check_type(), _constraint_name(), create_collection(), create_table(), drop_collection() (+13 more)
+### Community 84 - "ApiError"
+Cohesion: 0.04
+Nodes (67): ApiError, _actions_report(), _github_delivery(), github_webhook(), _lookup_rate_limit(), snooze_alert(), SnoozeBody, test_webhook() (+59 more)
 
 ### Community 85 - "test_oauth.py"
-Cohesion: 0.20
-Nodes (18): _callback(), _error_of(), _link_state(), _start(), test_callback_invalid_or_reused_state(), test_callback_provider_error(), test_callback_requires_same_browser(), test_github_requires_primary_verified_email() (+10 more)
+Cohesion: 0.16
+Nodes (21): auth_payload(), create_access_token(), factory(), _callback(), _error_of(), _link_state(), _start(), test_callback_invalid_or_reused_state() (+13 more)
 
 ### Community 86 - "deployer.ps1"
 Cohesion: 0.15
 Nodes (44): Assert-Admin(), Get-Context(), Get-OnOffArgument(), Initialize-Engine(), Invoke-Autostart(), Invoke-Backup(), Invoke-Compose(), Invoke-Config() (+36 more)
 
 ### Community 87 - "UninstallForm"
-Cohesion: 0.06
-Nodes (11): Payload, ProcessResult, ScriptOutput, Integration, StartMenuDir, Phase, Confirm, Done (+3 more)
+Cohesion: 0.08
+Nodes (10): ProcessResult, ScriptOutput, Integration, StartMenuDir, Phase, Confirm, Done, Failed (+2 more)
 
 ### Community 88 - "caddy"
 Cohesion: 0.10
@@ -661,29 +668,33 @@ Nodes (21): logging, logging, logging, driver, options, logging, logging, loggin
 Cohesion: 0.13
 Nodes (33): Get-InstallerArgumentString(), Get-UbuntuWslImage(), Initialize-WslPlatform(), Install-DockerDesktopRuntime(), Install-WslEngine(), Invoke-DryRun(), Register-ResumeAfterReboot(), Request-Reboot() (+25 more)
 
+### Community 91 - "DeviceAgent"
+Cohesion: 0.07
+Nodes (12): _connector(), _describe(), DeviceAgent, run_agent(), _send(), ws_url(), error_payload(), main() (+4 more)
+
 ### Community 92 - "export_firestore"
-Cohesion: 0.10
-Nodes (12): database_options(), delete_database(), export_firestore(), export_rtdb(), firestore_backups(), list_cloud_backups(), list_connections(), project_targets() (+4 more)
+Cohesion: 0.22
+Nodes (3): database_options(), export_firestore(), options()
 
 ### Community 93 - "Usability for non-experts"
 Cohesion: 0.06
-Nodes (31): 11. Docs and the deploy-website skill vs the code, 12. Test suite, CI health, dead code, 13. Non-expert usability walkthrough, 1. API core: auth, sessions, OAuth, invites, members, setup, instance settings, errors, rate limits, 2. Data sources, connections, provisioning, schema, data browser, DDL export, 4. Backups, PITR, jobs, worker, export/import, 5. Host devices, device RPC/agent, co-hosting sync and co-host apps, 7. Installer scripts, WSL engine, compose stack, Caddy, tunnel sidecar, Dockerfiles, CI workflows (+23 more)
+Nodes (33): _outcome(), 11. Docs and the deploy-website skill vs the code, 12. Test suite, CI health, dead code, 13. Non-expert usability walkthrough, 1. API core: auth, sessions, OAuth, invites, members, setup, instance settings, errors, rate limits, 2. Data sources, connections, provisioning, schema, data browser, DDL export, 3. Query console, query log, saved queries, 4. Backups, PITR, jobs, worker, export/import (+25 more)
 
 ### Community 94 - "DumpScanner"
 Cohesion: 0.19
 Nodes (9): count_insert_rows(), _count_row_tuples(), DumpScanner, test_count_insert_rows_ignores_parens_inside_strings(), test_dump_scanner_collects_point_and_counts(), _scan(), test_count_insert_rows_first_line_only(), test_multi_line_extended_insert_as_written_by_mariadb_11() (+1 more)
 
 ### Community 95 - "connections.py"
-Cohesion: 0.06
-Nodes (40): build_mongo_client(), build_sql_engine(), check_status(), cloud_engine(), _connect_args(), connection_info(), display_for(), _fingerprint() (+32 more)
+Cohesion: 0.04
+Nodes (61): build_mongo_client(), build_sql_engine(), check_status(), cloud_engine(), _connect_args(), connection_info(), display_for(), _fingerprint() (+53 more)
 
 ### Community 96 - "migrate"
 Cohesion: 0.11
 Nodes (20): condition, depends_on, api, mariadb, migrate, mongodb, redis, condition (+12 more)
 
 ### Community 97 - "BaseModel"
-Cohesion: 0.09
-Nodes (24): AwsCredentials, CloudBackupCreate, CloudDatabaseConnect, CloudDatabaseCreate, CloudRestore, ConnectionCreate, FirebaseCredentials, FirestoreClone (+16 more)
+Cohesion: 0.14
+Nodes (11): AwsCredentials, CloudDatabaseConnect, CloudDatabaseCreate, ConnectionCreate, FirebaseCredentials, FirestoreClone, FirestoreExport, FirestoreImport (+3 more)
 
 ### Community 98 - ".TestMarkers"
 Cohesion: 0.11
@@ -693,49 +704,53 @@ Nodes (7): CheckResult, Ports, SystemChecks, SystemReport, HasBlocking, HasWarni
 Cohesion: 0.10
 Nodes (20): with, body, build-args, cache-from, cache-to, context, files, flavor (+12 more)
 
-### Community 100 - "schema.py"
-Cohesion: 0.14
-Nodes (18): CollectionInput, ColumnReference, ColumnSpec, create_collection(), create_link(), create_table(), delete_link(), _drop() (+10 more)
+### Community 100 - "health.py"
+Cohesion: 0.08
+Nodes (17): get_engine(), _body(), install_error_handlers(), _api_error(), _http(), _unhandled(), _validation(), create_app() (+9 more)
 
 ### Community 101 - "EncryptingWriter"
-Cohesion: 0.08
-Nodes (12): body(), BackupCryptoError, DecryptingReader, EncryptingWriter, _hkdf(), iter_decrypt(), _nonce(), _read_exact() (+4 more)
+Cohesion: 0.05
+Nodes (35): body(), backup_key(), BackupCryptoError, DecryptingReader, derive_backup_key(), EncryptingWriter, export_key_material(), _hkdf() (+27 more)
 
 ### Community 102 - "device_local.py"
-Cohesion: 0.13
-Nodes (19): device_status(), enroll_cancel(), enroll_start(), enroll_status(), EnrollStart, _ensure_poller(), _link_or_none(), _linked_to() (+11 more)
+Cohesion: 0.10
+Nodes (20): device_status(), enroll_start(), enroll_status(), EnrollStart, _ensure_poller(), _link_or_none(), _linked_to(), _load_state() (+12 more)
 
 ### Community 103 - "conventions.py"
-Cohesion: 0.13
-Nodes (38): check_conventions(), check_links(), check_naming(), check_structure(), _field_is_indexed(), _find_field(), is_boolean_type(), is_plural() (+30 more)
-
-### Community 104 - "call"
-Cohesion: 0.06
-Nodes (23): DeviceExecutor, call(), CallListener, calls_channel(), _error_from(), progress_channel(), publish_control(), publish_progress() (+15 more)
+Cohesion: 0.11
+Nodes (25): check_links(), check_naming(), check_structure(), _field_is_indexed(), _find_field(), is_boolean_type(), is_plural(), _issue() (+17 more)
 
 ### Community 105 - "saved_queries.py"
-Cohesion: 0.12
+Cohesion: 0.11
 Nodes (27): SavedQuery, SavedQueryVersion, _add_version(), _check_source(), _check_version(), create_saved_query(), delete_saved_query(), get_saved_query() (+19 more)
 
-### Community 106 - "test_firestore.py"
-Cohesion: 0.18
-Nodes (20): requirements(), test_google_requirements_include_firestore_backups(), base(), connect(), docs_url(), _fail(), test_app_runner_app_does_not_get_firestore(), test_browse_page_filter_and_subcollections() (+12 more)
+### Community 106 - "NotebookSidebar.tsx"
+Cohesion: 0.14
+Nodes (27): useQueryLog(), useSavedQueries(), useSavedQueryVersion(), useSavedQueryVersions(), ModeSwitch(), PendingWriteAlert(), ReadOnlyBadge(), RowsSelect() (+19 more)
+
+### Community 107 - "docs/ARCHITECTURE.md - Deployer Architecture"
+Cohesion: 0.11
+Nodes (21): Deployer HTTP API v1, Auth endpoints (signup, login, refresh, OAuth), Export and import endpoints, Members and invites endpoints, OAuth callback redirect flow, Projects endpoints, Role hierarchy viewer<developer<admin<owner, docs/ARCHITECTURE.md - Deployer Architecture (+13 more)
 
 ### Community 108 - "query-shell"
 Cohesion: 0.11
 Nodes (18): cap_add, cap_drop, command, cpus, entrypoint, extra_hosts, image, init (+10 more)
 
 ### Community 109 - ".Ask"
-Cohesion: 0.05
-Nodes (34): AppInfo, DefaultInstallDir, ExePath, PowerShellExe, Ref, Repo, RepoUrl, TroubleshootingUrl (+26 more)
+Cohesion: 0.07
+Nodes (21): AppInfo, DefaultInstallDir, ExePath, PowerShellExe, Ref, Repo, RepoUrl, TroubleshootingUrl (+13 more)
 
-### Community 110 - "crowsfoot.ts"
-Cohesion: 0.19
-Nodes (16): LinkCardinality, RelationshipCardinality, describeEnds(), EndMarker, MARKER_LABEL, MARKER_NOTATION, markerPath(), Vec (+8 more)
+### Community 110 - "ScriptRunner"
+Cohesion: 0.09
+Nodes (8): LogWindow, ToolbarHeight, OutputWindow, ToolbarHeight, Payload, ScriptRunner, Cancelled, IsRunning
 
 ### Community 111 - "test_repo_detect.py"
 Cohesion: 0.12
 Nodes (21): detect(), _detect_dir(), has(), src(), _dirs(), env_keys(), _find_module(), _join() (+13 more)
+
+### Community 112 - "FakeDynamo"
+Cohesion: 0.07
+Nodes (7): aws(), FakeDynamo, _missing(), aws(), PitrFake, test_retried_delete_skips_the_protection_switch(), viewer()
 
 ### Community 113 - "Query Console"
 Cohesion: 0.13
@@ -750,16 +765,16 @@ Cohesion: 0.08
 Nodes (3): _code(), _wrap(), inner()
 
 ### Community 116 - "mongo_snapshot"
-Cohesion: 0.17
-Nodes (24): ArtifactWriter, check_db_name(), _index_path(), _latest_oplog_ts(), _load_index(), mariadb_archive_logs(), mariadb_snapshot(), mongo_archive_logs() (+16 more)
+Cohesion: 0.14
+Nodes (12): ArtifactWriter, _latest_oplog_ts(), mariadb_snapshot(), mongo_archive_logs(), mongo_snapshot(), _oldest_oplog_ts(), _oplog_available(), ts_from() (+4 more)
 
-### Community 118 - "fake_primary"
-Cohesion: 0.18
-Nodes (6): fake_primary(), FakePrimary, test_enrollment_poll_never_overwrites_a_cancel(), cancelled_meanwhile(), test_enrollment_poll_race_keeps_approved(), slow_primary()
+### Community 118 - "query_console.py"
+Cohesion: 0.13
+Nodes (15): _enter_read_only(), _error_text(), _first_keyword(), _is_blank(), _is_timeout(), _leading_keyword(), _ms(), _names_re() (+7 more)
 
 ### Community 119 - "approve_login"
 Cohesion: 0.19
-Nodes (11): approve_login(), deny_login(), list_tokens(), login_by_code(), LoginAction, LoginPoll, poll_login(), revoke_current() (+3 more)
+Nodes (13): approve_login(), create_login(), deny_login(), list_tokens(), login_by_code(), LoginAction, LoginCreate, LoginPoll (+5 more)
 
 ### Community 120 - "with"
 Cohesion: 0.13
@@ -769,41 +784,41 @@ Nodes (15): with, cache, cache-dependency-path, cache-from, cache-to, context, i
 Cohesion: 0.09
 Nodes (21): compilerOptions, allowImportingTsExtensions, erasableSyntaxOnly, jsx, lib, module, moduleDetection, moduleResolution (+13 more)
 
-### Community 122 - "shared_fixtures.py"
+### Community 122 - "test_data_sources.py"
 Cohesion: 0.08
-Nodes (17): set_docker(), publish_reply(), reply_channel(), fake_device(), factory(), FakeDevice, add_source(), docker() (+9 more)
+Nodes (11): fake_connect(), project_setup(), sqlite_engine(), test_check_connection_and_delete(), test_create_external_sql_source(), test_deleting_source_removes_links(), test_internal_network_is_refused_for_non_owners(), test_managed_create_drops_database_when_commit_fails() (+3 more)
 
 ### Community 123 - "test_rtdb.py"
-Cohesion: 0.12
+Cohesion: 0.11
 Nodes (19): base(), connect(), _fail(), FakeRtdb, by(), gcp(), test_browse_lazily_query_and_write_by_path(), test_cloud_run_app_gets_its_realtime_database() (+11 more)
 
-### Community 124 - "not_found"
-Cohesion: 0.07
-Nodes (51): not_found(), SourceReplica, SyncConflict, SyncVersion, cohosting_eligibility(), create_replica(), delete_replica(), get_conflict() (+43 more)
+### Community 124 - "record"
+Cohesion: 0.05
+Nodes (48): cohosting_eligibility(), create_replica(), delete_replica(), get_conflict(), _key_param(), list_conflicts(), list_replicas(), _replica() (+40 more)
 
-### Community 125 - "test_firestore_admin.py"
-Cohesion: 0.28
-Nodes (16): base(), connected(), run_job(), test_backup_schedules_backups_and_restore(), test_create_a_named_firestore_database(), test_delete_a_backup_and_an_export(), test_delete_a_firestore_database_needs_its_name_and_no_protection(), test_failed_operation_leaves_the_source_in_error() (+8 more)
+### Community 125 - "AppFields"
+Cohesion: 0.12
+Nodes (10): AppCreate, AppFields, AppUpdate, BuildBody, DeployBody, DetectBody, HostnameBody, _one_line() (+2 more)
 
-### Community 126 - "dependencies"
-Cohesion: 0.11
-Nodes (19): dependencies, @codemirror/autocomplete@^6.20.3, @codemirror/lang-javascript@^6.2.5, @codemirror/lang-sql@^6.10.0, @codemirror/language@^6.12.4, @dagrejs/dagre@^3.1.1, lucide-react@^1.46.0, react@^19.3.0 (+11 more)
+### Community 126 - "routers/remote_access.py"
+Cohesion: 0.20
+Nodes (15): add_hostname(), get_remote_access(), HostnameBody, link(), LinkBody, PublicUrlBody, quick(), QuickBody (+7 more)
 
 ### Community 127 - "test_backups_engine.py"
-Cohesion: 0.15
-Nodes (9): binlog_name_with_seq(), binlog_seq(), _mongo_build_oplog(), parse_binlog(), rename_oplog_entry(), _event(), test_binlog_names(), test_parse_binlog_extracts_databases_and_times() (+1 more)
+Cohesion: 0.10
+Nodes (15): binlog_name_with_seq(), binlog_seq(), feed(), _mongo_build_oplog(), parse_binlog(), parse_mongodump_counts(), rename_oplog_entry(), rewrite_dump_line() (+7 more)
 
 ### Community 128 - "test_cli_client.py"
 Cohesion: 0.07
-Nodes (34): env_of(), cli(), urlopen(), _fail_on(), _fill(), _http_error(), _login(), approve_once() (+26 more)
+Nodes (39): _merge_env(), env_of(), make_app(), env(), cli(), urlopen(), _fail_on(), _fill() (+31 more)
 
-### Community 130 - "pytest"
-Cohesion: 0.20
-Nodes (11): to_api_error(), _err(), test_check_permissions_all_ok(), test_check_permissions_missing(), test_check_permissions_no_zones_and_no_accounts(), test_error_mapping(), test_inactive_token_is_auth_failure(), test_invalid_token_maps_to_auth_failed() (+3 more)
+### Community 130 - "enqueue"
+Cohesion: 0.10
+Nodes (13): detached_source_params(), enqueue_detached_finalize(), _redis_due(), scheduler_tick(), soft_delete_source(), start_platform_snapshot(), device_removed(), active_job() (+5 more)
 
 ### Community 131 - "package.json"
-Cohesion: 0.09
-Nodes (32): devDependencies, eslint@^10.10.0, @eslint/js@^10.0.1, eslint-plugin-react-hooks@^7.1.1, eslint-plugin-react-refresh@^0.5.7, globals@^17.12.0, jsdom@^30.0.1, tailwindcss@^4.3.3 (+24 more)
+Cohesion: 0.06
+Nodes (43): devDependencies, eslint@^10.10.0, @eslint/js@^10.0.1, eslint-plugin-react-hooks@^7.1.1, eslint-plugin-react-refresh@^0.5.7, globals@^17.12.0, jsdom@^30.0.1, tailwindcss@^4.3.3 (+35 more)
 
 ### Community 132 - "Get-DeployerSource"
 Cohesion: 0.12
@@ -823,15 +838,15 @@ Nodes (13): TUNNEL_TRANSPORT_PROTOCOL, tunnel, cap_drop, depends_on, environment
 
 ### Community 136 - "AuditLog"
 Cohesion: 0.03
-Nodes (46): AuditLog, prune(), create_invite(), create(), env(), sign(), test_app_hostnames(), test_create_list_get_and_roles() (+38 more)
+Nodes (57): CaddyProxyHeaders, AuditLog, create_invite(), reset_logins(), create(), env(), sign(), test_app_hostnames() (+49 more)
 
 ### Community 137 - "worker"
 Cohesion: 0.15
 Nodes (13): disable, worker, command, entrypoint, extra_hosts, healthcheck, image, mem_limit (+5 more)
 
-### Community 138 - "aws_for"
-Cohesion: 0.29
-Nodes (14): aws_for(), call(), create_backups(), delete_document(), describe(), insert_document(), _json_object(), key_names() (+6 more)
+### Community 138 - "integration/test_query_console.py"
+Cohesion: 0.15
+Nodes (19): mariadb(), mongo(), run(), sh(), test_mariadb_error_mid_way_keeps_earlier_results(), test_mariadb_multi_statement_script(), test_mariadb_read_only_session(), test_mariadb_session_state_does_not_leak() (+11 more)
 
 ### Community 139 - "CloudError"
 Cohesion: 0.17
@@ -842,16 +857,16 @@ Cohesion: 0.22
 Nodes (13): apply_row_counts(), _by_name(), diff_entities(), diff_schemas(), _field_view(), _index_view(), entity(), field() (+5 more)
 
 ### Community 141 - "Remote Access & Custom Domains (Cloudflare)"
-Cohesion: 0.16
-Nodes (22): Commands, Google sign-in for your apps, How it works, Input requests, Sign in, The `deployer` command line (no browser, no sudo), Remote Access & Custom Domains (Cloudflare), Add hostname (ingress rules and proxied CNAME) (+14 more)
+Cohesion: 0.23
+Nodes (18): Instance settings and users endpoints, Remote Access & Custom Domains (Cloudflare), Add hostname (ingress rules and proxied CNAME), Remote access API, Cloudflare API token requirements, Remote access data model (settings, domains), desired.json / status.json handshake, Remote access error codes (+10 more)
 
 ### Community 142 - "MarkerKind"
 Cohesion: 0.17
 Nodes (11): Marker, MarkerKind, Check, Done, Error, None, Other, RebootRequired (+3 more)
 
 ### Community 143 - "test_transfer_stream.py"
-Cohesion: 0.15
-Nodes (9): _dump(), fake_engine(), FakeConn, materialize(), test_bare_numbers_cut_by_the_buffer(), test_lazy_entry_matches_json_load(), test_restore_file_streams_in_bounded_memory(), test_unread_rows_are_skipped_in_order() (+1 more)
+Cohesion: 0.13
+Nodes (11): read_data_entry(), _stream_parts(), _dump(), fake_engine(), FakeConn, materialize(), test_bare_numbers_cut_by_the_buffer(), test_lazy_entry_matches_json_load() (+3 more)
 
 ### Community 144 - "Core.cs"
 Cohesion: 0.15
@@ -861,37 +876,41 @@ Nodes (4): DeployerSetup, DeployerCli, Internet, Shell
 Cohesion: 0.37
 Nodes (17): capture_quick_url(), child_alive(), forward_file(), forward_logs(), log(), now_epoch(), now_iso(), pid_alive() (+9 more)
 
+### Community 146 - "test_big_mongo_document_is_sent_in_a_batch_of_its_own"
+Cohesion: 0.22
+Nodes (3): _dumps_token(), read_mongo_changes(), test_big_mongo_document_is_sent_in_a_batch_of_its_own()
+
 ### Community 147 - "tempfile"
 Cohesion: 0.09
-Nodes (22): BackupEngineError, _check_exit(), _fetch_binlog(), mariadb_defaults_file(), mongo_config_file(), _mongo_load_archive(), mongo_root_uri(), _mongorestore() (+14 more)
+Nodes (26): BackupEngineError, _check_exit(), _fetch_binlog(), _index_path(), _load_index(), mariadb_archive_logs(), mariadb_defaults_file(), mongo_config_file() (+18 more)
 
 ### Community 148 - "images"
 Cohesion: 0.18
 Nodes (12): name, runs-on, steps, strategy, component, context, images, strategy (+4 more)
 
 ### Community 149 - "FakeCloudflare"
-Cohesion: 0.15
-Nodes (5): set_transport(), fake_cf(), fake_cf(), FakeCloudflare, _ok()
+Cohesion: 0.14
+Nodes (5): set_transport(), _err(), fake_cf(), FakeCloudflare, _ok()
 
-### Community 150 - "test_mcp.py"
-Cohesion: 0.10
-Nodes (11): run(), env(), call(), rpc(), _route_role(), test_data_tools(), test_document_tools(), recorder() (+3 more)
+### Community 150 - "test_document_tools"
+Cohesion: 0.50
+Nodes (4): run(), test_document_tools(), recorder(), fn()
 
-### Community 151 - "test_github_integration.py"
-Cohesion: 0.13
-Nodes (15): b64(), connect(), docker(), env(), fake_token(), gh(), serve_repo(), test_connect_stores_encrypted_token_and_never_signs_in() (+7 more)
+### Community 151 - "results.ts"
+Cohesion: 0.19
+Nodes (18): QueryResponse, SqlQueryResponse, addPrimaryKeyQuery(), base64Size(), CellKind, describeQueryError(), ejsonLeaf(), expandedCellText() (+10 more)
 
 ### Community 152 - "_call_tool"
-Cohesion: 0.25
-Nodes (7): _call_tool(), _check_args(), _dispatch(), _error_result(), RpcError, _text_result(), _visible()
+Cohesion: 0.14
+Nodes (9): _call_tool(), _check_args(), _dispatch(), _error_result(), handle(), mcp_endpoint(), RpcError, _text_result() (+1 more)
 
-### Community 153 - "query_log.py"
-Cohesion: 0.26
-Nodes (8): QueryRun, delete_before(), get_run(), list_runs(), prune(), serialize(), _trim_project(), test_prune()
+### Community 153 - "test_query_log.py"
+Cohesion: 0.05
+Nodes (34): QueryRun, delete_query_log(), get_query_run(), list_query_log(), _naive_utc(), delete_before(), get_run(), list_runs() (+26 more)
 
-### Community 154 - "FakeSide"
-Cohesion: 0.15
-Nodes (4): FakeSide, FakeStore, test_reapplying_a_batch_is_a_no_op(), changes()
+### Community 154 - "CliError"
+Cohesion: 0.19
+Nodes (11): all_apps(), Api, ask_web(), _cancel_input(), CliError, cmd_app_create(), cmd_ask(), find_app() (+3 more)
 
 ### Community 155 - "apiSnippets.ts"
 Cohesion: 0.23
@@ -899,27 +918,27 @@ Nodes (14): buildMcpSnippets(), buildSnippets(), joinUrl(), KEY_PLACEHOLDER, Mcp
 
 ### Community 156 - "HANDOVER.md"
 Cohesion: 0.09
-Nodes (31): Release workflow (release.yml), Release job: build and push GHCR images, Release job: build, self-test and sign DeployerSetup.exe, Release job: CI gate (calls ci.yml), Everyday commands, Fable 5.1 vetting pass (Fix V-01..V-07, L-01..L-09), For AI agents, Full codebase audit (198 findings, all ticked) (+23 more)
+Nodes (30): Release workflow (release.yml), Release job: build and push GHCR images, Release job: build, self-test and sign DeployerSetup.exe, Release job: CI gate (calls ci.yml), Notes for AI agents (skill copy, MCP, graphify), Everyday commands, Fable 5.1 vetting pass (Fix V-01..V-07, L-01..L-09), For AI agents (+22 more)
 
-### Community 157 - "SourceReplica"
-Cohesion: 0.09
-Nodes (27): mark_online(), _merge_warnings(), conflicted(), _replica(), team(), test_conflict_list_diff_and_suggestion(), test_copy_failure_marks_replica_and_drops_partial_copy(), broken_dump() (+19 more)
+### Community 157 - "test_conventions.py"
+Cohesion: 0.44
+Nodes (17): check_conventions(), entity(), field(), _link(), mongo_source(), rules(), sql_source(), test_errored_sources_are_skipped() (+9 more)
 
 ### Community 158 - "backup_engine.py"
 Cohesion: 0.13
-Nodes (27): compare_counts(), _load_dump(), feed(), _managed_user_for(), _mariadb_clear(), _mariadb_create_db(), mariadb_current_point(), _mariadb_drop_db() (+19 more)
+Nodes (33): check_db_name(), compare_counts(), ensure_mongo_replica_set(), _load_dump(), _managed_user_for(), _mariadb_clear(), _mariadb_create_db(), mariadb_current_point() (+25 more)
 
 ### Community 159 - "readOnly.ts"
 Cohesion: 0.35
 Nodes (9): checkMongoReadOnly(), checkReadOnly(), checkSqlReadOnly(), firstKeyword(), MONGO_WRITE_NAMES, MONGO_WRITE_RE, ReadOnlyCheck, splitSqlStatements() (+1 more)
 
 ### Community 160 - "error"
-Cohesion: 0.05
-Nodes (38): rows(), error(), primary(), text(), 8. Windows setup wizard and Deployer Control (C# WinForms), API, C2-1 as built: cloud databases in AWS (RDS / Aurora), Data model (+30 more)
+Cohesion: 0.07
+Nodes (24): error(), fake_primary(), FakePrimary, test_enrollment_poll_never_overwrites_a_cancel(), cancelled_meanwhile(), test_enrollment_poll_race_keeps_approved(), slow_primary(), primary() (+16 more)
 
-### Community 161 - "client"
+### Community 161 - "restore_cloud_backup"
 Cohesion: 0.17
-Nodes (10): client(), set_transport(), test_secret_manager_rest_shapes(), test_firebase_connection_token_exchange_ignores_key_token_uri(), handle(), test_real_client_admin_and_storage_urls(), handle(), test_real_client_storage_objects() (+2 more)
+Nodes (12): CloudBackupCreate, CloudRestore, create_cloud_backup(), _dynamo_source(), list_cloud_backups(), PitrUpdate, restore_cloud_backup(), set_point_in_time_recovery() (+4 more)
 
 ### Community 163 - "services"
 Cohesion: 0.18
@@ -933,9 +952,9 @@ Nodes (7): read(), test_api_healthcheck_and_backup_dir_live_in_compose_only(), t
 Cohesion: 0.43
 Nodes (6): DIFF_MAX_LINES, DiffLine, diffStats(), lineDiff(), lines(), render()
 
-### Community 166 - "Cloud hosting and databases (AWS, Firebase)"
-Cohesion: 0.07
-Nodes (27): save_state(), AppSecrets, failure(), API, API, dashboard, MCP, AWS policy split as built: purpose-sized managed policies, C2-6 as built: internet access for App Runner apps linked to a database (NAT gateway), C2 - cloud databases (what is left) (+19 more)
+### Community 166 - "run_mongosh"
+Cohesion: 0.15
+Nodes (11): _call_shell(), _clamp(), _connect_uri(), _first_line(), parse_shell_output(), run_mongosh(), _shell_error_message(), test_connect_uri_adds_timeouts_once() (+3 more)
 
 ### Community 167 - "wslplatform.tests.ps1"
 Cohesion: 0.15
@@ -953,9 +972,9 @@ Nodes (11): steps, steps, steps, steps, steps, steps, if, name (+3 more)
 Cohesion: 0.20
 Nodes (11): name, needs, permissions, runs-on, jobs, bundle, tests, contents (+3 more)
 
-### Community 171 - "C2-3 as built: Cloud Firestore"
-Cohesion: 0.08
-Nodes (21): test_mysql_canceller_kills_the_query_from_a_private_pool(), cursor(), Add database -> In your Firebase project, API, Apps on Cloud Run, Browsing, editing, querying, C2-3 as built: Cloud Firestore, C2-5 as built: MCP, transfer, project delete (+13 more)
+### Community 171 - "cursor"
+Cohesion: 0.15
+Nodes (14): cursor(), Browsing, editing, querying, Browsing, editing, querying, C2-5 as built: MCP, transfer, project delete, Data tools on cloud databases, Deleting a project, MCP: every tool needs at least its REST route's role, Not verified against real clouds (+6 more)
 
 ### Community 172 - "Deploy a website with Deployer"
 Cohesion: 0.17
@@ -985,9 +1004,9 @@ Nodes (5): Add-DeployerFirewallRule(), Enable-DeployerLanAccess(), Get-DeployerN
 Cohesion: 0.20
 Nodes (10): name, runs-on, name, runs-on, name, runs-on, jobs, compose (+2 more)
 
-### Community 179 - "SyncConflict"
+### Community 179 - "How the main code paths work"
 Cohesion: 0.12
-Nodes (12): add_version(), _dt(), key_hash(), latest_versions(), owed_echoes(), _Round, row_hash(), test_history_and_restore() (+4 more)
+Nodes (11): _Watchdog, 1. Signing in, 3. Running a query in the console or notebook, 7. Deploying to the cloud, 8. Installing, updating and staying up, `deployer update`, How the main code paths work, Keeping the session alive (refresh rotation) (+3 more)
 
 ### Community 180 - "healthcheck"
 Cohesion: 0.53
@@ -1005,29 +1024,25 @@ Nodes (9): steps, steps, steps, id, if, name, run, shell (+1 more)
 Cohesion: 0.22
 Nodes (9): WizardPage, Checks, Docker, Error, Finish, Install, Options, Reboot (+1 more)
 
-### Community 184 - "apply_changes"
-Cohesion: 0.18
-Nodes (6): apply_changes(), _project(), same(), Side, Store, 10. Dashboard data features: databases, data browser, schema, query notebook/terminal, backups, devices, co-hosting, jobs, deploys
+### Community 184 - "test_backups_pitr.py"
+Cohesion: 0.36
+Nodes (11): invalidate(), _iso(), _pause(), _restore(), _run_all(), _snapshot(), _source(), _t_between() (+3 more)
 
-### Community 185 - "_fake_binlog"
-Cohesion: 0.15
-Nodes (6): _fake_binlog(), gtid(), __init__(), _read_all(), test_big_row_is_sent_in_a_batch_of_its_own(), test_transaction_bigger_than_a_batch_is_split_across_rounds()
-
-### Community 186 - "test_api_docs_routes.py"
-Cohesion: 0.43
-Nodes (5): _documented(), _norm(), _paths(), _routes(), test_documented_endpoints_exist()
+### Community 186 - "re"
+Cohesion: 0.06
+Nodes (18): _slug_filename(), _documented(), _norm(), _paths(), _routes(), test_documented_endpoints_exist(), _create(), test_api_key_lifecycle() (+10 more)
 
 ### Community 187 - ".ensure_github_role"
 Cohesion: 0.20
 Nodes (5): Dashboard, API, G3 as built: a permissions boundary for the roles Deployer creates, Not verified against real clouds, The fix: `deployer-boundary`, The threat
 
-### Community 188 - "test_query_log.py"
-Cohesion: 0.20
-Nodes (9): console(), runs(), test_get_and_delete(), test_list_filters_and_permissions(), test_logged_text_masks_passwords(), test_record_run_caps_text_and_trims_the_project(), test_runs_are_logged_with_outcome(), boom() (+1 more)
+### Community 188 - "rtdb_read"
+Cohesion: 0.30
+Nodes (3): list_documents(), list_rows(), rtdb_read()
 
-### Community 189 - "FakeExecutor"
-Cohesion: 0.17
-Nodes (4): env(), FakeExecutor, test_restore_deleted_source_can_be_retried_after_a_failure(), create()
+### Community 189 - "utcnow"
+Cohesion: 0.06
+Nodes (46): utcnow(), _backup_rules(), prune_all(), run_queued(), test_deploy_cancel_rollback_and_delete(), _iso(), _snapshot(), test_archive_logs_creates_and_extends_segments() (+38 more)
 
 ### Community 190 - "mariadb"
 Cohesion: 0.29
@@ -1050,8 +1065,8 @@ Cohesion: 0.29
 Nodes (5): test_a_name_used_only_by_tests_is_dead(), test_no_unreferenced_top_level_names(), _top_level_names(), _is_fixture(), test_no_fixture_is_imported_from_a_test_module()
 
 ### Community 195 - "C2-2 as built: DynamoDB"
-Cohesion: 0.13
-Nodes (11): aws(), engine(), Add database -> In your AWS account -> NoSQL, API, Apps on App Runner, Backups (Backups tab), C2-2 as built: DynamoDB, Data model (+3 more)
+Cohesion: 0.17
+Nodes (10): engine(), Add database -> In your AWS account -> NoSQL, API, Apps on App Runner, Backups (Backups tab), C2-2 as built: DynamoDB, Data model, Not verified against real clouds (+2 more)
 
 ### Community 196 - "Invoke-Preflight"
 Cohesion: 0.57
@@ -1064,6 +1079,10 @@ Nodes (6): x-mongodb-upgrade, entrypoint, mem_limit, network_mode, profiles, vol
 ### Community 200 - "test_skill_doc.py"
 Cohesion: 0.60
 Nodes (3): _section(), test_co_host_apps_are_not_listed_as_not_built(), test_external_platform_table_lists_only_external_platforms()
+
+### Community 201 - "API runtime dependencies (requirements.txt)"
+Cohesion: 0.20
+Nodes (12): API runtime dependencies (requirements.txt), alembic, argon2-cffi (password hashing), cryptography, API dev and test dependencies (requirements-dev.txt), fakeredis, pytest, ruff (+4 more)
 
 ### Community 202 - "linux-installer"
 Cohesion: 0.33
@@ -1082,56 +1101,84 @@ Cohesion: 0.83
 Nodes (4): test_argon2_runs_at_most_two_at_once(), hash(), _track(), verify()
 
 ### Community 206 - "test_nat_network_runs_against_the_real_botocore_models"
-Cohesion: 0.11
-Nodes (7): nat_name(), _unless_gone(), test_ensure_vpc_connector_runs_against_the_real_botocore_models(), test_nat_network_runs_against_the_real_botocore_models(), subnet(), Permissions added (`DeployerDatabases` and `DeployerHosting`, shown in Settings -> Cloud accounts), Shared, reference-counted, removed with the last user
+Cohesion: 0.10
+Nodes (10): nat_name(), _unless_gone(), test_ensure_vpc_connector_runs_against_the_real_botocore_models(), test_nat_network_runs_against_the_real_botocore_models(), subnet(), API, MCP, dashboard, C2-6 as built: internet access for App Runner apps linked to a database (NAT gateway), Not verified against real clouds (+2 more)
 
 ### Community 208 - "env"
 Cohesion: 0.67
 Nodes (3): WINDOWS_SIGNING_PASSWORD, WINDOWS_SIGNING_PFX, env
 
 ### Community 209 - "create_input"
-Cohesion: 0.36
-Nodes (5): _apps_for(), cancel_input(), _cli_row(), create_input(), poll_input()
+Cohesion: 0.46
+Nodes (4): cancel_input(), _cli_row(), create_input(), poll_input()
 
-### Community 210 - "key_of"
-Cohesion: 0.29
-Nodes (8): _bad(), _cursor_in(), key_of(), equals(), serialize(), serialize_item(), to_python(), test_values_round_trip()
+### Community 210 - "ThemeProvider.tsx"
+Cohesion: 0.26
+Nodes (9): labels, next, initialMode(), subscribe(), ThemeProvider(), THEME_STORAGE_KEY, ThemeContext, ThemeContextValue (+1 more)
 
 ### Community 211 - "Schema endpoints, SchemaLink and ConventionIssue"
 Cohesion: 0.44
 Nodes (8): Schema endpoints, SchemaLink and ConventionIssue, Database Planning Conventions, Cross-database link (SQL to NoSQL), Cross-database link rules X1-X3, DDL export (SQL, MongoDB, bundle), ERD crow's-foot notation, Naming rules N1-N6, Structure rules S1-S8
 
-### Community 212 - "run_console"
-Cohesion: 0.29
-Nodes (4): _cursor_out(), item_out(), plain(), run_console()
+### Community 212 - "csv.ts"
+Cohesion: 0.30
+Nodes (10): BOM, Cell, csvField(), exportCsv(), exportFilename(), exportJson(), ExportTable, rowsToObjects() (+2 more)
 
-### Community 214 - "record_run"
-Cohesion: 0.29
-Nodes (5): _outcome(), record_run(), add(), add(), 3. Query console, query log, saved queries
+### Community 213 - "cmd_login"
+Cohesion: 0.27
+Nodes (8): cmd_login(), cmd_logout(), config_path(), _home(), load_config(), local_url(), _login_local(), save_config()
 
-### Community 215 - "scripts"
-Cohesion: 0.29
-Nodes (7): scripts, build, dev, lint, preview, test, typecheck
+### Community 214 - "CheckRow"
+Cohesion: 0.17
+Nodes (12): CheckRow, Detail, SingleLine, State, TextLeft, Title, CheckStatus, Fail (+4 more)
+
+### Community 217 - "consoleMode.ts"
+Cohesion: 0.33
+Nodes (9): DEFAULT_QUERY_CONSOLE_MODE, listeners, loadQueryConsoleMode(), QUERY_CONSOLE_MODE_KEY, QUERY_CONSOLE_MODES, QueryConsoleMode, saveQueryConsoleMode(), subscribe() (+1 more)
 
 ### Community 218 - "services/cli_tokens.py"
 Cohesion: 0.12
 Nodes (19): CliLogin, CliToken, approve(), authenticate(), _clean(), create_login(), expire_if_needed(), issue_token() (+11 more)
 
-### Community 219 - "redact"
-Cohesion: 0.33
-Nodes (3): redact(), test_redact(), test_redact_is_linear()
+### Community 219 - "_clean_up_slot"
+Cohesion: 0.22
+Nodes (5): _clean_up_slot(), _slot_pids(), _fake_proc(), test_clean_up_slot_kills_a_real_process(), test_slot_pids_reads_proc_without_forking()
 
-### Community 220 - "Firestore point-in-time recovery and deletes (as built)"
-Cohesion: 0.33
-Nodes (6): API, Deletes (Backups tab; typed name), Firestore point-in-time recovery and deletes (as built), MCP, Not verified against real clouds, Point-in-time recovery (Backups tab -> Point-in-time recovery)
+### Community 220 - "test_managed_db_connection_cap.py"
+Cohesion: 0.29
+Nodes (4): FakeConn, _patch_engine(), test_existing_managed_users_are_capped_and_others_left_alone(), test_new_managed_user_is_created_with_the_cap()
+
+### Community 221 - "SqlStore"
+Cohesion: 0.06
+Nodes (19): m_sync_mongo_apply(), m_sync_mongo_changes(), m_sync_position(), m_sync_sql_apply(), m_sync_sql_changes(), _sync_database(), _sync_limit(), _sync_offset() (+11 more)
 
 ### Community 224 - "Invoke-DeployerNative"
 Cohesion: 0.16
 Nodes (15): Disable-DeployerLanAccess(), Get-DeployerAcPowerIndex(), Get-DeployerAcPowerTimeoutMinutes(), Get-DeployerLanAddresses(), Get-DeployerLanPorts(), Get-DeployerLanUrls(), Get-DeployerWslIp(), Invoke-DeployerNative() (+7 more)
 
-### Community 225 - "vite.config.ts"
-Cohesion: 0.40
-Nodes (4): @tailwindcss/vite@^4.3.3, @vitejs/plugin-react@^6.1.1, @tailwindcss/vite, @vitejs/plugin-react
+### Community 225 - "list_subcollections"
+Cohesion: 0.22
+Nodes (8): list_subcollections(), Add database -> In your Firebase project, Apps on Cloud Run, C2-3 as built: Cloud Firestore, Data model, MCP, Not verified against real clouds, Permissions added (Settings -> Cloud accounts guide)
+
+### Community 227 - "_rtdb_source"
+Cohesion: 0.28
+Nodes (5): rtdb_push(), rtdb_set(), _rtdb_source(), rtdb_update(), RtdbWrite
+
+### Community 229 - "list_jobs"
+Cohesion: 0.31
+Nodes (3): get_job(), _get_job(), list_jobs()
+
+### Community 230 - "Data API with API keys"
+Cohesion: 0.22
+Nodes (9): rows(), Calling from a browser, Config file, Data API with API keys, Queries, Rotating a key, Rows (SQL sources), Schema (+1 more)
+
+### Community 232 - "m_drop"
+Cohesion: 0.48
+Nodes (6): hosted_summary(), load_credentials(), _load_json_setting(), m_drop(), save_credentials(), servers()
+
+### Community 233 - "mongo_read_only_refusal"
+Cohesion: 0.33
+Nodes (5): mongo_read_only_refusal(), test_mongo_read_only_accepts(), test_mongo_read_only_refuses(), test_read_only_refusals_name_the_word(), test_sql_read_only_accepts()
 
 ### Community 247 - "ci.yml"
 Cohesion: 0.17
@@ -1141,37 +1188,29 @@ Nodes (11): concurrency, cancel-in-progress, group, name, permissions, contents,
 Cohesion: 0.33
 Nodes (5): name, permissions, tags, True, push
 
-### Community 251 - "handle"
-Cohesion: 0.24
-Nodes (3): handle(), mcp_endpoint(), _rpc_error()
-
 ### Community 253 - "C2-4 as built: Firebase Realtime Database"
 Cohesion: 0.22
 Nodes (9): Add database -> In your Firebase project -> Realtime Database, API, Apps on Cloud Run, Browsing, editing, querying, C2-4 as built: Firebase Realtime Database, Data model, MCP, Not verified against real clouds (+1 more)
 
-### Community 255 - "Firestore backups as built: new databases, managed exports, scheduled backups, restores"
-Cohesion: 0.29
-Nodes (7): API, Firestore backups as built: new databases, managed exports, scheduled backups, restores, Managed exports and imports (Backups tab -> Exports to Cloud Storage), MCP, Not verified against real clouds, Permissions added (Settings -> Cloud accounts guide), Scheduled backups and restores (Backups tab)
-
 ## Knowledge Gaps
 - **145 isolated node(s):** `deployer-api`, `RFC-5987`, `RFC-4180`, `Checking`, `Running` (+140 more)
   These have ≤1 connection - possible missing edges or undocumented components. (Counts symbols only; 2551 node(s) total have ≤1 connection when file, concept and rationale nodes are included.)
-- **31 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **25 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `ApiError` connect `ApiError` to `pytest`, `source_sync.py`, `oauth.py`, `apps.py`, `AuditLog`, `Device`, `aws_for`, `utcnow`, `get_connection`, `rtdb.py`, `ApiError`, `GcpClient`, `mcp.py`, `services/remote_access.py`, `_call_tool`, `metrics.py`, `routers/cloud.py`, `query_log.py`, `get_settings`, `conftest.py`, `backup_engine.py`, `firestore.py`, `Job`, `device_rpc.py`, `SourceReplica`, `services/__init__.py`, `dynamo.py`, `App`, `json.ts`, `test_source_sync.py`, `re`, `routers/backups.py`, `data_sources.py`, `post`, `SyncConflict`, `forbidden`, `models.py`, `introspection.py`, `test_query_log.py`, `services/cli_inputs.py`, `FakeExecutor`, `cloud_db.py`, `test_cli_inputs.py`, `data.py`, `github.py`, `deployments.py`, `DataSource`, `cloud_deploy.py`, `device_moves.py`, `create_input`, `run_query`, `key_of`, `run_console`, `tests/test_query_console.py`, `record_run`, `schema_ops.py`, `services/cli_tokens.py`, `export_firestore`, `test_auto_increment_is_persisted_for_restarts_and_repaired_with_a_log`, `connections.py`, `schema.py`, `device_local.py`, `call`, `saved_queries.py`, `approve_login`, `test_github_integration.py`, `shared_fixtures.py`, `not_found`?**
-  _High betweenness centrality (0.134) - this node is a cross-community bridge._
+- **Why does `ApiError` connect `ApiError` to `test_cli_client.py`, `source_sync.py`, `oauth.py`, `ApiError`, `update_app`, `AuditLog`, `Device`, `integration/test_query_console.py`, `services/backups.py`, `App`, `rtdb.py`, `test_big_mongo_document_is_sent_in_a_batch_of_its_own`, `ApiError`, `GcpClient`, `mcp.py`, `services/remote_access.py`, `_call_tool`, `metrics.py`, `routers/cloud.py`, `test_query_log.py`, `provisioning.py`, `test_transfer_devices.py`, `backup_engine.py`, `firestore.py`, `CloudflareClient`, `restore_cloud_backup`, `deployments.py`, `services/__init__.py`, `dynamo.py`, `_reconcile_app`, `run_mongosh`, `re`, `routers/backups.py`, `post`, `forbidden`, `models.py`, `test_data_browser.py`, `services/cli_inputs.py`, `deployments.py`, `cloud_db.py`, `utcnow`, `test_cli_inputs.py`, `data.py`, `get_redis`, `create_input`, `tests/test_query_console.py`, `services/cli_tokens.py`, `DeviceAgent`, `export_firestore`, `SqlStore`, `Usability for non-experts`, `connections.py`, `list_subcollections`, `_rtdb_source`, `device_local.py`, `m_drop`, `saved_queries.py`, `query_console.py`, `approve_login`, `record`?**
+  _High betweenness centrality (0.124) - this node is a cross-community bridge._
 - **Are the 149 inferred relationships involving `ApiError` (e.g. with `_oauth_set()` and `_platform_restore()`) actually correct?**
   _`ApiError` has 149 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `deployer-api`, `RFC-5987`, `RFC-4180` to the rest of the system?**
   _145 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Ui` be split into smaller, more focused modules?**
-  _Cohesion score 0.074034902168165 - nodes in this community are weakly interconnected._
-- **Why does `WizardForm` connect `WizardForm` to `Ui`, `.TestMarkers`, `ThemedForm`, `FlatButton`, `.Ask`, `SetupOptions`, `Core.cs`, `UninstallForm`, `ControlForm`, `IShellLinkW`, `WizardPage`, `Job`?**
-  _High betweenness centrality (0.069) - this node is a cross-community bridge._
+  _Cohesion score 0.07814207650273224 - nodes in this community are weakly interconnected._
+- **Why does `WizardForm` connect `WizardForm` to `Ui`, `.TestMarkers`, `ThemedForm`, `services/__init__.py`, `FlatButton`, `.Ask`, `ScriptRunner`, `SetupOptions`, `Core.cs`, `Color`, `CheckRow`, `UninstallForm`, `ControlForm`, `IShellLinkW`, `WizardPage`?**
+  _High betweenness centrality (0.060) - this node is a cross-community bridge._
 - **Are the 300 inferred relationships involving `DataSource` (e.g. with `create_replica()` and `_replica()`) actually correct?**
   _`DataSource` has 300 INFERRED edges - model-reasoned connections that need verification._
-- **Should `react` be split into smaller, more focused modules?**
-  _Cohesion score 0.05314357773374167 - nodes in this community are weakly interconnected._
+- **Should `PageSpinner` be split into smaller, more focused modules?**
+  _Cohesion score 0.0660941000746826 - nodes in this community are weakly interconnected._
