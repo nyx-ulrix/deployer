@@ -1,17 +1,10 @@
 import { Bot } from "lucide-react";
-import { CopyField } from "../../components/ui/CopyField";
 import { Card } from "../../components/ui/States";
-import { repoBlobUrl, repoRawUrl } from "../../lib/repoLinks";
 
-const SKILL_PATH = "skills/deploy-website/SKILL.md";
-const SKILL_RAW = repoRawUrl(SKILL_PATH);
-const SKILL_PAGE = repoBlobUrl(SKILL_PATH);
+const SKILL_LISTING = "https://www.agensi.io";
+const SKILL_NAME = "Deploy a Website with Deployer";
 
-// One-liners that drop the skill where Claude Code looks for user skills (~/.claude/skills/<name>/SKILL.md).
-const INSTALL_POWERSHELL = `$d="$HOME\\.claude\\skills\\deploy-website"; New-Item -ItemType Directory -Force $d | Out-Null; Invoke-WebRequest -UseBasicParsing ${SKILL_RAW} -OutFile "$d\\SKILL.md"`;
-const INSTALL_BASH = `mkdir -p ~/.claude/skills/deploy-website && curl -fsSL ${SKILL_RAW} -o ~/.claude/skills/deploy-website/SKILL.md`;
-
-/** How to give an AI coding agent the Deployer "deploy-website" skill (project Overview). */
+/** Where to get the Deployer "deploy-website" skill for an AI coding agent (project Overview). */
 export function AgentSkillCard() {
   return (
     <Card
@@ -20,19 +13,17 @@ export function AgentSkillCard() {
           <Bot className="size-4 text-accent" /> Use Deployer from an AI agent
         </span>
       }
-      description="A skill file teaches agents like Claude Code how to back a website with this project and how to deploy the site."
+      description="A skill teaches agents like Claude Code how to back a website with this project and how to deploy the site."
     >
       <div className="space-y-3 text-sm">
         <p className="text-muted">
           Install it once on the computer where the agent runs. The skill always asks which platform to deploy to and
           orders the choices by your past deployments — it never deploys on its own.
         </p>
-        <CopyField label="Windows (PowerShell)" value={INSTALL_POWERSHELL} />
-        <CopyField label="macOS / Linux" value={INSTALL_BASH} />
-        <p className="text-xs text-muted">
-          Other agents can read the same file from the repository at <code className="font-mono">{SKILL_PATH}</code>.{" "}
-          <a href={SKILL_PAGE} target="_blank" rel="noreferrer" className="font-medium text-accent hover:underline">
-            View on GitHub
+        <p>
+          Get it on Agensi: search for <span className="font-medium">{SKILL_NAME}</span>.{" "}
+          <a href={SKILL_LISTING} target="_blank" rel="noreferrer" className="font-medium text-accent hover:underline">
+            Open Agensi
           </a>
         </p>
       </div>

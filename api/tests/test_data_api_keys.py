@@ -191,10 +191,9 @@ REPO = Path(__file__).resolve().parents[2]
 
 def test_anon_key_is_not_advertised_as_public():
     """A-004: an anon key reads every table and collection (no per-table allowlist yet), so the
-    docs, the agent skill and the dashboard must say so instead of calling it the public-client key."""
+    docs and the dashboard must say so instead of calling it the public-client key."""
     places = {
         "docs/DATA_API.md": "read ALL data",
-        "skills/deploy-website/SKILL.md": "reads **all** data",
         "dashboard/src/features/projects/ApiKeysTab.tsx": "can read ALL data",
     }
     misleading = re.compile(r"safe for browsers|public clients \||anon . public|Public key for client apps", re.I)

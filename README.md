@@ -27,9 +27,9 @@ Google/GitHub sign-in uses OAuth apps that *you* create (optional).
 - **API keys** - give your apps a project-scoped key (`anon` read-only but reads all project data,
   `service` read/write) and use the same rows, documents, query and schema endpoints from curl,
   JavaScript or Python; download a ready-made config JSON per key ([docs/DATA_API.md](docs/DATA_API.md)).
-- **AI-agent skill** - [skills/deploy-website/SKILL.md](skills/deploy-website/SKILL.md) teaches agents
+- **AI-agent skill** - the `deploy-website` skill, on [Agensi](https://www.agensi.io), teaches agents
   such as Claude Code how to back a site with Deployer; it always asks which platform to deploy to,
-  ordered by your past deployments. Install commands are on each project's Overview tab.
+  ordered by your past deployments.
 - **MCP server for AI agents** - connect Claude Code or any MCP client to a project with an API key:
   it can read the schema, rows and documents, run queries, and (with a `service` key) change data and
   deploy apps. Copy-ready config under API keys → *Show usage* → *AI agents (MCP)* ([docs/MCP.md](docs/MCP.md)).

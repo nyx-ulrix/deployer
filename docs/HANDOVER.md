@@ -170,9 +170,8 @@ The owner prefers commit messages without attribution or co-author lines.
 
 ### For AI agents
 
-- The `deploy-website` skill (`skills/deploy-website/SKILL.md`) teaches an agent to use Deployer and
-  always to ask which platform to deploy to before deploying. A copy lives in
-  `C:\Users\malco\.claude\skills\deploy-website\SKILL.md`; refresh it whenever the repo copy changes.
+- The `deploy-website` skill teaches an agent to use Deployer and always to ask which platform to
+  deploy to before deploying. It is listed on Agensi and is no longer kept in this repository.
 - The MCP server is described in [MCP.md](MCP.md); destructive and billable tools need explicit
   confirmation arguments, and agents must ask the user first.
 - The repo is mapped with graphify: `graphify-out/graph.json`, `graph.html` and `GRAPH_REPORT.md` are

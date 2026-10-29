@@ -1,7 +1,7 @@
 """Every endpoint the docs name must exist in the router (A-189).
 
 Checked: `| METHOD | path |` table rows in docs/*.md, and inline `METHOD [<url>]/v1/...` references in
-docs/*.md, README.md and the deploy-website skill.
+docs/*.md and README.md.
 
 Tables often give paths relative to a prefix stated above them ("All under /v1/projects/{id}",
 ".../tables/{table}/rows"), so a documented path matches any route that ends with it. A path
@@ -18,9 +18,9 @@ from starlette.routing import WebSocketRoute
 from app.main import app
 
 ROOT = Path(__file__).resolve().parents[2]
-DOCS = [*sorted((ROOT / "docs").glob("*.md")), ROOT / "README.md", ROOT / "skills/deploy-website/SKILL.md"]
+DOCS = [*sorted((ROOT / "docs").glob("*.md")), ROOT / "README.md"]
 ROW = re.compile(r"^\|\s*(GET|POST|PUT|PATCH|DELETE|WS)\s*\|\s*`([^`]+)`")
-# `GET /v1/...`, and `GET <url>/v1/...` as the skill writes its availability probes
+# `GET /v1/...`, and `GET <url>/v1/...` as availability probes are written
 INLINE = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|WS) +`?(?:<\w+>)?(/v1/[^\s`)\"',;]+)")
 
 
@@ -59,7 +59,8 @@ def test_documented_endpoints_exist():
     routes = _routes()
     rows = list(_documented())
     assert len(rows) > 150  # the parser still finds the tables
-    assert sum(w.startswith("SKILL.md") for w, _, _ in rows) > 10  # ...and the inline references
+    inline = [line for doc in DOCS for line in doc.read_text(encoding="utf-8").splitlines() if INLINE.search(line)]
+    assert sum(not line.startswith("|") for line in inline) > 10  # ...and the inline references
     missing = [
         f"{where} {method} {path}"
         for where, method, path in rows
