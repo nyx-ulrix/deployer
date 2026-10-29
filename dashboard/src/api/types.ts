@@ -1603,6 +1603,8 @@ export type GitHubStatus = {
   login: string | null;
   scopes: string[];
   configured: boolean;
+  /** Asked for with ?check=1: GitHub refuses the saved token (null when GitHub can't be reached). */
+  rejected?: boolean | null;
 };
 
 export type GitHubRepo = {

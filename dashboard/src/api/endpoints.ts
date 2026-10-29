@@ -1068,7 +1068,7 @@ export const api = {
 
   // DEPLOYMENTS.md "Connect a Git repository": the signed-in user's GitHub connection.
   github: {
-    status: () => client.get<GitHubStatus>("/integrations/github"),
+    status: () => client.get<GitHubStatus>("/integrations/github", { query: { check: 1 } }),
     connect: () => client.post<{ url: string }>("/integrations/github/connect"),
     disconnect: () =>
       client.del<{ ok: true; apps_using_connection: number; message: string }>(

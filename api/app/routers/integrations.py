@@ -11,8 +11,12 @@ router = APIRouter(tags=["integrations"])
 
 
 @router.get("/integrations/github")
-def github_status(user: CurrentUser, db: DbSession) -> dict:
-    return github.status_out(db, user.id)
+def github_status(user: CurrentUser, db: DbSession, check: bool = False) -> dict:
+    out = github.status_out(db, user.id)
+    if check:  # one call to GitHub: is the saved token still accepted?
+        conn = github.get_connection(db, user.id)
+        out["rejected"] = github.token_rejected(github.token_of(conn)) if conn else False
+    return out
 
 
 @router.post("/integrations/github/connect")

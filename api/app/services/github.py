@@ -115,6 +115,16 @@ def status_out(db: Session, user_id: str) -> dict:
     }
 
 
+def token_rejected(token: str) -> bool | None:
+    """True when GitHub refuses the token (revoked, or the app's access removed); None when GitHub
+    can't be reached."""
+    try:
+        status, _ = _api("GET", "/user", token=token)
+    except GitHubError:
+        return None
+    return status == 401
+
+
 def apps_using(db: Session, user_id: str) -> int:
     return db.scalar(select(func.count()).select_from(App).where(App.github_connection_user_id == user_id))
 

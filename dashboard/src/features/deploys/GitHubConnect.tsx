@@ -92,7 +92,12 @@ export function GitHubAccountCard() {
           <GitHubIcon className="size-4.5" />
         </span>
         <p className="min-w-0 flex-1 text-sm">
-          {s.connected ? (
+          {s.connected && s.rejected ? (
+            <>
+              GitHub: connected as <span className="font-medium">{s.login}</span>, but GitHub no longer accepts this
+              access (it was revoked). Reconnect so apps can clone again.
+            </>
+          ) : s.connected ? (
             <>
               GitHub: connected as <span className="font-medium">{s.login}</span>
             </>
@@ -100,6 +105,7 @@ export function GitHubAccountCard() {
             "GitHub: not connected"
           )}
         </p>
+        {s.connected && s.rejected && <ConnectGitHubButton returnTo="/settings/account" label="Reconnect GitHub" />}
         {s.connected ? (
           <Button size="sm" variant="outline-danger" icon={<Unlink className="size-3.5" />} onClick={() => setConfirming(true)}>
             Disconnect

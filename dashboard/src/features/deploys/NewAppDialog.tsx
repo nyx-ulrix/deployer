@@ -185,7 +185,8 @@ function RepoStep({
 }) {
   const status = useQuery({ queryKey: qk.github, queryFn: api.github.status });
   const [url, setUrl] = useState("");
-  const connected = status.data?.connected ?? false;
+  const rejected = status.data?.rejected === true;
+  const connected = (status.data?.connected ?? false) && !rejected;
   const paste = (e: FormEvent) => {
     e.preventDefault();
     if (url.trim()) onPick(url.trim(), connected && /^https:\/\/github\.com\//i.test(url.trim()));
@@ -202,7 +203,8 @@ function RepoStep({
       ) : status.data?.configured ? (
         <div className="rounded-xl border border-border bg-surface-2 p-4">
           <p className="flex items-center gap-2 font-medium">
-            <GitHubIcon className="size-4" /> Connect GitHub once, then pick a repository
+            <GitHubIcon className="size-4" />{" "}
+            {rejected ? "GitHub no longer accepts Deployer's access. Connect again to pick a repository" : "Connect GitHub once, then pick a repository"}
           </p>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted">
             <li>Deployer reads your repositories (including private ones) to detect how to build them and to clone them when deploying.</li>
@@ -210,7 +212,10 @@ function RepoStep({
             <li>The token is stored encrypted and only used for apps you create. Disconnect any time in Account settings.</li>
           </ul>
           <div className="mt-3">
-            <ConnectGitHubButton returnTo={`/projects/${projectId}/deploys?new=1`} />
+            <ConnectGitHubButton
+              returnTo={`/projects/${projectId}/deploys?new=1`}
+              label={rejected ? "Reconnect GitHub" : undefined}
+            />
           </div>
         </div>
       ) : (

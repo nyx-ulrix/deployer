@@ -130,6 +130,22 @@ def test_connect_stores_encrypted_token_and_never_signs_in(client, owner, owner_
     assert client.get("/v1/integrations/github", headers=owner_headers).json()["connected"] is False
 
 
+def test_status_check_reports_a_token_github_rejects(client, owner, owner_headers, providers, gh, db):
+    token = connect(db, owner)
+    db.commit()
+    url = "/v1/integrations/github"
+    assert "rejected" not in client.get(url, headers=owner_headers).json()  # no GitHub call without ?check
+    assert gh.calls == []
+
+    gh.routes[("GET", "/user")] = (200, {"login": "octo"})
+    assert client.get(url, params={"check": 1}, headers=owner_headers).json()["rejected"] is False
+    assert gh.calls[-1][:3] == ("GET", "/user", token)
+
+    gh.routes[("GET", "/user")] = (401, {"message": "Bad credentials"})
+    status = client.get(url, params={"check": 1}, headers=owner_headers).json()
+    assert status["connected"] is True and status["rejected"] is True
+
+
 def test_connect_requires_the_same_signed_in_user(client, owner, providers, login, make_user, auth_headers, db):
     other = make_user()
     login(owner.email)  # this browser is signed in as the owner...

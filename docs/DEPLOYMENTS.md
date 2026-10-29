@@ -161,7 +161,10 @@ The New app dialog starts with **Choose a repository**; everything it fills in s
    (`error=github_connect_user_mismatch` otherwise), stores the token with `encrypt_secret` in
    `github_connections` (one per user; never logged or returned) and redirects to the dashboard's
    `/integrations/github/done?ok=1` (or `?error=<code>`), which returns to where the user was.
-   `GET /v1/integrations/github` → `{connected, login, scopes, configured}`; disconnect in Account
+   `GET /v1/integrations/github` → `{connected, login, scopes, configured}`; with `?check=1` it also asks
+   GitHub whether the saved token still works (`rejected`: true when GitHub refuses it, for example after
+   the access was revoked; null when GitHub can't be reached), and the dashboard then offers *Reconnect
+   GitHub*. Reconnecting replaces the token and keeps the apps linked. Disconnect in Account
    settings (`DELETE /v1/integrations/github` → `{ok, apps_using_connection, message}`); GitHub's own
    revoke is at github.com/settings/applications.
 2. **Pick a repository** from `GET /v1/integrations/github/repos?q=&page=` (GitHub `/user/repos`,
